@@ -143,13 +143,13 @@ class MatchJob {
   }
 
   start(): void {
+    // `run()` terminalizes a top-level crash itself (see below), then resolves — so this
+    // completion is unconditionally attempted and is first-terminal-wins: it no-ops when a
+    // crash already set `failed`, or a cancel already set `cancelled` (§6a). The `.catch`
+    // is a defensive backstop for a truly-unexpected `run()` rejection (never expected).
     this.run()
       .then(() => { this.terminalize('completed'); })
       .catch((error: unknown) => {
-        // A top-level orchestration crash (remote in practice — `allSettled` + the
-        // per-book catch contain per-book failures) must terminalize the job so a
-        // client never polls a stuck `matching` job forever (#1864 §6). Partial
-        // results are retained; the serialized `error` is class-mapped in the UI.
         this.log.error({ error: serializeError(error), jobId: this.id }, 'Match job failed unexpectedly');
         this.terminalize('failed', getErrorMessage(error));
       });
@@ -157,7 +157,18 @@ class MatchJob {
 
   private async run(): Promise<void> {
     const promises = this.books.map(book => this.matchWithSemaphore(book));
-    await Promise.allSettled(promises);
+    try {
+      await Promise.allSettled(promises);
+    } catch (error: unknown) {
+      // A top-level orchestration crash (remote in practice — `allSettled` + the per-book
+      // catch contain per-book failures) terminalizes the job `failed` HERE so a client
+      // never polls a stuck `matching` job forever (#1864 §6). Retaining partial results.
+      // Resolving afterward lets `start()`'s completion fire as a proven-no-op — the real
+      // failure→completion precedence path the §6a matrix asserts (F7).
+      this.log.error({ error: serializeError(error), jobId: this.id }, 'Match job failed unexpectedly');
+      this.terminalize('failed', getErrorMessage(error));
+      return;
+    }
 
     this.log.info(
       {

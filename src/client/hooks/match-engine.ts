@@ -65,7 +65,13 @@ export class MatchEngine {
   private hasPaused = false;
   private failureCount = 0;
   private isMatching = false;
-  private recovering = false;
+  /**
+   * True when the CURRENT logical run is itself a recovery run — a human Restart/Resume,
+   * or the automatic allowance-started remainder. Combined with a transient retry backoff
+   * (`failureCount > 0`) it derives the exposed `recovering` flag (F1), so the fail-closed
+   * CTA stays locked during automatic retry/remainder, not just during a human-driven one.
+   */
+  private recoveryRun = false;
   private paused: PausedReason | null = null;
   private pollHandle: ReturnType<typeof setTimeout> | null = null;
 
@@ -89,7 +95,7 @@ export class MatchEngine {
     this.epoch += 1;
     this.clearPoll();
     this.failureCount = 0;
-    this.recovering = true;
+    this.recoveryRun = true;
     this.paused = null;
     this.isMatching = true;
     this.emit();
@@ -106,7 +112,7 @@ export class MatchEngine {
     this.clearPoll();
     this.abandonActiveJob();
     this.isMatching = false;
-    this.recovering = false;
+    this.recoveryRun = false;
     this.paused = null;
     this.emit();
   }
@@ -124,7 +130,12 @@ export class MatchEngine {
     this.epoch += 1;
     this.clearPoll();
     this.abandonActiveJob();
-    this.original = candidates;
+    // Candidate paths are the logical-run identity (observed map, remainder, and every
+    // status result are keyed by `path`). Duplicate paths would let one result satisfy
+    // several candidates and finish with `matched < total` (§0/F2). Collapse to
+    // first-occurrence up front so `total` and the remainder stay path-consistent.
+    const deduped = dedupeByPath(candidates);
+    this.original = deduped;
     this.observed = new Map();
     this.chunkIndex = 0;
     this.allowanceSpent = false;
@@ -132,8 +143,8 @@ export class MatchEngine {
     this.failureCount = 0;
     this.jobId = null;
     this.paused = null;
-    this.recovering = recover;
-    this.beginRun(candidates, 'auto-initial');
+    this.recoveryRun = recover;
+    this.beginRun(deduped, 'auto-initial');
   }
 
   private beginRun(candidates: MatchCandidate[], phase: RunPhase): void {
@@ -191,7 +202,7 @@ export class MatchEngine {
   private finishLogical(): void {
     this.jobId = null;
     this.isMatching = false;
-    this.recovering = false;
+    this.recoveryRun = false;
     this.paused = null;
     this.emit();
   }
@@ -258,6 +269,9 @@ export class MatchEngine {
     // transport | server — bounded serialized backoff retry, all state preserved.
     this.failureCount += 1;
     if (this.failureCount <= MATCH_RETRY_LIMIT) {
+      // Emit so the derived `recovering` flag (failureCount > 0) reaches consumers and the
+      // fail-closed CTA locks during the transient backoff, not only during a human recovery (F1).
+      this.emit();
       this.schedulePoll(MATCH_RETRY_BACKOFF_MS);
       return;
     }
@@ -312,8 +326,11 @@ export class MatchEngine {
       return;
     }
     if (context === 'automatic-entry' && !this.allowanceSpent) {
-      // The one automatic allowance — consumed before the first pause only.
+      // The one automatic allowance — consumed before the first pause only. The
+      // allowance-started remainder is itself a recovery run (F1): mark it so the
+      // fail-closed CTA stays locked through the automatic remainder.
       this.allowanceSpent = true;
+      this.recoveryRun = true;
       this.jobId = null;
       this.beginRun(this.remaining(), 'auto-remainder');
       return;
@@ -338,12 +355,22 @@ export class MatchEngine {
     if (reason === 'start-failed') this.jobId = null; // no active job to probe (§4/F14)
     this.hasPaused = true;
     this.isMatching = false;
-    this.recovering = false;
     this.paused = reason;
     this.emit();
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────
+
+  /**
+   * Recovery-in-flight (F1): a recovery run (Restart / Resume / automatic remainder), OR a
+   * transient retry backoff in any run. Paused/idle/finished are not "recovering" — the
+   * `paused` gate covers the paused case, and healthy initial polling stays unlocked so the
+   * selection-scoped CTA still enables importing a matched subset (#1102).
+   */
+  private isRecovering(): boolean {
+    if (!this.isMatching) return false;
+    return this.recoveryRun || this.failureCount > 0;
+  }
 
   private runContext(): ProbeContext {
     return this.phase === 'auto-initial' && !this.hasPaused && !this.allowanceSpent
@@ -379,7 +406,7 @@ export class MatchEngine {
       results: [...this.observed.values()],
       progress: { matched: this.observed.size, total: this.original.length },
       isMatching: this.isMatching,
-      recovering: this.recovering,
+      recovering: this.isRecovering(),
       paused: this.paused !== null,
       reason: this.paused,
       remaining: this.remaining().length,
@@ -387,4 +414,16 @@ export class MatchEngine {
       total: this.original.length,
     };
   }
+}
+
+/** First-occurrence-wins path dedupe — the logical-run identity is the candidate path (F2). */
+function dedupeByPath(candidates: MatchCandidate[]): MatchCandidate[] {
+  const seen = new Set<string>();
+  const out: MatchCandidate[] = [];
+  for (const candidate of candidates) {
+    if (seen.has(candidate.path)) continue;
+    seen.add(candidate.path);
+    out.push(candidate);
+  }
+  return out;
 }
