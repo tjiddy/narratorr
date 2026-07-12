@@ -1,9 +1,18 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, waitFor, act, within } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { LibraryImportPage } from './LibraryImportPage';
+
+// Deterministic engine clock (#1864 F13): the MatchEngine's poll timer is routed through
+// `@/hooks/match-timer`; mocking it advances polling without real-time waits or a raised
+// async-util timeout (globally faking setTimeout would deadlock Query —
+// vitest-faketimers-react-query). Query's own timers stay real.
+vi.mock('@/hooks/match-timer', async () => {
+  const { createMatchTimerMock } = await import('@/__tests__/match-timer-mock');
+  return createMatchTimerMock();
+});
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
@@ -28,6 +37,14 @@ vi.mock('@/lib/api', async (importOriginal) => {
 const { api } = await import('@/lib/api');
 const mockApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
+const matchTimer = await import('@/hooks/match-timer');
+const engineClock = matchTimer as unknown as import('@/__tests__/match-timer-mock').MatchTimerMock;
+/** Wait for the engine to arm its next poll timer, then fire it deterministically. */
+async function firePoll(): Promise<void> {
+  await waitFor(() => expect(engineClock.__pending()).toBeGreaterThan(0));
+  await act(async () => { engineClock.__flushNext(); });
+}
+
 const mockSettingsWithPath = createMockSettings({
   library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
 });
@@ -38,6 +55,7 @@ const mockSettingsNoPath = createMockSettings({
 describe('LibraryImportPage (#133)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    engineClock.__reset();
     mockApi.getSettings!.mockResolvedValue(mockSettingsWithPath);
     mockApi.getBookIdentifiers!.mockResolvedValue([]);
     mockApi.scanDirectory!.mockResolvedValue({ discoveries: [], totalFolders: 0 });
@@ -102,8 +120,8 @@ describe('LibraryImportPage (#133)', () => {
     });
   });
 
-  it('retry-matching button: clicking it starts a new match job and clears the error card', async () => {
-    // First startMatchJob call fails; retry call succeeds
+  it('Resume-remaining: clicking it starts a new match job and clears the paused banner (#1864)', async () => {
+    // First startMatchJob call fails (paused start-failed); Resume starts a new run.
     mockApi.startMatchJob!
       .mockRejectedValueOnce(new Error('transient error'))
       .mockResolvedValue({ jobId: 'job-2' });
@@ -118,21 +136,21 @@ describe('LibraryImportPage (#133)', () => {
     renderWithProviders(<LibraryImportPage />);
 
     await waitFor(() => {
-      expect(screen.getByText(/matching failed/i)).toBeInTheDocument();
+      expect(screen.getByText(/matching paused/i)).toBeInTheDocument();
     });
 
-    await userEvent.click(screen.getByRole('button', { name: /retry matching/i }));
+    await userEvent.click(screen.getByRole('button', { name: /resume remaining/i }));
 
-    // Error card goes away once startMatching clears the error
+    // The banner clears once Resume starts the new run.
     await waitFor(() => {
-      expect(screen.queryByText(/matching failed/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/matching paused/i)).not.toBeInTheDocument();
     });
 
-    // startMatchJob called twice: initial + retry
+    // startMatchJob called twice: initial + resume
     expect(mockApi.startMatchJob).toHaveBeenCalledTimes(2);
   });
 
-  it('match-job failure: inline error shown and Import button disabled', async () => {
+  it('match-job start failure: paused banner (reason-mapped copy) and Import disabled (#1864)', async () => {
     mockApi.startMatchJob!.mockRejectedValue(new Error('match server unavailable'));
     mockApi.scanDirectory!.mockResolvedValue({
       discoveries: [
@@ -144,14 +162,83 @@ describe('LibraryImportPage (#133)', () => {
     renderWithProviders(<LibraryImportPage />);
 
     await waitFor(() => {
-      expect(screen.getByText(/matching failed/i)).toBeInTheDocument();
+      expect(screen.getByText(/matching paused/i)).toBeInTheDocument();
     });
-    expect(screen.getByText(/match server unavailable/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /retry matching/i })).toBeInTheDocument();
+    // Reason-mapped domain copy only — never the raw server text.
+    expect(screen.getByText(/couldn't start matching/i)).toBeInTheDocument();
+    expect(screen.queryByText(/match server unavailable/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resume remaining/i })).toBeInTheDocument();
 
-    // Import button must be disabled when matchJobError is set
-    const registerBtn = screen.getByRole('button', { name: /import/i });
-    expect(registerBtn).toBeDisabled();
+    // Import CTA is unconditionally disabled while paused.
+    expect(screen.getByRole('button', { name: /import/i })).toBeDisabled();
+  });
+
+  it('unconditional fail-closed: Import stays disabled while paused even after deselecting every pending row (#1864)', async () => {
+    // One matched row + one pending row; the run pauses. Deselecting the pending row
+    // would drop selectedPendingCount to 0 — but the paused gate keeps Import disabled.
+    mockApi.scanDirectory!.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/A/B1', parsedTitle: 'B1', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+        { path: '/audiobooks/A/B2', parsedTitle: 'B2', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+      ],
+      totalFolders: 2,
+    });
+    const b1 = { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'B1', authors: [{ name: 'A' }], asin: 'A1' }, alternatives: [] };
+    mockApi.getMatchJob!
+      .mockResolvedValueOnce({ id: 'job-1', status: 'matching', total: 2, matched: 1, results: [b1] })
+      .mockRejectedValue(new (await import('@/lib/api')).ApiError(400, { error: 'bad' })); // pause request-rejected
+
+    renderWithProviders(<LibraryImportPage />);
+    await waitFor(() => { expect(screen.getByText('B1')).toBeInTheDocument(); });
+    await firePoll(); // poll1: matching with [B1] partial
+    await firePoll(); // poll2: other-4xx → pause request-rejected
+
+    await waitFor(() => { expect(screen.getByText(/matching paused/i)).toBeInTheDocument(); });
+
+    // Deselect every row (including the pending one).
+    await userEvent.click(screen.getByRole('button', { name: /deselect all/i }));
+
+    // Still disabled — the pause gate is unconditional.
+    expect(screen.getByRole('button', { name: /import/i })).toBeDisabled();
+  });
+
+  it('unconditional fail-closed: Import stays disabled during AUTOMATIC recovery (recovering, not paused) after deselecting the pending row (#1864 F10)', async () => {
+    // B1 matches, then a 404 consumes the automatic allowance and starts a remainder for
+    // B2 — the run is `recovering` (not paused). Deselecting the pending B2 would drop
+    // selectedPendingCount to 0 and, without the recovering branch of `disabled={paused ||
+    // recovering}`, re-enable Import. Deleting `recovering` would make this test fail.
+    const ApiError = (await import('@/lib/api')).ApiError;
+    mockApi.scanDirectory!.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/A/B1', parsedTitle: 'B1', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+        { path: '/audiobooks/A/B2', parsedTitle: 'B2', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+      ],
+      totalFolders: 2,
+    });
+    mockApi.startMatchJob!.mockReset();
+    mockApi.startMatchJob!.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValue({ jobId: 'job-2' });
+    const b1 = { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'B1', authors: [{ name: 'A' }], asin: 'A1' }, alternatives: [] };
+    mockApi.getMatchJob!.mockReset();
+    mockApi.getMatchJob!
+      .mockResolvedValueOnce({ id: 'job-1', status: 'matching', total: 2, matched: 1, results: [b1] }) // B1 matches, still matching
+      .mockRejectedValueOnce(new ApiError(404, { error: 'gone' }))                                     // 404 → allowance → remainder
+      .mockResolvedValue({ id: 'job-2', status: 'matching', total: 2, matched: 0, results: [] });      // remainder keeps matching (recovering)
+
+    renderWithProviders(<LibraryImportPage />);
+    await waitFor(() => { expect(screen.getByText('B1')).toBeInTheDocument(); });
+    await firePoll(); // poll1: matching with [B1] partial → B1 matched
+    await firePoll(); // poll2: 404 → allowance → remainder job-2 starts (recovering, not paused)
+
+    // The automatic remainder has started — the run is now recovering (not paused).
+    await waitFor(() => { expect(mockApi.startMatchJob).toHaveBeenCalledTimes(2); });
+    expect(screen.queryByText(/matching paused/i)).not.toBeInTheDocument();
+
+    // B1 is matched, B2 pending — deselect the pending B2 row.
+    await waitFor(() => { expect(screen.getAllByLabelText('Deselect')).toHaveLength(2); });
+    await userEvent.click(screen.getAllByLabelText('Deselect')[1]!);
+
+    // Import stays disabled — the recovering gate is unconditional.
+    expect(screen.getByRole('button', { name: /import/i })).toBeDisabled();
   });
 
   it('existing rows hidden by default, toggle shows them', async () => {
@@ -403,7 +490,6 @@ describe('LibraryImportPage (#133)', () => {
     });
 
     it('import button disabled when selectedUnmatchedCount > 0 with title showing unmatched count', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
@@ -423,8 +509,7 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('NoMatch')).toBeInTheDocument();
       });
 
-      // Advance to trigger poll — mergeMatchResults auto-deselects confidence=none rows
-      await act(async () => { vi.advanceTimersByTime(2000); });
+      await firePoll(); // poll1 completed (none) → merge auto-deselects
 
       // Wait for the no-match badge to appear (confirms merge happened)
       await waitFor(() => {
@@ -442,12 +527,10 @@ describe('LibraryImportPage (#133)', () => {
         expect(registerBtn).toHaveAttribute('title', '1 selected book needs a match');
       });
 
-      vi.useRealTimers();
     });
 
     // #1102 — gate is scoped to selection, not the global match-job state
     it('enables import when only a matched row is selected and others are still pending', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
@@ -469,7 +552,7 @@ describe('LibraryImportPage (#133)', () => {
       renderWithProviders(<LibraryImportPage />);
 
       await waitFor(() => { expect(screen.getByText('Matched')).toBeInTheDocument(); });
-      await act(async () => { vi.advanceTimersByTime(2000); });
+      await firePoll(); // poll merges B1/B2 high-confidence results
 
       // 2 of 3 should show as ready (B1 + B2 high confidence + selected)
       await waitFor(() => { expect(screen.getByText('2 ready')).toBeInTheDocument(); });
@@ -486,11 +569,9 @@ describe('LibraryImportPage (#133)', () => {
       const registerBtn = screen.getByRole('button', { name: /import 1 book$/i });
       expect(registerBtn).toBeEnabled();
 
-      vi.useRealTimers();
     });
 
     it('import button shows "Importing..." when registerMutation.isPending', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       // confirmImport never resolves (keeps isPending=true)
       mockApi.confirmImport!.mockReturnValue(new Promise(() => {}));
@@ -511,8 +592,7 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('Book 1')).toBeInTheDocument();
       });
 
-      // Advance to trigger poll and complete matching
-      await act(async () => { vi.advanceTimersByTime(2000); });
+      await firePoll(); // poll completes matching → row enabled
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /import/i })).not.toBeDisabled();
@@ -524,13 +604,11 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText(/importing\.\.\./i)).toBeInTheDocument();
       });
 
-      vi.useRealTimers();
     });
   });
 
   describe('manual edit → import flow (#201)', () => {
     it('edited metadata persists through import confirm call', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       mockApi.confirmImport!.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       mockApi.getMatchJob!.mockResolvedValue({
@@ -550,8 +628,7 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('Parsed Title')).toBeInTheDocument();
       });
 
-      // Advance to trigger poll, which merges match results
-      await act(async () => { vi.advanceTimersByTime(2000); });
+      await firePoll(); // poll merges match results
 
       // Wait for match result to merge — the title should now show the matched title
       await waitFor(() => {
@@ -590,7 +667,6 @@ describe('LibraryImportPage (#133)', () => {
         );
       });
 
-      vi.useRealTimers();
     });
   });
 
@@ -599,8 +675,7 @@ describe('LibraryImportPage (#133)', () => {
       // Fake only the match-poll interval (mirrors the other import-flow tests) so the
       // poll doesn't churn rows while userEvent (real setTimeout) drives the click.
       // Fake only the match-poll interval (mirrors the other import-flow tests).
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const user = userEvent.setup();
 
       mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
@@ -622,8 +697,7 @@ describe('LibraryImportPage (#133)', () => {
       renderWithProviders(<LibraryImportPage />);
       await waitFor(() => expect(screen.getByText('Held Book')).toBeInTheDocument());
 
-      // Advance the poll so the match merges and the Import button enables.
-      await act(async () => { vi.advanceTimersByTime(2000); });
+      await firePoll(); // poll merges match → Import enables
       await waitFor(() => expect(screen.getByRole('button', { name: /import 1 book/i })).toBeEnabled());
 
       await user.click(screen.getByRole('button', { name: /import 1 book/i }));
@@ -646,7 +720,6 @@ describe('LibraryImportPage (#133)', () => {
         );
       });
 
-      vi.useRealTimers();
     });
   });
 
@@ -666,7 +739,6 @@ describe('LibraryImportPage (#133)', () => {
     };
 
     it('readyCount = selected + non-duplicate + high confidence', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       mockApi.scanDirectory!.mockResolvedValue(fiveBookDiscoveries);
       // Return results for 3 of 4 non-duplicate books (B4 stays pending)
@@ -685,18 +757,15 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('High Book')).toBeInTheDocument();
       });
 
-      await act(async () => { vi.advanceTimersByTime(2000); });
-
+      await firePoll(); // poll merges high/medium/none results
       // readyCount = selected + non-dup + high → only B1 (selected + non-dup + high)
       await waitFor(() => {
         expect(screen.getByText('1 ready')).toBeInTheDocument();
       });
 
-      vi.useRealTimers();
     });
 
     it('reviewCount = all medium confidence rows regardless of selection', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       mockApi.scanDirectory!.mockResolvedValue(fiveBookDiscoveries);
       mockApi.getMatchJob!.mockResolvedValue({
@@ -714,8 +783,7 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('High Book')).toBeInTheDocument();
       });
 
-      await act(async () => { vi.advanceTimersByTime(2000); });
-
+      await firePoll(); // poll merges high/medium/none results
       // reviewCount = all medium → 1 (B2). B2 is auto-deselected on merge (#1318),
       // but reviewCount is selection-independent so it still reports 1.
       await waitFor(() => {
@@ -739,11 +807,9 @@ describe('LibraryImportPage (#133)', () => {
       });
       expect(screen.getByText('1 review')).toBeInTheDocument();
 
-      vi.useRealTimers();
     });
 
     it('noMatchCount = all none confidence rows', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       mockApi.scanDirectory!.mockResolvedValue(fiveBookDiscoveries);
       mockApi.getMatchJob!.mockResolvedValue({
@@ -761,18 +827,15 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('High Book')).toBeInTheDocument();
       });
 
-      await act(async () => { vi.advanceTimersByTime(2000); });
-
+      await firePoll(); // poll merges high/medium/none results
       // noMatchCount = all none → 1 (B3)
       await waitFor(() => {
         expect(screen.getByText('1 no match')).toBeInTheDocument();
       });
 
-      vi.useRealTimers();
     });
 
     it('pendingCount = no matchResult + non-duplicate rows', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       // Only 2 non-dup books, matching returns result for only 1
       mockApi.scanDirectory!.mockResolvedValue({
@@ -797,14 +860,12 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('Matched')).toBeInTheDocument();
       });
 
-      await act(async () => { vi.advanceTimersByTime(2000); });
-
+      await firePoll(); // poll merges partial (B1 only) results
       // pendingCount = no matchResult + non-dup → 1 (B2 has no match result and is non-dup)
       await waitFor(() => {
         expect(screen.getByText('1 matching')).toBeInTheDocument();
       });
 
-      vi.useRealTimers();
     });
 
     it('duplicateCount = all isDuplicate rows', async () => {
@@ -830,14 +891,10 @@ describe('LibraryImportPage (#133)', () => {
   });
 
   // Polling tests — fake only setInterval/clearInterval to avoid TanStack Query deadlock
-  describe('match-job polling (fake timers)', () => {
-    beforeEach(() => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    });
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
+  describe('match-job polling (deterministic engine clock)', () => {
+    // The recovery engine's poll loop is setTimeout-driven (#1864 §0) and routed through
+    // the mocked `@/hooks/match-timer`, so `firePoll()` advances the poll deterministically
+    // (no real-time wait), while TanStack Query's own timers stay real.
     it('Import button enabled after poll resolves with completed job', async () => {
       mockApi.confirmImport!.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       // Completed match job — return a high-confidence result so the row is no longer pending.
@@ -857,9 +914,7 @@ describe('LibraryImportPage (#133)', () => {
       await waitFor(() => {
         expect(screen.getByText('Book One')).toBeInTheDocument();
       });
-
-      // Advance the setInterval (POLL_INTERVAL=2s) to trigger the first poll
-      await act(async () => { vi.advanceTimersByTime(2000); });
+      await firePoll(); // completed poll merges the high-confidence result
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /import/i })).not.toBeDisabled();
@@ -875,8 +930,6 @@ describe('LibraryImportPage (#133)', () => {
 
   describe('chunked register progress label (#1833)', () => {
     it('renders a non-zero first-chunk progress label during a multi-chunk register', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-
       // Big metadata blobs push each confirm item over half the chunk budget, so the runner
       // splits the register into 2 chunks (1 book each). The first chunk must render
       // "Registering 1 of 2" while POSTing — never "Registering 0 of 2".
@@ -900,15 +953,13 @@ describe('LibraryImportPage (#133)', () => {
 
       renderWithProviders(<LibraryImportPage />);
       await waitFor(() => { expect(screen.getByText('Book 1')).toBeInTheDocument(); });
-      await act(async () => { vi.advanceTimersByTime(2000); });
+      await firePoll(); // completed poll merges both high-confidence results
       await waitFor(() => { expect(screen.getByRole('button', { name: /import 2 books/i })).toBeEnabled(); });
 
       await userEvent.click(screen.getByRole('button', { name: /import 2 books/i }));
 
       await waitFor(() => { expect(screen.getByText(/Registering 1 of 2/)).toBeInTheDocument(); });
       expect(screen.queryByText(/Registering 0 of 2/)).not.toBeInTheDocument();
-
-      vi.useRealTimers();
     });
   });
 

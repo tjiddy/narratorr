@@ -5,7 +5,7 @@ import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
 import { compareNarratorSignals, diceCoefficient, normalizeNarrator, scoreResult } from '../../core/utils/similarity.js';
 import { normalizeProductionType } from '../../core/metadata/production-type.js';
 import { cleanTagTitle, extractYear, hasTagSeriesMarker, isPureVolumeMarker } from '../utils/folder-parsing.js';
-import type { Confidence, MatchCandidate, MatchResult } from './match-job.service.js';
+import type { Confidence, MatchCandidate, MatchResult } from './match-job.types.js';
 import type { MatchSource } from './tag-search-planner.js';
 import type { BookService } from './book.service.js';
 import { serializeError } from '../utils/serialize-error.js';
