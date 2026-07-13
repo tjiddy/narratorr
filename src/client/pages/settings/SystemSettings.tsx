@@ -212,11 +212,11 @@ export function SystemSettings() {
 
       <SystemInfo />
 
-      <ThirdPartyNotices />
-
       <GeneralSettingsForm />
 
       <ScheduledTasks />
+
+      <ThirdPartyNotices />
 
       <RestoreModal
         isOpen={restoreConfirmOpen}

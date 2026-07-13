@@ -41,8 +41,8 @@ describe('GeneralSettingsForm', () => {
     renderWithProviders(<GeneralSettingsForm />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Event History Retention (days)')).toHaveValue(60);
-      expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
+      expect(screen.getByLabelText(/event history retention/i)).toHaveValue(60);
+      expect(screen.getByLabelText(/log level/i)).toHaveValue('warn');
     });
   });
 
@@ -50,87 +50,85 @@ describe('GeneralSettingsForm', () => {
     renderWithProviders(<GeneralSettingsForm />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Event History Retention (days)')).toBeInTheDocument();
+      expect(screen.getByLabelText(/event history retention/i)).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Event History Retention (days)').getAttribute('step')).toBe('1');
+    expect(screen.getByLabelText(/event history retention/i).getAttribute('step')).toBe('1');
   });
 
   it('log level select uses shared SelectWithChevron contract', async () => {
     renderWithProviders(<GeneralSettingsForm />);
     await waitFor(() => {
-      expect(screen.getByLabelText('Log Level')).toBeInTheDocument();
+      expect(screen.getByLabelText(/log level/i)).toBeInTheDocument();
     });
-    const select = screen.getByLabelText('Log Level');
+    const select = screen.getByLabelText(/log level/i);
     expect(select).toHaveClass('appearance-none');
     expect(select.parentElement!.querySelector('svg')).toBeInTheDocument();
   });
 
-  it('shows save button when a field is changed', async () => {
+  it('shows save button on the Logging card when log level is changed', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GeneralSettingsForm />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
+      expect(screen.getByLabelText(/log level/i)).toHaveValue('warn');
     });
 
-    await user.selectOptions(screen.getByLabelText('Log Level'), 'debug');
+    await user.selectOptions(screen.getByLabelText(/log level/i), 'debug');
 
-    expect(screen.getByRole('button', { name: /save/i })).not.toBeDisabled();
+    // Only the dirty card surfaces a Save — the Housekeeping card stays clean.
+    const saveButtons = screen.getAllByRole('button', { name: /save/i });
+    expect(saveButtons).toHaveLength(1);
+    expect(saveButtons[0]).not.toBeDisabled();
+    expect(saveButtons[0]!.closest('form')).toBe(screen.getByLabelText(/log level/i).closest('form'));
   });
 
-  it('hides save button when form is clean', async () => {
+  it('hides both save buttons when nothing is dirty', async () => {
     renderWithProviders(<GeneralSettingsForm />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
+      expect(screen.getByLabelText(/log level/i)).toHaveValue('warn');
     });
 
     expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
   });
 
-  it('sends complete general category payload when saving after changing only logLevel', async () => {
+  it('Logging card saves only the logLevel slice (backend patch-merges the rest)', async () => {
     const user = userEvent.setup();
     mockApi.updateSettings.mockResolvedValue(mockSettings);
     renderWithProviders(<GeneralSettingsForm />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
+      expect(screen.getByLabelText(/log level/i)).toHaveValue('warn');
     });
 
-    await user.selectOptions(screen.getByLabelText('Log Level'), 'debug');
-    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    await user.selectOptions(screen.getByLabelText(/log level/i), 'debug');
+    fireEvent.submit(screen.getByLabelText(/log level/i).closest('form')!);
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        general: {
-          logLevel: 'debug',
-          housekeepingRetentionDays: 60,
-        },
+        general: { logLevel: 'debug' },
       });
     });
   });
 
-  it('sends complete general category payload when saving after changing only housekeepingRetentionDays', async () => {
+  it('Housekeeping card saves only the housekeepingRetentionDays slice', async () => {
     const user = userEvent.setup();
     mockApi.updateSettings.mockResolvedValue(mockSettings);
     renderWithProviders(<GeneralSettingsForm />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Event History Retention (days)')).toHaveValue(60);
+      expect(screen.getByLabelText(/event history retention/i)).toHaveValue(60);
     });
 
-    const input = screen.getByLabelText('Event History Retention (days)');
+    const input = screen.getByLabelText(/event history retention/i);
     await user.clear(input);
     await user.type(input, '30');
 
-    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    fireEvent.submit(input.closest('form')!);
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        general: {
-          logLevel: 'warn',
-          housekeepingRetentionDays: 30,
-        },
+        general: { housekeepingRetentionDays: 30 },
       });
     });
   });
@@ -141,11 +139,11 @@ describe('GeneralSettingsForm', () => {
     renderWithProviders(<GeneralSettingsForm />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
+      expect(screen.getByLabelText(/log level/i)).toHaveValue('warn');
     });
 
-    await user.selectOptions(screen.getByLabelText('Log Level'), 'debug');
-    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    await user.selectOptions(screen.getByLabelText(/log level/i), 'debug');
+    fireEvent.submit(screen.getByLabelText(/log level/i).closest('form')!);
 
     await waitFor(() => {
       expect(mockToast.success).toHaveBeenCalledWith('General settings saved');
@@ -162,16 +160,16 @@ describe('GeneralSettingsForm', () => {
     renderWithProviders(<GeneralSettingsForm />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Event History Retention (days)')).toHaveValue(60);
+      expect(screen.getByLabelText(/event history retention/i)).toHaveValue(60);
     });
 
     // Enter 0 — below the 1-365 range
-    const input = screen.getByLabelText('Event History Retention (days)');
+    const input = screen.getByLabelText(/event history retention/i);
     await user.clear(input);
     await user.type(input, '0');
 
     await act(async () => {
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+      fireEvent.submit(input.closest('form')!);
     });
 
     // zodResolver blocks submission and shows inline error
@@ -185,11 +183,11 @@ describe('GeneralSettingsForm', () => {
     renderWithProviders(<GeneralSettingsForm />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
+      expect(screen.getByLabelText(/log level/i)).toHaveValue('warn');
     });
 
-    await user.selectOptions(screen.getByLabelText('Log Level'), 'debug');
-    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    await user.selectOptions(screen.getByLabelText(/log level/i), 'debug');
+    fireEvent.submit(screen.getByLabelText(/log level/i).closest('form')!);
 
     await waitFor(() => {
       expect(mockToast.error).toHaveBeenCalledWith('Save failed');

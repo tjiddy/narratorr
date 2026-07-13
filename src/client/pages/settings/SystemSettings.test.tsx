@@ -560,12 +560,12 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
     renderWithProviders(<SystemSettings />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Event History Retention (days)')).toBeInTheDocument();
-      expect(screen.getByLabelText('Log Level')).toBeInTheDocument();
+      expect(screen.getByLabelText(/event history retention/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/log level/i)).toBeInTheDocument();
     });
   });
 
-  it('submits general settings with correct payload when log level changed', async () => {
+  it('submits only the logLevel slice when log level changed (Logging card)', async () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
       system: { backupIntervalMinutes: 10080, backupRetention: 7 },
@@ -577,15 +577,15 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
     renderWithProviders(<SystemSettings />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
+      expect(screen.getByLabelText(/log level/i)).toHaveValue('warn');
     });
 
-    await user.selectOptions(screen.getByLabelText('Log Level'), 'debug');
-    fireEvent.submit(screen.getByLabelText('Log Level').closest('form')!);
+    await user.selectOptions(screen.getByLabelText(/log level/i), 'debug');
+    fireEvent.submit(screen.getByLabelText(/log level/i).closest('form')!);
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        general: { logLevel: 'debug', housekeepingRetentionDays: 30 },
+        general: { logLevel: 'debug' },
       });
     });
   });
@@ -602,11 +602,11 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
     renderWithProviders(<SystemSettings />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
+      expect(screen.getByLabelText(/log level/i)).toHaveValue('warn');
     });
 
-    await user.selectOptions(screen.getByLabelText('Log Level'), 'debug');
-    fireEvent.submit(screen.getByLabelText('Log Level').closest('form')!);
+    await user.selectOptions(screen.getByLabelText(/log level/i), 'debug');
+    fireEvent.submit(screen.getByLabelText(/log level/i).closest('form')!);
 
     await waitFor(() => {
       expect(mockToast.error).toHaveBeenCalledWith('Save failed');

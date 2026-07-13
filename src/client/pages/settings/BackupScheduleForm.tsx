@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import { ClockIcon } from '@/components/icons';
-import { errorInputClass } from '@/components/settings/formStyles';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
+import { NumberField } from '@/components/settings/NumberField';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { DEFAULT_SETTINGS, systemFormSchema, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
@@ -31,44 +32,39 @@ export function BackupScheduleForm() {
       description="Configure automatic backup frequency and retention."
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-          <div>
-            <label htmlFor="backupIntervalMinutes" className="block text-sm font-medium mb-1.5">
-              Backup Interval (minutes)
-            </label>
-            <input
+        <SettingsTable>
+          <SettingsRow
+            htmlFor="backupIntervalMinutes"
+            label="Backup interval"
+            description="How often automatic backups run. 60–43200 (1 hour – 30 days). Default: 10080 (weekly)."
+          >
+            <NumberField
               id="backupIntervalMinutes"
-              type="number"
               {...register('backupIntervalMinutes', { valueAsNumber: true })}
-              className={errorInputClass(!!errors.backupIntervalMinutes)}
               min={60}
               max={43200}
               step={1}
+              suffix="min"
+              error={errors.backupIntervalMinutes?.message}
             />
-            {errors.backupIntervalMinutes && (
-              <p className="text-sm text-destructive mt-1">{errors.backupIntervalMinutes.message}</p>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">60–43200 (1 hour – 30 days). Default: 10080 (weekly).</p>
-          </div>
-          <div>
-            <label htmlFor="backupRetention" className="block text-sm font-medium mb-1.5">
-              Backup Retention
-            </label>
-            <input
+          </SettingsRow>
+
+          <SettingsRow
+            htmlFor="backupRetention"
+            label="Backup retention"
+            description="Keep the most recent N backups. Range 1–100. Default: 7."
+          >
+            <NumberField
               id="backupRetention"
-              type="number"
               {...register('backupRetention', { valueAsNumber: true })}
-              className={errorInputClass(!!errors.backupRetention)}
               min={1}
               max={100}
               step={1}
+              error={errors.backupRetention?.message}
             />
-            {errors.backupRetention && (
-              <p className="text-sm text-destructive mt-1">{errors.backupRetention.message}</p>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">Keep the most recent N backups (1–100). Default: 7.</p>
-          </div>
-        </div>
+          </SettingsRow>
+        </SettingsTable>
+
         {isDirty && (
           <button
             type="submit"
