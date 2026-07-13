@@ -66,6 +66,7 @@ export const queryKeys = {
   },
   systemTasks: () => ['system', 'tasks'] as const,
   systemInfo: () => ['system', 'info'] as const,
+  thirdPartyNotices: () => ['system', 'notices'] as const,
   importJobs: (params?: { status?: string }) => params ? ['importJobs', params] as const : ['importJobs'] as const,
   systemStatus: () => ['systemStatus'] as const,
   discover: {

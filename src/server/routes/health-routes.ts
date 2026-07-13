@@ -4,8 +4,15 @@ import { sql } from 'drizzle-orm';
 import type { Services } from './index.js';
 import fsp from 'fs/promises';
 import os from 'os';
+import path from 'path';
 import { getVersion, getCommit, getBuildTime } from '../utils/version.js';
 import { serializeError } from '../utils/serialize-error.js';
+
+// The third-party notice ships alongside the app: repo root in dev/CI, `/app` in the
+// runtime image (the s6 service runs `cd /app && node dist/server/index.js`, so
+// `process.cwd()` resolves to `/app`). Resolving from cwd — not a hardcoded `/app` —
+// keeps the notice readable in both trees (#1862).
+const THIRD_PARTY_NOTICES_FILENAME = 'THIRD_PARTY_NOTICES.md';
 
 
 export async function healthRoutes(app: FastifyInstance, services: Services, db: Db) {
@@ -37,6 +44,22 @@ export async function healthRoutes(app: FastifyInstance, services: Services, db:
   app.post<{ Params: { name: string } }>('/api/system/tasks/:name/run', async (request) => {
     await services.taskRegistry.runTask(request.params.name);
     return { ok: true };
+  });
+
+  // GET /api/system/notices — third-party license notices (#1862). Reads the notice
+  // shipped with the app and returns it as JSON so the System-tab licenses section can
+  // render the SAME file that ships in the image (single source of truth). A read failure
+  // returns an explicit 500 (with a serialized server log) rather than falling through to
+  // the generic handler, so the client can show a precise error affordance.
+  app.get('/api/system/notices', async (request, reply) => {
+    const noticePath = path.join(process.cwd(), THIRD_PARTY_NOTICES_FILENAME);
+    try {
+      const content = await fsp.readFile(noticePath, 'utf-8');
+      return { content };
+    } catch (error: unknown) {
+      request.log.error({ error: serializeError(error) }, 'Failed to load third-party notices');
+      return reply.status(500).send({ error: 'Failed to load third-party notices' });
+    }
   });
 
   // GET /api/system/info — system information

@@ -160,6 +160,15 @@ describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
       const wf = load();
       expect(wf).toMatch(/seq 1 30|timeout.*30/);
     });
+
+    it('asserts the third-party notice + LICENSE shipped non-empty in the image (#1862)', () => {
+      const wf = load();
+      // Runtime deployment evidence — the substantive gate is at docker build, this
+      // confirms the files reached the published image.
+      expect(wf).toContain('test -s /app/THIRD_PARTY_NOTICES.md');
+      expect(wf).toContain('test -s /app/LICENSE');
+      expect(wf).toContain('third-party notice or LICENSE missing/empty in published image');
+    });
   });
 
   describe('ffmpeg-8 dependency guard (#1679)', () => {

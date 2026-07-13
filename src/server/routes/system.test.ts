@@ -759,6 +759,44 @@ describe('system routes', () => {
       exitSpy.mockRestore();
     });
   });
+
+  describe('GET /api/system/notices (#1862 — third-party license notices)', () => {
+    it('returns 200 { content } read from `<cwd>/THIRD_PARTY_NOTICES.md` (cwd-relative, not hardcoded /app)', async () => {
+      // Isolate ambient input: stub cwd + readFile so the outcome does not depend on the
+      // runner's launch directory or checkout contents (F7). Asserting the readFile path is
+      // path.join(cwd, 'THIRD_PARTY_NOTICES.md') proves resolution is cwd-relative — the same
+      // resolution that yields repo root in dev/CI and /app in the runtime image — so a
+      // regression to a hardcoded '/app/...' path would fail here.
+      const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue('/fake/app');
+      const readSpy = vi.spyOn(fsp, 'readFile').mockResolvedValue('STUB NOTICE BODY');
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/notices' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ content: 'STUB NOTICE BODY' });
+      expect(readSpy).toHaveBeenCalledWith(path.join('/fake/app', 'THIRD_PARTY_NOTICES.md'), 'utf-8');
+
+      readSpy.mockRestore();
+      cwdSpy.mockRestore();
+    });
+
+    it('returns exactly 500 { error } with a serialized log when the read fails', async () => {
+      const readSpy = vi
+        .spyOn(fsp, 'readFile')
+        .mockRejectedValueOnce(Object.assign(new Error('ENOENT: no notice'), { code: 'ENOENT' }));
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/notices' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Failed to load third-party notices' });
+      expect(logSpies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'ENOENT: no notice', type: 'Error' }) }),
+        'Failed to load third-party notices',
+      );
+
+      readSpy.mockRestore();
+    });
+  });
 });
 
 // ── POST /api/system/restore (multipart upload) ────────────────────────────
