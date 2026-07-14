@@ -265,6 +265,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
                 limit={6}
                 maxHeight="max-h-36"
                 onSelect={applyMetadata}
+                showSeries
                 showDuration
                 showLibraryBadge
                 libraryBooks={libraryBooks}

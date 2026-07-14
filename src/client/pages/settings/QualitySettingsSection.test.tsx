@@ -41,20 +41,20 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Minimum')).toBeInTheDocument();
+      expect(screen.getByLabelText('Grab minimum')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Minimum Seeders')).toBeInTheDocument();
+    expect(screen.getByLabelText('Minimum seeders')).toBeInTheDocument();
   });
 
   it('does NOT render moved fields (protocol preference, reject/required words, preferred language)', async () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Minimum')).toBeInTheDocument();
+      expect(screen.getByLabelText('Grab minimum')).toBeInTheDocument();
     });
-    expect(screen.queryByLabelText('Protocol Preference')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Reject Words')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Required Words')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Protocol preference')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Reject words')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Required words')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Preferred Language')).not.toBeInTheDocument();
   });
 
@@ -62,27 +62,27 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveValue(50);
+      expect(screen.getByLabelText('Grab minimum')).toHaveValue(50);
     });
-    expect(screen.getByLabelText('Minimum Seeders')).toHaveValue(3);
+    expect(screen.getByLabelText('Minimum seeders')).toHaveValue(3);
   });
 
   it('MB/hr input accepts decimal values', async () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Minimum')).toBeInTheDocument();
+      expect(screen.getByLabelText('Grab minimum')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveAttribute('step', 'any');
+    expect(screen.getByLabelText('Grab minimum')).toHaveAttribute('step', 'any');
   });
 
   it('min seeders input uses integer step', async () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Seeders')).toBeInTheDocument();
+      expect(screen.getByLabelText('Minimum seeders')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Minimum Seeders')).toHaveAttribute('step', '1');
+    expect(screen.getByLabelText('Minimum seeders')).toHaveAttribute('step', '1');
   });
 
   it('blocks submit when grabFloor is negative', async () => {
@@ -90,10 +90,10 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveValue(50);
+      expect(screen.getByLabelText('Grab minimum')).toHaveValue(50);
     });
 
-    const input = screen.getByLabelText('MB/hr Grab Minimum');
+    const input = screen.getByLabelText('Grab minimum');
     await user.clear(input);
     await user.type(input, '-1');
 
@@ -110,10 +110,10 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Seeders')).toHaveValue(3);
+      expect(screen.getByLabelText('Minimum seeders')).toHaveValue(3);
     });
 
-    const input = screen.getByLabelText('Minimum Seeders');
+    const input = screen.getByLabelText('Minimum seeders');
     await user.clear(input);
     await user.type(input, '-1');
 
@@ -131,10 +131,10 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveValue(50);
+      expect(screen.getByLabelText('Grab minimum')).toHaveValue(50);
     });
 
-    const input = screen.getByLabelText('MB/hr Grab Minimum');
+    const input = screen.getByLabelText('Grab minimum');
     await user.tripleClick(input);
     await user.keyboard('100');
 
@@ -142,7 +142,7 @@ describe('QualitySettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        quality: { grabFloor: 100, minSeeders: 3, minDownloadSize: 0, maxDownloadSize: 5 },
+        quality: { grabFloor: 100, minSeeders: 3, minDownloadSize: 50, maxDownloadSize: 5 },
       });
     });
 
@@ -159,7 +159,7 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Minimum')).toBeInTheDocument();
+      expect(screen.getByLabelText('Grab minimum')).toBeInTheDocument();
     });
 
     expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
@@ -171,10 +171,10 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveValue(50);
+      expect(screen.getByLabelText('Grab minimum')).toHaveValue(50);
     });
 
-    const input = screen.getByLabelText('MB/hr Grab Minimum');
+    const input = screen.getByLabelText('Grab minimum');
     await user.tripleClick(input);
     await user.keyboard('100');
 
@@ -189,16 +189,16 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Max Download Size (GB)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Max download size')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Max Download Size (GB)')).toHaveAttribute('step', 'any');
+    expect(screen.getByLabelText('Max download size')).toHaveAttribute('step', 'any');
   });
 
   it('renders max download size field', async () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Max Download Size (GB)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Max download size')).toBeInTheDocument();
     });
   });
 
@@ -208,7 +208,7 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Max Download Size (GB)')).toHaveValue(10);
+      expect(screen.getByLabelText('Max download size')).toHaveValue(10);
     });
   });
 
@@ -218,10 +218,10 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Max Download Size (GB)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Max download size')).toBeInTheDocument();
     });
 
-    const input = screen.getByLabelText('Max Download Size (GB)');
+    const input = screen.getByLabelText('Max download size');
     await user.tripleClick(input);
     await user.keyboard('10');
 
@@ -241,10 +241,10 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Max Download Size (GB)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Max download size')).toBeInTheDocument();
     });
 
-    const input = screen.getByLabelText('Max Download Size (GB)');
+    const input = screen.getByLabelText('Max download size');
     await user.clear(input);
     await user.type(input, '-1');
 
@@ -261,24 +261,26 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Max Download Size (GB)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Max download size')).toBeInTheDocument();
     });
 
     expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
 
-    const input = screen.getByLabelText('Max Download Size (GB)');
+    const input = screen.getByLabelText('Max download size');
     await user.tripleClick(input);
     await user.keyboard('10');
 
     expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
   });
 
-  it('renders min download size field with MB unit in label', async () => {
+  it('renders min download size field with MB unit suffix', async () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Min Download Size (MB)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Min download size')).toBeInTheDocument();
     });
+    // The unit moved out of the label into a control-side suffix ('MB/hr' is a different exact string).
+    expect(screen.getByText('MB')).toBeInTheDocument();
   });
 
   it('loads minDownloadSize setting value into form', async () => {
@@ -287,7 +289,7 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Min Download Size (MB)')).toHaveValue(50);
+      expect(screen.getByLabelText('Min download size')).toHaveValue(50);
     });
   });
 
@@ -297,19 +299,21 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Min Download Size (MB)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Min download size')).toBeInTheDocument();
     });
 
-    const input = screen.getByLabelText('Min Download Size (MB)');
+    // 75, not the 50 default — typing the value the field already holds leaves the form clean
+    // (no Save button) and would prove nothing about the payload.
+    const input = screen.getByLabelText('Min download size');
     await user.tripleClick(input);
-    await user.keyboard('50');
+    await user.keyboard('75');
 
     await user.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith(
         expect.objectContaining({
-          quality: expect.objectContaining({ minDownloadSize: 50 }),
+          quality: expect.objectContaining({ minDownloadSize: 75 }),
         }),
       );
     });
@@ -320,10 +324,10 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Min Download Size (MB)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Min download size')).toBeInTheDocument();
     });
 
-    const input = screen.getByLabelText('Min Download Size (MB)');
+    const input = screen.getByLabelText('Min download size');
     await user.clear(input);
     await user.type(input, '-1');
 
@@ -341,10 +345,10 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveValue(50);
+      expect(screen.getByLabelText('Grab minimum')).toHaveValue(50);
     });
 
-    const input = screen.getByLabelText('MB/hr Grab Minimum');
+    const input = screen.getByLabelText('Grab minimum');
     await user.tripleClick(input);
     await user.keyboard('100');
 

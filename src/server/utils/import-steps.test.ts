@@ -2,6 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 
+// embedTagsForImport auto-detects ffmpeg now (resolveFfmpegPath). Plain-arrow toggle mock
+// (survives vi.clearAllMocks); default detected, flip false for the not-detected test.
+const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/utils/audio-processor.js')>();
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
+});
+
 // Mock dependencies before imports
 vi.mock('node:fs/promises', () => ({
   stat: vi.fn(),
@@ -130,6 +138,25 @@ describe('validateSource', () => {
     expect(result.fileCount).toBe(1);
   });
 
+  it('#1852 F28: rejects a direct hidden audio file before assigning fileCount', async () => {
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 1024 } as unknown as Stats);
+    await expect(validateSource('/downloads/.x.mp3', undefined, null)).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(validateSource('/downloads/.x.mp3', undefined, null)).rejects.toThrow(/hidden/);
+  });
+
+  it('#1852 F28: rejects a direct non-audio (unsupported) file before disk work', async () => {
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 1024 } as unknown as Stats);
+    await expect(validateSource('/downloads/book.txt', undefined, null)).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(validateSource('/downloads/book.txt', undefined, null)).rejects.toThrow('not a supported audio format');
+  });
+
+  it('#1852 F38: rejects a hidden source DIRECTORY before contains/count/disk work', async () => {
+    vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true } as unknown as Stats);
+    // readdir intentionally left unmocked — a correct reject happens before containsAudioFiles.
+    await expect(validateSource('/downloads/.incomplete', undefined, null)).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(validateSource('/downloads/.incomplete', undefined, null)).rejects.toThrow(/hidden/);
+  });
+
   it('throws ENOENT with mapping hint when remote mappings exist', async () => {
     const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     vi.mocked(stat).mockRejectedValue(enoent);
@@ -218,6 +245,32 @@ describe('checkDiskSpace', () => {
       libraryPath: '/lib', minFreeSpaceGB: 1,
     })).rejects.toThrow('Disk space check failed');
   });
+
+  it('#1852 F40: a directory source sizes only visible bytes and never traverses a .hidden/ subtree', async () => {
+    vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
+    // getVisiblePathSize (real, from ...actual) walks the mocked fs: root has a real file + a
+    // `.hidden` dir. readdir REJECTS for the hidden subtree to prove it is never entered.
+    vi.mocked(stat).mockImplementation(async (p: unknown) =>
+      String(p).endsWith('/src')
+        ? ({ isFile: () => false, isDirectory: () => true } as never)
+        : ({ isFile: () => true, isDirectory: () => false, size: 100 } as never));
+    vi.mocked(readdir).mockImplementation(async (p: unknown) => {
+      if (String(p).endsWith('/src')) {
+        return [
+          { name: 'real.mp3', isFile: () => true, isDirectory: () => false },
+          { name: '.hidden', isFile: () => false, isDirectory: () => true },
+        ] as never;
+      }
+      throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); // the hidden subtree — must never be read
+    });
+
+    // Does not throw despite the unreadable hidden subtree; the estimate reflects only visible bytes.
+    await expect(checkDiskSpace({
+      sourcePath: '/src', sourceStats: { isDirectory: () => true } as unknown as Stats,
+      libraryPath: '/lib', minFreeSpaceGB: 1,
+    })).resolves.toBeDefined();
+    expect(statfs).toHaveBeenCalledWith('/lib');
+  });
 });
 
 // ── embedTagsForImport ──────────────────────────────────────────────────
@@ -233,8 +286,7 @@ describe('embedTagsForImport', () => {
     const taggingService = { tagBook } as never;
 
     await embedTagsForImport({
-      taggingService, taggingEnabled: true, ffmpegPath: '/usr/bin/ffmpeg',
-      taggingMode: 'overwrite', embedCover: true,
+      taggingService, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
       bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
     });
 
@@ -244,8 +296,7 @@ describe('embedTagsForImport', () => {
   it('skips when taggingService is null', async () => {
     const log = createMockLog();
     await embedTagsForImport({
-      taggingService: undefined, taggingEnabled: true, ffmpegPath: '/usr/bin/ffmpeg',
-      taggingMode: 'overwrite', embedCover: true,
+      taggingService: undefined, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
       bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
     });
     // No error, no log — just a no-op
@@ -256,31 +307,30 @@ describe('embedTagsForImport', () => {
     const log = createMockLog();
     const tagBook = vi.fn();
     await embedTagsForImport({
-      taggingService: { tagBook } as never, taggingEnabled: false, ffmpegPath: '/usr/bin/ffmpeg',
-      taggingMode: 'overwrite', embedCover: true,
+      taggingService: { tagBook } as never, taggingEnabled: false, taggingMode: 'overwrite', embedCover: true,
       bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
     });
     expect(tagBook).not.toHaveBeenCalled();
   });
 
-  it('skips with debug log when ffmpegPath is empty/whitespace', async () => {
+  it('skips with debug log when ffmpeg is not detected', async () => {
+    ffmpegState.resolves = false;
     const log = createMockLog();
     const tagBook = vi.fn();
     await embedTagsForImport({
-      taggingService: { tagBook } as never, taggingEnabled: true, ffmpegPath: '  ',
-      taggingMode: 'overwrite', embedCover: true,
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
       bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
     });
     expect(tagBook).not.toHaveBeenCalled();
     expect(log.debug).toHaveBeenCalled();
+    ffmpegState.resolves = true;
   });
 
   it('logs warning and continues when tagBook throws', async () => {
     const log = createMockLog();
     const tagBook = vi.fn().mockRejectedValue(new Error('tag failed'));
     await embedTagsForImport({
-      taggingService: { tagBook } as never, taggingEnabled: true, ffmpegPath: '/usr/bin/ffmpeg',
-      taggingMode: 'overwrite', embedCover: true,
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
       bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
     });
     expect(log.warn).toHaveBeenCalled();
@@ -290,15 +340,14 @@ describe('embedTagsForImport', () => {
     const log = createMockLog();
     const tagBook = vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 });
     await embedTagsForImport({
-      taggingService: { tagBook } as never, taggingEnabled: true, ffmpegPath: '/ffmpeg',
-      taggingMode: 'populate_missing', embedCover: false,
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'populate_missing', embedCover: false,
       bookId: 42, targetPath: '/lib/book', book: bookMeta, log,
     });
     expect(tagBook).toHaveBeenCalledWith(
       42, '/lib/book',
       // publisher + seriesPosition reach tagBook → proves caller propagation (#1671).
       { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, publisher: 'Tor Books', coverUrl: 'http://cover.jpg' },
-      '/ffmpeg', 'populate_missing', false,
+      '/usr/bin/ffmpeg', 'populate_missing', false,
     );
   });
 });

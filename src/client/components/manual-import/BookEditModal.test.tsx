@@ -351,6 +351,23 @@ describe('BookEditModal', () => {
       expect(screen.getByText('11h 32m')).toBeInTheDocument();
     });
 
+    // T1 — same-titled series candidates must show their series #position so the
+    // user can pick the right entry (Fablehaven). showSeries is passed to the list.
+    it('shows series #position on candidates so same-titled entries are distinguishable', () => {
+      const alt1 = makeMetadata({ title: 'Fablehaven', providerId: 'alt1', seriesPrimary: { name: 'Fablehaven', position: 1 } });
+      const alt2 = makeMetadata({ title: 'Fablehaven', providerId: 'alt2', seriesPrimary: { name: 'Fablehaven', position: 2 } });
+      const bestMatch = makeMetadata({ title: 'Best', providerId: 'best' });
+
+      renderModal({
+        initial: makeEditState({ metadata: bestMatch }),
+        alternatives: [alt1, alt2],
+        confidence: 'medium',
+      });
+
+      expect(screen.getByText('Fablehaven #1')).toBeInTheDocument();
+      expect(screen.getByText('Fablehaven #2')).toBeInTheDocument();
+    });
+
     it('shows all search results (does not skip first)', async () => {
       const { api } = await import('@/lib/api');
       const searchMock = vi.mocked(api.searchMetadata);

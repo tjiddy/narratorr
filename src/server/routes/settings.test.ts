@@ -19,6 +19,16 @@ const { mockHardcoverSearchSeries, mockHardcoverClientCtor, mockFetchWithTimeout
   };
 });
 
+const { mockResolveFfmpegPath, mockProbeFfmpeg } = vi.hoisted(() => ({
+  mockResolveFfmpegPath: vi.fn(),
+  mockProbeFfmpeg: vi.fn(),
+}));
+
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/utils/audio-processor.js')>();
+  return { ...actual, resolveFfmpegPath: mockResolveFfmpegPath, probeFfmpeg: mockProbeFfmpeg };
+});
+
 vi.mock('../../core/utils/network-service.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../core/utils/network-service.js')>();
   return {
@@ -70,6 +80,35 @@ describe('settings routes', () => {
     mockHardcoverSearchSeries.mockReset();
     mockHardcoverClientCtor.mockReset();
     mockFetchWithTimeout.mockReset();
+    mockResolveFfmpegPath.mockReset();
+    mockProbeFfmpeg.mockReset();
+  });
+
+  describe('GET /api/settings/ffmpeg-status', () => {
+    it('returns {detected:false} when ffmpeg cannot be resolved', async () => {
+      mockResolveFfmpegPath.mockResolvedValue(null);
+      const res = await app.inject({ method: 'GET', url: '/api/settings/ffmpeg-status' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ detected: false });
+      expect(mockProbeFfmpeg).not.toHaveBeenCalled();
+    });
+
+    it('returns {detected, version, path} when ffmpeg resolves and probes', async () => {
+      mockResolveFfmpegPath.mockResolvedValue('/usr/bin/ffmpeg');
+      mockProbeFfmpeg.mockResolvedValue('8.0.1');
+      const res = await app.inject({ method: 'GET', url: '/api/settings/ffmpeg-status' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' });
+      expect(mockProbeFfmpeg).toHaveBeenCalledWith('/usr/bin/ffmpeg');
+    });
+
+    it('returns {detected:false} (not a 500) when ffmpeg resolves but the probe throws', async () => {
+      mockResolveFfmpegPath.mockResolvedValue('/usr/bin/ffmpeg');
+      mockProbeFfmpeg.mockRejectedValue(new Error('broken binary'));
+      const res = await app.inject({ method: 'GET', url: '/api/settings/ffmpeg-status' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ detected: false });
+    });
   });
 
   describe('GET /api/settings', () => {
@@ -140,59 +179,42 @@ describe('settings routes', () => {
     });
   });
 
-  describe('POST /api/settings/ffmpeg-probe', () => {
-    it('returns version string on success', async () => {
-      (services.healthCheck.probeFfmpeg as Mock).mockResolvedValue('6.1.1');
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/settings/ffmpeg-probe',
-        payload: { path: '/usr/bin/ffmpeg' },
-      });
-
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).version).toBe('6.1.1');
-    });
-
-    it('returns 400 on probe failure', async () => {
-      (services.healthCheck.probeFfmpeg as Mock).mockRejectedValue(new Error('spawn ENOENT'));
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/settings/ffmpeg-probe',
-        payload: { path: '/bad/path' },
-      });
-
-      expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.payload).error).toContain('spawn ENOENT');
-    });
-
-    it('validates path is required', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/settings/ffmpeg-probe',
-        payload: { path: '' },
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-  });
-
   describe('PUT /api/settings (processing)', () => {
-    it('saves processing settings with valid ffmpeg path', async () => {
+    it('saves the processing engine subset and forwards the exact payload to the service', async () => {
       const updated = {
         ...mockSettings,
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' },
+        processing: { ...mockSettings.processing, outputFormat: 'mp3', bitrate: 256, mergeBehavior: 'always' },
       };
       (services.settings.update as Mock).mockResolvedValue(updated);
 
       const res = await app.inject({
         method: 'PUT',
         url: '/api/settings',
-        payload: { processing: { ffmpegPath: '/usr/bin/ffmpeg' } },
+        payload: { processing: { outputFormat: 'mp3', bitrate: 256, mergeBehavior: 'always' } },
       });
 
       expect(res.statusCode).toBe(200);
+      // The removed editable ffmpegPath field is gone — assert the service receives exactly the
+      // engine fields sent, and nothing more, so a silently-dropped or injected field is caught.
+      expect(services.settings.update).toHaveBeenCalledWith({
+        processing: { outputFormat: 'mp3', bitrate: 256, mergeBehavior: 'always' },
+      });
+      expect(JSON.parse(res.payload).processing.bitrate).toBe(256);
+    });
+
+    it('strips the removed ffmpegPath field before it reaches the service', async () => {
+      (services.settings.update as Mock).mockResolvedValue(mockSettings);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { processing: { bitrate: 192, ffmpegPath: '/usr/bin/ffmpeg' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const payload = (services.settings.update as Mock).mock.calls[0]![0];
+      expect(payload.processing).not.toHaveProperty('ffmpegPath');
+      expect(payload.processing.bitrate).toBe(192);
     });
   });
 
@@ -579,28 +601,6 @@ describe('settings routes', () => {
   });
 
   describe('inline schema trim behavior', () => {
-    describe('POST /api/settings/ffmpeg-probe — trim', () => {
-      it('returns 400 when path is whitespace-only', async () => {
-        const res = await app.inject({
-          method: 'POST',
-          url: '/api/settings/ffmpeg-probe',
-          payload: { path: '   ' },
-        });
-        expect(res.statusCode).toBe(400);
-      });
-
-      it('calls handler with trimmed path when surrounding spaces provided', async () => {
-        (services.healthCheck.probeFfmpeg as Mock).mockResolvedValue('6.1.1');
-        const res = await app.inject({
-          method: 'POST',
-          url: '/api/settings/ffmpeg-probe',
-          payload: { path: '  /usr/bin/ffmpeg  ' },
-        });
-        expect(res.statusCode).toBe(200);
-        expect((services.healthCheck.probeFfmpeg as Mock)).toHaveBeenCalledWith('/usr/bin/ffmpeg');
-      });
-    });
-
     describe('POST /api/settings/test-proxy — trim', () => {
       it('returns 400 when proxyUrl is whitespace-only', async () => {
         const res = await app.inject({

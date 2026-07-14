@@ -97,7 +97,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
         mergePhase={mergeProgress?.phase}
         canMerge={canMerge}
         mergeDisabled={!ffmpegConfigured || !!mergeProgress}
-        mergeTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
+        mergeTooltip={!ffmpegConfigured ? 'Requires ffmpeg — install it or set FFMPEG_PATH (Settings > Audio Tools)' : undefined}
         onRemoveClick={() => open('confirmDelete')}
         isRemoving={deleteMutation.isPending}
         showWrongRelease={showWrongRelease}

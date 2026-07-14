@@ -215,6 +215,26 @@ describe('getAudioStats', () => {
     expect(result.totalSize).toBe(70);
   });
 
+  it('#1852: excludes dot-files and dot-dir subtrees from fileCount AND totalSize', async () => {
+    await writeFile(join(root, 'real.m4b'), Buffer.alloc(100));
+    await writeFile(join(root, '.real.tmp.m4b'), Buffer.alloc(999)); // born-hidden temp
+    await mkdir(join(root, '.merge-tmp'), { recursive: true });
+    await writeFile(join(root, '.merge-tmp', 'big.m4b'), Buffer.alloc(50_000)); // hidden subtree
+
+    const result = await getAudioStats(root, inject<FastifyBaseLogger>(log));
+    expect(result).toEqual({ fileCount: 1, totalSize: 100 });
+  });
+
+  it('#1852 F38: a hidden directory ROOT still counts its visible children (identity root)', async () => {
+    const staging = join(root, '.merge-tmp');
+    await mkdir(staging, { recursive: true });
+    await writeFile(join(staging, 'track.m4b'), Buffer.alloc(10));
+    await writeFile(join(staging, '.half.tmp.m4b'), Buffer.alloc(999));
+
+    const result = await getAudioStats(staging, inject<FastifyBaseLogger>(log));
+    expect(result).toEqual({ fileCount: 1, totalSize: 10 });
+  });
+
   it.skipIf(process.platform === 'win32')('logs warn and continues with partial results when a subdirectory cannot be read', async () => {
     // Windows ignores chmod permission bits (uses ACLs instead), so this test
     // can't make a directory unreadable via the same mechanism. CI runs Linux
@@ -252,6 +272,14 @@ describe('getAudioStats', () => {
     it('non-audio file path returns { fileCount: 0, totalSize: 0 }', async () => {
       const filePath = join(root, 'cover.jpg');
       await writeFile(filePath, Buffer.alloc(999));
+
+      const result = await getAudioStats(filePath, inject<FastifyBaseLogger>(log));
+      expect(result).toEqual({ fileCount: 0, totalSize: 0 });
+    });
+
+    it('#1852: a direct hidden audio file path returns zeroed stats', async () => {
+      const filePath = join(root, '.standalone.tmp.m4b');
+      await writeFile(filePath, Buffer.alloc(4321));
 
       const result = await getAudioStats(filePath, inject<FastifyBaseLogger>(log));
       expect(result).toEqual({ fileCount: 0, totalSize: 0 });

@@ -308,7 +308,7 @@ describe('runRssJob', () => {
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadOrchestrator();
     (download.grab as Mock).mockRejectedValueOnce(
-      new DuplicateDownloadError('Book 1 already has an active download (id: 5)', 'ACTIVE_DOWNLOAD_EXISTS'),
+      new DuplicateDownloadError('Book 1 already has an active download (id: 5)', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }),
     );
     const blacklist = createMockBlacklistService();
 
@@ -317,7 +317,7 @@ describe('runRssJob', () => {
     expect(result.grabbed).toBe(0);
     expect(log.debug).toHaveBeenCalledWith(
       expect.objectContaining({ bookId: 1 }),
-      'Skipping RSS grab — book already has active download',
+      'Skipping RSS grab — book already has a blocking download or import',
     );
   });
 

@@ -59,7 +59,7 @@ async function waitForJob(service: MatchJobService, id: string, maxMs = 2000): P
   const start = Date.now();
   while (Date.now() - start < maxMs) {
     const status = service.getJob(id);
-    if (!status || status.status === 'completed' || status.status === 'cancelled') return;
+    if (!status || status.status === 'completed' || status.status === 'cancelled' || status.status === 'failed') return;
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 }
@@ -132,6 +132,9 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
     const id = matchService.createJob([candidate]);
     await waitForJob(matchService, id);
 
+    // Per-book rate-limit containment must NOT reach the run() catch (#1864) — the
+    // job completes normally, never terminalizes 'failed'.
+    expect(matchService.getJob(id)!.status).toBe('completed');
     const result = matchService.getJob(id)!.results[0];
     expect(result!.confidence).toBe('none');
 

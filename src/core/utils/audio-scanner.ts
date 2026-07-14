@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { extname, basename } from 'node:path';
 import { parseFile, type ICommonTagsResult } from 'music-metadata';
-import { AUDIO_EXTENSIONS } from './audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from './audio-constants.js';
 import { collectAudioFilePaths } from './collect-audio-files.js';
 // ffprobe-backed media probing lives in audio-probe (imported by path; Node-only).
 import { resolveFileDuration, fillTechnicalViaFFprobe, getFFprobeStreamDuration } from './audio-probe.js';
@@ -59,11 +59,11 @@ export interface AudioScanResult {
 export interface AudioScanOptions {
   /** When true, detect cover art presence but skip buffer extraction */
   skipCover?: boolean | undefined;
-  /** Path to ffprobe binary — when provided, duration is sourced from ffprobe instead of music-metadata */
+  /** Path to ffprobe binary — when provided, ffprobe arbitrates/falls back for durations music-metadata reports as missing or implausible (music-metadata is the primary source) */
   ffprobePath?: string | undefined;
-  /** Diagnostic warning callback (e.g. ffprobe/music-metadata duration mismatch). Caller maps to its logger. */
+  /** Diagnostic warning callback (e.g. ffprobe/music-metadata duration mismatch, or a fully-rejected duration). Caller maps to its logger. */
   onWarn?: ((msg: string, payload?: Record<string, unknown>) => void) | undefined;
-  /** Diagnostic debug callback (e.g. ffprobe failure → music-metadata fallback). Caller maps to its logger. */
+  /** Diagnostic debug callback (e.g. neither source produced a duration). Caller maps to its logger. */
   onDebug?: ((msg: string, payload?: Record<string, unknown>) => void) | undefined;
   /**
    * Called when the scan collected ≥1 audio file but still returns null because
@@ -259,7 +259,7 @@ async function processOneFile(
 
     const metadata = await parseFile(filePath);
 
-    const fileDuration = await resolveFileDuration(filePath, metadata.format.duration, options.ffprobePath, options.onWarn, options.onDebug);
+    const fileDuration = await resolveFileDuration(filePath, metadata.format.duration, fileStat.size, options.ffprobePath, options.onWarn, options.onDebug);
     if (fileDuration) result.totalDuration += fileDuration;
 
     extractCoverArt(result, metadata.common, options.skipCover);
@@ -350,7 +350,9 @@ function assignTagFields(
   const tagPublisher = common.label?.[0];
   if (tagPublisher !== undefined) result.tagPublisher = tagPublisher;
 
-  if (common.track?.no && common.grouping) {
+  // Null-check (not truthy) so a genuine track/position `0` is preserved as
+  // tagSeriesPosition: 0 (#1849/#1028) instead of being dropped by a falsy gate.
+  if (common.track?.no != null && common.grouping) {
     result.tagSeriesPosition = common.track.no;
   }
 }
@@ -490,7 +492,8 @@ async function collectAudioFiles(dirPath: string): Promise<string[]> {
   try {
     const pathStat = await stat(dirPath);
     if (pathStat.isFile()) {
-      return AUDIO_EXTENSIONS.has(extname(dirPath).toLowerCase()) ? [dirPath] : [];
+      // Direct-file branch: a hidden file (`.foo.mp3`) is a born-hidden transient, never scanned.
+      return !isHiddenName(basename(dirPath)) && AUDIO_EXTENSIONS.has(extname(dirPath).toLowerCase()) ? [dirPath] : [];
     }
     const files = await collectAudioFilePaths(dirPath, { recursive: true, skipHidden: true });
     return files.sort();

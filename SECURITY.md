@@ -70,7 +70,7 @@ All sensitive configuration values (API keys, passwords, proxy URLs) are encrypt
 - **Key management:** 32-byte encryption key loaded from (in priority order):
   1. `NARRATORR_SECRET_KEY` environment variable
   2. `secret.key` file in the config directory (auto-generated on first run with `0600` permissions)
-- **Encrypted entities** (the canonical list lives in `SECRET_FIELDS` at `src/server/utils/secret-codec.ts`): indexer API keys, indexer base URLs (`apiUrl` may embed `user:pass@host` credentials for Prowlarr-managed indexers), indexer FlareSolverr URLs, and MyAnonamouse session IDs (`mamId`); download client passwords/API keys; import list API keys; the Hardcover metadata API key; proxy URLs; the application's own API key and the forms-auth session secret; notifier secrets (webhook URLs/headers, Discord/Slack webhook URLs, Telegram bot tokens, SMTP passwords, Pushover/Gotify tokens)
+- **Encrypted entities** (the canonical list lives in `SECRET_FIELDS` at `src/server/utils/secret-codec.ts` — the enumeration here is illustrative, not exhaustive): indexer API keys, indexer base URLs (`apiUrl` may embed `user:pass@host` credentials for Prowlarr-managed indexers), indexer FlareSolverr URLs, and MyAnonamouse session IDs (`mamId`); download client passwords/API keys; connector URLs and API keys/tokens (ABS, Plex); import list API keys; the Hardcover metadata API key; proxy URLs; the application's own API key and the forms-auth session secret; notifier secrets (webhook URLs/headers, Discord/Slack webhook URLs, Telegram bot tokens, SMTP passwords, Pushover user keys, Gotify tokens, ntfy topics and access tokens)
 - **Sentinel pattern:** API responses mask secrets with `********`. Updates that include the sentinel value preserve the existing encrypted value (no re-encryption of unchanged secrets)
 - **Storage format:** `$ENC$<base64(iv + authTag + ciphertext)>` — encrypted values are distinguishable from plaintext
 
@@ -170,11 +170,12 @@ The `/api/filesystem/browse` endpoint allows authenticated users to browse the h
 
 ## Outbound Fetch (SSRF Protection)
 
-Three outbound code paths follow attacker-influenced URLs and route through the SSRF helpers in `src/core/utils/network-service.ts` (a custom Undici DNS lookup function that rejects unsafe destinations before the connection is made):
+Four outbound code paths follow attacker-influenced URLs and route through the SSRF helpers in `src/core/utils/network-service.ts` (a custom Undici DNS lookup function that rejects unsafe destinations before the connection is made):
 
 - **Cover-download** — cover art URLs from indexer responses or manually-pasted release URLs (`src/server/services/cover-download.ts`)
 - **Torrent / NZB download** — download URLs from indexer search results, including 302 redirects to magnet links (`src/core/utils/download-url.ts`)
 - **NZB content fetch** — NZB URLs from indexer XML during language enrichment, including 302 redirects to CDN-hosted content (`src/server/utils/enrich-usenet-languages.ts`)
+- **Blackhole download client** — indexer-supplied artifact URLs fetched when saving `.torrent`/`.nzb` files into the watch folder (`src/core/download-clients/blackhole.ts`)
 
 **Blocked destinations:**
 - RFC 1918 private networks (10/8, 172.16/12, 192.168/16)
@@ -186,6 +187,8 @@ Three outbound code paths follow attacker-influenced URLs and route through the 
 - Unspecified addresses (0.0.0.0, ::)
 - IPv4-mapped IPv6 forms (e.g., `::ffff:169.254.169.254`)
 - Hostname allowlist for known metadata names (e.g., `metadata.google.internal`) as a belt-and-suspenders check on top of the IP filter
+
+**LAN-allowlist carve-out:** a private/loopback destination is permitted **iff the URL's host:port exactly matches a configured indexer's `apiUrl` host:port** (`resolveAndValidate`'s `lanAllowlist`, threaded into all four paths above). This exists because a legitimately LAN-hosted indexer (e.g. Prowlarr in the same compose stack) serves its download/cover URLs from the same private host:port the operator already configured — blocking those would break the operator's own setup while providing no protection (the operator configured that destination). Attacker-influenced URLs pointing at any *other* private address remain blocked.
 
 **DNS rebinding mitigation:** the lookup function runs once per request and the connection is made to the resolved IP. A malicious DNS server that returns a public IP on first lookup and a private IP on a second cannot bypass the check. Per-redirect-hop revalidation re-runs the policy on each socket open, so 302→internal pivots are also caught.
 
@@ -239,6 +242,13 @@ Narratorr exposes two HTTP API surfaces with deliberately different stability gu
 - **`/api/v1/*` — public & supported.** The versioned, native public API. Its contract is locked by the canonical v1 building blocks in `src/shared/schemas/v1/common.ts` and the conventions below. Breaking changes require a new version prefix (`/api/v2/*`), never a silent change under `/api/v1/`.
 
 **Documented contract exception — Prowlarr/Readarr compatibility shim.** The endpoints `/api/v1/indexer*` and `/api/v1/system/status` (`src/server/routes/prowlarr-compat.ts`) live under the `/api/v1/` prefix but are **not** native v1. They impersonate Prowlarr/Readarr so those tools can manage narratorr as an indexer target, and their shapes are dictated by the external product, not by narratorr's v1 conventions. Treat them as a named exception; do not mistake them for, or align them with, the native v1 contract.
+
+**Documented breaking-change exception — grab-conflict classification (#1861).** `POST /api/v1/books/:publicId/grab` returns a `409` whose `code` discriminator is derived from one consolidated grab-blocker classifier (`src/server/services/download-blockers.ts`). #1861 unified this classifier across every caller (v1 included), which changes the v1 grab 409 on two reachable paths — a deliberate, maintainer-reviewed break, not a silent change:
+
+- **`checking` / `pending_review` active:** was `409 ACTIVE_DOWNLOAD_EXISTS`, now `409 PIPELINE_ACTIVE`. The prior legacy rule counted these pipeline states as replaceable; they are not.
+- **Quality-gate-eligible completed row (completed display + tracked `externalId`):** was **admitted (`200`)**, now `409 PIPELINE_ACTIVE`. This closes a two-live-downloads dupe window during the completed→QG-pickup handoff; it cannot be preserved on v1 without leaving that duplicate-admission defect open.
+
+The `PIPELINE_ACTIVE` 409 message is also blocker-neutral and id-free ("Book already has a download in the import pipeline") since it now represents QG-completed rows and pending auto import jobs, not only in-flight downloads. This exception entry is the governance artifact for the change; maintainer sign-off is the normal PR review of this amendment. A future rejection of the break is a re-scope to `/api/v2/*`, tracked separately — no code path is conditioned on sign-off.
 
 ### v1 conventions (ADR)
 

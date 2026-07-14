@@ -21,8 +21,8 @@ describe('download-errors leaf module / back-compat re-export', () => {
     expect(fromLeaf).toBeInstanceOf(ServiceDownloadError);
     expect(fromService).toBeInstanceOf(LeafDownloadError);
 
-    const dupFromLeaf = new LeafDuplicateDownloadError('dup', 'ACTIVE_DOWNLOAD_EXISTS');
-    const dupFromService = new ServiceDuplicateDownloadError('dup', 'PIPELINE_ACTIVE');
+    const dupFromLeaf = new LeafDuplicateDownloadError('dup', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } });
+    const dupFromService = new ServiceDuplicateDownloadError('dup', 'PIPELINE_ACTIVE', { reason: 'processing' });
 
     expect(dupFromLeaf).toBeInstanceOf(ServiceDuplicateDownloadError);
     expect(dupFromService).toBeInstanceOf(LeafDuplicateDownloadError);
@@ -33,8 +33,9 @@ describe('download-errors leaf module / back-compat re-export', () => {
     expect(dl.name).toBe('DownloadError');
     expect(dl.code).toBe('INVALID_STATUS');
 
-    const dup = new LeafDuplicateDownloadError('active', 'ACTIVE_DOWNLOAD_EXISTS');
+    const dup = new LeafDuplicateDownloadError('active', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } });
     expect(dup.name).toBe('DuplicateDownloadError');
     expect(dup.code).toBe('ACTIVE_DOWNLOAD_EXISTS');
+    expect(dup.details).toEqual({ active: { title: 'A Book', count: 1 } });
   });
 });

@@ -1,9 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
+});
+
 import type { FastifyBaseLogger } from 'fastify';
 import { QualityGateOrchestrator, type QualityGateOrchestratorOptionalDeps } from './quality-gate-orchestrator.js';
 import type { QualityGateService, QualityDecision } from './quality-gate.service.js';
 import { QualityGateServiceError, NULL_REASON } from './quality-gate.types.js';
 import { inject, createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
+import { gatherBookBlockers, classifyBlockers } from './download-blockers.js';
+import { runReplaceWorkflow, type ReplaceCtx } from './download-replace-workflow.js';
+import type { DownloadRow } from './types.js';
+import type { DownloadService as DownloadServiceType } from './download.service.js';
 import type { Db } from '../../db/index.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -281,7 +291,8 @@ describe('QualityGateOrchestrator', () => {
       expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
     });
 
-    it('passes ffprobePath as undefined when settingsService has no ffmpegPath', async () => {
+    it('passes ffprobePath as undefined when ffmpeg is not detected', async () => {
+      ffmpegState.resolves = false;
       const { orchestrator, qualityGateService } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
 
@@ -291,6 +302,7 @@ describe('QualityGateOrchestrator', () => {
         '/downloads/test',
         { skipCover: true, ffprobePath: undefined, onWarn: expect.any(Function), onDebug: expect.any(Function), onFilesWithoutCodec: expect.any(Function) },
       );
+      ffmpegState.resolves = true;
     });
 
     it('emits SSE and records probeFailure event on probe failure', async () => {
@@ -2391,4 +2403,110 @@ describe('QualityGateOrchestrator', () => {
     });
   });
 
+});
+
+// #1857 F15 / AC8 — cross-owner invariant: a confirmed replace can NEVER cancel a
+// row the quality gate owns or is about to claim, because such rows classify as
+// PIPELINE_ACTIVE (not replaceable). This is the ROOT reason the QG needs no new
+// guards for this feature: replace's classification, not a QG change, is what keeps
+// the gate's atomicClaim / eager `importing` promotion / decision / SSE / enqueue
+// running exactly as the rest of this suite asserts. These tests pin that classifier
+// so the invariant can't silently regress.
+describe('replace × quality-gate ownership (#1857 F15 / AC8)', () => {
+  const qgRow = (over: Partial<DownloadRow>): DownloadRow => ({
+    id: 1, title: 'QG-owned', clientStatus: 'completed', pipelineStage: 'idle',
+    externalId: 'ext-1', downloadClientId: 1, bookId: 5, bookStatusAtGrab: 'wanted',
+    infoHash: 'h', guid: 'g', addedAt: new Date('2026-01-01'), ...over,
+  } as DownloadRow);
+
+  async function classifyFor(rows: DownloadRow[]) {
+    const db = createMockDb();
+    // gatherBookBlockers: rows select (orderBy), then pending-auto-jobs select (limit).
+    db.select.mockReturnValueOnce(mockDbChain(rows)).mockReturnValueOnce(mockDbChain([]));
+    return classifyBlockers(await gatherBookBlockers(db as unknown as Db, 5));
+  }
+
+  it.each([
+    ['checking', qgRow({ pipelineStage: 'checking' })],
+    ['pending_review', qgRow({ pipelineStage: 'pending_review' })],
+    ['importing', qgRow({ pipelineStage: 'importing' })],
+    ['tracked completed awaiting the gate', qgRow({ clientStatus: 'completed', pipelineStage: 'idle', externalId: 'ext-1' })],
+  ] as const)('classifies a %s download as PIPELINE_ACTIVE — replace cancels nothing, QG keeps the row', async (_label, row) => {
+    const classification = await classifyFor([row]);
+    // PIPELINE_ACTIVE means the confirmed replace throws and cancels NOTHING — the row
+    // stays for the quality gate, whose decision path is therefore unaffected.
+    expect(classification.kind).toBe('pipeline');
+    if (classification.kind === 'pipeline') {
+      // A held review directs to Activity; anything else is 'processing'.
+      expect(classification.reason).toBe(row.pipelineStage === 'pending_review' ? 'awaiting_review' : 'processing');
+    }
+  });
+
+  it('a Blackhole handoff (completed, externalId null) is NOT a QG row and does NOT block replace', async () => {
+    const classification = await classifyFor([qgRow({ clientStatus: 'completed', pipelineStage: 'idle', externalId: null })]);
+    expect(classification.kind).toBe('clear'); // terminal, not QG-eligible → replace may proceed
+  });
+
+  // AC8 (#1857 F25) — the confirmed replace runs WHILE the QG is HELD at a defined
+  // decision barrier (proving live interleaving, not accidental sequencing). The QG
+  // must complete FULFILLED (claim → promotion → decision → enqueue); the replace must
+  // reject PIPELINE_ACTIVE and cancel nothing.
+  it('replace runs while the QG is held mid-decision: QG completes fulfilled, replace rejects PIPELINE_ACTIVE (cancels nothing)', async () => {
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
+    vi.mocked(resolveSavePath).mockResolvedValue({ resolvedPath: '/downloads/test', originalPath: '/downloads/test' });
+    const { orchestrator, qualityGateService } = createOrchestrator();
+    const completedDownload = { ...baseDownload, status: 'completed' as const, bookId: 1 };
+    const downloadingBook = { ...baseBook, status: 'downloading' as const };
+    qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
+
+    // Barrier: hold the QG at its decision (processDownload) — it has already claimed +
+    // promoted the book to importing and is now deciding — until the replace has run.
+    let signalAtDecision!: () => void;
+    const atDecision = new Promise<void>((res) => { signalAtDecision = res; });
+    let releaseDecision!: () => void;
+    const held = new Promise<void>((res) => { releaseDecision = res; });
+    qualityGateService.processDownload.mockImplementation(async () => {
+      signalAtDecision();
+      await held;
+      return { action: 'imported', reason: { action: 'imported', holdReasons: [] }, statusTransition: { from: 'checking', to: 'completed' } };
+    });
+
+    const qgPromise = orchestrator.processOneDownload(1);
+    await atDecision; // the QG is now provably held mid-decision
+
+    // The book's QG-owned row is still present (checking-equivalent, QG-eligible).
+    const replaceDb = createMockDb();
+    replaceDb.select
+      .mockReturnValueOnce(mockDbChain([qgRow({ clientStatus: 'completed', pipelineStage: 'checking', externalId: 'ext-1' })]))
+      .mockReturnValueOnce(mockDbChain([]));
+    const replaceGrab = vi.fn().mockResolvedValue({ id: 42 });
+    const removeExternalItem = vi.fn().mockResolvedValue(undefined);
+    const ctx: ReplaceCtx = {
+      db: replaceDb as unknown as Db,
+      log: inject<FastifyBaseLogger>(createMockLogger()),
+      downloadService: inject<DownloadServiceType>({ removeExternalItem }),
+      blacklistService: inject({ create: vi.fn().mockResolvedValue(undefined) }),
+      broadcaster: inject({}),
+      eventHistory: inject({}),
+      grab: replaceGrab,
+      safe: (fn) => fn(),
+    };
+
+    // Replace runs entirely while the QG is held → rejects PIPELINE_ACTIVE, cancels nothing.
+    const replaceOutcome = await runReplaceWorkflow(ctx, { downloadUrl: 'm', title: 'New Release', bookId: 1, replace: true })
+      .then(() => ({ ok: true }))
+      .catch((e: unknown) => ({ ok: false, error: e }));
+    expect(replaceOutcome).toMatchObject({ ok: false, error: { code: 'PIPELINE_ACTIVE' } });
+    expect(replaceGrab).not.toHaveBeenCalled();
+    expect(removeExternalItem).not.toHaveBeenCalled();
+    // Ordering proof: the QG has NOT enqueued yet — it is genuinely mid-flight, held.
+    expect(qualityGateService.atomicClaim).toHaveBeenCalledWith(1); // claim already happened
+    expect(transitionBookStatus).toHaveBeenCalledWith(expect.anything(), 1, expect.objectContaining({ status: 'importing' })); // promotion happened
+    expect(enqueueAutoImport).not.toHaveBeenCalled(); // enqueue is downstream of the held decision
+
+    // Release the QG → it MUST complete fulfilled (unaffected by the replace).
+    releaseDecision();
+    await expect(qgPromise).resolves.toBeUndefined();
+    expect(enqueueAutoImport).toHaveBeenCalledWith(expect.anything(), 1, 1, expect.any(Function), expect.anything());
+  });
 });

@@ -190,6 +190,17 @@ describe('v1 OpenAPI spec generation', () => {
     expect(Object.keys(grab)).toEqual(expect.arrayContaining(['200', '201', '400', '404', '409']));
   });
 
+  it('documents the grab 409 with a description enumerating both conflict codes and their meaning (#1861)', () => {
+    const grab = spec.paths['/api/v1/books/{publicId}/grab'].post.responses;
+    const description: string = grab['409'].description;
+    expect(description).toBeTruthy();
+    // Both discriminator codes are named, so a consumer can tell the two apart.
+    expect(description).toContain('ACTIVE_DOWNLOAD_EXISTS');
+    expect(description).toContain('PIPELINE_ACTIVE');
+    // The pipeline meaning is spelled out (not merely that a 409 exists).
+    expect(description).toMatch(/import pipeline|quality gate/i);
+  });
+
   it('documents POST /api/v1/books with a request body and its declared response codes (#1520)', () => {
     // Relative path key, NOT URL_BASE-prefixed (swagger strips the base into
     // servers[].url — learning fastify-swagger-servers-strips-path-prefix).

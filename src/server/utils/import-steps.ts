@@ -7,10 +7,11 @@ import { join, extname, basename, normalize } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { transitionDownloadState } from './download-state.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/index.js';
 import { getErrorMessage } from './error-message.js';
 import type { TaggingService } from '../services/tagging.service.js';
 import { serializeError } from './serialize-error.js';
+import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 
 // Re-export side-effect functions for backwards compatibility
 export {
@@ -26,7 +27,7 @@ export type {
 import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import {
   containsAudioFiles, countAudioFiles, copyAudioFiles, getPathSize, getAudioPathSize,
-  assertCopyVerified, ContentFailureError,
+  getVisiblePathSize, assertCopyVerified, ContentFailureError,
 } from './import-helpers.js';
 import { runPostProcessingScript } from './post-processing-script.js';
 import { revertBookStatus } from './book-status.js';
@@ -113,6 +114,17 @@ export async function validateSource(
     throw statError;
   }
 
+  // Reject a hidden source ROOT before any counting/disk work (symmetric for file & directory):
+  //  - a hidden direct file (`/downloads/.x.mp3`) is a born-hidden transient, never real content (F28);
+  //  - a hidden source directory (an in-progress `/downloads/.incomplete/`) is transient too (F38).
+  // `validateSource` gates untrusted download-client input, so unlike the identity-root enumerators
+  // it DOES self-reject a hidden root. A non-audio direct file is also rejected here (moved earlier
+  // than copyToLibrary's check) so `fileCount:1`/disk work never runs for an unimportable file.
+  const rootName = basename(savePath);
+  if (isHiddenName(rootName)) {
+    throw new ContentFailureError(`Source path is hidden (leading dot), not importable: ${rootName}`);
+  }
+
   let fileCount = 0;
   if (sourceStats.isDirectory()) {
     if (!(await containsAudioFiles(savePath))) {
@@ -120,6 +132,9 @@ export async function validateSource(
     }
     fileCount = await countAudioFiles(savePath);
   } else if (sourceStats.isFile()) {
+    if (!AUDIO_EXTENSIONS.has(extname(savePath).toLowerCase())) {
+      throw new ContentFailureError(`Source file is not a supported audio format: ${rootName}`);
+    }
     fileCount = 1;
   }
 
@@ -145,7 +160,11 @@ export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<DiskSpac
   const { sourcePath, sourceStats, libraryPath, minFreeSpaceGB } = args;
   if (minFreeSpaceGB <= 0) return { freeGB: -1, requiredGB: 0 };
 
-  const sourceSize = sourceStats.isDirectory() ? await getPathSize(sourcePath) : sourceStats.size;
+  // Size a directory source with the visibility-aware walk (F40): it skips leading-dot files and
+  // dot-dir subtrees, so the estimate reflects what `copyAudioFiles` actually writes AND never
+  // traverses a hidden subtree — an unreadable `.hidden/` can't abort the import via EACCES/ENOENT.
+  // Shared `getPathSize` stays exact-all-entry for import verification (`verifyCopy`) — do not swap that.
+  const sourceSize = sourceStats.isDirectory() ? await getVisiblePathSize(sourcePath) : sourceStats.size;
   const estimatedOutputSize = sourceSize;
   const requiredBytes = minFreeSpaceGB * 1024 ** 3 + estimatedOutputSize;
 
@@ -271,7 +290,6 @@ export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<
 export interface EmbedTagsArgs {
   taggingService: TaggingService | undefined;
   taggingEnabled: boolean;
-  ffmpegPath: string;
   taggingMode: 'populate_missing' | 'overwrite';
   embedCover: boolean;
   bookId: number;
@@ -295,11 +313,12 @@ export interface EmbedTagsArgs {
 
 /** Embed audio tags into imported files. Awaited but nonfatal. */
 export async function embedTagsForImport(args: EmbedTagsArgs): Promise<void> {
-  const { taggingService, taggingEnabled, ffmpegPath, taggingMode, embedCover, bookId, targetPath, book, log } = args;
+  const { taggingService, taggingEnabled, taggingMode, embedCover, bookId, targetPath, book, log } = args;
   if (!taggingService) return;
   if (!taggingEnabled) return;
-  if (!ffmpegPath?.trim()) {
-    log.debug({ bookId }, 'Tag embedding enabled but ffmpeg path not configured — skipping');
+  const ffmpegPath = await resolveFfmpegPath();
+  if (!ffmpegPath) {
+    log.debug({ bookId }, 'Tag embedding enabled but ffmpeg not available — skipping');
     return;
   }
 

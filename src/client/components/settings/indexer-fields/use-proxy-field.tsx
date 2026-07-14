@@ -23,9 +23,7 @@ export function UseProxyField({ register, watch }: { register: UseFormRegister<C
             Send search and test requests through the global proxy
           </p>
         </div>
-        <label className="relative inline-flex items-center cursor-pointer">
-          <ToggleSwitch id="indexerUseProxy" {...register('settings.useProxy')} />
-        </label>
+        <ToggleSwitch id="indexerUseProxy" {...register('settings.useProxy')} />
       </div>
       {useProxy && !hasGlobalProxy && (
         <p className="text-sm text-destructive mt-1">

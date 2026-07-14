@@ -43,9 +43,9 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByText('Enable Scheduled Search')).toBeInTheDocument();
+      expect(screen.getByLabelText('Scheduled search')).toBeInTheDocument();
     });
-    expect(screen.getByText('Search Interval (minutes)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Search interval')).toBeInTheDocument();
     expect(screen.queryByText('Auto-Grab Best Result')).not.toBeInTheDocument();
   });
 
@@ -53,8 +53,7 @@ describe('SearchSettingsSection', () => {
     const user = userEvent.setup();
     renderWithProviders(<SearchSettingsSection />);
 
-    const checkbox = () => screen.getByText('Enable Scheduled Search')
-      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const checkbox = () => screen.getByLabelText('Scheduled search') as HTMLInputElement;
 
     // Wait for settings to load and reset form
     await waitFor(() => {
@@ -70,11 +69,10 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByText('Enable RSS Sync')).toBeInTheDocument();
+      expect(screen.getByLabelText('RSS sync')).toBeInTheDocument();
     });
 
-    const rssCheckbox = screen.getByText('Enable RSS Sync')
-      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const rssCheckbox = screen.getByLabelText('RSS sync') as HTMLInputElement;
 
     expect(rssCheckbox.checked).toBe(false);
     await user.click(rssCheckbox);
@@ -85,7 +83,7 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByText('RSS Interval (minutes)')).toBeInTheDocument();
+      expect(screen.getByLabelText('RSS interval')).toBeInTheDocument();
     });
   });
 
@@ -93,9 +91,9 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByText('Enable Scheduled Search')).toBeInTheDocument();
+      expect(screen.getByLabelText('Scheduled search')).toBeInTheDocument();
     });
-    expect(screen.getByText('Enable RSS Sync')).toBeInTheDocument();
+    expect(screen.getByLabelText('RSS sync')).toBeInTheDocument();
   });
 
   it('describes that search includes grabbing', async () => {
@@ -110,7 +108,7 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByText('Blacklist TTL (days)')).toBeInTheDocument();
+      expect(screen.getByText('Blacklist TTL')).toBeInTheDocument();
     });
   });
 
@@ -118,7 +116,7 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Blacklist TTL (days)')).toHaveAttribute('min', '1');
+      expect(screen.getByLabelText('Blacklist TTL')).toHaveAttribute('min', '1');
     });
   });
 
@@ -126,12 +124,12 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search Interval (minutes)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Search interval')).toBeInTheDocument();
     });
 
-    expect(screen.getByLabelText('Search Interval (minutes)').getAttribute('step')).toBe('1');
-    expect(screen.getByLabelText('Blacklist TTL (days)').getAttribute('step')).toBe('1');
-    expect(screen.getByLabelText('RSS Interval (minutes)').getAttribute('step')).toBe('1');
+    expect(screen.getByLabelText('Search interval').getAttribute('step')).toBe('1');
+    expect(screen.getByLabelText('Blacklist TTL').getAttribute('step')).toBe('1');
+    expect(screen.getByLabelText('RSS interval').getAttribute('step')).toBe('1');
   });
 
   it('sends search and rss categories on save', async () => {
@@ -140,8 +138,7 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     // Wait for settings to load and form to reset
-    const checkbox = () => screen.getByText('Enable Scheduled Search')
-      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const checkbox = () => screen.getByLabelText('Scheduled search') as HTMLInputElement;
     await waitFor(() => {
       expect(checkbox().checked).toBe(false);
     });
@@ -164,10 +161,10 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Protocol Preference')).toBeInTheDocument();
+      expect(screen.getByLabelText('Protocol preference')).toBeInTheDocument();
     });
 
-    const options = screen.getByLabelText('Protocol Preference').querySelectorAll('option');
+    const options = screen.getByLabelText('Protocol preference').querySelectorAll('option');
     expect(options).toHaveLength(3);
     expect(options[0]).toHaveTextContent('Prefer Usenet');
     expect(options[1]).toHaveTextContent('Prefer Torrent');
@@ -180,10 +177,9 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     // Wait for settings to load
-    const checkbox = () => screen.getByText('Enable Scheduled Search')
-      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const checkbox = () => screen.getByLabelText('Scheduled search') as HTMLInputElement;
     await waitFor(() => {
-      expect(screen.getByText('Enable Scheduled Search')).toBeInTheDocument();
+      expect(checkbox()).toBeInTheDocument();
     });
 
     // Toggle checkbox on to dirty the form so Save button appears
@@ -202,10 +198,10 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search Interval (minutes)')).toHaveValue(360);
+      expect(screen.getByLabelText('Search interval')).toHaveValue(360);
     });
 
-    const input = screen.getByLabelText('Search Interval (minutes)');
+    const input = screen.getByLabelText('Search interval');
     await user.tripleClick(input);
     await user.keyboard('4');
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -221,10 +217,10 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Blacklist TTL (days)')).toHaveValue(7);
+      expect(screen.getByLabelText('Blacklist TTL')).toHaveValue(7);
     });
 
-    const input = screen.getByLabelText('Blacklist TTL (days)');
+    const input = screen.getByLabelText('Blacklist TTL');
     await user.tripleClick(input);
     await user.keyboard('0');
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -240,10 +236,10 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('RSS Interval (minutes)')).toHaveValue(30);
+      expect(screen.getByLabelText('RSS interval')).toHaveValue(30);
     });
 
-    const input = screen.getByLabelText('RSS Interval (minutes)');
+    const input = screen.getByLabelText('RSS interval');
     await user.tripleClick(input);
     await user.keyboard('4');
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -259,14 +255,14 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Blacklist TTL (days)')).toHaveValue(7);
+      expect(screen.getByLabelText('Blacklist TTL')).toHaveValue(7);
     });
 
-    const ttlInput = screen.getByLabelText('Blacklist TTL (days)');
+    const ttlInput = screen.getByLabelText('Blacklist TTL');
     await user.tripleClick(ttlInput);
     await user.keyboard('14');
 
-    const rssInput = screen.getByLabelText('RSS Interval (minutes)');
+    const rssInput = screen.getByLabelText('RSS interval');
     await user.tripleClick(rssInput);
     await user.keyboard('60');
 
@@ -294,11 +290,11 @@ describe('SearchSettingsSection', () => {
 
     // Wait for server value to load
     await waitFor(() => {
-      expect(screen.getByLabelText('Protocol Preference')).toHaveValue('torrent');
+      expect(screen.getByLabelText('Protocol preference')).toHaveValue('torrent');
     });
 
     // Change to usenet
-    await user.selectOptions(screen.getByLabelText('Protocol Preference'), 'usenet');
+    await user.selectOptions(screen.getByLabelText('Protocol preference'), 'usenet');
     await user.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
@@ -316,12 +312,10 @@ describe('SearchSettingsSection', () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByText('Enable Scheduled Search')).toBeInTheDocument();
+      expect(screen.getByLabelText('Scheduled search')).toBeInTheDocument();
     });
 
-    const checkbox = screen.getByText('Enable Scheduled Search')
-      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
-    await user.click(checkbox);
+    await user.click(screen.getByLabelText('Scheduled search'));
 
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
 
@@ -332,19 +326,24 @@ describe('SearchSettingsSection', () => {
 
   describe('search priority dropdown (#439)', () => {
     it('renders search priority dropdown with both options and per-option descriptions', async () => {
+      const user = userEvent.setup();
       renderWithProviders(<SearchSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Search Priority')).toBeInTheDocument();
+        expect(screen.getByLabelText('Search priority')).toBeInTheDocument();
       });
 
-      const options = screen.getByLabelText('Search Priority').querySelectorAll('option');
+      const options = screen.getByLabelText('Search priority').querySelectorAll('option');
       expect(options).toHaveLength(2);
       expect(options[0]).toHaveTextContent('Audio Quality');
       expect(options[1]).toHaveTextContent('Narrator Accuracy');
 
-      expect(screen.getByText(/Prioritize higher bitrate releases/)).toBeInTheDocument();
-      expect(screen.getByText(/Prioritize releases matching the narrator/)).toBeInTheDocument();
+      // The per-option explainer moved behind the row's InfoTip — open it, then assert both lines.
+      expect(screen.queryByText(/Prioritize higher bitrate releases/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Search priority options' }));
+      const tip = screen.getByRole('tooltip');
+      expect(tip).toHaveTextContent(/Prioritize higher bitrate releases/);
+      expect(tip).toHaveTextContent(/Prioritize releases matching the narrator/);
     });
 
     it('selecting quality and saving fires mutation with correct payload', async () => {
@@ -353,11 +352,11 @@ describe('SearchSettingsSection', () => {
       renderWithProviders(<SearchSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Search Priority')).toBeInTheDocument();
+        expect(screen.getByLabelText('Search priority')).toBeInTheDocument();
       });
 
       // 'accuracy' is the default, so select 'quality' to dirty the form
-      await user.selectOptions(screen.getByLabelText('Search Priority'), 'quality');
+      await user.selectOptions(screen.getByLabelText('Search priority'), 'quality');
 
       await user.click(screen.getByRole('button', { name: /save/i }));
 
@@ -378,7 +377,7 @@ describe('SearchSettingsSection', () => {
       renderWithProviders(<SearchSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Search Priority')).toHaveValue('accuracy');
+        expect(screen.getByLabelText('Search priority')).toHaveValue('accuracy');
       });
     });
   });

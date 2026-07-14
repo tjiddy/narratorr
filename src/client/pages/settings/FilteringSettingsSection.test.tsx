@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
@@ -47,13 +47,13 @@ describe('FilteringSettingsSection', () => {
     expect(screen.queryByLabelText('Region')).not.toBeInTheDocument();
   });
 
-  it('does NOT render the Hardcover API Key input (moved to Metadata section)', async () => {
+  it('does NOT render the Hardcover API key input (moved to Metadata section)', async () => {
     renderWithProviders(<FilteringSettingsSection />);
 
     await waitFor(() => {
       expect(screen.getByText('Languages')).toBeInTheDocument();
     });
-    expect(screen.queryByLabelText('Hardcover API Key')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Hardcover API key')).not.toBeInTheDocument();
   });
 
   it('renders languages checkbox grid with English checked', async () => {
@@ -71,7 +71,7 @@ describe('FilteringSettingsSection', () => {
     renderWithProviders(<FilteringSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Reject Words')).toHaveValue('German');
+      expect(screen.getByLabelText('Reject words')).toHaveValue('German');
     });
   });
 
@@ -85,7 +85,7 @@ describe('FilteringSettingsSection', () => {
     renderWithProviders(<FilteringSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Duration (minutes)')).toHaveValue(30);
+      expect(screen.getByLabelText('Minimum duration')).toHaveValue(30);
     });
   });
 
@@ -95,10 +95,10 @@ describe('FilteringSettingsSection', () => {
     renderWithProviders(<FilteringSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Reject Words')).toHaveValue('German');
+      expect(screen.getByLabelText('Reject words')).toHaveValue('German');
     });
 
-    const durationInput = screen.getByLabelText('Minimum Duration (minutes)');
+    const durationInput = screen.getByLabelText('Minimum duration');
     await user.tripleClick(durationInput);
     await user.keyboard('30');
 
@@ -112,11 +112,35 @@ describe('FilteringSettingsSection', () => {
     });
   });
 
+  it('blocks submit and shows the validation error when minimum duration is negative', async () => {
+    // Previously the section never read formState.errors — a schema-invalid duration failed the
+    // Save SILENTLY (nothing rendered, nothing sent). The row-table conversion wires the error
+    // display; this is the template rule: every schema-validatable number input renders its error.
+    const user = userEvent.setup();
+    renderWithProviders(<FilteringSettingsSection />);
+
+    // Wait for the server reset to land before typing (matches the Quality section's pattern).
+    await waitFor(() => {
+      expect(screen.getByLabelText('Reject words')).toHaveValue('German');
+    });
+
+    const input = screen.getByLabelText('Minimum duration');
+    await user.clear(input);
+    await user.type(input, '-1');
+
+    await act(async () => {
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    });
+
+    expect(screen.getByText(/too small/i)).toBeInTheDocument();
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
+  });
+
   it('renders required words input with server value', async () => {
     renderWithProviders(<FilteringSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Required Words')).toHaveValue('M4B');
+      expect(screen.getByLabelText('Required words')).toHaveValue('M4B');
     });
   });
 
@@ -133,7 +157,7 @@ describe('FilteringSettingsSection', () => {
     renderWithProviders(<FilteringSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Reject Words')).toBeInTheDocument();
+      expect(screen.getByLabelText('Reject words')).toBeInTheDocument();
     });
     expect(
       screen.getByText(/title, subtitle, author, narrator, or format type/i),
@@ -146,10 +170,10 @@ describe('FilteringSettingsSection', () => {
     renderWithProviders(<FilteringSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Reject Words')).toHaveValue('German');
+      expect(screen.getByLabelText('Reject words')).toHaveValue('German');
     });
 
-    const rejectInput = screen.getByLabelText('Reject Words');
+    const rejectInput = screen.getByLabelText('Reject words');
     await user.tripleClick(rejectInput);
     await user.keyboard('Abridged');
 
@@ -182,10 +206,10 @@ describe('FilteringSettingsSection', () => {
     renderWithProviders(<FilteringSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Reject Words')).toHaveValue('German');
+      expect(screen.getByLabelText('Reject words')).toHaveValue('German');
     });
 
-    const rejectInput = screen.getByLabelText('Reject Words');
+    const rejectInput = screen.getByLabelText('Reject words');
     await user.tripleClick(rejectInput);
     await user.keyboard('changed');
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -201,10 +225,10 @@ describe('FilteringSettingsSection', () => {
     renderWithProviders(<FilteringSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Reject Words')).toHaveValue('German');
+      expect(screen.getByLabelText('Reject words')).toHaveValue('German');
     });
 
-    const rejectInput = screen.getByLabelText('Reject Words');
+    const rejectInput = screen.getByLabelText('Reject words');
     await user.tripleClick(rejectInput);
     await user.keyboard('changed');
     await user.click(screen.getByRole('button', { name: /save/i }));

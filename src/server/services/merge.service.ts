@@ -11,14 +11,18 @@ import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
 import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
+import { processAudioFiles, resolveFfmpegPath } from '../../core/utils/audio-processor.js';
+import { buildNamingContext, type RenameableBook } from '../utils/paths.js';
+import { toNamingOptions, type NamingOptions } from '../../core/utils/naming.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
+import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 import { Semaphore } from '../utils/semaphore.js';
 import type { MergePhase, MergeFailedReason } from '../../shared/schemas/sse-events.js';
+import type { EventSource } from '../../shared/schemas/event-history.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import { createStderrDeduplicator } from '../utils/stderr-deduplicator.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -36,6 +40,13 @@ import { serializeError } from '../utils/serialize-error.js';
 export function clampConcurrency(value: number | undefined): number {
   return Number.isInteger(value) && (value as number) >= 1 ? (value as number) : 1;
 }
+
+/**
+ * Provenance of a merge request. A narrow subset of the canonical {@link EventSource} union
+ * (derived from it, not a redeclared widened type), so merge events record whether the merge
+ * was user-initiated (the manual Merge button) or unattended (auto-merge after a download lands).
+ */
+export type MergeOrigin = Extract<EventSource, 'manual' | 'auto'>;
 
 export interface MergeResult {
   bookId: number;
@@ -69,6 +80,11 @@ export class MergeService {
   private readonly semaphore = new Semaphore(1);
   private abortControllers = new Map<number, AbortController>();
   private currentPhase = new Map<number, MergePhase>();
+  // Per-bookId merge provenance. Set in enqueueMerge (only after pre-flight succeeds, so a
+  // rejected enqueue leaves no stale entry) and read by the three event emitters, which take
+  // only a bookId. Its lifecycle mirrors `inProgress`/queue membership exactly: cleared in the
+  // immediate-start finally, the startQueuedMerge finally, and the queued-cancel splice path.
+  private origins = new Map<number, MergeOrigin>();
 
   constructor(
     private db: Db,
@@ -80,14 +96,19 @@ export class MergeService {
     private connectorService?: ConnectorService,
   ) {}
 
+  /** Resolve the recorded provenance for a book, defaulting to 'manual' on a lookup miss. */
+  private originFor(bookId: number): MergeOrigin {
+    return this.origins.get(bookId) ?? 'manual';
+  }
+
   private emitMergeStarted(bookId: number, bookTitle: string): void {
-    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_started', source: 'manual' })
+    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_started', source: this.originFor(bookId) })
       .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record merge_started event'));
     safeEmit(this.eventBroadcaster, 'merge_started', { book_id: bookId, book_title: bookTitle }, this.log);
   }
 
   private emitMergeFailed(bookId: number, bookTitle: string, error: string, reason: MergeFailedReason = 'error'): void {
-    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_failed', source: 'manual', reason: { error } })
+    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_failed', source: this.originFor(bookId), reason: { error } })
       .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record merge_failed event'));
     safeEmit(this.eventBroadcaster, 'merge_failed', { book_id: bookId, book_title: bookTitle, error, reason }, this.log);
   }
@@ -98,7 +119,7 @@ export class MergeService {
   }
 
   private emitMergeComplete(bookId: number, bookTitle: string, message: string, enrichmentWarning?: string): void {
-    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merged', source: 'manual' })
+    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merged', source: this.originFor(bookId) })
       .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record merged event'));
     safeEmit(this.eventBroadcaster, 'merge_complete', {
       book_id: bookId, book_title: bookTitle, success: true, message,
@@ -128,15 +149,19 @@ export class MergeService {
     if (!book.path) throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
     if (book.status !== 'imported') throw new MergeError(`Book is not imported (status: ${book.status})`, 'NO_STATUS');
     const processingSettings = await this.settingsService.get('processing');
-    if (!processingSettings?.ffmpegPath?.trim()) throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
+    if (!(await resolveFfmpegPath())) throw new MergeError('ffmpeg is not available', 'FFMPEG_NOT_CONFIGURED');
     const allEntries = await readdir(book.path);
-    const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+    const topLevelAudioFiles = allEntries.filter((f) => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
     if (topLevelAudioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
     return processingSettings;
   }
 
-  /** Public API: validate and enqueue a merge. Returns acknowledgement immediately. */
-  async enqueueMerge(bookId: number): Promise<MergeAcknowledgement> {
+  /**
+   * Public API: validate and enqueue a merge. Returns acknowledgement immediately.
+   * `origin` records provenance ('manual' for the Merge button, 'auto' for auto-merge after a
+   * download lands); it defaults to 'manual' so the existing merge route stays unchanged.
+   */
+  async enqueueMerge(bookId: number, origin: MergeOrigin = 'manual'): Promise<MergeAcknowledgement> {
     // Synchronous duplicate check — no await gap between check and mark prevents concurrent races
     if (this.inProgress.has(bookId)) throw new MergeError('Merge already in progress for this book', 'ALREADY_IN_PROGRESS');
     if (this.queue.includes(bookId)) throw new MergeError('Merge already queued for this book', 'ALREADY_QUEUED');
@@ -159,6 +184,12 @@ export class MergeService {
       throw error;
     }
 
+    // Record provenance ONLY after the pre-flight try block succeeds. Storing it here (rather than
+    // before the await) means the validation `catch` above has nothing to clean up, so a
+    // rejected-at-enqueue merge (NOT_FOUND / NO_PATH / NO_STATUS / FFMPEG_NOT_CONFIGURED /
+    // NO_TOP_LEVEL_FILES / settings-read failure) leaves no stale origin for a later merge to inherit.
+    this.origins.set(bookId, origin);
+
     // Start the new request immediately ONLY when nothing is queued ahead of it and a
     // slot is free. tryAcquire() is short-circuited away when the queue is non-empty so
     // the new request never grabs a freed slot ahead of older queued work.
@@ -169,6 +200,7 @@ export class MergeService {
         })
         .finally(() => {
           this.inProgress.delete(bookId);
+          this.origins.delete(bookId);
           this.processNext(); // Pass the slot or release if empty
         });
       return { status: 'started', bookId };
@@ -232,6 +264,7 @@ export class MergeService {
       })
       .finally(() => {
         this.inProgress.delete(bookId);
+        this.origins.delete(bookId);
         this.processNext(); // Pass the slot or release if empty
       });
   }
@@ -257,10 +290,9 @@ export class MergeService {
     if (!book) throw new MergeError('Book not found', 'NOT_FOUND');
     if (!book.path) throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
     if (book.status !== 'imported') throw new MergeError(`Book is not imported (status: ${book.status})`, 'NO_STATUS');
-    const processingSettings = await this.settingsService.get('processing');
-    if (!processingSettings?.ffmpegPath?.trim()) throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
+    if (!(await resolveFfmpegPath())) throw new MergeError('ffmpeg is not available', 'FFMPEG_NOT_CONFIGURED');
     const allEntries = await readdir(book.path);
-    const audioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+    const audioFiles = allEntries.filter((f) => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
     if (audioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
   }
 
@@ -271,7 +303,8 @@ export class MergeService {
     const bookPath = book.path;
 
     const processingSettings = await this.settingsService.get('processing');
-    if (!processingSettings?.ffmpegPath?.trim()) return { bookId, outputFile: '', filesReplaced: 0, message: 'ffmpeg not configured' };
+    const ffmpegPath = await resolveFfmpegPath();
+    if (!ffmpegPath) return { bookId, outputFile: '', filesReplaced: 0, message: 'ffmpeg not available' };
 
     const librarySettings = await this.settingsService.get('library');
 
@@ -279,7 +312,10 @@ export class MergeService {
     this.abortControllers.set(bookId, controller);
 
     this.emitMergeStarted(bookId, book.title);
-    const stagingDir = bookPath + '.merge-tmp';
+    // Born-hidden staging dir (AC11): `.<book>.merge-tmp` — dot-led basename so its populated
+    // multi-GB audio is invisible to ABS/scanners for the whole merge, yet stays a sibling on the
+    // same filesystem (atomic finalize rename preserved). Its owner still enumerates it by identity.
+    const stagingDir = dotPrefixBasename(bookPath + '.merge-tmp');
 
     try {
       // Converge any interrupted commit-pending marker at bookPath BEFORE any staging
@@ -296,7 +332,7 @@ export class MergeService {
       // and commitMerge's originals-deletion. Reading it before recovery would stage/delete
       // a stale file list.
       const allEntries = await readdir(bookPath);
-      const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+      const topLevelAudioFiles = allEntries.filter((f) => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
 
       // Re-validate the merge minimum on the CONVERGED folder (F9): recovery can shrink a
       // previously-valid queued merge below two top-level audio files, and processAudioFiles
@@ -307,7 +343,10 @@ export class MergeService {
       }
 
       this.emitMergeProgress(bookId, book.title, 'staging');
-      const stagedOutput = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title, controller.signal);
+      const stagedOutput = await this.runStaging(
+        stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, { ...processingSettings, ffmpegPath },
+        bookId, book.title, librarySettings.fileFormat, toNamingOptions(librarySettings), controller.signal,
+      );
 
       // Check abort signal before committing (cooperative cancel during verifying)
       if (controller.signal.aborted) {
@@ -317,7 +356,7 @@ export class MergeService {
       this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedOutput, bookPath, topLevelAudioFiles, bookId, book);
 
-      const ffprobePath = resolveFfprobePathFromSettings(processingSettings.ffmpegPath);
+      const ffprobePath = resolveFfprobePathFromSettings(ffmpegPath);
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath);
       let enrichmentWarning: string | undefined;
       if (!enrichResult.enriched) {
@@ -344,13 +383,21 @@ export class MergeService {
   /** Steps 1-5: copy to staging, process, verify. Returns the staged output filename (extension follows outputFormat). */
   private async runStaging(
     stagingDir: string,
-    book: { path: string; title: string; authors?: Array<{ name: string }> | null; audioBitrate?: number | null },
+    book: RenameableBook & { path: string; authors?: Array<{ name: string }> | null; audioBitrate?: number | null },
     audioFiles: string[],
     processingSettings: { ffmpegPath: string; outputFormat?: 'm4b' | 'mp3'; keepOriginalBitrate?: boolean; bitrate?: number },
     bookId: number,
     bookTitle: string,
+    fileFormat: string,
+    namingOptions: NamingOptions,
     signal?: AbortSignal,
   ): Promise<string> {
+    // Reset the deterministic staging dir to empty before copying (Change 4 / F25). A prior kill
+    // can leave stale (non-dot) audio inside this exact path; the owning merge reopens it by
+    // identity and would otherwise fold that residue into the result. A failure to empty it throws
+    // here → routed by executeMerge's catch to `merge_failed` (ordinary failure path, no new error).
+    // It only ever touches this merge's OWN staging dir, never one another active op could own.
+    await rm(stagingDir, { recursive: true, force: true });
     await mkdir(stagingDir, { recursive: true });
 
     for (const file of audioFiles) {
@@ -380,6 +427,10 @@ export class MergeService {
     }, {
       author: authorName,
       title: book.title,
+      // Thread the library fileFormat + book-level tokens so a merged filename matches the
+      // rest of the library. Empty fileFormat (legacy/fixture) omits it → `${author} - ${title}`
+      // fallback; the settings form rejects an empty value, so this is non-empty in normal use.
+      ...buildNamingContext(book, authorName || null, fileFormat, namingOptions),
     }, {
       onProgress: (_phase, percentage) => {
         this.emitMergeProgress(bookId, bookTitle, 'processing', percentage);
@@ -463,7 +514,10 @@ export class MergeService {
       this.queue.splice(queueIdx, 1);
       const book = await this.bookService.getById(bookId);
       const bookTitle = book?.title ?? `Book ${bookId}`;
+      // Emit BEFORE clearing the origin so the cancelled event carries the enqueued provenance,
+      // then clean up (this item never entered `inProgress`, so this is its only cleanup site).
       this.emitMergeFailed(bookId, bookTitle, 'Cancelled by user', 'cancelled');
+      this.origins.delete(bookId);
       this.emitQueuePositionUpdates().catch((error: unknown) => {
         this.log.debug({ error: serializeError(error) }, 'Failed to emit queue position updates after cancellation');
       });

@@ -84,8 +84,8 @@ describe('FileList', () => {
     expect(screen.getByText('50 MB')).toBeInTheDocument();
     // 1048576 bytes = 1 MB
     expect(screen.getByText('1 MB')).toBeInTheDocument();
-    // 1536 bytes = 1.5 KB
-    expect(screen.getByText('1.5 KB')).toBeInTheDocument();
+    // 1536 bytes = 1.5 KB, rounds to whole KB
+    expect(screen.getByText('2 KB')).toBeInTheDocument();
   });
 
   it('shows error message on API error', async () => {

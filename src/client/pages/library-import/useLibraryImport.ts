@@ -21,7 +21,11 @@ export type Step = 'scanning' | 'review' | 'error';
 export function useLibraryImport() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { results: matchResults, progress, isMatching, error: matchJobError, startMatching, cancel: _cancelMatching } = useMatchJob();
+  const {
+    results: matchResults, progress, isMatching, recovering,
+    paused, reason: pausedReason, remaining: matchRemaining, matchedCount: _matchedCount, total: matchTotal,
+    startMatching, restart, resume, cancel: _cancelMatching,
+  } = useMatchJob();
 
   const [step, setStep] = useState<Step>('scanning');
   const [scanError, setScanError] = useState<string | null>(null);
@@ -110,6 +114,9 @@ export function useLibraryImport() {
           path: d.path,
           title: d.parsedTitle,
           ...(d.parsedAuthor && { author: d.parsedAuthor }),
+          // Thread the parsed series position (#1849) so the ranker can break
+          // same-title series ties. `!== undefined` (never `||`) so position 0 survives.
+          ...(d.parsedSeriesPosition !== undefined && { seriesPosition: d.parsedSeriesPosition }),
         }));
       if (candidates.length > 0) {
         startMatching(candidates);
@@ -242,19 +249,28 @@ export function useLibraryImport() {
     scanMutation.mutate(libraryPath);
   }, [settings, scanMutation, clearHeld]);
 
-  const handleRetryMatch = useCallback(() => {
+  // Restart all (#1864 §5b) — rebuild candidates from CURRENT edited row values
+  // (incl. edited seriesPosition, #1849), CLEAR every non-duplicate row's match to
+  // pending (stale by construction), and reset the result-offset before the new run.
+  const handleRestartMatch = useCallback(() => {
     const candidates = rows
       .filter(r => !isLibraryDbDuplicate(r.book))
       .map(r => ({
         path: r.book.path,
         title: r.edited.title,
         ...(r.edited.author && { author: r.edited.author }),
+        // Guard preserves position 0 (#1028/#1849).
+        ...(r.edited.seriesPosition !== undefined && { seriesPosition: r.edited.seriesPosition }),
       }));
-    if (candidates.length > 0) {
-      prevMatchCountRef.current = 0;
-      startMatching(candidates);
-    }
-  }, [rows, startMatching]);
+    if (candidates.length === 0) return;
+    prevMatchCountRef.current = 0;
+    setRows(prev => prev.map(r => isLibraryDbDuplicate(r.book) ? r : { ...r, matchResult: undefined }));
+    restart(candidates);
+  }, [rows, restart]);
+
+  // Resume remaining (#1864 §5) — re-match only the result-less remainder; rows that
+  // already matched keep their result (the engine's observed map is preserved).
+  const handleResumeMatch = useCallback(() => resume(), [resume]);
 
   // Computed counts
   const selectedCount = rows.filter(r => r.selected).length;
@@ -275,7 +291,6 @@ export function useLibraryImport() {
     hasLibraryPath,
     scanError,
     emptyResult,
-    matchJobError,
     rows,
     editIndex,
     setEditIndex,
@@ -285,13 +300,21 @@ export function useLibraryImport() {
     libraryRoot,
     heldReview,
 
+    // Match-phase recovery (#1864)
+    recovering,
+    paused,
+    pausedReason,
+    matchRemaining,
+    matchTotal,
+
     handleToggle,
     handleSelectAll,
     handleEdit,
     handleRegister,
     handleReconfirmHeld,
     handleRetry,
-    handleRetryMatch,
+    handleRestartMatch,
+    handleResumeMatch,
 
     scanMutation,
     registerMutation,

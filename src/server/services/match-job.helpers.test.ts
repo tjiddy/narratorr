@@ -4,6 +4,7 @@ import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { MatchCandidate, MatchResult } from './match-job.service.js';
 import type * as FolderParsing from '../utils/folder-parsing.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 
 // Spy on cleanTagTitle so a single test can force the empty-cleaned-title path
 // (the deriveTagQuery guard at match-job.helpers.ts is otherwise unreachable
@@ -24,6 +25,7 @@ import {
   narratorMismatchReason,
   rankResultsCleaned,
   rankResults,
+  positionTiebreak,
   resolveConfidenceFromDuration,
   resolveSingleResultConfidence,
   parsePublishedYear,
@@ -55,6 +57,11 @@ function makeBook(overrides: Partial<BookMetadata> = {}): BookMetadata {
     authors: [{ name: 'Sample Author' }],
     ...overrides,
   };
+}
+
+/** Resolve a book's primary-series position the same way the ranker does. */
+function pickPos(meta: BookMetadata): number | undefined {
+  return pickPrimarySeries(meta)?.position;
 }
 
 // ============================================================================
@@ -112,6 +119,23 @@ describe('deriveTagQuery', () => {
     const scan = makeAudioScan({ tagTitle: 'Mistborn', tagAuthor: 'Brandon Sanderson', tagYear: '   ' });
     const result = deriveTagQuery(scan);
     expect(result).not.toHaveProperty('year');
+  });
+
+  it('carries tagSeriesPosition into seriesPosition when present (#1849)', () => {
+    const scan = makeAudioScan({ tagTitle: 'Fablehaven', tagAuthor: 'Brandon Mull', tagSeriesPosition: 1 });
+    expect(deriveTagQuery(scan)).toEqual({ title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 });
+  });
+
+  it('preserves a genuine tagSeriesPosition of 0 (#1849/#1028 — not swallowed by ||)', () => {
+    const scan = makeAudioScan({ tagTitle: 'Fablehaven', tagAuthor: 'Brandon Mull', tagSeriesPosition: 0 });
+    expect(deriveTagQuery(scan)).toEqual({ title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 0 });
+  });
+
+  it('omits seriesPosition when the scan has no tagSeriesPosition', () => {
+    const scan = makeAudioScan({ tagTitle: 'Fablehaven', tagAuthor: 'Brandon Mull' });
+    const result = deriveTagQuery(scan);
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('seriesPosition');
   });
 
   it('returns null when cleanTagTitle reduces title to empty', () => {
@@ -540,151 +564,313 @@ describe('rankResults', () => {
 });
 
 // ============================================================================
+// positionTiebreak — shared comparator (#1849)
+// ============================================================================
+
+describe('positionTiebreak', () => {
+  const p1 = makeBook({ series: [{ name: 'Fablehaven', position: 1 }] });
+  const p2 = makeBook({ series: [{ name: 'Fablehaven', position: 2 }] });
+  const noPos = makeBook({ series: [{ name: 'Fablehaven' }] });
+  const noSeries = makeBook({ series: [] });
+
+  it('returns 0 (no-op) when wanted is undefined', () => {
+    expect(positionTiebreak(p1, p2, undefined)).toBe(0);
+  });
+
+  it('ranks the position-matching candidate ahead (negative → a first)', () => {
+    expect(positionTiebreak(p1, p2, 1)).toBeLessThan(0);
+    expect(positionTiebreak(p2, p1, 1)).toBeGreaterThan(0);
+  });
+
+  it('respects a genuine position 0 via === (#1028)', () => {
+    const p0 = makeBook({ series: [{ name: 'Fablehaven', position: 0 }] });
+    expect(positionTiebreak(p0, p1, 0)).toBeLessThan(0);
+  });
+
+  it('prefers the canonical seriesPrimary over series[0] (#1088/#1097)', () => {
+    const primary1 = makeBook({
+      series: [{ name: 'Cosmere', position: 4 }],
+      seriesPrimary: { name: 'Stormlight', position: 1 },
+    });
+    expect(positionTiebreak(primary1, p2, 1)).toBeLessThan(0);
+  });
+
+  it('treats a candidate with no position as a non-match (ties another non-match, never throws)', () => {
+    expect(positionTiebreak(noPos, noSeries, 1)).toBe(0);
+    // A non-match loses only to a genuine match
+    expect(positionTiebreak(noPos, p1, 1)).toBeGreaterThan(0);
+    expect(positionTiebreak(p1, noPos, 1)).toBeLessThan(0);
+  });
+
+  it('two matching positions tie (returns 0)', () => {
+    const anotherP1 = makeBook({ series: [{ name: 'Other', position: 1 }] });
+    expect(positionTiebreak(p1, anotherP1, 1)).toBe(0);
+  });
+});
+
+// ============================================================================
+// Position-agreement tiebreaker in the rankers (#1849)
+// ============================================================================
+
+describe('rankResults position tiebreaker', () => {
+  const fablehaven1 = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }] });
+  const fablehaven2 = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }] });
+
+  it('Fablehaven regression: wanted position 1 makes the position-1 candidate bestMatch', () => {
+    const candidate: MatchCandidate = { path: '/audiobooks/01 - Fablehaven', title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 };
+    // Provider returned #2 first; the tiebreaker must promote #1.
+    const ranked = rankResults([fablehaven2, fablehaven1], candidate);
+    expect(pickPos(ranked[0]!.meta)).toBe(1);
+  });
+
+  it('the disagreeing candidate is not penalized beyond losing the tiebreak', () => {
+    const candidate: MatchCandidate = { path: '/audiobooks/01 - Fablehaven', title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 };
+    const ranked = rankResults([fablehaven2, fablehaven1], candidate);
+    // Both still present; #2 simply drops to second.
+    expect(pickPos(ranked[1]!.meta)).toBe(2);
+  });
+
+  it('respects wanted position 0 (#1028)', () => {
+    const p0 = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 0 }] });
+    const candidate: MatchCandidate = { path: '/audiobooks/00 - Fablehaven', title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 0 };
+    const ranked = rankResults([fablehaven1, p0], candidate);
+    expect(pickPos(ranked[0]!.meta)).toBe(0);
+  });
+
+  it('wanted position absent → falls through to the folder-year tiebreaker unchanged', () => {
+    const a = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }], publishedDate: '2008' });
+    const b = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2006' });
+    // No seriesPosition on the candidate; folder year 2006 must still decide.
+    const candidate: MatchCandidate = { path: '/audiobooks/Fablehaven (2006)', title: 'Fablehaven', author: 'Brandon Mull' };
+    const ranked = rankResults([a, b], candidate);
+    expect(ranked[0]!.meta.publishedDate).toBe('2006');
+  });
+
+  it('position tie → falls through to the folder-year tiebreaker', () => {
+    // Both share position 1, so position no-ops; folder year 2006 breaks it.
+    const a = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2008' });
+    const b = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2006' });
+    const candidate: MatchCandidate = { path: '/audiobooks/Fablehaven (2006)', title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 };
+    const ranked = rankResults([a, b], candidate);
+    expect(ranked[0]!.meta.publishedDate).toBe('2006');
+  });
+
+  it('candidate missing a position is neutral: does not win, does not demote below another non-match, does not throw', () => {
+    const noPos = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven' }], publishedDate: '2008' });
+    const alsoNoPos = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven' }], publishedDate: '2006' });
+    const candidate: MatchCandidate = { path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 };
+    // Neither matches wanted=1 → position no-ops, no year → stable input order.
+    const ranked = rankResults([noPos, alsoNoPos], candidate);
+    expect(ranked[0]!.meta.publishedDate).toBe('2008');
+    expect(ranked[1]!.meta.publishedDate).toBe('2006');
+  });
+});
+
+describe('rankResultsCleaned position tiebreaker', () => {
+  const fablehaven1 = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }] });
+  const fablehaven2 = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }] });
+
+  it('wanted position promotes the agreeing candidate on a score tie', () => {
+    const ranked = rankResultsCleaned([fablehaven2, fablehaven1], { title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 });
+    expect(pickPos(ranked[0]!.meta)).toBe(1);
+  });
+
+  it('respects wanted position 0 (#1028)', () => {
+    const p0 = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 0 }] });
+    const ranked = rankResultsCleaned([fablehaven1, p0], { title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 0 });
+    expect(pickPos(ranked[0]!.meta)).toBe(0);
+  });
+
+  it('position tiebreaker runs before the year tiebreaker', () => {
+    // #1 has the WRONG year, #2 has the right year. Position must still win.
+    const p1WrongYear = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2008' });
+    const p2RightYear = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }], publishedDate: '2006' });
+    const ranked = rankResultsCleaned([p2RightYear, p1WrongYear], { title: 'Fablehaven', author: 'Brandon Mull', year: '2006', seriesPosition: 1 });
+    expect(pickPos(ranked[0]!.meta)).toBe(1);
+  });
+
+  it('wanted position absent → year tiebreaker still decides (unchanged behavior)', () => {
+    const a = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }], publishedDate: '2008' });
+    const b = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2006' });
+    const ranked = rankResultsCleaned([a, b], { title: 'Fablehaven', author: 'Brandon Mull', year: '2006' });
+    expect(ranked[0]!.meta.publishedDate).toBe('2006');
+  });
+
+  it('position tie → falls through to the year tiebreaker', () => {
+    const a = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2008' });
+    const b = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2006' });
+    const ranked = rankResultsCleaned([a, b], { title: 'Fablehaven', author: 'Brandon Mull', year: '2006', seriesPosition: 1 });
+    expect(ranked[0]!.meta.publishedDate).toBe('2006');
+  });
+
+  it('candidate missing a position is neutral among non-matches (no throw, no demotion)', () => {
+    const noPos = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven' }], publishedDate: '2008' });
+    const alsoNoPos = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven' }], publishedDate: '2006' });
+    const ranked = rankResultsCleaned([noPos, alsoNoPos], { title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 });
+    expect(ranked[0]!.meta.publishedDate).toBe('2008');
+    expect(ranked[1]!.meta.publishedDate).toBe('2006');
+  });
+});
+
+// ============================================================================
 // resolveConfidenceFromDuration
 // ============================================================================
 
 describe('resolveConfidenceFromDuration', () => {
-  const topMeta = makeBook({ duration: 600 });
+  // meta.duration is MINUTES; the second arg is unrounded scanned SECONDS (#1850).
+  const topMeta = makeBook({ duration: 60 }); // 60min → 3600s
 
-  it('returns medium when duration is undefined', () => {
-    const result = resolveConfidenceFromDuration([{ meta: topMeta, score: 0.9 }], undefined);
+  it('returns medium when scanned seconds is undefined', () => {
+    const result = resolveConfidenceFromDuration([{ meta: topMeta }], undefined);
     expect(result).toEqual({ confidence: 'medium', reason: expect.stringContaining('no duration data') });
   });
 
-  it('returns medium when duration is zero', () => {
-    const result = resolveConfidenceFromDuration([{ meta: topMeta, score: 0.9 }], 0);
+  it('returns medium when scanned seconds is zero', () => {
+    const result = resolveConfidenceFromDuration([{ meta: topMeta }], 0);
     expect(result.confidence).toBe('medium');
   });
 
   it('returns medium "cannot verify" when top result has no duration', () => {
     const noDuration = makeBook();
-    const result = resolveConfidenceFromDuration([{ meta: noDuration, score: 0.9 }], 600);
+    const result = resolveConfidenceFromDuration([{ meta: noDuration }], 3600);
     expect(result).toEqual({ confidence: 'medium', reason: expect.stringContaining('cannot verify') });
   });
 
-  it('returns high when duration matches within strict threshold (5%) and score < combined gate', () => {
-    // duration 605, expected 600 → distance = 5/600 ≈ 0.0083 — under strict 5%
-    const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 600 }), score: 0.85 }], 605);
+  it('returns high when scanned seconds is within the 90s band', () => {
+    // provider 60min → 3600s; scanned 3650s → Δ50s — inside 90s
+    const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 60 }) }], 3650);
     expect(result).toEqual({ confidence: 'high' });
   });
 
-  it('returns medium duration mismatch when distance exceeds strict threshold and score < combined gate', () => {
-    // duration 700, expected 600 → distance = 100/600 ≈ 0.167 — over 5% (and 15%)
-    const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 600 }), score: 0.85 }], 700);
+  it('returns medium duration mismatch when the gap exceeds 90s', () => {
+    // provider 60min → 3600s; scanned 3750s → Δ150s — beyond 90s
+    const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 60 }) }], 3750);
     expect(result.confidence).toBe('medium');
     expect(result.reason).toContain('Duration mismatch');
   });
 
-  it('uses relaxed threshold (15%) when score >= combined gate (0.95)', () => {
-    // distance 10% — fails strict 5% but passes relaxed 15%
-    const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 600 }), score: 0.96 }], 660);
-    expect(result).toEqual({ confidence: 'high' });
-  });
-
-  it('uses strict threshold (5%) when score < combined gate', () => {
-    // distance 10% — fails strict 5%; score below gate so relaxed isn't applied
-    const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 600 }), score: 0.94 }], 660);
+  it('does not relax on long books — a 30h book 5min off is medium, no score tier rescues it', () => {
+    // provider 1800min (30h) → 108000s; scanned 108300s → Δ300s. The old relaxed
+    // 15% band (≈4.5h) would have blessed this as high; the absolute 90s band does not.
+    const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 1800 }) }], 108300);
     expect(result.confidence).toBe('medium');
+    expect(result.reason).toContain('Duration mismatch');
   });
 });
 
 // ============================================================================
-// isDurationVerified (#1266)
+// isDurationVerified (#1266/#1850) — single absolute 90s band, no score tier
 // ============================================================================
 
 describe('isDurationVerified', () => {
-  it('returns false when scanned duration is undefined', () => {
-    expect(isDurationVerified(makeBook({ duration: 600 }), undefined, 0.9)).toBe(false);
+  it('returns false when scanned seconds is undefined', () => {
+    expect(isDurationVerified(makeBook({ duration: 60 }), undefined)).toBe(false);
   });
 
-  it('returns false when scanned duration is zero', () => {
-    expect(isDurationVerified(makeBook({ duration: 600 }), 0, 0.9)).toBe(false);
+  it('returns false when scanned seconds is zero', () => {
+    expect(isDurationVerified(makeBook({ duration: 60 }), 0)).toBe(false);
   });
 
   it('returns false when meta duration is missing', () => {
-    expect(isDurationVerified(makeBook(), 600, 0.9)).toBe(false);
+    expect(isDurationVerified(makeBook(), 3600)).toBe(false);
   });
 
   it('returns false when meta duration is zero', () => {
-    expect(isDurationVerified(makeBook({ duration: 0 }), 600, 0.9)).toBe(false);
+    expect(isDurationVerified(makeBook({ duration: 0 }), 3600)).toBe(false);
   });
 
-  it('returns true within strict 5% band when score < combined gate', () => {
-    // duration 605 vs 600 → distance ≈ 0.83% — under strict 5%
-    expect(isDurationVerified(makeBook({ duration: 600 }), 605, 0.85)).toBe(true);
+  it('returns true within the 90s band', () => {
+    // provider 60min → 3600s; scanned 3650s → Δ50s
+    expect(isDurationVerified(makeBook({ duration: 60 }), 3650)).toBe(true);
   });
 
-  it('returns false outside strict band when score < combined gate', () => {
-    // duration 660 vs 600 → distance 10% — over strict 5%, score below gate
-    expect(isDurationVerified(makeBook({ duration: 600 }), 660, 0.94)).toBe(false);
+  it('returns true at exactly 90s (inclusive boundary)', () => {
+    // provider 60min → 3600s; scanned 3690s → Δ90s
+    expect(isDurationVerified(makeBook({ duration: 60 }), 3690)).toBe(true);
   });
 
-  it('returns true within relaxed 15% band when score >= combined gate (0.95)', () => {
-    // distance 10% — fails strict but passes relaxed once the score clears the gate
-    expect(isDurationVerified(makeBook({ duration: 600 }), 660, 0.96)).toBe(true);
+  it('returns false beyond the 90s band', () => {
+    // provider 60min → 3600s; scanned 3720s → Δ120s
+    expect(isDurationVerified(makeBook({ duration: 60 }), 3720)).toBe(false);
   });
 
-  it('returns false outside relaxed band even when score >= combined gate', () => {
-    // duration 720 vs 600 → distance 20% — over relaxed 15%
-    expect(isDurationVerified(makeBook({ duration: 600 }), 720, 0.99)).toBe(false);
+  it('compares in seconds — a sub-minute delta near a minute boundary verifies (no rounding inflation)', () => {
+    // scanned 3650s vs provider 3600s → Δ50s verifies. Under the old rounded-minutes
+    // compare, 3650s rounds to 61min and presented as an apparent 1-min delta.
+    expect(isDurationVerified(makeBook({ duration: 60 }), 3650)).toBe(true);
+  });
+
+  it('does not relax for long books — a 30h book 5min off is not verified', () => {
+    // provider 1800min → 108000s; scanned 108300s → Δ300s. No score gate exists to widen this.
+    expect(isDurationVerified(makeBook({ duration: 1800 }), 108300)).toBe(false);
+  });
+
+  it('same-edition regression: 34.5h book Δ69s → verified', () => {
+    // provider 2070min → 124200s; scanned 124269s → Δ69s (the evidence-set max)
+    expect(isDurationVerified(makeBook({ duration: 2070 }), 124269)).toBe(true);
+  });
+
+  it('same-edition regression: 13.7h book Δ68s → verified', () => {
+    // provider 822min → 49320s; scanned 49388s → Δ68s
+    expect(isDurationVerified(makeBook({ duration: 822 }), 49388)).toBe(true);
   });
 });
 
 // ============================================================================
-// resolveSingleResultConfidence (#1821) — RAW single-result contract, no cap
+// resolveSingleResultConfidence (#1821/#1850) — RAW single-result contract, no cap
 // ============================================================================
 
 describe('resolveSingleResultConfidence', () => {
-  it('both present + outside band → medium with mismatch reason', () => {
-    // scanned 556min (9h16m) vs candidate 807min (13h27m) = 45% off — the Fablehaven case
-    const result = resolveSingleResultConfidence(makeBook({ duration: 807 }), 556, 0.9);
+  it('both present + beyond 90s → medium with mismatch reason (hours from seconds/minutes)', () => {
+    // scanned 33360s (9.3hrs) vs candidate 807min (13.4hrs) — the Fablehaven case
+    const result = resolveSingleResultConfidence(makeBook({ duration: 807 }), 33360);
     expect(result.confidence).toBe('medium');
     expect(result.reason).toBe('Duration mismatch — scanned 9.3hrs vs expected 13.4hrs');
   });
 
-  it('both present + within band → high, no reason', () => {
-    // 605 vs 600 → under strict 5%
-    const result = resolveSingleResultConfidence(makeBook({ duration: 600 }), 605, 0.85);
+  it('both present + within 90s → high, no reason', () => {
+    // provider 60min → 3600s; scanned 3650s → Δ50s
+    const result = resolveSingleResultConfidence(makeBook({ duration: 60 }), 3650);
     expect(result.confidence).toBe('high');
     expect(result.reason).toBeUndefined();
   });
 
-  it('scanned duration missing → high, no reason (absent data does not demote)', () => {
-    const result = resolveSingleResultConfidence(makeBook({ duration: 600 }), undefined, 0.9);
+  it('scanned seconds missing → high, no reason (absent data does not demote)', () => {
+    const result = resolveSingleResultConfidence(makeBook({ duration: 60 }), undefined);
     expect(result.confidence).toBe('high');
     expect(result.reason).toBeUndefined();
   });
 
-  it('scanned duration zero → high, no reason', () => {
-    const result = resolveSingleResultConfidence(makeBook({ duration: 600 }), 0, 0.9);
+  it('scanned seconds zero → high, no reason', () => {
+    const result = resolveSingleResultConfidence(makeBook({ duration: 60 }), 0);
     expect(result.confidence).toBe('high');
     expect(result.reason).toBeUndefined();
   });
 
   it('candidate meta.duration missing → high, no reason', () => {
-    const result = resolveSingleResultConfidence(makeBook(), 600, 0.9);
+    const result = resolveSingleResultConfidence(makeBook(), 3600);
     expect(result.confidence).toBe('high');
     expect(result.reason).toBeUndefined();
   });
 
   it('candidate meta.duration zero → high, no reason', () => {
-    const result = resolveSingleResultConfidence(makeBook({ duration: 0 }), 600, 0.9);
+    const result = resolveSingleResultConfidence(makeBook({ duration: 0 }), 3600);
     expect(result.confidence).toBe('high');
     expect(result.reason).toBeUndefined();
   });
 
-  it('boundary: 10% distance with score < gate → medium (strict band applies)', () => {
-    // 660 vs 600 = 10% — outside strict 5%, score below gate → not verified → demote
-    const result = resolveSingleResultConfidence(makeBook({ duration: 660 }), 600, 0.94);
+  it('beyond 90s → medium with reason (hours math)', () => {
+    // provider 660min (11.0hrs) → 39600s; scanned 36000s (10.0hrs) → Δ3600s
+    const result = resolveSingleResultConfidence(makeBook({ duration: 660 }), 36000);
     expect(result.confidence).toBe('medium');
     expect(result.reason).toBe('Duration mismatch — scanned 10.0hrs vs expected 11.0hrs');
   });
 
-  it('boundary: 10% distance with score >= gate → high (relaxed 5%→15% band)', () => {
-    // 660 vs 600 = 10% — inside relaxed 15% once the score clears the 0.95 gate
-    const result = resolveSingleResultConfidence(makeBook({ duration: 660 }), 600, 0.96);
-    expect(result.confidence).toBe('high');
-    expect(result.reason).toBeUndefined();
+  it('reason renders correct hours from the new units (seconds scanned, minutes expected)', () => {
+    // provider 1789min → 107340s (29.8hrs); scanned 107440s → Δ100s beyond 90s (29.8hrs)
+    const result = resolveSingleResultConfidence(makeBook({ duration: 1789 }), 107440);
+    expect(result.confidence).toBe('medium');
+    expect(result.reason).toBe('Duration mismatch — scanned 29.8hrs vs expected 29.8hrs');
   });
 });
 

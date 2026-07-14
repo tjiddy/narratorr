@@ -12,6 +12,10 @@ vi.mock('./enrichment-utils.js', () => ({
 vi.mock('../../core/utils/ffprobe-path.js', () => ({
   resolveFfprobePathFromSettings: vi.fn(),
 }));
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/utils/audio-processor.js')>();
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') };
+});
 
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
@@ -33,7 +37,7 @@ function createMockDeps() {
   return {
     db: {} as Db,
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as FastifyBaseLogger,
-    settingsService: { get: vi.fn().mockResolvedValue({ ffmpegPath: '/usr/bin/ffmpeg' }) } as unknown as SettingsService,
+    settingsService: { get: vi.fn().mockResolvedValue({ }) } as unknown as SettingsService,
     bookService: { update: vi.fn(), findAsinCollision: vi.fn().mockResolvedValue(null) } as unknown as BookService,
     metadataService: { enrichBook: vi.fn(), resolveBook: vi.fn() } as unknown as MetadataService,
   };
@@ -70,14 +74,12 @@ describe('orchestrateBookEnrichment', () => {
       );
     });
 
-    it('resolves ffprobe path from processing settings before calling enrichBookFromAudio', async () => {
-      (deps.settingsService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ffmpegPath: '/custom/ffmpeg' });
+    it('resolves ffprobe path from the auto-detected ffmpeg before calling enrichBookFromAudio', async () => {
       mockResolveFfprobePath.mockReturnValue('/custom/ffprobe');
 
       await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
 
-      expect(deps.settingsService.get).toHaveBeenCalledWith('processing');
-      expect(mockResolveFfprobePath).toHaveBeenCalledWith('/custom/ffmpeg');
+      expect(mockResolveFfprobePath).toHaveBeenCalledWith('/usr/bin/ffmpeg');
       expect(mockEnrichBookFromAudio).toHaveBeenCalledWith(
         42, '/path', expect.anything(), deps.db, deps.log, deps.bookService, '/custom/ffprobe',
       );

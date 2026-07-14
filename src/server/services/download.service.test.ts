@@ -770,7 +770,9 @@ describe('DownloadService', () => {
       (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit', type: 'blackhole' });
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
-      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      // Capture the inserted row to prove '' is normalized to null at insert (#1861).
+      const valuesSpy = vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([{ id: 1 }]) });
+      db.insert.mockReturnValue({ values: valuesSpy } as never);
       db.update.mockReturnValue(mockDbChain());
       db.select.mockReturnValue(
         mockDbChain([{ download: { ...mockDownload, clientStatus: 'completed', pipelineStage: 'idle', externalId: null }, book: mockBook }]),
@@ -789,6 +791,8 @@ describe('DownloadService', () => {
         expect.objectContaining({ title: 'Test', clientType: 'blackhole' }),
         expect.stringContaining('Handoff client'),
       );
+      // '' → null at the insert seam so it can never persist as a permanent QG blocker.
+      expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ externalId: null }));
     });
 
     it('logs handoff info when adapter.addDownload returns null', async () => {
@@ -835,6 +839,67 @@ describe('DownloadService', () => {
           title: 'Test',
         }),
       ).rejects.toThrow('UNIQUE constraint failed');
+    });
+
+    // #1857 AC6/F5/F30 — client-add succeeded, insert failed → best-effort compensate
+    // the just-admitted tracked download with delete-files (externalId, true).
+    it('compensates a tracked download with removeDownload(externalId, true) when insert fails, then rethrows', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-456'),
+        removeDownload: vi.fn().mockResolvedValue(undefined),
+      };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
+
+      await expect(
+        service.grab({ downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc', title: 'Test' }),
+      ).rejects.toThrow('UNIQUE constraint failed');
+
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith('ext-456', true);
+    });
+
+    it('logs an operator-recoverable orphan (not absolute no-orphan) when compensation ALSO fails', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-789'),
+        removeDownload: vi.fn().mockRejectedValue(new Error('client offline')),
+      };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
+
+      // Insert error still surfaces even though compensation failed.
+      await expect(
+        svc.grab({ downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc', title: 'Test' }),
+      ).rejects.toThrow('UNIQUE constraint failed');
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ externalId: 'ext-789' }),
+        expect.stringContaining('orphaned external download'),
+      );
+    });
+
+    // #1857 F1 — a NULL adapter (compensation cannot run) must NOT silently skip the
+    // recovery log; the orphaned externalId still has to be logged for the operator.
+    it('logs the orphan when the compensation adapter is unavailable (getAdapter → null)', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock)
+        .mockResolvedValueOnce({ addDownload: vi.fn().mockResolvedValue('ext-null') }) // add succeeds
+        .mockResolvedValueOnce(null); // compensation lookup returns no adapter
+      db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
+
+      await expect(
+        svc.grab({ downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc', title: 'Test' }),
+      ).rejects.toThrow('UNIQUE constraint failed');
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ externalId: 'ext-null' }),
+        expect.stringContaining('orphaned external download'),
+      );
     });
 
     it('uses usenet protocol when specified', async () => {
@@ -1286,10 +1351,11 @@ describe('DownloadService', () => {
       let retryBudget: any;
       let retryService: DownloadService;
       let retryLog: ReturnType<typeof createMockLogger>;
+      let retryServiceLog: ReturnType<typeof createMockLogger>;
       let mockRetryDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
-        downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasGrabBlocker: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -1304,14 +1370,19 @@ describe('DownloadService', () => {
         mockRetryDeps = {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) },
-          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }) },
+          downloadOrchestrator: {
+            grab: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }),
+            grabForRetry: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }),
+            hasGrabBlocker: vi.fn().mockResolvedValue(false),
+          },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 1, title: 'The Way of Kings', duration: 3600, path: null, author: { name: 'Sanderson' } }) },
           settingsService: createMockSettingsService(),
           retryBudget,
           log: retryLog,
         };
-        retryService = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(createMockLogger()));
+        retryServiceLog = createMockLogger();
+        retryService = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(retryServiceLog));
         retryService.wire({ retrySearchDeps: mockRetryDeps as never, indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) } as never });
       });
 
@@ -1342,6 +1413,34 @@ describe('DownloadService', () => {
 
         expect(result.status).toBe('no_candidates');
         expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'No viable candidates' });
+      });
+
+      // #1857 F12 / #1861 — the book is already served by a grab blocker (a live
+      // download / replacement winner, a QG-eligible completed row, or a pending auto
+      // import job). retry() must map to { status: 'already_active' } WITHOUT deleting
+      // the old failed row or touching its errorMessage.
+      it('returns already_active and preserves the old failed row (not deleted, errorMessage untouched)', async () => {
+        const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const, errorMessage: 'Original failure' };
+        // Early precheck sees a grab blocker for the book → retrySearch returns already_active.
+        mockRetryDeps.downloadOrchestrator.hasGrabBlocker.mockResolvedValue(true);
+
+        db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
+        const chain = mockDbChain();
+        db.update.mockReturnValue(chain);
+
+        const result = await retryService.retry(1);
+
+        expect(result.status).toBe('already_active');
+        // Old row NOT deleted, errorMessage NOT rewritten, indexer search never run.
+        expect(db.delete).not.toHaveBeenCalled();
+        expect(chain.set).not.toHaveBeenCalled();
+        expect(mockRetryDeps.indexerSearchService.searchAll).not.toHaveBeenCalled();
+        // #1861 F2 — the manual-retry diagnostic is blocker-neutral (the outcome now also
+        // covers QG-completed rows and pending auto import jobs, not just live downloads).
+        expect(retryServiceLog.info).toHaveBeenCalledWith(
+          { id: 1 },
+          'Manual retry: book already has a blocking download or import — not retrying',
+        );
       });
 
       it('returns no_candidates and updates errorMessage when budget exhausted', async () => {
@@ -1710,9 +1809,14 @@ describe('DownloadService', () => {
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
     });
 
+    // #1861 — checkDuplicateDownloads now runs the ONE consolidated blocker
+    // classification (`gatherBookBlockers` → `classifyBlockers`): first a plain
+    // `downloads` SELECT (raw rows, NOT the joined getActiveByBookId shape), then
+    // the auto-import-jobs SELECT. Seed both.
     it('throws DuplicateDownloadError with code ACTIVE_DOWNLOAD_EXISTS when replaceable active download exists', async () => {
       const replaceableDownload = { ...mockDownload, id: 5, clientStatus: 'queued' as const, pipelineStage: 'idle' as const };
-      db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
+      db.select.mockReturnValueOnce(mockDbChain([replaceableDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([])); // no auto import job
 
       const err = await service.grab({
         downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
@@ -1722,14 +1826,15 @@ describe('DownloadService', () => {
 
       expect(err).toBeInstanceOf(DuplicateDownloadError);
       expect((err as DuplicateDownloadError).code).toBe('ACTIVE_DOWNLOAD_EXISTS');
+      expect((err as DuplicateDownloadError).details).toEqual({ active: { title: replaceableDownload.title, count: 1 } });
       expect(db.insert).not.toHaveBeenCalled();
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
     });
 
     it('throws DuplicateDownloadError with PIPELINE_ACTIVE code when only importing downloads exist', async () => {
       const pipelineDownload = { ...mockDownload, id: 5, clientStatus: 'completed' as const, pipelineStage: 'importing' as const };
-      // getActiveByBookId returns only pipeline download
-      db.select.mockReturnValueOnce(mockDbChain([{ download: pipelineDownload, book: mockBook }]));
+      db.select.mockReturnValueOnce(mockDbChain([pipelineDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([])); // no auto import job
 
       const err = await service.grab({
         downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
@@ -1739,13 +1844,15 @@ describe('DownloadService', () => {
 
       expect(err).toBeInstanceOf(DuplicateDownloadError);
       expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
+      expect((err as DuplicateDownloadError).details).toEqual({ reason: 'processing' });
       expect(db.insert).not.toHaveBeenCalled();
     });
 
     // #197 — DuplicateDownloadError typed error assertions (ERR-1)
     it('throws DuplicateDownloadError with code ACTIVE_DOWNLOAD_EXISTS for replaceable-active duplicate', async () => {
       const replaceableDownload = { ...mockDownload, id: 5, clientStatus: 'queued' as const, pipelineStage: 'idle' as const };
-      db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
+      db.select.mockReturnValueOnce(mockDbChain([replaceableDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
 
       const err = await service.grab({
         downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
@@ -1760,7 +1867,8 @@ describe('DownloadService', () => {
 
     it('throws DuplicateDownloadError with code PIPELINE_ACTIVE for pipeline-active duplicate', async () => {
       const pipelineDownload = { ...mockDownload, id: 5, clientStatus: 'completed' as const, pipelineStage: 'importing' as const };
-      db.select.mockReturnValueOnce(mockDbChain([{ download: pipelineDownload, book: mockBook }]));
+      db.select.mockReturnValueOnce(mockDbChain([pipelineDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
 
       const err = await service.grab({
         downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
@@ -1771,6 +1879,57 @@ describe('DownloadService', () => {
       expect(err).toBeInstanceOf(DuplicateDownloadError);
       expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
       expect((err as DuplicateDownloadError).name).toBe('DuplicateDownloadError');
+    });
+
+    // #1861 accepted delta: a `checking`/`pending_review` active row is now a
+    // PIPELINE_ACTIVE blocker (legacy counted it replaceable → ACTIVE_DOWNLOAD_EXISTS).
+    it('throws PIPELINE_ACTIVE (not ACTIVE_DOWNLOAD_EXISTS) for a checking-stage active row', async () => {
+      const checkingRow = { ...mockDownload, id: 5, clientStatus: 'completed' as const, pipelineStage: 'checking' as const };
+      db.select.mockReturnValueOnce(mockDbChain([checkingRow]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+      }).catch((e: unknown) => e);
+
+      expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
+    });
+
+    it('throws PIPELINE_ACTIVE (not admitted) for a QG-eligible completed row — closes the dupe window (#1861)', async () => {
+      // completed display + tracked externalId = the quality gate WILL pick it up;
+      // legacy admitted the grab here (200), leaving two live downloads.
+      const qgRow = { ...mockDownload, id: 5, clientStatus: 'completed' as const, pipelineStage: 'idle' as const, externalId: 'ext-tracked' };
+      db.select.mockReturnValueOnce(mockDbChain([qgRow]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+      }).catch((e: unknown) => e);
+
+      expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('admits the grab (clear) for a Blackhole handoff completed row (externalId null) — unchanged', async () => {
+      const blackholeRow = { ...mockDownload, id: 5, clientStatus: 'completed' as const, pipelineStage: 'idle' as const, externalId: null };
+      db.select.mockReturnValueOnce(mockDbChain([blackholeRow])); // gatherBookBlockers: downloads
+      db.select.mockReturnValueOnce(mockDbChain([]));             // gatherBookBlockers: importJobs
+      // Grab proceeds past the guard → insert + re-read the created row.
+      db.insert.mockReturnValue(mockDbChain([{ id: 7 }]));
+      db.select.mockReturnValue(mockDbChain([{ download: { ...mockDownload, id: 7 }, book: mockBook }]));
+
+      const result = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+      });
+
+      expect(result.id).toBe(7);
+      expect(db.insert).toHaveBeenCalled();
     });
 
     it('throws PIPELINE_ACTIVE when no active downloads but a pending auto import job exists for the same book', async () => {
@@ -1823,6 +1982,44 @@ describe('DownloadService', () => {
       const { sql, params } = toSQL(whereArg);
       expect(sql).toMatch(/"status" in \(\?, \?\)/i);
       expect(params).toEqual([42, 'auto', 'pending', 'processing']);
+    });
+
+    // #1861 F5 — mixed-blocker precedence at the REAL DownloadService seam. If
+    // checkDuplicateDownloads reintroduced first-row/replaceable precedence (or
+    // otherwise bypassed the aggregate classifier), a single-blocker-class test would
+    // still pass; seeding BOTH a replaceable row AND a pipeline row proves the service
+    // gives PIPELINE_ACTIVE precedence.
+    it('throws PIPELINE_ACTIVE (not ACTIVE_DOWNLOAD_EXISTS) when a replaceable row AND a pipeline row both exist', async () => {
+      const replaceableRow = { ...mockDownload, id: 5, clientStatus: 'queued' as const, pipelineStage: 'idle' as const };
+      const pipelineRow = { ...mockDownload, id: 6, clientStatus: 'completed' as const, pipelineStage: 'importing' as const };
+      db.select.mockReturnValueOnce(mockDbChain([replaceableRow, pipelineRow])); // gatherBookBlockers: downloads
+      db.select.mockReturnValueOnce(mockDbChain([]));                            // importJobs (none)
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(DuplicateDownloadError);
+      expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('throws PIPELINE_ACTIVE (not ACTIVE_DOWNLOAD_EXISTS) when a replaceable row AND a pending auto job both exist', async () => {
+      const replaceableRow = { ...mockDownload, id: 5, clientStatus: 'queued' as const, pipelineStage: 'idle' as const };
+      db.select.mockReturnValueOnce(mockDbChain([replaceableRow]));   // gatherBookBlockers: downloads (replaceable)
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 91 }]));       // importJobs (pending auto job)
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(DuplicateDownloadError);
+      expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
+      expect(db.insert).not.toHaveBeenCalled();
     });
 
     it('proceeds when no active downloads and no pending auto import jobs exist for the book', async () => {

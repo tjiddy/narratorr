@@ -57,7 +57,7 @@ describe('getEventSummary', () => {
     const result = getEventSummary('grabbed', { indexerId: 3, size: 500000000, protocol: 'torrent' }, indexerMap);
     expect(result).toContain('DrunkenSlug');
     expect(result).toContain('Torrent');
-    expect(result).toContain('476.84 MB');
+    expect(result).toContain('477 MB');
   });
 
   it('grabbed — falls back to raw indexer ID when name not in lookup map', () => {

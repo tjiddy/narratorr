@@ -95,6 +95,18 @@ describe('resolvePreviewAudioFile', () => {
     expect(await resolvePreviewAudioFile(join(workDir, 'nope'))).toBeNull();
   });
 
+  it('#1852: returns null for a direct hidden audio file (born-hidden temp)', async () => {
+    const file = join(workDir, '.track.tmp.mp3');
+    await writeFile(file, 'data');
+    expect(await resolvePreviewAudioFile(file)).toBeNull();
+  });
+
+  it('#1852: a dir with only a real file + a dot-led temp resolves to the real file', async () => {
+    await writeFile(join(workDir, 'real.mp3'), 'data');
+    await writeFile(join(workDir, '.real.tmp.mp3'), 'data');
+    expect(await resolvePreviewAudioFile(workDir)).toBe(join(workDir, 'real.mp3'));
+  });
+
   it('returns null for a directory with no audio files', async () => {
     await writeFile(join(workDir, 'cover.jpg'), 'img');
     expect(await resolvePreviewAudioFile(workDir)).toBeNull();

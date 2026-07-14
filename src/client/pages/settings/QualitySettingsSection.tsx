@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import { ZapIcon } from '@/components/icons';
-import { errorInputClass } from '@/components/settings/formStyles';
+import { NumberField } from '@/components/settings/NumberField';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { DEFAULT_SETTINGS, qualityFormSchema, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
@@ -37,81 +38,54 @@ export function QualitySettingsSection() {
       description="Minimum bar to grab"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <div>
-          <label htmlFor="grabFloor" className="block text-sm font-medium mb-2">MB/hr Grab Minimum</label>
-          <input
-            id="grabFloor"
-            type="number"
-            {...register('grabFloor', { valueAsNumber: true })}
-            className={errorInputClass(!!errors.grabFloor)}
-            min={0}
-            step="any"
-            placeholder="0"
-          />
-          {errors.grabFloor && (
-            <p className="text-sm text-destructive mt-1">{errors.grabFloor.message}</p>
-          )}
-          <p className="text-sm text-muted-foreground mt-2">
-            Minimum MB/hr to accept. Releases below this threshold are hidden from search results. Set to 0 to disable.
-          </p>
-        </div>
+        <SettingsTable>
+          <SettingsRow htmlFor="grabFloor" label="Grab minimum" description="Minimum MB/hr to accept. Releases below this threshold are hidden from search results. Set to 0 to disable.">
+            <NumberField
+              id="grabFloor"
+              {...register('grabFloor', { valueAsNumber: true })}
+              min={0}
+              step="any"
+              placeholder="0"
+              suffix="MB/hr"
+              error={errors.grabFloor?.message}
+            />
+          </SettingsRow>
 
-        <div>
-          <label htmlFor="minSeeders" className="block text-sm font-medium mb-2">Minimum Seeders</label>
-          <input
-            id="minSeeders"
-            type="number"
-            {...register('minSeeders', { valueAsNumber: true })}
-            className={errorInputClass(!!errors.minSeeders)}
-            min={0}
-            step={1}
-            placeholder="0"
-          />
-          {errors.minSeeders && (
-            <p className="text-sm text-destructive mt-1">{errors.minSeeders.message}</p>
-          )}
-          <p className="text-sm text-muted-foreground mt-2">
-            Torrent results with fewer seeders are hidden. Does not affect Usenet results. Set to 0 to disable.
-          </p>
-        </div>
+          <SettingsRow htmlFor="minSeeders" label="Minimum seeders" description="Torrent results with fewer seeders are hidden. Does not affect Usenet results. Set to 0 to disable.">
+            <NumberField
+              id="minSeeders"
+              {...register('minSeeders', { valueAsNumber: true })}
+              min={0}
+              step={1}
+              placeholder="0"
+              error={errors.minSeeders?.message}
+            />
+          </SettingsRow>
 
-        <div>
-          <label htmlFor="minDownloadSize" className="block text-sm font-medium mb-2">Min Download Size (MB)</label>
-          <input
-            id="minDownloadSize"
-            type="number"
-            {...register('minDownloadSize', { valueAsNumber: true })}
-            className={errorInputClass(!!errors.minDownloadSize)}
-            min={0}
-            step="any"
-            placeholder="0"
-          />
-          {errors.minDownloadSize && (
-            <p className="text-sm text-destructive mt-1">{errors.minDownloadSize.message}</p>
-          )}
-          <p className="text-sm text-muted-foreground mt-2">
-            Minimum download size in MB. Filters out tracker-test uploads, single-track previews, and corrupted partial releases. Try 50 to start. Set to 0 to disable.
-          </p>
-        </div>
+          <SettingsRow htmlFor="minDownloadSize" label="Min download size" description="Minimum download size in MB. Filters out tracker-test uploads, single-track previews, and corrupted partial releases. Set to 0 to disable.">
+            <NumberField
+              id="minDownloadSize"
+              {...register('minDownloadSize', { valueAsNumber: true })}
+              min={0}
+              step="any"
+              placeholder="50"
+              suffix="MB"
+              error={errors.minDownloadSize?.message}
+            />
+          </SettingsRow>
 
-        <div>
-          <label htmlFor="maxDownloadSize" className="block text-sm font-medium mb-2">Max Download Size (GB)</label>
-          <input
-            id="maxDownloadSize"
-            type="number"
-            {...register('maxDownloadSize', { valueAsNumber: true })}
-            className={errorInputClass(!!errors.maxDownloadSize)}
-            min={0}
-            step="any"
-            placeholder="0"
-          />
-          {errors.maxDownloadSize && (
-            <p className="text-sm text-destructive mt-1">{errors.maxDownloadSize.message}</p>
-          )}
-          <p className="text-sm text-muted-foreground mt-2">
-            Maximum download size in GB. Releases larger than this are hidden from search results. Set to 0 to disable.
-          </p>
-        </div>
+          <SettingsRow htmlFor="maxDownloadSize" label="Max download size" description="Maximum download size in GB. Releases larger than this are hidden from search results. Set to 0 to disable.">
+            <NumberField
+              id="maxDownloadSize"
+              {...register('maxDownloadSize', { valueAsNumber: true })}
+              min={0}
+              step="any"
+              placeholder="0"
+              suffix="GB"
+              error={errors.maxDownloadSize?.message}
+            />
+          </SettingsRow>
+        </SettingsTable>
 
         {isDirty && (
           <button

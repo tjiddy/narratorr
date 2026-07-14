@@ -419,8 +419,8 @@ async function tryGrab(
     return { result: 'grabbed', title: best.title };
   } catch (grabError: unknown) {
     if (grabError instanceof DuplicateDownloadError) {
-      log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has active download');
-      return { result: 'skipped', reason: 'already_has_active_download' };
+      log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has a blocking download or import');
+      return { result: 'skipped', reason: 'grab_blocked' };
     }
     return { result: 'grab_error', error: ensureError(grabError) };
   }

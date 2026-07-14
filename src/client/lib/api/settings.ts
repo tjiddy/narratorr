@@ -5,8 +5,10 @@ import type { IndexerTestResult } from '../../../core/indexers/types.js';
 export type Settings = AppSettings;
 export type TestResult = IndexerTestResult;
 
-export interface FfmpegProbeResult {
-  version: string;
+export interface FfmpegStatus {
+  detected: boolean;
+  version?: string;
+  path?: string;
 }
 
 export interface ProxyTestResult {
@@ -27,11 +29,7 @@ export const settingsApi = {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
-  probeFfmpeg: (path: string) =>
-    fetchApi<FfmpegProbeResult>('/settings/ffmpeg-probe', {
-      method: 'POST',
-      body: JSON.stringify({ path }),
-    }),
+  getFfmpegStatus: () => fetchApi<FfmpegStatus>('/settings/ffmpeg-status'),
   testProxy: (proxyUrl: string) =>
     fetchApi<ProxyTestResult>('/settings/test-proxy', {
       method: 'POST',

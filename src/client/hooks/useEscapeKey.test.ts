@@ -120,6 +120,27 @@ describe('useEscapeKey', () => {
     });
   });
 
+  // #1857 — nested modals: only the topmost open modal closes on Escape.
+  describe('topmost-modal arbitration', () => {
+    it('closes only the innermost (last-registered) modal on Escape', () => {
+      const outer = vi.fn();
+      const inner = vi.fn();
+
+      renderHook(() => useEscapeKey(true, outer));
+      const innerHook = renderHook(() => useEscapeKey(true, inner));
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(inner).toHaveBeenCalledTimes(1);
+      expect(outer).not.toHaveBeenCalled();
+
+      // Once the inner modal unmounts, Escape falls through to the outer.
+      innerHook.unmount();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(outer).toHaveBeenCalledTimes(1);
+      expect(inner).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('does not throw when focusRef is undefined', () => {
     const onEscape = vi.fn();
 

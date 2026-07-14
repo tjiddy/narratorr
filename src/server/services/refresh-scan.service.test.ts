@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') };
+});
+
 import { inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookService, BookWithAuthor } from './book.service.js';
@@ -13,7 +18,7 @@ vi.mock('../../core/utils/ffprobe-path.js', () => ({
 }));
 
 vi.mock('../utils/import-helpers.js', () => ({
-  getPathSize: vi.fn().mockResolvedValue(1_000_000),
+  getVisiblePathSize: vi.fn().mockResolvedValue(1_000_000),
 }));
 
 vi.mock('node:fs/promises', () => ({
@@ -23,7 +28,7 @@ vi.mock('node:fs/promises', () => ({
 
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
-import { getPathSize } from '../utils/import-helpers.js';
+import { getVisiblePathSize } from '../utils/import-helpers.js';
 import { readdir } from 'node:fs/promises';
 import { refreshScanBook, RefreshScanError } from './refresh-scan.service.js';
 
@@ -160,10 +165,10 @@ describe('refreshScanBook', () => {
     );
   });
 
-  it('updates size field with total recursive directory size via getPathSize', async () => {
-    vi.mocked(getPathSize).mockResolvedValue(5_000_000);
+  it('updates size field with total recursive directory size via getVisiblePathSize', async () => {
+    vi.mocked(getVisiblePathSize).mockResolvedValue(5_000_000);
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
-    expect(getPathSize).toHaveBeenCalledWith('/library/author/book');
+    expect(getVisiblePathSize).toHaveBeenCalledWith('/library/author/book');
     expect(mockBookService.update).toHaveBeenCalledWith(
       1,
       expect.objectContaining({ size: 5_000_000 }),
@@ -184,6 +189,25 @@ describe('refreshScanBook', () => {
       1,
       expect.objectContaining({ duration: 120 }),
     );
+  });
+
+  // Zero-duration skip-write guard: an all-rejected scan (every file's duration omitted as
+  // implausible) yields totalDuration 0 and must NOT clobber the stored duration/audioDuration.
+  it('does not write duration/audioDuration when totalDuration is 0 (skip-write guard)', async () => {
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ totalDuration: 0 }));
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    const updateArg = vi.mocked(mockBookService.update).mock.calls[0]![1];
+    expect(updateArg).not.toHaveProperty('duration');
+    expect(updateArg).not.toHaveProperty('audioDuration');
+    // Other technical fields still refresh.
+    expect(updateArg).toEqual(expect.objectContaining({ audioCodec: 'mp3', audioTotalSize: 300_000_000 }));
+    expect(log.warn).toHaveBeenCalled();
+  });
+
+  it('writes duration/audioDuration when totalDuration is > 0 (guard not triggered)', async () => {
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    const updateArg = vi.mocked(mockBookService.update).mock.calls[0]![1];
+    expect(updateArg).toEqual(expect.objectContaining({ duration: 120, audioDuration: 7200 }));
   });
 
   // Narrator overwrite semantics
@@ -287,6 +311,17 @@ describe('refreshScanBook', () => {
     );
   });
 
+  it('#1852: excludes a born-hidden temp from topLevelAudioFileCount', async () => {
+    vi.mocked(readdir).mockResolvedValue(
+      ['002.mp3', '.002.tmp.mp3', 'cover.jpg'] as unknown as Awaited<ReturnType<typeof readdir>>,
+    );
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(mockBookService.update).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ topLevelAudioFileCount: 1 }),
+    );
+  });
+
   // Error paths
   it('throws RefreshScanError NOT_FOUND when book does not exist', async () => {
     vi.mocked(mockBookService.getById).mockResolvedValue(null);
@@ -329,7 +364,6 @@ describe('refreshScanBook', () => {
   // ffprobePath
   it('resolves ffprobePath from processing settings before calling scan', async () => {
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
-    expect(mockSettingsService.get).toHaveBeenCalledWith('processing');
     expect(resolveFfprobePathFromSettings).toHaveBeenCalledWith('/usr/bin/ffmpeg');
     expect(scanAudioDirectory).toHaveBeenCalledWith(
       '/library/author/book',

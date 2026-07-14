@@ -13,6 +13,7 @@ import type { QualityDecisionReason } from './quality-gate.types.js';
 import { NULL_REASON } from './quality-gate.types.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
+import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { revertBookStatus, transitionBookStatus } from '../utils/book-status.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -183,7 +184,7 @@ export class QualityGateOrchestrator {
     return { id: result.id, status: result.status };
   }
 
-  private async resolveFfprobePath(): Promise<string | undefined> { const s = await this.optional.settingsService?.get('processing'); return resolveFfprobePathFromSettings(s?.ffmpegPath); }
+  private async resolveFfprobePath(): Promise<string | undefined> { return resolveFfprobePathFromSettings(await resolveFfmpegPath()); }
 
   /**
    * Run the savePath → scan → decide → dispatch chain for a row that the caller

@@ -2,9 +2,10 @@ import { stat, readdir } from 'node:fs/promises';
 import { extname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
-import { getPathSize } from '../utils/import-helpers.js';
+import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
+import { getVisiblePathSize } from '../utils/import-helpers.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 
@@ -30,7 +31,7 @@ export class RefreshScanError extends Error {
 export async function refreshScanBook(
   bookId: number,
   bookService: BookService,
-  settingsService: SettingsService,
+  _settingsService: SettingsService,
   log: FastifyBaseLogger,
 ): Promise<RefreshScanResult> {
   const book = await bookService.getById(bookId);
@@ -51,8 +52,7 @@ export async function refreshScanBook(
     throw error;
   }
 
-  const processingSettings = await settingsService.get('processing');
-  const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
+  const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
 
   const scanResult = await scanAudioDirectory(book.path, {
     skipCover: true,
@@ -64,14 +64,15 @@ export async function refreshScanBook(
     throw new RefreshScanError('NO_AUDIO_FILES', 'No audio files found in book directory');
   }
 
-  // Count top-level (non-recursive) audio files
+  // Count top-level (non-recursive) audio files — exclude born-hidden transients (`.002.tmp.mp3`)
   const topLevelEntries = await readdir(book.path);
   const topLevelAudioFileCount = topLevelEntries.filter(
-    (f) => AUDIO_EXTENSIONS.has(extname(String(f)).toLowerCase()),
+    (f) => !isHiddenName(String(f)) && AUDIO_EXTENSIONS.has(extname(String(f)).toLowerCase()),
   ).length;
 
-  // Total directory size (all files, not just audio)
-  const directorySize = await getPathSize(book.path);
+  // Total directory size (all visible files, not just audio) — the visibility-aware walk skips
+  // leading-dot files and dot-dir subtrees so a mid-op `.merge-tmp/` never inflates stored `size`.
+  const directorySize = await getVisiblePathSize(book.path);
 
   const durationMinutes = Math.round(scanResult.totalDuration / 60);
   const narratorsUpdated = !!scanResult.tagNarrator;
@@ -80,6 +81,18 @@ export async function refreshScanBook(
   const narrators = scanResult.tagNarrator
     ? scanResult.tagNarrator.split(/[,;&]/).map(n => n.trim()).filter(n => n.length > 0)
     : undefined;
+
+  // Skip-write guard: an all-rejected scan yields totalDuration 0 (every file's duration was
+  // omitted as implausible). Writing that zero would silently clobber a correct provider/prior
+  // duration and poison the baseline future quality-gate durationDelta comparisons run against,
+  // so preserve the stored duration/audioDuration in that case. Other fields refresh as today.
+  const durationFields =
+    scanResult.totalDuration === 0
+      ? {}
+      : { audioDuration: Math.round(scanResult.totalDuration), duration: durationMinutes };
+  if (scanResult.totalDuration === 0) {
+    log.warn({ bookId }, 'Refresh scan produced 0 total duration; preserving existing duration/audioDuration');
+  }
 
   // bookService.update() wraps narrator sync + book row update in a single transaction
   await bookService.update(bookId, {
@@ -92,10 +105,9 @@ export async function refreshScanBook(
     audioFileCount: scanResult.fileCount,
     topLevelAudioFileCount,
     audioTotalSize: scanResult.totalSize,
-    audioDuration: Math.round(scanResult.totalDuration),
     size: directorySize,
-    duration: durationMinutes,
     enrichmentStatus: 'file-enriched',
+    ...durationFields,
     ...(narrators !== undefined ? { narrators } : {}),
   });
 

@@ -1,4 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
+});
+
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { MatchJobService, capConfidence, type MatchCandidate, type MatchResult } from './match-job.service.js';
 import { RECORDING_REVIEW_REASON } from './match-job.helpers.js';
@@ -7,6 +13,7 @@ import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 
 // Mock audio scanner
 vi.mock('../../core/utils/audio-scanner.js', () => ({
@@ -60,12 +67,12 @@ function flushPromises(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 50));
 }
 
-/** Wait for a job to reach a terminal status */
+/** Wait for a job to reach a terminal status ('failed' is terminal too, #1864). */
 async function waitForJob(service: MatchJobService, id: string, maxMs = 2000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < maxMs) {
     const status = service.getJob(id);
-    if (!status || status.status === 'completed' || status.status === 'cancelled') return;
+    if (!status || status.status === 'completed' || status.status === 'cancelled' || status.status === 'failed') return;
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 }
@@ -280,6 +287,162 @@ describe('MatchJobService', () => {
     });
   });
 
+  // #1864 §6/§6a — deterministic terminalization + first-terminal-wins matrix.
+  describe('terminalization (#1864)', () => {
+    it('injected top-level run() crash → status failed with error, retained results, logged', async () => {
+      // The orchestration awaits Promise.allSettled; a rejection there is the only
+      // path that escapes the per-book catch (remote in practice). Spy so the job's
+      // first allSettled call — issued synchronously inside createJob — rejects.
+      const spy = vi.spyOn(Promise, 'allSettled').mockRejectedValueOnce(new Error('orchestration boom'));
+      try {
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const status = service.getJob(id)!;
+        expect(status.status).toBe('failed');
+        expect(status.error).toBe('orchestration boom');
+        expect(Array.isArray(status.results)).toBe(true); // partial results retained
+        expect(log.error).toHaveBeenCalledWith(
+          expect.objectContaining({ jobId: 'test-job-id' }),
+          'Match job failed unexpectedly',
+        );
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('a poll of a failed job still returns it (not gone) until TTL', async () => {
+      const spy = vi.spyOn(Promise, 'allSettled').mockRejectedValueOnce(new Error('boom'));
+      try {
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+        // getJob returns the failed snapshot with error + retained results, not null.
+        const status = service.getJob(id);
+        expect(status).not.toBeNull();
+        expect(status!.status).toBe('failed');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('failed job schedules cleanup exactly once (removed after TTL)', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const spy = vi.spyOn(Promise, 'allSettled').mockRejectedValueOnce(new Error('boom'));
+      try {
+        const id = service.createJob([sampleCandidate]);
+        for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(1);
+        expect(service.getJob(id)!.status).toBe('failed');
+
+        vi.advanceTimersByTime(10 * 60 * 1000);
+        expect(service.getJob(id)).toBeNull();
+        // Exactly one cleanup — the terminalizing transition owns the single schedule.
+        expect(log.debug).toHaveBeenCalledWith({ jobId: id }, 'Match job expired and removed');
+        const removals = (log.debug as ReturnType<typeof vi.fn>).mock.calls.filter(c => c[1] === 'Match job expired and removed');
+        expect(removals).toHaveLength(1);
+      } finally {
+        spy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('completion-then-cancel stays completed (first terminal wins)', async () => {
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+      expect(service.getJob(id)!.status).toBe('completed');
+
+      // A cancel after completion is a no-op — returns false, status unchanged.
+      expect(service.cancelJob(id)).toBe(false);
+      expect(service.getJob(id)!.status).toBe('completed');
+    });
+
+    it('cancel-then-completion stays cancelled (first terminal wins)', async () => {
+      const books: MatchCandidate[] = Array.from({ length: 20 }, (_, i) => ({ path: `/b-${i}`, title: `B${i}` }));
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return [];
+      });
+      const id = service.createJob(books);
+      expect(service.cancelJob(id)).toBe(true); // matching → cancelled transition
+      await waitForJob(service, id);
+      // The run resolves afterward but completion no-ops over the cancelled terminal.
+      expect(service.getJob(id)!.status).toBe('cancelled');
+    });
+
+    it('failure-then-cancel stays failed (terminal is immutable)', async () => {
+      const spy = vi.spyOn(Promise, 'allSettled').mockRejectedValueOnce(new Error('boom'));
+      try {
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+        expect(service.getJob(id)!.status).toBe('failed');
+        expect(service.cancelJob(id)).toBe(false);
+        expect(service.getJob(id)!.status).toBe('failed');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('failure-then-completion stays failed with the original error, results, and a single cleanup (F7)', async () => {
+      // run() terminalizes `failed` on the orchestration crash, then RESOLVES — so start()'s
+      // completion handler always fires afterward. That completion is the failure→completion
+      // matrix cell: it must no-op (write-once), leaving status/error/results owned by the
+      // failed transition and scheduling no second TTL cleanup.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const spy = vi.spyOn(Promise, 'allSettled').mockRejectedValueOnce(new Error('orchestration boom'));
+      try {
+        const id = service.createJob([sampleCandidate]);
+        // Flush the crash catch AND the subsequent completion handler (both microtasks).
+        for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(1);
+
+        const status = service.getJob(id)!;
+        // The completion attempt no-oped: still failed, original error, retained results.
+        expect(status.status).toBe('failed');
+        expect(status.error).toBe('orchestration boom');
+        expect(Array.isArray(status.results)).toBe(true);
+
+        // Exactly one cleanup — the failed transition owns it; the no-op completion schedules none.
+        vi.advanceTimersByTime(10 * 60 * 1000);
+        expect(service.getJob(id)).toBeNull();
+        const removals = (log.debug as ReturnType<typeof vi.fn>).mock.calls.filter(c => c[1] === 'Match job expired and removed');
+        expect(removals).toHaveLength(1);
+      } finally {
+        spy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('cancelJob boolean semantics (#1864 F11)', () => {
+    it('returns true only on the matching→cancelled transition', () => {
+      const id = service.createJob([sampleCandidate]);
+      expect(service.getJob(id)!.status).toBe('matching');
+      expect(service.cancelJob(id)).toBe(true);
+      expect(service.getJob(id)!.status).toBe('cancelled');
+    });
+
+    it('returns false for an already-cancelled (terminal) job', () => {
+      const id = service.createJob([sampleCandidate]);
+      expect(service.cancelJob(id)).toBe(true);
+      expect(service.cancelJob(id)).toBe(false); // second cancel is a no-op
+    });
+
+    it('returns false for a completed (terminal) job', async () => {
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+      expect(service.cancelJob(id)).toBe(false);
+    });
+
+    it('does not log the cancel line for a missing or terminal job', () => {
+      service.cancelJob('nonexistent');
+      const id = service.createJob([sampleCandidate]);
+      service.cancelJob(id);
+      (log.info as ReturnType<typeof vi.fn>).mockClear();
+      service.cancelJob(id); // already cancelled
+      expect(log.info).not.toHaveBeenCalledWith({ jobId: id }, 'Match job cancelled');
+    });
+  });
+
   describe('confidence scoring', () => {
     it('returns none confidence when no search results', async () => {
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -485,9 +648,9 @@ describe('MatchJobService', () => {
   });
 
   describe('runtime disambiguation', () => {
-    it('promotes to high confidence when best match duration within 5%', async () => {
+    it('promotes to high confidence when best match duration within the 90s band', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000, // 600 minutes
+        totalDuration: 36050, // 600min provider (36000s) + 50s → Δ50s
         files: [],
       });
 
@@ -497,7 +660,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 610 }) // 1.67% off
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ50s — inside 90s
         .mockResolvedValueOnce({ asin: 'A2', duration: 800 });
 
       const id = service.createJob([sampleCandidate]);
@@ -678,10 +841,10 @@ describe('MatchJobService', () => {
     });
 
     it('single result within runtime tolerance → high (no regression to correct matches)', async () => {
-      // 600min scanned vs 605min provider → under the strict 5% band → verified.
-      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 600 * 60, files: [] });
+      // 36050s scanned vs 600min (36000s) provider → Δ50s, inside the 90s band → verified.
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 36050, files: [] });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', duration: 605 }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', duration: 600 }),
       ]);
 
       const id = service.createJob([sampleCandidate]);
@@ -925,7 +1088,6 @@ describe('MatchJobService', () => {
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
 
-      expect(settingsService.get).toHaveBeenCalledWith('processing');
       expect(scanAudioDirectory).toHaveBeenCalledWith(
         sampleCandidate.path,
         { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function) },
@@ -939,8 +1101,8 @@ describe('MatchJobService', () => {
       expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
     });
 
-    it('passes ffprobePath as undefined when ffmpegPath is empty', async () => {
-      (settingsService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ffmpegPath: '' });
+    it('passes ffprobePath as undefined when ffmpeg is not detected', async () => {
+      ffmpegState.resolves = false;
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 3600 });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeBookMetadata({ providerId: undefined }),
@@ -953,10 +1115,11 @@ describe('MatchJobService', () => {
         sampleCandidate.path,
         { skipCover: true, ffprobePath: undefined, onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
+      ffmpegState.resolves = true;
     });
 
-    it('passes ffprobePath as undefined when ffmpegPath is whitespace-only', async () => {
-      (settingsService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ffmpegPath: '   ' });
+    it('passes ffprobePath as undefined when ffmpeg detection returns null (variant)', async () => {
+      ffmpegState.resolves = false;
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 3600 });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeBookMetadata({ providerId: undefined }),
@@ -969,6 +1132,7 @@ describe('MatchJobService', () => {
         sampleCandidate.path,
         { skipCover: true, ffprobePath: undefined, onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
+      ffmpegState.resolves = true;
     });
   });
 
@@ -1037,9 +1201,9 @@ describe('MatchJobService', () => {
   });
 
   describe('edge cases', () => {
-    it('handles exact 5% duration threshold as high confidence (inclusive)', async () => {
+    it('handles exact 90s duration delta as high confidence (inclusive)', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000, // 600 min
+        totalDuration: 36090, // 600min provider (36000s) + 90s → exactly the band edge
         files: [],
       });
 
@@ -1049,20 +1213,20 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 630 }) // exactly 5%
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ90s exactly
         .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Fixed: "within 5%" is inclusive (<=), so exact 5% gets high confidence
+      // The 90s band is inclusive (<=), so exactly 90s gets high confidence.
       expect(result!.confidence).toBe('high');
     });
 
-    it('handles just under 5% threshold as high confidence', async () => {
+    it('handles just under 90s delta as high confidence', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000, // 600 min
+        totalDuration: 36080, // 600min provider (36000s) + 80s → Δ80s
         files: [],
       });
 
@@ -1072,7 +1236,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 629 }) // 4.83%
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ80s
         .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
       const id = service.createJob([sampleCandidate]);
@@ -1155,12 +1319,14 @@ describe('MatchJobService', () => {
     });
   });
 
-  // ── #335 Tiered duration threshold based on combined score ──────────────
-  describe('tiered duration threshold (#335)', () => {
-    it('high combined score (1.0) + duration within 15% → confidence high', async () => {
+  // ── #1850 Single absolute duration band (90s), score-independent ─────────
+  // Replaces the removed #335 relative %/score tier: one fixed 90s band, applied
+  // identically regardless of the title/author score.
+  describe('absolute duration band (#1850)', () => {
+    it('high combined score (1.0) + duration within 90s → confidence high', async () => {
       // sampleCandidate: "The Way of Kings" by "Brandon Sanderson" → score 1.0
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000, // 600 min
+        totalDuration: 36050, // 600min provider (36000s) + 50s → Δ50s
         files: [],
       });
 
@@ -1170,7 +1336,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 660 }) // 10% off — within 15% relaxed
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ50s — inside 90s
         .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
       const id = service.createJob([sampleCandidate]);
@@ -1180,135 +1346,113 @@ describe('MatchJobService', () => {
       expect(result!.confidence).toBe('high');
     });
 
-    it('high combined score (1.0) + duration at exactly 15% boundary → confidence high (inclusive)', async () => {
-      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000, // 600 min
-        files: [],
-      });
-
-      const results = [
-        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
-        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
-      ];
-      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
-      (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 690 }) // exactly 15%
-        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
-
-      const id = service.createJob([sampleCandidate]);
-      await waitForJob(service, id);
-
-      const result = service.getJob(id)!.results[0];
-      expect(result!.confidence).toBe('high');
-    });
-
-    it('high combined score (1.0) + duration at 16% → confidence medium', async () => {
-      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000, // 600 min
-        files: [],
-      });
-
-      const results = [
-        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
-        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
-      ];
-      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
-      (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 696 }) // 16% off
-        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
-
-      const id = service.createJob([sampleCandidate]);
-      await waitForJob(service, id);
-
-      const result = service.getJob(id)!.results[0];
-      expect(result!.confidence).toBe('medium');
-    });
-
-    it('low combined score (0.8) + duration within 5% → confidence high (existing behavior)', async () => {
-      // Use a candidate with slightly different title to lower score below 0.95
-      const weakCandidate: MatchCandidate = {
-        path: '/audiobooks/Doctor Sleep',
-        title: 'Doctor Sleep',
-        author: 'Stephen King',
-      };
-
-      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000, // 600 min
-        files: [],
-      });
-
-      // "Doctor Sleep" search returns results with somewhat different title
-      const results = [
-        makeBookMetadata({ title: 'Doctor Sleep: A Novel', authors: [{ name: 'Stephen King' }], providerId: 'p1' }),
-        makeBookMetadata({ title: 'Doctor Sleep (Unabridged)', authors: [{ name: 'Stephen King' }], providerId: 'p2' }),
-      ];
-      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
-      (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 620 }) // 3.3% off — within strict 5%
-        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
-
-      const id = service.createJob([weakCandidate]);
-      await waitForJob(service, id);
-
-      const result = service.getJob(id)!.results[0];
-      expect(result!.confidence).toBe('high');
-    });
-
-    it('low combined score + duration at 6% → confidence medium (strict threshold applies)', async () => {
-      const weakCandidate: MatchCandidate = {
-        path: '/audiobooks/Doctor Sleep',
-        title: 'Doctor Sleep',
-        author: 'Stephen King',
-      };
-
-      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000, // 600 min
-        files: [],
-      });
-
-      const results = [
-        makeBookMetadata({ title: 'Doctor Sleep: A Novel', authors: [{ name: 'Stephen King' }], providerId: 'p1' }),
-        makeBookMetadata({ title: 'Doctor Sleep (Unabridged)', authors: [{ name: 'Stephen King' }], providerId: 'p2' }),
-      ];
-      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
-      (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 640 }) // 6.7% off — exceeds strict 5%
-        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
-
-      const id = service.createJob([weakCandidate]);
-      await waitForJob(service, id);
-
-      const result = service.getJob(id)!.results[0];
-      expect(result!.confidence).toBe('medium');
-    });
-
-    it('perfect title + mismatched author (combined ≈ 0.6) + 10% duration → medium', async () => {
-      // Perfect title match but wrong author → combined score well below 0.95
-      const candidate: MatchCandidate = {
+    it('high combined score (1.0) — no relaxation: a 30h book 5min off → medium (the #335 tier removal)', async () => {
+      // Old code: score 1.0 relaxed the band to 15% (≈4.5h on a 30h book), so a
+      // 5-minute gap passed as high. The absolute 90s band demotes it — high title
+      // confidence makes a duration gap MORE diagnostic, not less.
+      const longCandidate: MatchCandidate = {
         path: '/audiobooks/The Way of Kings',
         title: 'The Way of Kings',
         author: 'Brandon Sanderson',
       };
-
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000, // 600 min
+        totalDuration: 108300, // 1800min provider (108000s) + 300s (5min) → Δ300s
         files: [],
       });
 
       const results = [
-        makeBookMetadata({ title: 'The Way of Kings', authors: [{ name: 'Completely Different Person' }], providerId: 'p1' }),
-        makeBookMetadata({ title: 'The Way of Kings Guide', authors: [{ name: 'Completely Different Person' }], providerId: 'p2' }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 660 }) // 10% off — within relaxed 15% but score < 0.95
-        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+        .mockResolvedValueOnce({ asin: 'A1', duration: 1800 }) // 30h; Δ300s beyond 90s
+        .mockResolvedValueOnce({ asin: 'A2', duration: 2400 });
 
-      const id = service.createJob([candidate]);
+      const id = service.createJob([longCandidate]);
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Score ≈ 0.6 (title 1.0 * 0.6 + author ~0.0 * 0.4), strict 5% applies → 10% exceeds → medium
+      expect(result!.confidence).toBe('medium');
+      expect(result!.reason).toContain('Duration mismatch');
+    });
+
+    it('high combined score (1.0) + duration just beyond 90s → confidence medium', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+        totalDuration: 36120, // 600min provider (36000s) + 120s → Δ120s
+        files: [],
+      });
+
+      const results = [
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ120s beyond 90s
+        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result!.confidence).toBe('medium');
+    });
+
+    it('low combined score + duration within 90s → confidence high (band is score-independent)', async () => {
+      // A weak title match still verifies within the same 90s band — no strict/relaxed split.
+      const weakCandidate: MatchCandidate = {
+        path: '/audiobooks/Doctor Sleep',
+        title: 'Doctor Sleep',
+        author: 'Stephen King',
+      };
+
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+        totalDuration: 36060, // 600min provider (36000s) + 60s → Δ60s
+        files: [],
+      });
+
+      const results = [
+        makeBookMetadata({ title: 'Doctor Sleep: A Novel', authors: [{ name: 'Stephen King' }], providerId: 'p1' }),
+        makeBookMetadata({ title: 'Doctor Sleep (Unabridged)', authors: [{ name: 'Stephen King' }], providerId: 'p2' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ60s — inside 90s
+        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+
+      const id = service.createJob([weakCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result!.confidence).toBe('high');
+    });
+
+    it('low combined score + duration beyond 90s → confidence medium', async () => {
+      const weakCandidate: MatchCandidate = {
+        path: '/audiobooks/Doctor Sleep',
+        title: 'Doctor Sleep',
+        author: 'Stephen King',
+      };
+
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+        totalDuration: 36000, // 600min → Δ2400s from a 640min provider
+        files: [],
+      });
+
+      const results = [
+        makeBookMetadata({ title: 'Doctor Sleep: A Novel', authors: [{ name: 'Stephen King' }], providerId: 'p1' }),
+        makeBookMetadata({ title: 'Doctor Sleep (Unabridged)', authors: [{ name: 'Stephen King' }], providerId: 'p2' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'A1', duration: 640 }) // Δ2400s beyond 90s
+        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+
+      const id = service.createJob([weakCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
       expect(result!.confidence).toBe('medium');
     });
   });
@@ -1409,9 +1553,9 @@ describe('MatchJobService', () => {
       expect(['medium', 'high']).toContain(result!.confidence);
     });
 
-    it('duration still promotes to high when ≤ 5% threshold with scoring', async () => {
+    it('duration still promotes to high when within the 90s band with scoring', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000,
+        totalDuration: 36050, // 600min provider (36000s) + 50s → Δ50s
         files: [],
       });
 
@@ -1421,7 +1565,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 610 })
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 800 });
 
       const id = service.createJob([sampleCandidate]);
@@ -1566,6 +1710,32 @@ describe('MatchJobService', () => {
     });
   });
 
+  // #1849 — folder-pass position-agreement tiebreaker end-to-end: the candidate's
+  // seriesPosition reaches rankResults and selects the agreeing same-title entry.
+  describe('position tiebreaker (folder pass, #1849)', () => {
+    it('selects the position-matching entry as bestMatch on a same-title series tie', async () => {
+      const candidate: MatchCandidate = {
+        path: '/audiobooks/Fablehaven/01 - Fablehaven',
+        title: 'Fablehaven',
+        author: 'Brandon Mull',
+        seriesPosition: 1,
+      };
+      // Provider returned #2 first; tied title/author scores. Position must promote #1.
+      const results = [
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], providerId: undefined, series: [{ name: 'Fablehaven', position: 2 }], asin: 'B2' }),
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], providerId: undefined, series: [{ name: 'Fablehaven', position: 1 }], asin: 'B1' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result!.bestMatch!.asin).toBe('B1');
+      expect(pickPrimarySeries(result!.bestMatch!)?.position).toBe(1);
+    });
+  });
+
   describe('structured search params', () => {
     it('sends structured title and author via options when parsed data available', async () => {
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -1595,14 +1765,14 @@ describe('MatchJobService', () => {
   // ── #415 Match confidence reason ──────────────────────────────────────
   describe('match confidence reason (#415)', () => {
     describe('reason populated for medium confidence', () => {
-      it('duration exceeds strict threshold (>5%) with score < 0.95 → reason includes "Duration mismatch" with scanned and expected hours', async () => {
+      it('duration beyond the 90s band (weak title score) → reason includes "Duration mismatch" with scanned and expected hours', async () => {
         const weakCandidate: MatchCandidate = {
           path: '/audiobooks/Doctor Sleep',
           title: 'Doctor Sleep',
           author: 'Stephen King',
         };
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-          totalDuration: 36000, // 600 min
+          totalDuration: 36000, // 600 min → 10.0 hrs scanned
           files: [],
         });
         const results = [
@@ -1611,7 +1781,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 650 }) // 8.3% off — exceeds strict 5%
+          .mockResolvedValueOnce({ asin: 'A1', duration: 650 }) // Δ3000s — beyond 90s
           .mockResolvedValueOnce({ asin: 'A2', duration: 700 });
 
         const id = service.createJob([weakCandidate]);
@@ -1626,9 +1796,9 @@ describe('MatchJobService', () => {
         expect(result!.reason).toContain('10.8');
       });
 
-      it('duration exceeds relaxed threshold (>15%) with score ≥ 0.95 → reason includes "Duration mismatch" with both values', async () => {
+      it('duration beyond the 90s band (high title score, no relaxation) → reason includes "Duration mismatch" with both values', async () => {
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-          totalDuration: 36000, // 600 min
+          totalDuration: 36000, // 600 min → 10.0 hrs scanned
           files: [],
         });
         const results = [
@@ -1637,7 +1807,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 696 }) // 16% off
+          .mockResolvedValueOnce({ asin: 'A1', duration: 696 }) // Δ5760s — beyond 90s even at score 1.0
           .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
         const id = service.createJob([sampleCandidate]);
@@ -1717,7 +1887,7 @@ describe('MatchJobService', () => {
         expect(result!.reason).toBe('Best match missing duration — cannot verify');
       });
 
-      it('duration just over strict threshold (5.1%) with score < 0.95 → medium confidence with duration-mismatch reason', async () => {
+      it('duration beyond 90s (weak title score) → medium confidence with duration-mismatch reason', async () => {
         const weakCandidate: MatchCandidate = {
           path: '/audiobooks/Doctor Sleep',
           title: 'Doctor Sleep',
@@ -1733,7 +1903,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 1051 }) // 5.1% off
+          .mockResolvedValueOnce({ asin: 'A1', duration: 1051 }) // Δ3060s — beyond 90s
           .mockResolvedValueOnce({ asin: 'A2', duration: 1200 });
 
         const id = service.createJob([weakCandidate]);
@@ -1744,7 +1914,7 @@ describe('MatchJobService', () => {
         expect(result!.reason).toContain('Duration mismatch');
       });
 
-      it('duration just over relaxed threshold (15.1%) with score ≥ 0.95 → medium confidence with duration-mismatch reason', async () => {
+      it('duration beyond 90s (high title score, no relaxation) → medium confidence with duration-mismatch reason', async () => {
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
           totalDuration: 60000, // 1000 min
           files: [],
@@ -1755,7 +1925,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 1151 }) // 15.1% off
+          .mockResolvedValueOnce({ asin: 'A1', duration: 1151 }) // Δ9060s — beyond 90s even at score 1.0
           .mockResolvedValueOnce({ asin: 'A2', duration: 1300 });
 
         const id = service.createJob([sampleCandidate]);
@@ -1826,9 +1996,9 @@ describe('MatchJobService', () => {
         expect(result!.reason).toBeUndefined();
       });
 
-      it('duration at exactly 5.0% strict threshold (inclusive <=) → high confidence, no reason', async () => {
+      it('duration at exactly the 90s band edge (inclusive <=) → high confidence, no reason', async () => {
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-          totalDuration: 36000, // 600 min
+          totalDuration: 36090, // 600min provider (36000s) + 90s → exactly the band edge
           files: [],
         });
         const results = [
@@ -1837,7 +2007,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 630 }) // exactly 5%
+          .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ90s exactly
           .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
         const id = service.createJob([sampleCandidate]);
@@ -1848,9 +2018,9 @@ describe('MatchJobService', () => {
         expect(result!.reason).toBeUndefined();
       });
 
-      it('duration at exactly 15.0% relaxed threshold with high score (inclusive <=) → high confidence, no reason', async () => {
+      it('duration within the 90s band with high title score → high confidence, no reason', async () => {
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-          totalDuration: 36000, // 600 min
+          totalDuration: 36050, // 600min provider (36000s) + 50s → Δ50s
           files: [],
         });
         const results = [
@@ -1859,7 +2029,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 690 }) // exactly 15%
+          .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ50s
           .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
         const id = service.createJob([sampleCandidate]);
@@ -2300,6 +2470,29 @@ describe('MatchJobService', () => {
           'Dune Frank Herbert',
           { title: 'Dune', author: 'Frank Herbert' },
         );
+      });
+
+      // #1849 — the wanted series position must survive the per-attempt
+      // `attemptQuery` rebuild (match-job.service.ts) and reach rankResultsCleaned
+      // on the REAL tag path, so a same-title series tie resolves to the right entry.
+      it('threads tagSeriesPosition through attemptQuery so the tag-pass tiebreaker picks the right entry', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue({
+          ...makeTaggedScan('Fablehaven', 'Brandon Mull'),
+          tagSeriesPosition: 1,
+        });
+        // Provider returns #2 first; scores tie (same title/author). Both carry a
+        // full asin so fetchDetails passes them through without a getBook call.
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }], asin: 'B2' }),
+          makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], asin: 'B1' }),
+        ]);
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.bestMatch?.asin).toBe('B1');
+        expect(pickPrimarySeries(result!.bestMatch!)?.position).toBe(1);
       });
 
       it('does NOT fall through to Pass 2 when tag-derived match is accepted', async () => {
@@ -3237,20 +3430,18 @@ describe('MatchJobService', () => {
           expect(result!.reason).toBeUndefined();
         });
 
-        it('single-result + strip cap + duration in relaxed 15% band + score clears gate → high (uses top.score)', async () => {
-          // F1 — proves the single-result branch feeds `top.score` into isDurationVerified
-          // so a strong textual match relaxes the duration band from strict 5% to 15%.
-          // Scanned 600min vs candidate 660min = 10% distance: outside strict 5%, inside
-          // relaxed 15%. The exact 'Imagine Me' / 'Tahereh Mafi' match scores 1.0 (≥ 0.95
-          // gate), so the relaxed band applies → verified → high. A strict-only regression
-          // (or a low/default score passed instead of top.score) would yield medium here.
+        it('single-result + strip cap + duration within the 90s band → high (cap bypassed by verification)', async () => {
+          // #1266/#1850 — proves the single-result branch bypasses the strip `medium`
+          // cap when the scanned runtime verifies the candidate within the absolute 90s
+          // band. Scanned 36050s vs candidate 600min (36000s) = Δ50s, inside 90s →
+          // durationVerified → capBypassedByDuration → high. Band is score-independent.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
-            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 600 * 60 }),
+            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 36050 }),
           );
           vi.mocked(metadataService.searchBooks)
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([
-              makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1', duration: 660 }),
+              makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1', duration: 600 }),
             ]);
           vi.mocked(metadataService.getBook).mockResolvedValue(null);
 
@@ -3453,11 +3644,12 @@ describe('MatchJobService', () => {
     }
 
     it('caps a duration-verified tag-pass high → medium on narrator mismatch (headline, multi-alternative)', async () => {
-      // Two unabridged editions; duration (8.35% gap) verifies the marquee
-      // edition at the relaxed 15% band → high. Narrator is the discriminator
-      // duration lacks: file Adriel Brandt vs matched Michael York → cap to Review.
+      // Two unabridged editions; the scan (28850s) is within the 90s band of the
+      // marquee 480min edition (28800s, Δ50s) → duration verifies → high. Narrator
+      // is the discriminator duration lacks: file Adriel Brandt vs matched Michael
+      // York → cap to Review.
       vi.mocked(scanAudioDirectory).mockResolvedValue(
-        makeNarratorScan({ tagTitle: 'Brave New World', tagAuthor: 'Aldous Huxley', tagNarrator: 'Adriel Brandt' }),
+        makeNarratorScan({ tagTitle: 'Brave New World', tagAuthor: 'Aldous Huxley', tagNarrator: 'Adriel Brandt', totalDuration: 28850 }),
       );
       vi.mocked(metadataService.searchBooks).mockResolvedValue([
         makeBookMetadata({ title: 'Brave New World', authors: [{ name: 'Aldous Huxley' }], narrators: ['Michael York'], duration: 480, asin: 'B002V1BVK4' }),

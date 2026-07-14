@@ -32,6 +32,9 @@ export const queryKeys = {
     book: (id: string) => ['metadata', 'book', id] as const,
   },
   settings: () => ['settings'] as const,
+  // Shared by the Audio Tools status row, the ffmpeg-gated Post Processing toggles,
+  // and BookDetails merge/retag gating — one cache entry so they never disagree.
+  ffmpegStatus: () => ['ffmpeg-status'] as const,
   indexers: () => ['indexers'] as const,
   downloadClients: () => ['downloadClients'] as const,
   notifiers: () => ['notifiers'] as const,
@@ -63,6 +66,7 @@ export const queryKeys = {
   },
   systemTasks: () => ['system', 'tasks'] as const,
   systemInfo: () => ['system', 'info'] as const,
+  thirdPartyNotices: () => ['system', 'notices'] as const,
   importJobs: (params?: { status?: string }) => params ? ['importJobs', params] as const : ['importJobs'] as const,
   systemStatus: () => ['systemStatus'] as const,
   discover: {

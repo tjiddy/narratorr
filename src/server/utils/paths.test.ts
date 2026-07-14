@@ -3,8 +3,10 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Dirent } from 'node:fs';
 import { basename } from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { renameFilesWithTemplate, planFileRenames, padWidth, assertPathInsideLibrary, assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
+import { renameFilesWithTemplate, planFileRenames, padWidth, buildBookNameTokens, assertPathInsideLibrary, assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import type { RenameableBook } from './paths.js';
+import { renderFilename } from '../../core/utils/naming.js';
+import { compareAudioNames, disambiguateStems } from '../../core/utils/collect-audio-files.js';
 
 vi.mock('node:fs/promises', async () => ({
   ...(await vi.importActual('node:fs/promises')),
@@ -408,6 +410,18 @@ describe('planFileRenames', () => {
     vi.mocked(readdir).mockResolvedValue(names.map(n => makeDirent(n, true)) as never);
   }
 
+  it('#1852: never plans a rename for a dot-led temp and never lets it shift numbering', async () => {
+    await mockFiles(['01.mp3', '.01.tmp.mp3', '02.mp3']);
+
+    const renames = await planFileRenames('/t', '{trackNumber:000}', book, 'Author');
+
+    // The hidden temp is absent from the plan; the two real files number 001, 002 (unshifted).
+    expect(renames.some(r => r.from.startsWith('.'))).toBe(false);
+    const byFrom = Object.fromEntries(renames.map(r => [r.from, r.to]));
+    expect(byFrom['01.mp3']).toBe('001.mp3');
+    expect(byFrom['02.mp3']).toBe('002.mp3');
+  });
+
   describe('colliding format → number all', () => {
     it('numbers every file including the first, zero-padded, with no bare file', async () => {
       await mockFiles(['x.mp3', 'y.mp3', 'z.mp3']);
@@ -631,5 +645,111 @@ describe('planFileRenames', () => {
       expect(source).not.toMatch(/audio-scanner/);
       expect(source).not.toMatch(/chapter-resolver/);
     });
+  });
+});
+
+describe('buildBookNameTokens', () => {
+  const fullBook: RenameableBook = {
+    title: 'The Way of Kings',
+    seriesName: 'The Stormlight Archive',
+    seriesPosition: 1,
+    narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }],
+    publishedDate: '2010-08-31',
+    editionLabel: 'Full Cast',
+  };
+
+  it('derives every book-level token from a full book row', () => {
+    expect(buildBookNameTokens(fullBook, 'Brandon Sanderson')).toEqual({
+      author: 'Brandon Sanderson',
+      authorLastFirst: 'Sanderson, Brandon',
+      title: 'The Way of Kings',
+      titleSort: 'Way of Kings', // leading article stripped
+      series: 'The Stormlight Archive',
+      seriesPosition: 1,
+      narrator: 'Michael Kramer', // primary narrator only
+      narratorLastFirst: 'Kramer, Michael',
+      year: '2010',
+      edition: 'Full Cast',
+    });
+  });
+
+  it('omits series/narrator/edition tokens when the fields are absent', () => {
+    const tokens = buildBookNameTokens(
+      { title: 'Solo', seriesName: null, seriesPosition: null, narrators: [], publishedDate: null, editionLabel: null },
+      'Author',
+    );
+    expect(tokens.series).toBeUndefined();
+    expect(tokens.narrator).toBeUndefined();
+    expect(tokens.narratorLastFirst).toBeUndefined();
+    expect(tokens.year).toBeUndefined();
+    expect(tokens.edition).toBeUndefined();
+  });
+
+  it('treats an empty-string seriesName as absent', () => {
+    expect(buildBookNameTokens({ ...fullBook, seriesName: '' }, 'Author').series).toBeUndefined();
+  });
+
+  it('preserves a legitimate seriesPosition of 0 (not swallowed by || undefined)', () => {
+    expect(buildBookNameTokens({ ...fullBook, seriesPosition: 0 }, 'Author').seriesPosition).toBe(0);
+    expect(buildBookNameTokens({ ...fullBook, seriesPosition: null }, 'Author').seriesPosition).toBeUndefined();
+  });
+
+  it('falls back to Unknown Author for a null/empty author', () => {
+    expect(buildBookNameTokens(fullBook, null).author).toBe('Unknown Author');
+    expect(buildBookNameTokens(fullBook, '').author).toBe('Unknown Author');
+    expect(buildBookNameTokens(fullBook, null).authorLastFirst).toBe('Author, Unknown');
+  });
+});
+
+describe('cross-path naming consistency (anti-drift pin)', () => {
+  // A representative book exercising every book-level token.
+  const consistencyBook: RenameableBook = {
+    title: 'The Way of Kings',
+    seriesName: 'The Stormlight Archive',
+    seriesPosition: 1,
+    narrators: [{ name: 'Michael Kramer' }],
+    publishedDate: '2010-08-31',
+    editionLabel: 'Full Cast',
+  };
+  const author = 'Brandon Sanderson';
+  const fileFormat = '{author} - {series? - }{seriesPosition:00? - }{title}{ (?edition?)}';
+
+  async function mockFiles(names: string[]): Promise<void> {
+    const { readdir } = await import('node:fs/promises');
+    vi.mocked(readdir).mockResolvedValue(names.map(n => makeDirent(n, true)) as never);
+  }
+
+  it('merge path stem equals the single-file planFileRenames stem', async () => {
+    await mockFiles(['audiobook.mp3']);
+    const [rename] = await planFileRenames('/t', fileFormat, consistencyBook, author);
+    const planStem = rename!.to.replace(/\.mp3$/, '');
+
+    // The merge path (audio-processor mergeFiles) renders exactly this:
+    const mergeStem = renderFilename(fileFormat, {
+      author, title: consistencyBook.title, ...buildBookNameTokens(consistencyBook, author),
+    });
+    expect(mergeStem).toBe(planStem);
+    expect(mergeStem).toBe('Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast)');
+  });
+
+  it('convert path stems equal the multi-file planFileRenames stems under a colliding book-only format', async () => {
+    // Book-only format (no per-file token) → every file collides → ordinals disambiguate.
+    const bookOnly = '{author} - {title}';
+    const files = ['Track1.mp3', 'Track2.mp3', 'Track10.mp3'];
+    await mockFiles(files);
+    const planTos = (await planFileRenames('/t', bookOnly, consistencyBook, author)).map(r => r.to.replace(/\.mp3$/, ''));
+
+    // The convert path (audio-processor computeConvertStems) computes exactly this:
+    const ordered = [...files].sort(compareAudioNames);
+    const baseTokens = { author, title: consistencyBook.title, ...buildBookNameTokens(consistencyBook, author) };
+    const stems = ordered.map(() => renderFilename(bookOnly, baseTokens));
+    const convertStems = disambiguateStems(stems);
+
+    expect(convertStems).toEqual(planTos);
+    expect(convertStems).toEqual([
+      'Brandon Sanderson - The Way of Kings (1)',
+      'Brandon Sanderson - The Way of Kings (2)',
+      'Brandon Sanderson - The Way of Kings (3)',
+    ]);
   });
 });

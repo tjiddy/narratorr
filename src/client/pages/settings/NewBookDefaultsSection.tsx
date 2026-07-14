@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import { SparklesIcon } from '@/components/icons';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { DEFAULT_SETTINGS, newBookDefaultsFormSchema, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
@@ -27,17 +28,11 @@ export function NewBookDefaultsSection() {
       description="Applied when books are added manually or via import lists or discovery"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <label htmlFor="newBookSearchImmediately" className="block text-sm font-medium">Search Immediately</label>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Trigger a search as soon as a book is added
-            </p>
-          </div>
-          <label className="relative inline-flex items-center cursor-pointer">
+        <SettingsTable>
+          <SettingsRow htmlFor="newBookSearchImmediately" label="Search immediately" description="Trigger a search as soon as a book is added">
             <ToggleSwitch id="newBookSearchImmediately" {...register('searchImmediately')} />
-          </label>
-        </div>
+          </SettingsRow>
+        </SettingsTable>
 
         {isDirty && (
           <button

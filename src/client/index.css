@@ -155,6 +155,10 @@
 
   html {
     scroll-behavior: smooth;
+    /* Reserve the scrollbar gutter even when the page doesn't scroll: conditional content
+       (e.g. a dirty form's fade-in Save button) crossing the viewport-height threshold
+       otherwise summons/dismisses the scrollbar and shifts the whole app sideways. */
+    scrollbar-gutter: stable;
   }
 
   body {

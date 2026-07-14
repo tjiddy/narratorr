@@ -20,6 +20,7 @@ export default tseslint.config(
       '**/coverage/**',
       'e2e/**',
       'eslint-rules/**',
+      '.scratch/**',
     ],
   },
 

@@ -36,6 +36,9 @@ export interface MatchCandidate {
   path: string;
   title: string;
   author?: string;
+  /** Wanted series position parsed from the folder name (#1849), sent to the
+   * match-start endpoint so the ranker can break same-title series ties. */
+  seriesPosition?: number;
 }
 
 export interface MatchResult {
@@ -69,10 +72,13 @@ export interface MatchResult {
 
 export interface MatchJobStatus {
   id: string;
-  status: 'matching' | 'completed' | 'cancelled';
+  status: 'matching' | 'completed' | 'failed' | 'cancelled';
   total: number;
   matched: number;
   results: MatchResult[];
+  /** Present only on a terminal `'failed'` job (#1864). Mirrors the server
+   * `MatchJobStatus`. Never rendered raw — the recovery banner maps by reason. */
+  error?: string;
 }
 
 export const libraryScanApi = {

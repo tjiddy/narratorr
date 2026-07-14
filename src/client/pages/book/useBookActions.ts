@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type UpdateBookPayload, type RetagExcludableField, type RetagMode } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { describeKeptFiles } from '@/lib/kept-files-message.js';
 
@@ -71,12 +72,11 @@ export function useBookActions(bookId: number) {
     },
   });
 
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-  });
-
-  const ffmpegConfigured = !!settings?.processing?.ffmpegPath?.trim();
+  const ffmpegStatus = useFfmpegStatus();
+  // Optimistic while the status query LOADS (ffmpeg is present on the normal Docker
+  // install), but fail SAFE on a query error — gate the merge/retag buttons rather than
+  // leave them enabled on a box where ffmpeg may be absent.
+  const ffmpegConfigured = ffmpegStatus.isError ? false : ffmpegStatus.data?.detected !== false;
 
   const deleteMutation = useMutation({
     mutationFn: ({ deleteFiles }: { deleteFiles: boolean }) =>

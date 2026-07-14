@@ -5,7 +5,7 @@ import { downloads, books, bookEvents, bookNarrators, narrators } from '../../db
 
 import type { BookRow, DownloadRow } from './types.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
-import { transitionDownloadState, completedDisplayDownloadCondition } from '../utils/download-state.js';
+import { transitionDownloadState, completedDisplayDownloadCondition, qualityGateEligibleDownloadCondition } from '../utils/download-state.js';
 import { buildQualityAssessment } from './quality-gate.helpers.js';
 import { QualityGateServiceError } from './quality-gate.types.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
@@ -36,7 +36,7 @@ export class QualityGateService {
       .select({ download: downloads, book: books })
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
-      .where(and(completedDisplayDownloadCondition(), isNotNull(downloads.externalId)));
+      .where(qualityGateEligibleDownloadCondition());
 
     if (rows.length === 0) return rows;
 

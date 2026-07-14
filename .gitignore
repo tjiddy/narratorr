@@ -68,3 +68,6 @@ temp/
 # Skills: ignore everything by default; add `!.claude/skills/<name>/` lines to ship specific skills
 .claude/skills/*
 
+
+# Local scratch for non-committing artifacts (plans, reviews, assessments, audits, handoffs)
+/.scratch/

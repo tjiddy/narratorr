@@ -11,6 +11,7 @@ import { createTestApp, createMockServices, installMockAppLog, resetMockServices
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import { registerRoutes, type Services } from './index.js';
 import { TaskRegistry, TaskRegistryError } from '../services/task-registry.js';
+import { config } from '../config.js';
 
 vi.mock('../utils/version.js', () => ({
   getVersion: () => '0.1.0',
@@ -64,6 +65,24 @@ describe('system routes', () => {
       const payload = JSON.parse(res.payload);
       expect(payload).not.toHaveProperty('timestamp');
       expect(payload).not.toHaveProperty('update');
+    });
+
+    it('omits instanceBadge when unset, includes it when configured (#1842)', async () => {
+      const original = config.instanceBadge;
+
+      // Unset → payload byte-identical to today.
+      config.instanceBadge = undefined;
+      let res = await app.inject({ method: 'GET', url: '/api/system/status' });
+      expect(JSON.parse(res.payload)).not.toHaveProperty('instanceBadge');
+
+      // Set → badge appears verbatim alongside the existing fields.
+      config.instanceBadge = 'dev';
+      try {
+        res = await app.inject({ method: 'GET', url: '/api/system/status' });
+        expect(JSON.parse(res.payload)).toEqual({ version: '0.1.0', status: 'ok', instanceBadge: 'dev' });
+      } finally {
+        config.instanceBadge = original;
+      }
     });
   });
 
@@ -738,6 +757,44 @@ describe('system routes', () => {
       expect(exitSpy).toHaveBeenCalledWith(0);
 
       exitSpy.mockRestore();
+    });
+  });
+
+  describe('GET /api/system/notices (#1862 — third-party license notices)', () => {
+    it('returns 200 { content } read from `<cwd>/THIRD_PARTY_NOTICES.md` (cwd-relative, not hardcoded /app)', async () => {
+      // Isolate ambient input: stub cwd + readFile so the outcome does not depend on the
+      // runner's launch directory or checkout contents (F7). Asserting the readFile path is
+      // path.join(cwd, 'THIRD_PARTY_NOTICES.md') proves resolution is cwd-relative — the same
+      // resolution that yields repo root in dev/CI and /app in the runtime image — so a
+      // regression to a hardcoded '/app/...' path would fail here.
+      const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue('/fake/app');
+      const readSpy = vi.spyOn(fsp, 'readFile').mockResolvedValue('STUB NOTICE BODY');
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/notices' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ content: 'STUB NOTICE BODY' });
+      expect(readSpy).toHaveBeenCalledWith(path.join('/fake/app', 'THIRD_PARTY_NOTICES.md'), 'utf-8');
+
+      readSpy.mockRestore();
+      cwdSpy.mockRestore();
+    });
+
+    it('returns exactly 500 { error } with a serialized log when the read fails', async () => {
+      const readSpy = vi
+        .spyOn(fsp, 'readFile')
+        .mockRejectedValueOnce(Object.assign(new Error('ENOENT: no notice'), { code: 'ENOENT' }));
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/notices' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Failed to load third-party notices' });
+      expect(logSpies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'ENOENT: no notice', type: 'Error' }) }),
+        'Failed to load third-party notices',
+      );
+
+      readSpy.mockRestore();
     });
   });
 });

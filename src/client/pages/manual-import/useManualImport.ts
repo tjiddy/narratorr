@@ -24,7 +24,11 @@ interface UseManualImportOptions {
 export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportOptions = {}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { results: matchResults, progress, isMatching, startMatching, cancel: cancelMatching } = useMatchJob();
+  const {
+    results: matchResults, progress, isMatching, recovering,
+    paused, reason: pausedReason, remaining: matchRemaining, matchedCount: _matchedCount, total: matchTotal,
+    startMatching, restart, resume, cancel: cancelMatching,
+  } = useMatchJob();
 
   const [step, setStep] = useState<Step>('path');
   const [scanPath, setScanPath] = useState('');
@@ -103,6 +107,9 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
           path: d.path,
           title: d.parsedTitle,
           ...(d.parsedAuthor && { author: d.parsedAuthor }),
+          // Thread the parsed series position (#1849) so the ranker can break
+          // same-title series ties. `!== undefined` (never `||`) so position 0 survives.
+          ...(d.parsedSeriesPosition !== undefined && { seriesPosition: d.parsedSeriesPosition }),
         }));
       if (candidates.length > 0) {
         startMatching(candidates);
@@ -193,6 +200,28 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
     importMutation.mutate({ items, mode });
   }, [rows, importMutation, mode]);
 
+  // Restart all (#1864 §5b) — rebuild candidates from CURRENT edited row values,
+  // CLEAR every non-duplicate row's match to pending, and reset the result-offset.
+  // Manual import had no prior re-match affordance; this wiring is new.
+  const handleRestartMatch = useCallback(() => {
+    const candidates = rows
+      .filter(r => !r.book.isDuplicate)
+      .map(r => ({
+        path: r.book.path,
+        title: r.edited.title,
+        ...(r.edited.author && { author: r.edited.author }),
+        ...(r.edited.seriesPosition !== undefined && { seriesPosition: r.edited.seriesPosition }),
+      }));
+    if (candidates.length === 0) return;
+    prevMatchCountRef.current = 0;
+    setRows(prev => prev.map(r => r.book.isDuplicate ? r : { ...r, matchResult: undefined }));
+    restart(candidates);
+  }, [rows, restart]);
+
+  // Resume remaining (#1864 §5) — re-match only the result-less remainder; already
+  // matched rows keep their result (the engine's observed map is preserved).
+  const handleResumeMatch = useCallback(() => resume(), [resume]);
+
   const handleBack = useCallback(() => {
     if (step === 'review') {
       cancelMatching();
@@ -233,6 +262,12 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       progress,
       chunkProgress,
       heldReview,
+      // Match-phase recovery (#1864)
+      recovering,
+      paused,
+      pausedReason,
+      matchRemaining,
+      matchTotal,
     },
     actions: {
       handleScan,
@@ -242,6 +277,8 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       handleImport,
       handleBack,
       handleReconfirmHeld,
+      handleRestartMatch,
+      handleResumeMatch,
     },
     mutations: {
       scanMutation,

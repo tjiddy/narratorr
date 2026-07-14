@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Mock } from 'vitest';
 
 // Mock the production probes so the boot orchestration (`checkFfmpegVersionAtBoot`)
@@ -130,12 +130,92 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
     expect(log.warn).toHaveBeenCalledTimes(1);
     expect(calls(log.warn)[0]![0] as string).toMatch(/ffmpeg/i);
   });
+
+  it('warns that FFMPEG_PATH did not win when the override differs from the resolved path (P3-10)', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
+    const probeFfmpeg = vi.fn().mockResolvedValue('8.0.1');
+    const getFfmpegOverride = () => '/custom/ffmpeg';
+
+    await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg, getFfmpegOverride }, log);
+
+    expect(log.info).toHaveBeenCalledTimes(1); // version log still emitted
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    const [payload, message] = calls(log.warn)[0]! as [Record<string, unknown>, string];
+    expect(payload).toMatchObject({ ffmpegPath: '/custom/ffmpeg', resolved: '/usr/bin/ffmpeg' });
+    expect(message).toMatch(/FFMPEG_PATH/);
+  });
+
+  it('does NOT warn about the override when it matches the resolved path (P3-10)', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/custom/ffmpeg');
+    const probeFfmpeg = vi.fn().mockResolvedValue('8.0.1');
+    const getFfmpegOverride = () => '/custom/ffmpeg';
+
+    await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg, getFfmpegOverride }, log);
+
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('warns about a dropped legacy ffmpegPath when ffmpeg is not found (P2-3)', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    const detectFfmpegPath = vi.fn().mockResolvedValue(null);
+    const probeFfmpeg = vi.fn();
+    const getLegacyFfmpegPath = vi.fn().mockResolvedValue('/opt/custom/ffmpeg');
+
+    await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg, getLegacyFfmpegPath }, log);
+
+    expect(probeFfmpeg).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledTimes(2); // "not found" + guided-migration
+    const legacyWarn = calls(log.warn).find(([p]) => (p as Record<string, unknown>)?.legacyFfmpegPath);
+    expect(legacyWarn).toBeDefined();
+    expect((legacyWarn![0] as Record<string, unknown>).legacyFfmpegPath).toBe('/opt/custom/ffmpeg');
+    expect(legacyWarn![1] as string).toMatch(/FFMPEG_PATH/);
+  });
+
+  it('warns about a dropped legacy path even when a DIFFERENT ffmpeg is found (finding 1)', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
+    const probeFfmpeg = vi.fn().mockResolvedValue('8.0.1');
+    const getLegacyFfmpegPath = vi.fn().mockResolvedValue('/opt/custom/ffmpeg');
+
+    await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg, getLegacyFfmpegPath }, log);
+
+    // The dangerous case is a SILENT binary swap: a configured custom path is dropped while a
+    // different system ffmpeg is used. It must warn (naming both paths + FFMPEG_PATH), not stay quiet.
+    expect(getLegacyFfmpegPath).toHaveBeenCalledTimes(1);
+    const legacyWarn = calls(log.warn).find(([p]) => (p as Record<string, unknown>)?.legacyFfmpegPath);
+    expect(legacyWarn).toBeDefined();
+    expect(legacyWarn![0]).toMatchObject({ legacyFfmpegPath: '/opt/custom/ffmpeg', resolvedFfmpegPath: '/usr/bin/ffmpeg' });
+    expect(legacyWarn![1] as string).toMatch(/FFMPEG_PATH/);
+  });
+
+  it('does NOT warn when the legacy path equals the resolved binary (finding 1)', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
+    const probeFfmpeg = vi.fn().mockResolvedValue('8.0.1');
+    const getLegacyFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg'); // same as resolved → no swap
+
+    await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg, getLegacyFfmpegPath }, log);
+
+    expect(log.warn).not.toHaveBeenCalled();
+  });
 });
 
 describe('checkFfmpegVersionAtBoot — production wiring (#1679 F2)', () => {
+  // Isolate FFMPEG_PATH: checkFfmpegVersionAtBoot binds the real env override, so a dev box
+  // with it set would spuriously fire the P3-10 warning and skew warn-count assertions.
+  let savedFfmpegPathEnv: string | undefined;
   beforeEach(() => {
+    savedFfmpegPathEnv = process.env.FFMPEG_PATH;
+    delete process.env.FFMPEG_PATH;
     (detectFfmpegPath as Mock).mockReset();
     (probeFfmpeg as Mock).mockReset();
+  });
+
+  afterEach(() => {
+    if (savedFfmpegPathEnv === undefined) delete process.env.FFMPEG_PATH;
+    else process.env.FFMPEG_PATH = savedFfmpegPathEnv;
   });
 
   it('wires the production detectFfmpegPath/probeFfmpeg probes and logs once on success', async () => {
@@ -166,5 +246,16 @@ describe('checkFfmpegVersionAtBoot — production wiring (#1679 F2)', () => {
 
     expect(log.warn).toHaveBeenCalledTimes(1);
     expect(log.info).not.toHaveBeenCalled();
+  });
+
+  it('wires getLegacyFfmpegPath from the settings service and warns on a dropped config (P2-3)', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    (detectFfmpegPath as Mock).mockResolvedValue(null);
+    const settingsService = { getLegacyFfmpegPath: vi.fn().mockResolvedValue('/opt/x/ffmpeg') };
+
+    await checkFfmpegVersionAtBoot(log, settingsService);
+
+    expect(settingsService.getLegacyFfmpegPath).toHaveBeenCalledTimes(1);
+    expect(log.warn).toHaveBeenCalledTimes(2); // not-found + dropped-config
   });
 });

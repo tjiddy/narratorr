@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Mock } from 'vitest';
 import { eq, and } from 'drizzle-orm';
-import { revertBookStatus, transitionBookStatus, REVERT_FALLBACK_STATUS } from './book-status.js';
+import { revertBookStatus, guardedRevertBookStatus, transitionBookStatus, REVERT_FALLBACK_STATUS } from './book-status.js';
 import { createMockDb, mockDbChain } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
 import { books } from '../../db/schema.js';
@@ -96,6 +96,38 @@ describe('revertBookStatus', () => {
 
     expect(REVERT_FALLBACK_STATUS).toBe('imported');
     expect(result).toBe('imported');
+    expect((chain as Record<string, Mock>).set).toHaveBeenCalledWith(expect.objectContaining({ status: 'imported' }));
+  });
+});
+
+describe('guardedRevertBookStatus (#1857)', () => {
+  it('lands and returns the resolved snapshot when the book is still in the expected state', async () => {
+    const db = createMockDb();
+    const chain = mockDbChain([{ id: 42 }]); // returning() → one row → guard matched
+    db.update.mockReturnValue(chain);
+
+    const result = await guardedRevertBookStatus(db as unknown as Db, { id: 42 }, 'missing', 'downloading');
+
+    expect(result).toEqual({ landed: true, status: 'missing' });
+    // Equality guard compiled into the WHERE predicate.
+    const whereFn = (chain as Record<string, Mock>).where;
+    expect(whereFn).toHaveBeenCalledWith(and(eq(books.id, 42), eq(books.status, 'downloading')));
+    expect((chain as Record<string, Mock>).set).toHaveBeenCalledWith(expect.objectContaining({ status: 'missing' }));
+  });
+
+  it('misses (landed=false) when the book has moved away from the expected state (late importing)', async () => {
+    const db = createMockDb();
+    db.update.mockReturnValue(mockDbChain([])); // returning() empty → guard missed
+    const result = await guardedRevertBookStatus(db as unknown as Db, { id: 1 }, 'wanted', 'downloading');
+    expect(result).toEqual({ landed: false, status: 'wanted' });
+  });
+
+  it('resolves the REVERT_FALLBACK_STATUS fallback for a null snapshot before guarding', async () => {
+    const db = createMockDb();
+    const chain = mockDbChain([{ id: 3 }]);
+    db.update.mockReturnValue(chain);
+    const result = await guardedRevertBookStatus(db as unknown as Db, { id: 3 }, null, 'downloading');
+    expect(result).toEqual({ landed: true, status: REVERT_FALLBACK_STATUS });
     expect((chain as Record<string, Mock>).set).toHaveBeenCalledWith(expect.objectContaining({ status: 'imported' }));
   });
 });

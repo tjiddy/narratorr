@@ -52,6 +52,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       uploadBookCover: vi.fn(),
       refreshScanBook: vi.fn(),
       getSettings: vi.fn(),
+      getFfmpegStatus: vi.fn(),
       retryBookImport: vi.fn(),
       checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
     },
@@ -131,6 +132,9 @@ describe('BookDetails', () => {
     // Default: retag preview returns a plan with 3 will-tag files. Individual
     // tests override via mockResolvedValue / mockRejectedValue when needed.
     (api.getBookRetagPreview as Mock).mockResolvedValue(RETAG_PLAN_FIXTURE);
+    // Default: ffmpeg detected (auto-detection replaced the path setting). The disabled-button
+    // test overrides to { detected: false }.
+    (api.getFfmpegStatus as Mock).mockResolvedValue({ detected: true });
   });
 
   describe('cover cache-busting prop wiring', () => {
@@ -466,7 +470,7 @@ describe('BookDetails', () => {
     it('calls retagBook API and shows success toast with plural', async () => {
       const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
       (api.retagBook as Mock).mockResolvedValue({
         bookId: 1, tagged: 3, skipped: 0, failed: 0, warnings: [],
@@ -485,7 +489,7 @@ describe('BookDetails', () => {
     it('shows singular "file" when only one file tagged', async () => {
       const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
       (api.retagBook as Mock).mockResolvedValue({
         bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [],
@@ -503,7 +507,7 @@ describe('BookDetails', () => {
     it('shows warning toast when some files failed', async () => {
       const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
       (api.retagBook as Mock).mockResolvedValue({
         bookId: 1, tagged: 2, skipped: 0, failed: 1, warnings: ['ch03.ogg: Unsupported'],
@@ -521,7 +525,7 @@ describe('BookDetails', () => {
     it('shows error toast when retag API fails', async () => {
       const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
       (api.retagBook as Mock).mockRejectedValue(new Error('ffmpeg is not configured'));
 
@@ -537,7 +541,7 @@ describe('BookDetails', () => {
     it('keeps Re-tag button enabled when ffmpeg is not configured (so the preview modal can surface the inline error)', async () => {
       const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
@@ -555,7 +559,7 @@ describe('BookDetails', () => {
     it('enables Re-tag button when ffmpeg path is configured', async () => {
       const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
@@ -570,7 +574,7 @@ describe('BookDetails', () => {
     it('hides Re-tag button when book has no path', async () => {
       const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
 
       renderBookDetails({ path: null });
@@ -822,7 +826,7 @@ describe('BookDetails', () => {
   describe('retag confirmation modal', () => {
     function mockFfmpegEnabled() {
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
     }
 
@@ -955,7 +959,7 @@ describe('BookDetails', () => {
     it('clicking Re-tag with ffmpeg unconfigured opens the preview modal and surfaces the inline error', async () => {
       const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
       (api.getBookRetagPreview as Mock).mockRejectedValue(
         new RetagFfmpegNotConfiguredError('ffmpeg is not configured'),
@@ -1000,7 +1004,7 @@ describe('BookDetails', () => {
   describe('Merge to M4B button', () => {
     function mockFfmpegEnabledForMerge() {
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
     }
 
@@ -1050,12 +1054,10 @@ describe('BookDetails', () => {
       expect(screen.queryByRole("menuitem", { name: /Merge to M4B/i })).not.toBeInTheDocument();
     });
 
-    it('disables Merge to M4B button when ffmpegConfigured is false', async () => {
+    it('disables Merge to M4B button when ffmpeg is not detected', async () => {
       const user = userEvent.setup();
-      // ffmpegPath is empty → ffmpegConfigured = false → button disabled
-      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
-      }));
+      // ffmpeg not detected → ffmpegConfigured = false → button disabled
+      (api.getFfmpegStatus as Mock).mockResolvedValue({ detected: false });
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 12 });
 
       await openOverflowMenu(user);
@@ -1066,7 +1068,7 @@ describe('BookDetails', () => {
   describe('Merge to M4B confirmation modal', () => {
     function mockFfmpegEnabledForMerge() {
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
     }
 
@@ -1254,7 +1256,7 @@ describe('#257 merge observability — BookDetails progress', () => {
   it('merge button disabled while progress indicator is visible', async () => {
     const user = userEvent.setup();
     (api.getSettings as Mock).mockResolvedValue(createMockSettings({
-      processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
     }));
     mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.5 });
     renderBookDetails({ path: '/library/test', status: 'imported', topLevelAudioFileCount: 3 });

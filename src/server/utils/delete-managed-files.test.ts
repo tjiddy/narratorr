@@ -61,6 +61,42 @@ describe('deleteManagedBookFiles', () => {
     expect(await pathExists(book)).toBe(true);
   }));
 
+  it('#1852: preserves a born-hidden temp file AND a .merge-tmp/ subtree (never deleted, never classified)', withTmp(async (root) => {
+    const book = join(root, 'Book');
+    await mkdir(book, { recursive: true });
+    await writeFile(join(book, 'chapter1.mp3'), 'a');
+    await writeFile(join(book, '.chapter1.tmp.mp3'), 'b'); // active born-hidden temp
+    await mkdir(join(book, '.merge-tmp'), { recursive: true });
+    await writeFile(join(book, '.merge-tmp', 'staged.m4b'), 'c'); // active staging subtree
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    // Only the real managed audio is deleted; the hidden entries are neither deleted nor
+    // reported as foreign — they are skipped entirely and survive on disk.
+    expect(base(result.deletedManaged)).toEqual(['chapter1.mp3']);
+    expect(base(result.preservedForeign)).toEqual([]);
+    expect(await pathExists(join(book, '.chapter1.tmp.mp3'))).toBe(true);
+    expect(await pathExists(join(book, '.merge-tmp', 'staged.m4b'))).toBe(true);
+  }));
+
+  // #1852 F9 — a hidden book ROOT is an IDENTITY root for the sweep: only DISCOVERED children are
+  // hidden-filtered, never the root the caller handed in. So the sweep still deletes the root's
+  // visible managed audio while preserving a hidden temp inside it. A regression that self-rejected
+  // a hidden root would leave the visible audio undeleted and fail the first assertion.
+  it('#1852 F9: a hidden book root still deletes its visible managed audio while preserving a hidden temp', withTmp(async (root) => {
+    const book = join(root, '.Book'); // hidden ROOT handed in by identity
+    await mkdir(book, { recursive: true });
+    await writeFile(join(book, 'chapter1.mp3'), 'a');       // visible managed audio → deleted
+    await writeFile(join(book, '.chapter1.tmp.mp3'), 'b');  // active born-hidden temp → survives
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    expect(base(result.deletedManaged)).toEqual(['chapter1.mp3']);
+    expect(await pathExists(join(book, 'chapter1.mp3'))).toBe(false);
+    expect(await pathExists(join(book, '.chapter1.tmp.mp3'))).toBe(true);
+    expect(await pathExists(book)).toBe(true); // retained — the surviving hidden temp keeps it non-empty
+  }));
+
   it('is case-insensitive for audio and cover extensions', withTmp(async (root) => {
     const book = join(root, 'Book');
     await mkdir(book, { recursive: true });

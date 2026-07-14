@@ -180,7 +180,13 @@ function buildGrabParams(payload: ReleaseTokenPayload, bookId: number): GrabPara
  */
 function mapGrabError(error: unknown, reply: FastifyReply): FastifyReply | null {
   if (error instanceof DuplicateDownloadError) {
-    return reply.status(409).send(envelope(error.code, 'Book already has an active download'));
+    // Code-aware, id-free message (#1861): `PIPELINE_ACTIVE` now also represents
+    // QG-completed rows and pending auto import jobs, so the old fixed "active
+    // download" prose would lie for that code.
+    const message = error.code === 'ACTIVE_DOWNLOAD_EXISTS'
+      ? 'Book already has an active download'
+      : 'Book already has a download in the import pipeline';
+    return reply.status(409).send(envelope(error.code, message));
   }
   if (error instanceof DownloadClientAuthError) {
     return reply.status(401).send(envelope('DOWNLOAD_CLIENT_AUTH_FAILED', 'Download client authentication failed'));
@@ -283,7 +289,14 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
               400: v1ErrorEnvelopeSchema,
               401: v1ErrorEnvelopeSchema,
               404: v1ErrorEnvelopeSchema,
-              409: v1ErrorEnvelopeSchema,
+              // 409 `code` discriminator (#1861): `ACTIVE_DOWNLOAD_EXISTS` — a
+              // replaceable client-stage download exists; `PIPELINE_ACTIVE` — a
+              // download has entered the import pipeline (checking/pending_review/
+              // importing), a completed download is awaiting the quality gate, or an
+              // auto import job is pending.
+              409: v1ErrorEnvelopeSchema.describe(
+                'Conflict — the book already has a blocking download. `code` is `ACTIVE_DOWNLOAD_EXISTS` when a replaceable client-stage download exists, or `PIPELINE_ACTIVE` when a download has entered the import pipeline (checking, pending_review, importing), a completed download is awaiting the quality gate, or an auto import job is pending.',
+              ),
               500: v1ErrorEnvelopeSchema,
               502: v1ErrorEnvelopeSchema,
               504: v1ErrorEnvelopeSchema,

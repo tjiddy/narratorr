@@ -12,6 +12,7 @@ import { HardcoverClient } from '../../core/metadata/hardcover.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { getUpdateStatus, checkForUpdate } from '../jobs/version-check.js';
+import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 
 
 export type HealthState = 'healthy' | 'warning' | 'error';
@@ -348,19 +349,36 @@ export class HealthCheckService {
   }
 
   private async checkFfmpeg(): Promise<HealthCheckResult[]> {
-    const target: HealthCheckTarget = { kind: 'settings', path: 'post-processing' };
-    const processingSettings = await this.settingsService.get('processing');
-    const ffmpegPath = processingSettings?.ffmpegPath;
+    const target: HealthCheckTarget = { kind: 'settings', path: 'audio-tools' };
+    const ffmpegPath = await resolveFfmpegPath();
 
-    if (!ffmpegPath?.trim()) {
-      return []; // Skip check if not configured
+    if (!ffmpegPath) {
+      // ffmpeg is OPTIONAL — it only matters when an automation that runs on its own needs it.
+      // Manual merge/retag are UI-gated and surface the miss inline (Audio Tools status row), so an
+      // absent binary with no enabled automation stays SILENT here rather than firing a
+      // restart-persistent on_health_issue alarm on every bare-metal install that never uses audio
+      // processing. Only auto-merge and tag embedding fire unattended and would fail — alarm on those.
+      const [processing, tagging] = await Promise.all([
+        this.settingsService.get('processing'),
+        this.settingsService.get('tagging'),
+      ]);
+      const automationNeedsFfmpeg = processing?.autoMergeDownloads === true || tagging?.enabled === true;
+      if (!automationNeedsFfmpeg) {
+        return [];
+      }
+      return [{
+        checkName: 'ffmpeg',
+        state: 'error',
+        message: 'ffmpeg not found but an audio automation (auto-merge or tag embedding) needs it — install it or set FFMPEG_PATH',
+        target,
+      }];
     }
 
     try {
       await this.deps.probeFfmpeg(ffmpegPath);
       return [{ checkName: 'ffmpeg', state: 'healthy', target }];
     } catch {
-      return [{ checkName: 'ffmpeg', state: 'error', message: `ffmpeg not found at: ${ffmpegPath}`, target }];
+      return [{ checkName: 'ffmpeg', state: 'error', message: `ffmpeg not usable at: ${ffmpegPath}`, target }];
     }
   }
 

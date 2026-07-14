@@ -53,12 +53,12 @@ export const settingsRegistry = {
   processing: defineCategory({
     schema: processingSettingsSchema,
     defaults: {
-      ffmpegPath: '',
       outputFormat: 'm4b' as const,
       keepOriginalBitrate: true,
       bitrate: 128,
       mergeBehavior: 'multi-file-only' as const,
       maxConcurrentProcessing: 1,
+      autoMergeDownloads: false,
       postProcessingScript: '',
       postProcessingScriptTimeout: 300,
     },
@@ -74,7 +74,7 @@ export const settingsRegistry = {
       grabFloor: 0,
       protocolPreference: 'none' as const,
       minSeeders: 1,
-      minDownloadSize: 0,
+      minDownloadSize: 50,
       maxDownloadSize: 5,
       searchImmediately: false,
       rejectWords: DEFAULT_REJECT_WORDS,

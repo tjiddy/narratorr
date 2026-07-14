@@ -118,13 +118,6 @@ export function getCompletedStatuses(): DownloadStatus[] {
 }
 
 /**
- * Statuses that can be replaced by a new grab.
- * Excludes the import-pipeline status (importing) which requires a separate
- * cancellation mechanism beyond the download-client cancel path.
- */
-const REPLACEABLE_STATUSES: DownloadStatus[] = ['queued', 'downloading', 'paused', 'checking', 'pending_review'];
-
-/**
  * Statuses that should be polled from external download clients.
  * Excludes internal pipeline statuses (checking, pending_review, importing)
  * that are managed by quality-gate/import flows, not download client APIs.
@@ -158,14 +151,4 @@ export function deriveDisplayStatus(clientStatus: ClientStatus, pipelineStage: P
 /** Tuple predicate: does the download display as terminal (finished)? */
 export function isTerminalState(clientStatus: ClientStatus, pipelineStage: PipelineStage): boolean {
   return isTerminalStatus(deriveDisplayStatus(clientStatus, pipelineStage));
-}
-
-/**
- * Tuple predicate: can this download be replaced by a new grab?
- * Mirrors the `REPLACEABLE_STATUSES` set over the tuple — preserves the
- * load-bearing invariant that an `importing` download
- * (`pipelineStage === 'importing'`) is NOT replaceable.
- */
-export function isReplaceableState(clientStatus: ClientStatus, pipelineStage: PipelineStage): boolean {
-  return REPLACEABLE_STATUSES.includes(deriveDisplayStatus(clientStatus, pipelineStage));
 }

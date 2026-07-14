@@ -1,4 +1,9 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') };
+});
+
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { ImportService } from './import.service.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
@@ -7,6 +12,12 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
+import { createClient } from '@libsql/client';
+import { drizzle } from 'drizzle-orm/libsql';
+import { migrate } from 'drizzle-orm/libsql/migrator';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { downloads, books } from '../../db/schema.js';
 
 // Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
@@ -95,7 +106,6 @@ import { mkdir, cp, stat, readdir, writeFile, rename, rm, rmdir, statfs } from '
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
-import { join } from 'node:path';
 import { copyToLibrary, MarkerPathConflictError } from '../utils/import-steps.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
@@ -1101,10 +1111,13 @@ describe('ImportService', () => {
       mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
+      // Audio-extension source name so validateSource (#1852 F28: rejects a non-audio direct file)
+      // passes and the throw-under-test still originates in checkDiskSpace, as intended.
+      (mockAdapter.getDownload as Mock).mockResolvedValueOnce({ ...defaultDownloadItem, name: 'book.m4b' });
 
       // Marker present AS A FILE (#1341: a real marker is a regular file → preflight passes,
       // markerPresent reads present); source is a single FILE so checkDiskSpace uses
-      // sourceStats.size and never walks the (self-referential) readdir mock via getPathSize.
+      // sourceStats.size and never walks the (self-referential) readdir mock via getVisiblePathSize.
       vi.mocked(stat).mockImplementation(async (p: unknown) =>
         String(p).endsWith('.import-commit-pending')
           ? ({ isFile: () => true, isDirectory: () => false } as never)
@@ -1608,7 +1621,6 @@ describe('ImportService', () => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
         if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 });
         if (key === 'processing') return Promise.resolve({
-          ffmpegPath: '/usr/bin/ffmpeg',
           outputFormat: 'm4b',
           keepOriginalBitrate: false,
           bitrate: 128,
@@ -1904,8 +1916,7 @@ describe('ImportService', () => {
       return createMockSettingsService({
         import: { minSeedTime: 0, minFreeSpaceGB: overrides?.minFreeSpaceGB ?? 5 },
         processing: {
-          ffmpegPath: '/usr/bin/ffmpeg',
-        },
+          },
       });
     }
 
@@ -2806,5 +2817,56 @@ describe('ImportService consolidation (issue #79)', () => {
         expect(cpIndex).toBeLessThan(txIndex);
       });
     });
+  });
+});
+
+// #1861 AC3 — direct seam over a REAL migrated in-memory DB (mockDbChain does not
+// evaluate SQL, so the non-empty externalId guard must be proven against real SQL).
+// getEligibleDownloads now consumes the shared qualityGateEligibleDownloadCondition,
+// so a completed `external_id = ''` row (seeded as PRE-EXISTING) must never be
+// eligible — proving the truthiness alignment needs no data migration.
+const PROD_DRIZZLE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'drizzle');
+
+describe('ImportService.getEligibleDownloads — externalId truthiness alignment (#1861 AC3)', () => {
+  async function migratedDb() {
+    const client = createClient({ url: ':memory:' });
+    const db = drizzle(client);
+    await migrate(db, { migrationsFolder: PROD_DRIZZLE });
+    return db as unknown as Db;
+  }
+
+  function svc(db: Db) {
+    return new ImportService(db, {} as never, {} as never, inject<FastifyBaseLogger>(createMockLogger()), undefined, undefined);
+  }
+
+  async function seedBook(db: Db): Promise<number> {
+    const [row] = await db.insert(books).values({ publicId: 'bk_seam0000000000000', title: 'Seam Book', status: 'wanted' }).returning({ id: books.id });
+    return row!.id;
+  }
+
+  it('excludes completed rows with externalId null OR pre-existing empty string, and includes a tracked real-id row', async () => {
+    const db = await migratedDb();
+    const bookId = await seedBook(db);
+    const completed = { clientStatus: 'completed' as const, pipelineStage: 'idle' as const, progress: 1, completedAt: new Date(), bookId };
+    const [nullRow] = await db.insert(downloads).values({ publicId: 'dl_null', title: 'Null id', externalId: null, ...completed }).returning({ id: downloads.id });
+    const [emptyRow] = await db.insert(downloads).values({ publicId: 'dl_empty', title: 'Empty id (pre-existing)', externalId: '', ...completed }).returning({ id: downloads.id });
+    const [realRow] = await db.insert(downloads).values({ publicId: 'dl_real', title: 'Tracked', externalId: 'ext-1', ...completed }).returning({ id: downloads.id });
+
+    const eligible = await svc(db).getEligibleDownloads();
+    const ids = eligible.map((e) => e.id);
+
+    expect(ids).toEqual([realRow!.id]);
+    expect(ids).not.toContain(nullRow!.id);
+    expect(ids).not.toContain(emptyRow!.id); // pre-existing '' clears with NO migration
+  });
+
+  it('excludes an eligible-looking row missing completedAt or bookId (import-specific guards retained)', async () => {
+    const db = await migratedDb();
+    const bookId = await seedBook(db);
+    await db.insert(downloads).values({ publicId: 'dl_nocompleted', title: 'No completedAt', externalId: 'ext-2', clientStatus: 'completed', pipelineStage: 'idle', progress: 1, bookId, completedAt: null });
+    await db.insert(downloads).values({ publicId: 'dl_nobook', title: 'No book', externalId: 'ext-3', clientStatus: 'completed', pipelineStage: 'idle', progress: 1, bookId: null, completedAt: new Date() });
+
+    const eligible = await svc(db).getEligibleDownloads();
+    expect(eligible).toHaveLength(0);
   });
 });

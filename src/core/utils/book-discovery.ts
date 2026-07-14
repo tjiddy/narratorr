@@ -1,6 +1,6 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join, extname, relative, basename } from 'node:path';
-import { AUDIO_EXTENSIONS } from './audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from './audio-constants.js';
 import { IMPORT_SIBLING_SUFFIXES } from './import-sibling-suffixes.js';
 import { classifyLeafFolder, hasStrongChapterSetEvidence } from './book-classifier.js';
 import { readAlbumTag } from './audio-scanner.js';
@@ -107,7 +107,7 @@ async function scanDir(dirPath: string): Promise<DirInfo> {
   }
 
   for (const entry of entries) {
-    if (entry.name.startsWith('.')) continue;
+    if (isHiddenName(entry.name)) continue;
     // Exclude stranded import siblings (#1341): a `Title.import-bak` / `.import-tmp` /
     // `.import-commit-pending` entry does NOT begin with a dot, so it slips past the
     // leading-dot skip above and would otherwise be walked as a normal directory (or, for

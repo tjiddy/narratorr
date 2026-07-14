@@ -1,51 +1,42 @@
-import { useState } from 'react';
-import { type UseFormReturn } from 'react-hook-form';
+import { type ReactNode } from 'react';
 import { z } from 'zod';
-import { toast } from 'sonner';
-import { api } from '@/lib/api';
-import { getErrorMessage } from '@/lib/error-message.js';
-import { FORMAT_LABELS, MERGE_LABELS, TAG_MODE_LABELS } from '@/lib/constants';
-import { ZapIcon, CheckCircleIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
-import { FormField } from '@/components/settings/FormField';
+import { Link } from 'react-router-dom';
+import { ZapIcon, AlertTriangleIcon, TerminalIcon } from '@/components/icons';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
+import { NumberField } from '@/components/settings/NumberField';
+import { InfoTip } from '@/components/settings/InfoTip';
 import { errorInputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { outputFormatSchema, mergeBehaviorSchema, tagModeSchema, processingFormSchema as sharedProcessingFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { TAG_MODE_LABELS } from '@/lib/constants';
+import { tagModeSchema, postProcessingScriptTimeoutField, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
+import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 
-// Consume the registry-guarded shared processing form schema (#1308 guard covers
-// its key alignment with processingSettingsSchema) and extend it with the three
-// page-local tagging fields this combined form also edits. The NaN→undefined
-// coercion for cleared numeric inputs still lives at the form layer via
-// register()'s setValueAs below — the shared schema carries no z.preprocess.
-const processingFormSchema = sharedProcessingFormSchema.extend({
+const saveButtonClass = 'px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in';
+
+// Post Processing = the "when": automations that fire after a download. The merge/convert
+// ENGINE config (the "how") lives on the Audio Tools page. TWO independent forms — one per card,
+// each with its own dirty-gated Save (the app-wide per-card convention). Each saves only its own
+// subset; the backend patch-merges categories, so the two forms (and the Audio Tools engine
+// subset) never clobber each other.
+
+// ─── Automations card (processing automations + the whole tagging category) ───
+
+const automationsFormSchema = z.object({
+  autoMergeDownloads: z.boolean(),
   taggingEnabled: z.boolean(),
   tagMode: tagModeSchema,
   embedCover: z.boolean(),
   writeOpf: z.boolean(),
-}).superRefine((data, ctx) => {
-  if (data.postProcessingScript?.trim() && data.postProcessingScriptTimeout == null) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['postProcessingScriptTimeout'],
-      message: 'Timeout is required when a post-processing script is configured',
-    });
-  }
 });
 
-type ProcessingFormData = z.infer<typeof processingFormSchema>;
+type AutomationsFormData = z.infer<typeof automationsFormSchema>;
 
-function toFormData(settings: AppSettings): ProcessingFormData {
+function toAutomationsFormData(settings: AppSettings): AutomationsFormData {
   return {
-    ffmpegPath: settings.processing.ffmpegPath,
-    outputFormat: settings.processing.outputFormat,
-    keepOriginalBitrate: settings.processing.keepOriginalBitrate,
-    bitrate: settings.processing.bitrate,
-    mergeBehavior: settings.processing.mergeBehavior,
-    maxConcurrentProcessing: settings.processing.maxConcurrentProcessing,
-    postProcessingScript: settings.processing.postProcessingScript,
-    postProcessingScriptTimeout: settings.processing.postProcessingScriptTimeout,
+    autoMergeDownloads: settings.processing.autoMergeDownloads,
     taggingEnabled: settings.tagging.enabled,
     tagMode: settings.tagging.mode,
     embedCover: settings.tagging.embedCover,
@@ -53,17 +44,10 @@ function toFormData(settings: AppSettings): ProcessingFormData {
   };
 }
 
-function toPayload(data: ProcessingFormData) {
+function toAutomationsPayload(data: AutomationsFormData) {
   return {
     processing: {
-      ffmpegPath: data.ffmpegPath,
-      outputFormat: data.outputFormat,
-      keepOriginalBitrate: data.keepOriginalBitrate,
-      bitrate: data.bitrate,
-      mergeBehavior: data.mergeBehavior,
-      maxConcurrentProcessing: data.maxConcurrentProcessing,
-      postProcessingScript: data.postProcessingScript,
-      ...(data.postProcessingScriptTimeout !== undefined && { postProcessingScriptTimeout: data.postProcessingScriptTimeout }),
+      autoMergeDownloads: data.autoMergeDownloads,
     },
     tagging: {
       enabled: data.taggingEnabled,
@@ -74,279 +58,239 @@ function toPayload(data: ProcessingFormData) {
   };
 }
 
-function CustomScriptSection({ register, errors }: Pick<UseFormReturn<ProcessingFormData>, 'register'> & { errors: UseFormReturn<ProcessingFormData>['formState']['errors'] }) {
+/** "needs ffmpeg" note shown under a gated automation when ffmpeg isn't detected. */
+function GateNote() {
   return (
-    <div className="pt-6 mt-6 border-t border-border">
-      <div className="mb-4">
-        <h3 className="text-sm font-medium">Custom Script</h3>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Run a custom script after each successful import. To run ffmpeg or other transforms on each downloaded book, configure a post-processing script here.
-        </p>
-      </div>
-      <div className="space-y-5">
-        <FormField
-          id="postProcessingScript"
-          label="Post-Processing Script"
-          registration={register('postProcessingScript')}
-          error={errors.postProcessingScript}
-          placeholder="/path/to/script.sh"
-          hint={<>Absolute path to a script. Leave empty to disable. Environment variables: <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_BOOK_TITLE</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_BOOK_AUTHOR</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_IMPORT_PATH</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_IMPORT_FILE_COUNT</code>.</>}
-        />
-        <FormField
-          id="postProcessingScriptTimeout"
-          label="Script Timeout (seconds)"
-          type="number"
-          registration={register('postProcessingScriptTimeout', { setValueAs: (v: string) => { const n = Number(v); return v === '' || Number.isNaN(n) ? undefined : n; } })}
-          error={errors.postProcessingScriptTimeout}
-          min={1}
-          step={1}
-          placeholder="300"
-          hint="Maximum time in seconds before the script is killed. Default: 300 (5 minutes)."
-        />
-      </div>
-    </div>
+    <span className="inline-flex items-center gap-1.5 mt-2 text-xs font-medium text-destructive">
+      <AlertTriangleIcon className="w-3.5 h-3.5" />
+      ffmpeg not found —{' '}
+      <Link to="/settings/audio-tools" className="underline underline-offset-2">see ffmpeg requirements in Audio Tools</Link>
+    </span>
   );
 }
 
-function ProbeResultFeedback({ result, error }: { result: { version: string } | null; error: string | null }) {
-  if (result) {
-    return (
-      <div className="mt-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg flex items-center gap-2">
-        <CheckCircleIcon className="w-4 h-4 text-green-500 shrink-0" />
-        <p className="text-sm text-green-500">ffmpeg {result.version} detected</p>
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div className="mt-2 p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-center gap-2">
-        <AlertCircleIcon className="w-4 h-4 text-destructive shrink-0" />
-        <p className="text-sm text-destructive">{error}</p>
-      </div>
-    );
-  }
-  return null;
+function AutoMergeDescription({ gated }: { gated: boolean }): ReactNode {
+  return (
+    <>
+      Combine a multi-file download into one chaptered file after it lands. Downloads only — never Library or Manual Import.
+      {gated ? <GateNote /> : (
+        <Link to="/settings/audio-tools" className="mt-2 flex items-center gap-1 text-xs text-primary w-fit">
+          uses your Merge &amp; Convert settings — Audio Tools →
+        </Link>
+      )}
+    </>
+  );
 }
 
-// eslint-disable-next-line max-lines-per-function -- linear form: ffmpeg, processing, and tagging sections
-export function ProcessingSettingsSection() {
-  const [probeResult, setProbeResult] = useState<{ version: string } | null>(null);
-  const [probeError, setProbeError] = useState<string | null>(null);
-  const [probing, setProbing] = useState(false);
+function AutomationsForm() {
+  const ffmpegStatus = useFfmpegStatus();
+  // Optimistic while the status query LOADS — avoids a flash of "needs ffmpeg" on a
+  // normal (ffmpeg-present) install — but fail SAFE on a query error: an errored status
+  // fetch gates the toggles (disabled) rather than leaving them enabled on a box where
+  // ffmpeg may be absent. Real enforcement is still the backend FFMPEG_NOT_CONFIGURED gate.
+  const ffmpegAvailable = ffmpegStatus.isError ? false : ffmpegStatus.data?.detected !== false;
 
-  const { form, mutation, onSubmit } = useSettingsForm<ProcessingFormData>({
-    schema: processingFormSchema,
-    defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
-    select: toFormData,
-    toPayload,
-    successMessage: 'Processing settings saved',
+  const { form, mutation, onSubmit } = useSettingsForm<AutomationsFormData>({
+    schema: automationsFormSchema,
+    defaultValues: toAutomationsFormData({ ...DEFAULT_SETTINGS } as AppSettings),
+    select: toAutomationsFormData,
+    toPayload: toAutomationsPayload,
+    successMessage: 'Post processing settings saved',
   });
 
-  const { register, handleSubmit, watch, formState: { errors, isDirty } } = form;
-
-  const ffmpegPath = watch('ffmpegPath');
-  const keepOriginalBitrate = watch('keepOriginalBitrate');
+  const { register, handleSubmit, watch, formState: { isDirty } } = form;
   const taggingEnabled = watch('taggingEnabled');
-  const currentOutputFormat = watch('outputFormat');
-
-  async function handleProbe() {
-    if (!ffmpegPath?.trim()) return;
-    setProbing(true);
-    setProbeResult(null);
-    setProbeError(null);
-    try {
-      const result = await api.probeFfmpeg(ffmpegPath);
-      setProbeResult(result);
-      toast.success(`ffmpeg ${result.version} detected`);
-    } catch (error: unknown) {
-      const message = getErrorMessage(error);
-      setProbeError(message);
-      toast.error(message);
-    } finally {
-      setProbing(false);
-    }
-  }
+  const autoMergeDownloads = watch('autoMergeDownloads');
 
   return (
     <SettingsSection
       icon={<ZapIcon className="w-5 h-5 text-primary" />}
       title="Post Processing"
-      description="Audio file merge and conversion for Merge and Bulk operations"
+      description="Automations that run on their own after a download lands. None run on Library or Manual Import."
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <div className="space-y-5">
-          <div>
-            <label htmlFor="ffmpegPath" className="block text-sm font-medium mb-2">ffmpeg Path</label>
-            <div className="flex gap-2">
-              <input
-                id="ffmpegPath"
-                type="text"
-                {...register('ffmpegPath')}
-                className={`flex-1 ${errorInputClass(!!errors.ffmpegPath)}`}
-                placeholder="/usr/bin/ffmpeg"
-              />
-              <button
-                type="button"
-                onClick={handleProbe}
-                disabled={!ffmpegPath?.trim() || probing}
-                className="px-4 py-3 bg-muted text-foreground font-medium rounded-xl hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed transition-all whitespace-nowrap flex items-center gap-2"
-              >
-                {probing ? <LoadingSpinner className="w-4 h-4" /> : 'Test'}
-              </button>
-            </div>
-            {errors.ffmpegPath && (
-              <p className="text-sm text-destructive mt-1">{errors.ffmpegPath.message}</p>
-            )}
-            <ProbeResultFeedback result={probeResult} error={probeError} />
-            <p className="text-sm text-muted-foreground mt-2">
-              Path to the ffmpeg binary. In Docker, this is typically <code className="px-1 py-0.5 bg-muted rounded text-xs">/usr/bin/ffmpeg</code>.
-            </p>
-          </div>
+        <SettingsTable>
+          <SettingsRow
+            htmlFor="autoMergeDownloads"
+            label={<>Auto-merge multi-file downloads {!ffmpegAvailable && <span className="ml-1 text-[0.65rem] uppercase tracking-wide text-muted-foreground border border-border rounded-full px-1.5 py-0.5">needs ffmpeg</span>}</>}
+            description={<AutoMergeDescription gated={!ffmpegAvailable} />}
+            muted={!ffmpegAvailable}
+          >
+            <ToggleSwitch id="autoMergeDownloads" disabled={!ffmpegAvailable && !autoMergeDownloads} {...register('autoMergeDownloads')} />
+          </SettingsRow>
 
-          <div>
-            <label htmlFor="outputFormat" className="block text-sm font-medium mb-2">Output Format</label>
-            <SelectWithChevron id="outputFormat" {...register('outputFormat')}>
-              {outputFormatSchema.options.map((format) => (
-                <option key={format} value={format}>
-                  {FORMAT_LABELS[format] ?? format}
-                </option>
-              ))}
-            </SelectWithChevron>
-            {currentOutputFormat === 'mp3' && (
-              <div className="mt-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center gap-2">
-                <AlertCircleIcon className="w-4 h-4 text-amber-500 shrink-0" />
-                <p className="text-sm text-amber-500">MP3 does not support embedded chapter markers</p>
+          <SettingsRow
+            htmlFor="taggingEnabled"
+            label={<>Tag Embedding {!ffmpegAvailable && <span className="ml-1 text-[0.65rem] uppercase tracking-wide text-muted-foreground border border-border rounded-full px-1.5 py-0.5">needs ffmpeg</span>}</>}
+            description={<>Write book metadata into the audio file’s tags on import. Series, series part, subtitle, ASIN, and publisher survive on MP3 but are dropped on M4B by the container.{!ffmpegAvailable && <GateNote />}</>}
+            muted={!ffmpegAvailable}
+          >
+            <ToggleSwitch id="taggingEnabled" disabled={!ffmpegAvailable && !taggingEnabled} {...register('taggingEnabled')} />
+          </SettingsRow>
+
+          {taggingEnabled && ffmpegAvailable && (
+            <SettingsRow htmlFor="tagMode" label="Tag mode" description="“Populate missing” only writes empty fields; “Overwrite” replaces all tag fields.">
+              <div className="w-48">
+                <SelectWithChevron id="tagMode" {...register('tagMode')}>
+                  {tagModeSchema.options.map((mode) => (
+                    <option key={mode} value={mode}>{TAG_MODE_LABELS[mode] ?? mode}</option>
+                  ))}
+                </SelectWithChevron>
               </div>
-            )}
-          </div>
+            </SettingsRow>
+          )}
 
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label htmlFor="bitrate" className="block text-sm font-medium">Target Bitrate (kbps)</label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <ToggleSwitch id="keepOriginalBitrate" size="compact" {...register('keepOriginalBitrate')} />
-                Keep original
-              </label>
-            </div>
-            <input
-              id="bitrate"
-              type="number"
-              {...register('bitrate', { valueAsNumber: true })}
-              disabled={keepOriginalBitrate}
-              className={`${errorInputClass(!!errors.bitrate)} disabled:cursor-not-allowed disabled:opacity-50`}
-              min={32}
-              max={512}
-              step={1}
-              placeholder="128"
-            />
-            {errors.bitrate && !keepOriginalBitrate && (
-              <p className="text-sm text-destructive mt-1">{errors.bitrate.message}</p>
-            )}
-            <p className="text-sm text-muted-foreground mt-2">
-              {keepOriginalBitrate
-                ? 'Files will be re-encoded using the original source bitrate.'
-                : 'Audio bitrate for the output file (32-512 kbps). 128 is good for speech; use 64 for smaller files.'}
-            </p>
-          </div>
+          {taggingEnabled && ffmpegAvailable && (
+            <SettingsRow htmlFor="embedCover" label="Embed cover art" description="Embed the book’s cover image into audio file tags.">
+              <ToggleSwitch id="embedCover" {...register('embedCover')} />
+            </SettingsRow>
+          )}
 
-          <div>
-            <label htmlFor="mergeBehavior" className="block text-sm font-medium mb-2">Merge Behavior</label>
-            <SelectWithChevron id="mergeBehavior" {...register('mergeBehavior')}>
-              {mergeBehaviorSchema.options.map((behavior) => (
-                <option key={behavior} value={behavior}>
-                  {MERGE_LABELS[behavior] ?? behavior}
-                </option>
-              ))}
-            </SelectWithChevron>
-            <p className="text-sm text-muted-foreground mt-2">
-              Controls when multiple audio files are merged into a single output file with chapter markers
-            </p>
-          </div>
-
-          <FormField
-            id="maxConcurrentProcessing"
-            label="Max Concurrent Jobs"
-            type="number"
-            registration={register('maxConcurrentProcessing', { valueAsNumber: true })}
-            error={errors.maxConcurrentProcessing}
-            min={1}
-            max={8}
-            step={1}
-            placeholder="1"
-            hint="Maximum number of manual merge jobs that can run simultaneously. Higher values use more CPU and disk I/O."
-          />
-        </div>
-
-        <div className="pt-6 mt-6 border-t border-border">
-          <div className="flex items-center justify-between">
-            <div>
-              <label htmlFor="taggingEnabled" className="block text-sm font-medium">Tag Embedding</label>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Write book metadata (author, title, series, narrator, subtitle, ASIN, publisher, description, year, genre) into audio file tags on import. Series, series part, subtitle, ASIN, and publisher survive on MP3 but are dropped on M4B by the container. Requires ffmpeg.
-              </p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <ToggleSwitch id="taggingEnabled" {...register('taggingEnabled')} />
-            </label>
-          </div>
-
-          {taggingEnabled && <div className="space-y-5 mt-5">
-            <div>
-              <label htmlFor="tagMode" className="block text-sm font-medium mb-2">Tag Mode</label>
-              <SelectWithChevron id="tagMode" {...register('tagMode')}>
-                {tagModeSchema.options.map((mode) => (
-                  <option key={mode} value={mode}>
-                    {TAG_MODE_LABELS[mode] ?? mode}
-                  </option>
-                ))}
-              </SelectWithChevron>
-              <p className="text-sm text-muted-foreground mt-2">
-                &ldquo;Populate missing&rdquo; only writes tags to fields that are currently empty. &ldquo;Overwrite&rdquo; replaces all tag fields.
-              </p>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <label htmlFor="embedCover" className="block text-sm font-medium">Embed Cover Art</label>
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  Embed the book&rsquo;s cover image into audio file tags
-                </p>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <ToggleSwitch id="embedCover" {...register('embedCover')} />
-              </label>
-            </div>
-          </div>}
-        </div>
-
-        {/* OPF sidecar — rendered OUTSIDE the taggingEnabled conditional: it never touches audio and
-            needs no ffmpeg, so it must be usable even when Tag Embedding is off. */}
-        <div className="pt-6 mt-6 border-t border-border">
-          <div className="flex items-center justify-between">
-            <div>
-              <label htmlFor="writeOpf" className="block text-sm font-medium">OPF Metadata Sidecar</label>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Write a <code className="px-1 py-0.5 bg-muted rounded text-xs">metadata.opf</code> file into each book folder on import. Using Audiobookshelf? Enable this and set &ldquo;Prefer OPF metadata&rdquo; in ABS so it shows narratorr&rsquo;s metadata instead of the release&rsquo;s embedded tags.
-              </p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <ToggleSwitch id="writeOpf" {...register('writeOpf')} />
-            </label>
-          </div>
-        </div>
-
-        <CustomScriptSection register={register} errors={errors} />
+          <SettingsRow
+            htmlFor="writeOpf"
+            label="OPF metadata sidecar"
+            description={
+              <>
+                Write a <code className="px-1 py-0.5 bg-muted rounded text-xs">metadata.opf</code> into each book folder on import.{' '}
+                <InfoTip label="Audiobookshelf setup">
+                  Using Audiobookshelf? Enable this, then turn on “Prefer OPF metadata” in your ABS
+                  library settings so it reads the sidecar instead of the audio file’s tags.
+                </InfoTip>
+              </>
+            }
+          >
+            <ToggleSwitch id="writeOpf" {...register('writeOpf')} />
+          </SettingsRow>
+        </SettingsTable>
 
         {isDirty && (
-          <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
-          >
+          <button type="submit" disabled={mutation.isPending} className={saveButtonClass}>
             {mutation.isPending ? 'Saving...' : 'Save'}
           </button>
         )}
       </form>
     </SettingsSection>
+  );
+}
+
+// ─── Custom script card (script path + timeout — its own form and Save) ───
+
+const customScriptFormSchema = z.object({
+  postProcessingScript: z.string(),
+  postProcessingScriptTimeout: postProcessingScriptTimeoutField.optional(),
+}).superRefine((data, ctx) => {
+  if (data.postProcessingScript?.trim() && data.postProcessingScriptTimeout == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['postProcessingScriptTimeout'],
+      message: 'Timeout is required when a post-processing script is configured',
+    });
+  }
+});
+
+type CustomScriptFormData = z.infer<typeof customScriptFormSchema>;
+
+function toCustomScriptFormData(settings: AppSettings): CustomScriptFormData {
+  return {
+    postProcessingScript: settings.processing.postProcessingScript,
+    postProcessingScriptTimeout: settings.processing.postProcessingScriptTimeout,
+  };
+}
+
+function toCustomScriptPayload(data: CustomScriptFormData) {
+  return {
+    processing: {
+      postProcessingScript: data.postProcessingScript,
+      ...(data.postProcessingScriptTimeout !== undefined && { postProcessingScriptTimeout: data.postProcessingScriptTimeout }),
+    },
+  };
+}
+
+/** A monospaced env-var chip for the script's description copy. */
+function EnvChip({ children }: { children: ReactNode }) {
+  return <code className="px-1 py-0.5 bg-muted rounded text-xs font-mono">{children}</code>;
+}
+
+function CustomScriptForm() {
+  const { form, mutation, onSubmit } = useSettingsForm<CustomScriptFormData>({
+    schema: customScriptFormSchema,
+    defaultValues: toCustomScriptFormData({ ...DEFAULT_SETTINGS } as AppSettings),
+    select: toCustomScriptFormData,
+    toPayload: toCustomScriptPayload,
+    successMessage: 'Custom script settings saved',
+  });
+
+  const { register, handleSubmit, formState: { errors, isDirty } } = form;
+
+  return (
+    <SettingsSection
+      icon={<TerminalIcon className="w-5 h-5 text-primary" />}
+      title="Custom script"
+      description="Run a script after each successful import — hand off to another tool, or run ffmpeg and other transforms on every downloaded book."
+    >
+      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+        <SettingsTable>
+          <SettingsRow
+            layout="stacked"
+            htmlFor="postProcessingScript"
+            label="Post-processing script"
+            description={
+              <>
+                Absolute path to the script. Leave empty to disable.{' '}
+                <InfoTip label="Script environment variables">
+                  <span className="block mb-1.5">The script runs with these environment variables set:</span>
+                  <span className="block space-y-1">
+                    <span className="block"><EnvChip>NARRATORR_BOOK_TITLE</EnvChip></span>
+                    <span className="block"><EnvChip>NARRATORR_BOOK_AUTHOR</EnvChip></span>
+                    <span className="block"><EnvChip>NARRATORR_IMPORT_PATH</EnvChip></span>
+                    <span className="block"><EnvChip>NARRATORR_IMPORT_FILE_COUNT</EnvChip></span>
+                  </span>
+                </InfoTip>
+              </>
+            }
+          >
+            <input
+              id="postProcessingScript"
+              type="text"
+              {...register('postProcessingScript')}
+              placeholder="/path/to/script.sh"
+              className={errorInputClass(!!errors.postProcessingScript)}
+            />
+            {errors.postProcessingScript && <span className="block mt-1 text-xs text-destructive">{errors.postProcessingScript.message}</span>}
+          </SettingsRow>
+
+          <SettingsRow
+            htmlFor="postProcessingScriptTimeout"
+            label="Script timeout"
+            description="Maximum time before the script is killed. Default: 300 (5 minutes)."
+          >
+            <NumberField
+              id="postProcessingScriptTimeout"
+              {...register('postProcessingScriptTimeout', { setValueAs: (v: string) => { const n = Number(v); return v === '' || Number.isNaN(n) ? undefined : n; } })}
+              min={1}
+              step={1}
+              placeholder="300"
+              suffix="seconds"
+              error={errors.postProcessingScriptTimeout?.message}
+            />
+          </SettingsRow>
+        </SettingsTable>
+
+        {isDirty && (
+          <button type="submit" disabled={mutation.isPending} className={saveButtonClass}>
+            {mutation.isPending ? 'Saving...' : 'Save'}
+          </button>
+        )}
+      </form>
+    </SettingsSection>
+  );
+}
+
+export function ProcessingSettingsSection() {
+  return (
+    <div className="space-y-8">
+      <AutomationsForm />
+      <CustomScriptForm />
+    </div>
   );
 }

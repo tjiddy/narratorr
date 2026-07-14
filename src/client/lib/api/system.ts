@@ -42,6 +42,13 @@ export interface SystemInfo {
 export interface SystemStatus {
   version: string;
   status: string;
+  /** Optional free-form instance badge (e.g. 'dev'); present only when configured (#1842). */
+  instanceBadge?: string;
+}
+
+/** Third-party license notices shipped with the image, rendered on the System tab (#1862). */
+export interface ThirdPartyNotices {
+  content: string;
 }
 
 export const systemApi = {
@@ -57,4 +64,5 @@ export const systemApi = {
   getSystemTasks: () => fetchApi<TaskMetadata[]>('/system/tasks'),
   runSystemTask: (name: string) => fetchApi<{ ok: boolean }>(`/system/tasks/${name}/run`, { method: 'POST' }),
   getSystemInfo: () => fetchApi<SystemInfo>('/system/info'),
+  getThirdPartyNotices: () => fetchApi<ThirdPartyNotices>('/system/notices'),
 };

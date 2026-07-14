@@ -5,7 +5,7 @@ import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import { DuplicateDownloadError } from '../services/download-errors.js';
 import { DownloadClientError } from '../../core/download-clients/errors.js';
 import {
-  grabSchema,
+  grabBodySchema,
   type GrabInput,
 } from '../../shared/schemas.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -20,25 +20,29 @@ export async function searchRoutes(
     '/api/search/grab',
     {
       schema: {
-        body: grabSchema,
+        body: grabBodySchema,
       },
     },
     async (request, reply) => {
       const data = request.body;
 
       try {
-        request.log.info({ title: data.title }, 'Grab requested');
+        request.log.info({ title: data.title, replace: data.replace }, 'Grab requested');
         request.log.debug({ title: data.title, protocol: data.protocol, downloadUrl: sanitizeLogUrl(data.downloadUrl), bookId: data.bookId }, 'Grab details');
-        const download = await downloadOrchestrator.grab(data);
+        const download = await downloadOrchestrator.grabInternal(data);
         request.log.debug({ downloadId: download.id, status: download.status, externalId: download.externalId }, 'Grab completed');
         return await reply.status(201).send(download);
       } catch (error: unknown) {
         if (error instanceof DuplicateDownloadError) {
-          if (error.code === 'ACTIVE_DOWNLOAD_EXISTS') {
-            return reply.status(409).send({ code: 'ACTIVE_DOWNLOAD_EXISTS' });
+          // Shape both conflict codes from the REQUIRED code-discriminated error
+          // `details` the classifier populated — no internal ids, no raw messages,
+          // no re-querying, no fallback (the decision stayed in the service, #1857
+          // F60 / #1861).
+          if ('active' in error.details) {
+            const { active } = error.details;
+            return reply.status(409).send({ code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: active.title }, count: active.count });
           }
-          // PIPELINE_ACTIVE — propagate to error-handler plugin (returns 409 { error: message })
-          throw error;
+          return reply.status(409).send({ code: 'PIPELINE_ACTIVE', reason: error.details.reason });
         }
         if (error instanceof DownloadClientError) {
           // Typed download-client errors propagate to error-handler plugin

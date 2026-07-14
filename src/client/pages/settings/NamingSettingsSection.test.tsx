@@ -78,12 +78,22 @@ describe('NamingSettingsSection', () => {
       expect(screen.getByText('Configure how audiobook files and folders are named')).toBeInTheDocument();
     });
 
-    it('renders Folder Format and File Format fields', async () => {
+    it('renders Folder format and File format fields', async () => {
       renderWithProviders(<NamingSettingsSection />);
       await waitFor(() => {
-        expect(screen.getByText('Folder Format')).toBeInTheDocument();
+        expect(screen.getByText('Folder format')).toBeInTheDocument();
       });
-      expect(screen.getByText('File Format')).toBeInTheDocument();
+      expect(screen.getByText('File format')).toBeInTheDocument();
+    });
+
+    it('format inputs keep an accessible name (row header is a span, so the input labels itself)', async () => {
+      // Regression guard: the stacked row header hosts the interactive "?" button and therefore
+      // renders as a <span>, not a <label> — without aria-label the inputs would be nameless.
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Folder format')).toHaveAttribute('id', 'folderFormat');
+      });
+      expect(screen.getByLabelText('File format')).toHaveAttribute('id', 'fileFormat');
     });
 
     it('renders ? buttons with cursor-pointer for folder and file format', async () => {

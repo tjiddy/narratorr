@@ -7,6 +7,7 @@ import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
+import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { normalizeProductionType } from '../../core/metadata/production-type.js';
 import { RateLimitError } from '../../core/index.js';
@@ -62,8 +63,7 @@ export async function orchestrateBookEnrichment(
   audnexusConfig: AudnexusConfig,
 ): Promise<{ audioEnriched: boolean }> {
   // Audio file metadata enrichment
-  const processingSettings = await deps.settingsService.get('processing');
-  const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
+  const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
   const audioResult = await enrichBookFromAudio(
     bookId,
     finalPath,

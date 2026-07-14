@@ -10,7 +10,7 @@ import type { Dirent } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import { join, extname, dirname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/index.js';
 import { MARKER_SUFFIX, SCRATCH_SUFFIXES } from '../../core/utils/import-sibling-suffixes.js';
 import { assertMarkerPathWritable } from './marker-path-conflict.js';
 import { serializeError } from './serialize-error.js';
@@ -213,6 +213,7 @@ async function listAudioFilesRecursive(dir: string): Promise<string[]> {
   }
   const results: string[] = [];
   for (const entry of entries) {
+    if (isHiddenName(entry.name)) continue; // never back up / restore a born-hidden temp or dot-dir subtree
     if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
       results.push(entry.name);
     } else if (entry.isDirectory()) {

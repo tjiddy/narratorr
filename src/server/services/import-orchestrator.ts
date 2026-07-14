@@ -1,3 +1,5 @@
+import { readdir } from 'node:fs/promises';
+import { extname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { ImportService, ImportResult, ImportContext, ImportProgressCallbacks } from './import.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -7,6 +9,9 @@ import type { TaggingService } from './tagging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { BlacklistService } from './blacklist.service.js';
+import type { MergeService } from './merge.service.js';
+import { MergeError } from './merge.service.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
 import type { RetrySearchDeps } from './retry-search.js';
 import {
   emitDownloadImporting, emitBookImporting, emitImportStatusSuccess,
@@ -46,6 +51,7 @@ export class ImportOrchestrator {
     private broadcaster?: EventBroadcasterService,
     private connectorService?: ConnectorService,
     private bookService?: BookService,
+    private mergeService?: MergeService,
   ) {}
 
   /** Wire cyclic / late-bound deps after construction. Call once during composition. */
@@ -121,10 +127,9 @@ export class ImportOrchestrator {
     // Best-effort: tagging
     try {
       const taggingSettings = await this.settingsService.get('tagging');
-      const processingSettings = await this.settingsService.get('processing');
       await embedTagsForImport({
         taggingService: this.taggingService, taggingEnabled: taggingSettings.enabled,
-        ffmpegPath: processingSettings.ffmpegPath, taggingMode: taggingSettings.mode, embedCover: taggingSettings.embedCover,
+        taggingMode: taggingSettings.mode, embedCover: taggingSettings.embedCover,
         bookId: ctx.bookId, targetPath: result.targetPath,
         book: {
           title: ctx.book.title, authorName: ctx.authorName, narrator: ctx.narratorStr,
@@ -185,6 +190,55 @@ export class ImportOrchestrator {
         this.log,
         'Failed to enqueue connector refresh on auto-import',
       );
+    }
+
+    // Auto-merge (#1836), DOWNLOAD path only — reached solely via this success dispatcher,
+    // which manual/library import never invoke. The LAST awaited step before the method returns:
+    // it comes after the three awaited import side effects (tag/OPF/script) and, being placed
+    // after the fire-and-forget block above, never blocks those dispatches (they already kicked
+    // off un-awaited). Ordering relative to them is not load-bearing.
+    await this.maybeEnqueueAutoMerge(result, ctx);
+  }
+
+  /**
+   * Opt-in auto-merge for multi-file downloads (#1836). Enqueues into the same bounded merge
+   * queue as the manual Merge button; the enqueue is fully isolated from the import — no
+   * rejection or later merge failure may fail/revert the completed import.
+   *
+   * Admission uses the SAME eligibility signal as the manual Merge button: a live top-level
+   * `readdir` of the committed folder filtered by AUDIO_EXTENSIONS. It deliberately does NOT use
+   * `ImportResult.fileCount` (a recursive count of the SOURCE folder) or the persisted
+   * `books.topLevelAudioFileCount` (written by swallow-on-failure enrichment; can be a stale 0).
+   * `enqueueMerge` re-validates via its own live readdir + the synchronous in-progress/queue
+   * duplicate guard, so this pre-count is an admission optimization, not the sole guard.
+   */
+  private async maybeEnqueueAutoMerge(result: ImportResult, ctx: ImportContext): Promise<void> {
+    if (!this.mergeService) return;
+    try {
+      const processing = await this.settingsService.get('processing');
+      if (!processing.autoMergeDownloads) return;
+
+      const entries = await readdir(result.targetPath);
+      const topLevelAudioCount = entries.filter((f) => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase())).length;
+      if (topLevelAudioCount < 2) {
+        this.log.debug({ bookId: ctx.bookId, topLevelAudioCount }, 'Auto-merge skipped — fewer than 2 top-level audio files');
+        return;
+      }
+
+      await this.mergeService.enqueueMerge(ctx.bookId, 'auto');
+      this.log.info({ bookId: ctx.bookId, topLevelAudioCount }, 'Auto-merge enqueued for multi-file download');
+    } catch (mergeError: unknown) {
+      // Idempotency: a duplicate completion / worker retry while a merge is queued or running
+      // throws ALREADY_* from the synchronous guard — benign, log at debug, no second job.
+      if (mergeError instanceof MergeError && (mergeError.code === 'ALREADY_IN_PROGRESS' || mergeError.code === 'ALREADY_QUEUED')) {
+        this.log.debug({ bookId: ctx.bookId, code: mergeError.code }, 'Auto-merge already queued/running — idempotent skip');
+        return;
+      }
+      // Failure isolation: neither a pre-enqueue admission rejection (MergeError, e.g. ineligible
+      // book or ffmpeg unconfigured) nor any other enqueue error may fail/revert the import. A
+      // pre-enqueue rejection records no merge_failed — it is a skipped admission, not a merge
+      // attempt. A mid-run merge failure surfaces on MergeService's own merge_failed path.
+      this.log.warn({ error: serializeError(mergeError), bookId: ctx.bookId }, 'Auto-merge enqueue failed — import unaffected');
     }
   }
 

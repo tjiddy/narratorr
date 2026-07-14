@@ -42,12 +42,11 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByText('Delete After Import')).toBeInTheDocument();
-      expect(screen.getByText('Minimum Seed Time (minutes)')).toBeInTheDocument();
+      expect(screen.getByText('Delete after import')).toBeInTheDocument();
+      expect(screen.getByText('Minimum seed time')).toBeInTheDocument();
     });
 
-    const checkbox = screen.getByText('Delete After Import')
-      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const checkbox = screen.getByLabelText('Delete after import') as HTMLInputElement;
 
     expect(checkbox.checked).toBe(false);
     await user.click(checkbox);
@@ -58,7 +57,7 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
+      expect(screen.getByLabelText('Minimum free space')).toHaveValue(5);
     });
   });
 
@@ -67,10 +66,10 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
+      expect(screen.getByLabelText('Minimum free space')).toHaveValue(5);
     });
 
-    const input = screen.getByLabelText('Minimum Free Space (GB)');
+    const input = screen.getByLabelText('Minimum free space');
     await user.tripleClick(input);
     await user.keyboard('10');
     expect(input).toHaveValue(10);
@@ -88,18 +87,18 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Free Space (GB)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Minimum free space')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveAttribute('step', 'any');
+    expect(screen.getByLabelText('Minimum free space')).toHaveAttribute('step', 'any');
   });
 
   it('minimum seed time input uses integer step', async () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Minimum seed time')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toHaveAttribute('step', '1');
+    expect(screen.getByLabelText('Minimum seed time')).toHaveAttribute('step', '1');
   });
 
   it('allows changing the minimum seed time', async () => {
@@ -111,10 +110,10 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toHaveValue(60);
+      expect(screen.getByLabelText('Minimum seed time')).toHaveValue(60);
     });
 
-    const seedTimeInput = screen.getByLabelText('Minimum Seed Time (minutes)');
+    const seedTimeInput = screen.getByLabelText('Minimum seed time');
     await user.tripleClick(seedTimeInput);
     await user.keyboard('120');
     expect(seedTimeInput).toHaveValue(120);
@@ -130,10 +129,10 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toHaveValue(60);
+      expect(screen.getByLabelText('Minimum seed time')).toHaveValue(60);
     });
 
-    const input = screen.getByLabelText('Minimum Seed Time (minutes)');
+    const input = screen.getByLabelText('Minimum seed time');
     await user.tripleClick(input);
     await user.keyboard('-1');
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -153,10 +152,10 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toHaveValue(60);
+      expect(screen.getByLabelText('Minimum seed time')).toHaveValue(60);
     });
 
-    const input = screen.getByLabelText('Minimum Seed Time (minutes)');
+    const input = screen.getByLabelText('Minimum seed time');
     await user.tripleClick(input);
     await user.keyboard('120');
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -174,11 +173,11 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
+      expect(screen.getByLabelText('Minimum free space')).toHaveValue(5);
     });
 
     // Change a value to dirty the form so Save button appears
-    const input = screen.getByLabelText('Minimum Free Space (GB)');
+    const input = screen.getByLabelText('Minimum free space');
     await user.tripleClick(input);
     await user.keyboard('10');
 
@@ -197,11 +196,11 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
+      expect(screen.getByLabelText('Minimum free space')).toHaveValue(5);
     });
 
     // Change a value to dirty the form so Save button appears
-    const input = screen.getByLabelText('Minimum Free Space (GB)');
+    const input = screen.getByLabelText('Minimum free space');
     await user.tripleClick(input);
     await user.keyboard('10');
 
@@ -216,7 +215,7 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByText('Redownload Failed')).toBeInTheDocument();
+      expect(screen.getByText('Redownload failed')).toBeInTheDocument();
       expect(screen.getByText('Automatically search for and attempt to download a different release when a download fails')).toBeInTheDocument();
     });
   });
@@ -225,10 +224,10 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Redownload Failed')).toBeInTheDocument();
+      expect(screen.getByLabelText('Redownload failed')).toBeInTheDocument();
     });
 
-    const checkbox = screen.getByLabelText('Redownload Failed') as HTMLInputElement;
+    const checkbox = screen.getByLabelText('Redownload failed') as HTMLInputElement;
     expect(checkbox.checked).toBe(true);
   });
 
@@ -238,10 +237,10 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Redownload Failed')).toBeInTheDocument();
+      expect(screen.getByLabelText('Redownload failed')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByLabelText('Redownload Failed'));
+    await user.click(screen.getByLabelText('Redownload failed'));
     await user.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
@@ -256,10 +255,10 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByText('Delete After Import')).toBeInTheDocument();
+        expect(screen.getByText('Delete after import')).toBeInTheDocument();
       });
 
-      const form = screen.getByText('Delete After Import').closest('form')!;
+      const form = screen.getByText('Delete after import').closest('form')!;
       const labels = Array.from(form.querySelectorAll('label[for]')).map(
         (el) => el.getAttribute('for'),
       );
@@ -283,10 +282,10 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeInTheDocument();
+        expect(screen.getByLabelText('Minimum seed time')).toBeInTheDocument();
       });
 
-      expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeDisabled();
+      expect(screen.getByLabelText('Minimum seed time')).toBeDisabled();
     });
 
     it('seed time input is enabled when deleteAfterImport is on', async () => {
@@ -297,7 +296,7 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).not.toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed time')).not.toBeDisabled();
       });
     });
 
@@ -310,13 +309,13 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).not.toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed time')).not.toBeDisabled();
       });
 
-      await user.click(screen.getByLabelText('Delete After Import'));
+      await user.click(screen.getByLabelText('Delete after import'));
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed time')).toBeDisabled();
       });
     });
 
@@ -325,13 +324,13 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed time')).toBeDisabled();
       });
 
-      await user.click(screen.getByLabelText('Delete After Import'));
+      await user.click(screen.getByLabelText('Delete after import'));
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).not.toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed time')).not.toBeDisabled();
       });
     });
 
@@ -345,19 +344,19 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).not.toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed time')).not.toBeDisabled();
       });
 
       // Enter invalid value
-      const input = screen.getByLabelText('Minimum Seed Time (minutes)');
+      const input = screen.getByLabelText('Minimum seed time');
       await user.tripleClick(input);
       await user.keyboard('-1');
 
       // Toggle delete off — field becomes disabled
-      await user.click(screen.getByLabelText('Delete After Import'));
+      await user.click(screen.getByLabelText('Delete after import'));
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed time')).toBeDisabled();
       });
 
       // Try to save — should not call updateSettings (validation blocks it)
@@ -381,19 +380,19 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).not.toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed time')).not.toBeDisabled();
       });
 
       // Edit minSeedTime
-      const input = screen.getByLabelText('Minimum Seed Time (minutes)');
+      const input = screen.getByLabelText('Minimum seed time');
       await user.tripleClick(input);
       await user.keyboard('120');
 
       // Toggle delete off — seed time becomes disabled
-      await user.click(screen.getByLabelText('Delete After Import'));
+      await user.click(screen.getByLabelText('Delete after import'));
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed time')).toBeDisabled();
       });
 
       // Save — should include the edited minSeedTime value
@@ -413,10 +412,10 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
+      expect(screen.getByLabelText('Minimum free space')).toHaveValue(5);
     });
 
-    const input = screen.getByLabelText('Minimum Free Space (GB)');
+    const input = screen.getByLabelText('Minimum free space');
     await user.clear(input);
     await user.type(input, '10');
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
@@ -432,12 +431,12 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Ratio')).toBeInTheDocument();
+        expect(screen.getByLabelText('Minimum seed ratio')).toBeInTheDocument();
       });
 
-      const allLabels = screen.getAllByText(/Minimum Seed/);
-      const seedTimeIdx = allLabels.findIndex(el => el.textContent?.includes('Time'));
-      const seedRatioIdx = allLabels.findIndex(el => el.textContent === 'Minimum Seed Ratio');
+      const allLabels = screen.getAllByText(/Minimum seed/);
+      const seedTimeIdx = allLabels.findIndex(el => el.textContent?.includes('time'));
+      const seedRatioIdx = allLabels.findIndex(el => el.textContent === 'Minimum seed ratio');
       expect(seedRatioIdx).toBeGreaterThan(seedTimeIdx);
     });
 
@@ -453,10 +452,10 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Ratio')).toBeInTheDocument();
+        expect(screen.getByLabelText('Minimum seed ratio')).toBeInTheDocument();
       });
 
-      expect(screen.getByLabelText('Minimum Seed Ratio')).toHaveAttribute('step', '0.1');
+      expect(screen.getByLabelText('Minimum seed ratio')).toHaveAttribute('step', '0.1');
     });
 
     it('rejects negative minSeedRatio via form validation', async () => {
@@ -469,10 +468,10 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Ratio')).not.toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed ratio')).not.toBeDisabled();
       });
 
-      const input = screen.getByLabelText('Minimum Seed Ratio');
+      const input = screen.getByLabelText('Minimum seed ratio');
       await user.tripleClick(input);
       await user.keyboard('-1');
       await user.click(screen.getByRole('button', { name: /save/i }));
@@ -493,10 +492,10 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Ratio')).toHaveValue(0);
+        expect(screen.getByLabelText('Minimum seed ratio')).toHaveValue(0);
       });
 
-      const input = screen.getByLabelText('Minimum Seed Ratio');
+      const input = screen.getByLabelText('Minimum seed ratio');
       await user.tripleClick(input);
       await user.keyboard('1.5');
       await user.click(screen.getByRole('button', { name: /save/i }));
@@ -514,10 +513,10 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Ratio')).toBeInTheDocument();
+        expect(screen.getByLabelText('Minimum seed ratio')).toBeInTheDocument();
       });
 
-      expect(screen.getByLabelText('Minimum Seed Ratio')).toBeDisabled();
+      expect(screen.getByLabelText('Minimum seed ratio')).toBeDisabled();
     });
 
     it('seed ratio input is enabled when deleteAfterImport is on', async () => {
@@ -528,7 +527,7 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Ratio')).not.toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed ratio')).not.toBeDisabled();
       });
     });
 
@@ -541,14 +540,14 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Ratio')).not.toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed ratio')).not.toBeDisabled();
       });
 
-      await user.click(screen.getByLabelText('Delete After Import'));
+      await user.click(screen.getByLabelText('Delete after import'));
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Ratio')).toBeDisabled();
-        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed ratio')).toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed time')).toBeDisabled();
       });
     });
 
@@ -557,14 +556,14 @@ describe('ImportSettingsSection', () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Ratio')).toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed ratio')).toBeDisabled();
       });
 
-      await user.click(screen.getByLabelText('Delete After Import'));
+      await user.click(screen.getByLabelText('Delete after import'));
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Minimum Seed Ratio')).not.toBeDisabled();
-        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).not.toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed ratio')).not.toBeDisabled();
+        expect(screen.getByLabelText('Minimum seed time')).not.toBeDisabled();
       });
     });
   });

@@ -163,7 +163,7 @@ async function main() {
 
   // Log the detected ffmpeg/ffprobe versions once (best-effort) so an ffmpeg<8
   // regression is visible in boot output, not just inferred from holds (#1679).
-  await checkFfmpegVersionAtBoot(app.log);
+  await checkFfmpegVersionAtBoot(app.log, services.settings);
   await app.register(cookie);
   await app.register(authPlugin, { authService: services.auth, urlBase: config.urlBase });
   await app.register(errorHandlerPlugin);

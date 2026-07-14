@@ -318,7 +318,7 @@ describe('search routes', () => {
   describe('POST /api/search/grab', () => {
     it('grabs download and returns 201', async () => {
       const mockDownload = { id: 1, title: 'Test', status: 'downloading' };
-      (services.downloadOrchestrator.grab as Mock).mockResolvedValue(mockDownload);
+      (services.downloadOrchestrator.grabInternal as Mock).mockResolvedValue(mockDownload);
 
       const res = await app.inject({
         method: 'POST',
@@ -334,7 +334,7 @@ describe('search routes', () => {
 
     it('forwards indexerId from request body to orchestrator.grab', async () => {
       const mockDownload = { id: 1, title: 'Test', status: 'downloading' };
-      (services.downloadOrchestrator.grab as Mock).mockResolvedValue(mockDownload);
+      (services.downloadOrchestrator.grabInternal as Mock).mockResolvedValue(mockDownload);
 
       await app.inject({
         method: 'POST',
@@ -346,7 +346,7 @@ describe('search routes', () => {
         },
       });
 
-      expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith(
+      expect(services.downloadOrchestrator.grabInternal).toHaveBeenCalledWith(
         expect.objectContaining({ indexerId: 7 }),
       );
     });
@@ -377,7 +377,7 @@ describe('search routes', () => {
     });
 
     it('returns 500 when grab fails', async () => {
-      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new Error('No download client'));
+      (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(new Error('No download client'));
 
       const res = await app.inject({
         method: 'POST',
@@ -394,8 +394,8 @@ describe('search routes', () => {
 
     // #197 — DuplicateDownloadError route handling (ERR-1)
     it('returns 409 with { code: ACTIVE_DOWNLOAD_EXISTS } when DuplicateDownloadError has ACTIVE_DOWNLOAD_EXISTS code', async () => {
-      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(
-        new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'),
+      (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(
+        new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }),
       );
 
       const res = await app.inject({
@@ -408,12 +408,29 @@ describe('search routes', () => {
       });
 
       expect(res.statusCode).toBe(409);
-      expect(JSON.parse(res.payload)).toEqual({ code: 'ACTIVE_DOWNLOAD_EXISTS' });
+      // #1857/#1861 — coded body carries the active title + count from the REQUIRED
+      // structured details (no ids, no request-title fallback — that fallback was deleted).
+      expect(JSON.parse(res.payload)).toEqual({ code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'A Book' }, count: 1 });
     });
 
-    it('returns 409 with { error: message } when DuplicateDownloadError has PIPELINE_ACTIVE code (plugin-routed)', async () => {
-      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(
-        new DuplicateDownloadError('Book 1 has pipeline download', 'PIPELINE_ACTIVE'),
+    it('returns 409 with { code: ACTIVE_DOWNLOAD_EXISTS, active, count } from the error details (#1857)', async () => {
+      (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(
+        new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'The Older Grab', count: 2 } }),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: { downloadUrl: 'magnet:?xt=urn:btih:abc123', title: 'Test', bookId: 1 },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'The Older Grab' }, count: 2 });
+    });
+
+    it('returns 409 with { code: PIPELINE_ACTIVE, reason } shaped in the route (no id-leaking prose, #1857)', async () => {
+      (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(
+        new DuplicateDownloadError('Book 1 has pipeline download', 'PIPELINE_ACTIVE', { reason: 'awaiting_review' }),
       );
 
       const res = await app.inject({
@@ -426,12 +443,27 @@ describe('search routes', () => {
       });
 
       expect(res.statusCode).toBe(409);
-      expect(JSON.parse(res.payload)).toEqual({ error: 'Book 1 has pipeline download' });
+      expect(JSON.parse(res.payload)).toEqual({ code: 'PIPELINE_ACTIVE', reason: 'awaiting_review' });
+    });
+
+    it('shapes PIPELINE_ACTIVE reason=processing from the required error details', async () => {
+      (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(
+        new DuplicateDownloadError('Book 1 has pipeline download', 'PIPELINE_ACTIVE', { reason: 'processing' }),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: { downloadUrl: 'magnet:?xt=urn:btih:abc123', title: 'Test' },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ code: 'PIPELINE_ACTIVE', reason: 'processing' });
     });
 
     // #558 — Typed download client errors propagate to error-handler plugin
     it('returns 401 when DownloadClientAuthError propagates through error handler', async () => {
-      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(
+      (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(
         new DownloadClientAuthError('qBittorrent', 'Session expired'),
       );
 
@@ -446,7 +478,7 @@ describe('search routes', () => {
     });
 
     it('returns 504 when DownloadClientTimeoutError propagates through error handler', async () => {
-      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(
+      (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(
         new DownloadClientTimeoutError('SABnzbd', 'Request timed out'),
       );
 
@@ -461,7 +493,7 @@ describe('search routes', () => {
     });
 
     it('returns 502 when generic DownloadClientError propagates through error handler', async () => {
-      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(
+      (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(
         new DownloadClientError('Transmission', 'HTTP 500: Internal Server Error'),
       );
 
@@ -476,7 +508,7 @@ describe('search routes', () => {
     });
 
     it('still returns 500 for non-download-client errors and logs canonical serialized error', async () => {
-      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new Error('Some other error'));
+      (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(new Error('Some other error'));
 
       const res = await app.inject({
         method: 'POST',
@@ -494,7 +526,7 @@ describe('search routes', () => {
 
     it('sanitizes downloadUrl in debug log (strips query params from HTTP URL)', async () => {
       const mockDownload = { id: 1, title: 'Test', status: 'downloading' };
-      (services.downloadOrchestrator.grab as Mock).mockResolvedValue(mockDownload);
+      (services.downloadOrchestrator.grabInternal as Mock).mockResolvedValue(mockDownload);
 
       // Create a separate app instance with logging enabled to capture log output
       const logLines: string[] = [];
@@ -539,9 +571,9 @@ describe('search routes', () => {
   // ===== #248 — grab route accepts guid =====
 
   describe('POST /api/search/grab — guid threading', () => {
-    it('passes guid to downloadOrchestrator.grab when provided', async () => {
+    it('passes guid to downloadOrchestrator.grabInternal when provided', async () => {
       const mockDownload = { id: 1, title: 'Test', status: 'downloading' };
-      (services.downloadOrchestrator.grab as Mock).mockResolvedValue(mockDownload);
+      (services.downloadOrchestrator.grabInternal as Mock).mockResolvedValue(mockDownload);
 
       await app.inject({
         method: 'POST',
@@ -553,14 +585,14 @@ describe('search routes', () => {
         },
       });
 
-      expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith(
+      expect(services.downloadOrchestrator.grabInternal).toHaveBeenCalledWith(
         expect.objectContaining({ guid: 'test-guid' }),
       );
     });
 
     it('omits guid when not provided (backward compatible)', async () => {
       const mockDownload = { id: 1, title: 'Test', status: 'downloading' };
-      (services.downloadOrchestrator.grab as Mock).mockResolvedValue(mockDownload);
+      (services.downloadOrchestrator.grabInternal as Mock).mockResolvedValue(mockDownload);
 
       await app.inject({
         method: 'POST',
@@ -571,7 +603,7 @@ describe('search routes', () => {
         },
       });
 
-      const callArg = (services.downloadOrchestrator.grab as Mock).mock.calls[0]![0] as Record<string, unknown>;
+      const callArg = (services.downloadOrchestrator.grabInternal as Mock).mock.calls[0]![0] as Record<string, unknown>;
       expect(callArg.guid).toBeUndefined();
     });
   });

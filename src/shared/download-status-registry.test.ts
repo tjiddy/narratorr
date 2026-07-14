@@ -10,7 +10,6 @@ import {
   getClientPolledStatuses,
   deriveDisplayStatus,
   isTerminalState,
-  isReplaceableState,
 } from './download-status-registry.js';
 
 describe('download-status-registry', () => {
@@ -203,19 +202,5 @@ describe('download-status-registry', () => {
       }
     });
 
-    it('a download with pipelineStage=importing is NOT replaceable (load-bearing invariant)', () => {
-      for (const c of clientStatuses) {
-        expect(isReplaceableState(c, 'importing')).toBe(false);
-      }
-    });
-
-    it('isReplaceableState mirrors the replaceable-status set for every tuple', () => {
-      const replaceable = new Set<string>(['queued', 'downloading', 'paused', 'checking', 'pending_review']);
-      for (const c of clientStatuses) {
-        for (const p of pipelineStages) {
-          expect(isReplaceableState(c, p)).toBe(replaceable.has(deriveDisplayStatus(c, p)));
-        }
-      }
-    });
   });
 });

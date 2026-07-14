@@ -38,10 +38,14 @@ export type NarratorEquality = 'equal' | 'not-equal' | 'no-signal';
 
 /**
  * Relaxed duration tolerance band (15%) for the equal-narrator corroborator.
- * COPIED (not imported) from `match-job.helpers.ts`'s `DURATION_THRESHOLD_RELAXED`
- * to keep core free of server imports — two unabridged readings of one book are
- * ~the same length, so duration can only *downgrade* an equal-narrator match,
- * never separate editions on its own.
+ * Historically COPIED (not imported) from `match-job.helpers.ts`'s relative
+ * duration band to keep core free of server imports. #1850 replaced the match-job
+ * band with a single absolute 90s tolerance, but the same-vs-different-recording
+ * decision is a different question with its own edge cases, so this relative band
+ * is retained deliberately (evaluating the same first-principles critique here is
+ * tracked as a separate follow-up). Two unabridged readings of one book are ~the
+ * same length, so duration can only *downgrade* an equal-narrator match, never
+ * separate editions on its own.
  */
 const DURATION_TOLERANCE = 0.15;
 

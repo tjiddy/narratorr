@@ -6,9 +6,12 @@ import type { BookService } from './book.service.js';
 import type { ConnectorService } from './connector.service.js';
 import { enqueueBookRefresh, type BookRefreshItem } from '../utils/enqueue-book-refresh.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
+import { buildNamingContext } from '../utils/paths.js';
+import type { NamingOptions } from '../../core/utils/naming.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
+import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 
 /** Deps for a single bulk-convert step. Extracted from `BulkOperationService` (it is at the line cap). */
@@ -24,6 +27,15 @@ export interface ConvertProcessingSettings {
   outputFormat?: 'm4b' | 'mp3';
   mergeBehavior?: 'always' | 'multi-file-only' | 'never';
   bitrate?: number | null;
+  /**
+   * Library file-naming template + options, threaded from `startConvertJob` (which fetches
+   * `library` settings alongside `processing`). Empty/absent `fileFormat` keeps the original
+   * basename fallback; a non-empty format renders book-level tokens into each converted stem,
+   * disambiguated like the rename path. Sourced from `library`, not `processing`, but bundled
+   * here so the single settings bag threads through `convertBook` unchanged.
+   */
+  fileFormat?: string;
+  namingOptions?: NamingOptions;
 }
 
 /**
@@ -77,18 +89,25 @@ export async function convertBook(
   processingSettings: ConvertProcessingSettings,
 ): Promise<void> {
   const { db, bookService, log, connectorService } = deps;
-  const stagingDir = bookPath + '.convert-tmp';
+  // Born-hidden staging dir (AC10): `.<book>.convert-tmp` — dot-led basename so its populated audio
+  // is invisible to ABS/scanners while converting, on the same filesystem (atomic swap preserved).
+  const stagingDir = dotPrefixBasename(bookPath + '.convert-tmp');
   const book = await bookService.getById(bookId);
   const authorName = book?.authors?.[0]?.name ?? 'Unknown Author';
   const sourceBitrateKbps = toSourceBitrateKbps(book?.audioBitrate);
   const targetBitrateKbps = processingSettings.bitrate ?? undefined;
   logBitrateCapping(sourceBitrateKbps, targetBitrateKbps, log);
 
+  // Reset the deterministic staging dir to empty before copying (Change 4 / F25): a prior kill can
+  // leave stale (non-dot) audio in this exact path that the owning convert reopens by identity and
+  // would fold into the result. A failure to empty it throws → the bulk op's per-item failure path
+  // (ordinary handling, no new error). Only ever touches this convert's OWN staging dir.
+  await rm(stagingDir, { recursive: true, force: true });
   await mkdir(stagingDir, { recursive: true });
   try {
     // Copy audio files to staging
     const entries = await readdir(bookPath);
-    const audioFiles = entries.filter(f => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+    const audioFiles = entries.filter(f => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
     for (const file of audioFiles) {
       await cp(join(bookPath, file), join(stagingDir, file));
     }
@@ -102,7 +121,14 @@ export async function convertBook(
         bitrate: targetBitrateKbps,
         sourceBitrateKbps,
       },
-      { author: authorName, title: bookTitle },
+      {
+        author: authorName,
+        title: bookTitle,
+        // Book-level tokens + library fileFormat/namingOptions so a re-encode renders the same
+        // series/narrator/edition tokens the rename path bakes in. Empty fileFormat → omitted →
+        // convertFiles keeps the original-basename fallback.
+        ...buildNamingContext(book, authorName, processingSettings.fileFormat, processingSettings.namingOptions),
+      },
     );
 
     if (!result.success) {

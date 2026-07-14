@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
+import type { RetryResponse } from '@/lib/api/activity';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
@@ -311,6 +312,93 @@ describe('useEventHistory', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Retry failed — search encountered an error');
+    });
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it('retryMutation shows honest neutral toast (not success) when API returns { status: "already_active" }', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.retryDownload).mockResolvedValue({ status: 'already_active' });
+
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.retryMutation.mutate(42);
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('This book is already being processed — nothing to retry.');
+    });
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+  });
+
+  it('RetryResponse type includes the { status: "already_active" } variant', () => {
+    expectTypeOf<{ status: 'already_active' }>().toExtend<RetryResponse>();
+  });
+
+  it('retryMutation shows generic fallback (not success) for an unknown sentinel status', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.retryDownload).mockResolvedValue({ status: 'future_thing' } as never);
+
+    const { wrapper } = createWrapper();
+
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.retryMutation.mutate(42);
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Retry failed — unexpected response');
+    });
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it('retryMutation shows generic fallback for a present-but-non-numeric id (rejects key-presence-only impl)', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.retryDownload).mockResolvedValue({ id: 'bad', status: 'future_thing' } as never);
+
+    const { wrapper } = createWrapper();
+
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.retryMutation.mutate(42);
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Retry failed — unexpected response');
+    });
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it('retryMutation shows generic fallback (no throw) for a non-object / JSON null response', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.retryDownload).mockResolvedValue(null as never);
+
+    const { wrapper } = createWrapper();
+
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.retryMutation.mutate(42);
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Retry failed — unexpected response');
     });
     expect(toast.success).not.toHaveBeenCalled();
   });

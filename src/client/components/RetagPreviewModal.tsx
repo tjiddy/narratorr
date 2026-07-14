@@ -130,7 +130,7 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
               role="alert"
               className="text-sm text-destructive bg-destructive/10 rounded-lg px-4 py-3"
             >
-              ffmpeg isn’t configured. Set the ffmpeg path in <strong>Settings → Post Processing</strong> to enable re-tagging.
+              ffmpeg isn’t available. Install ffmpeg or set FFMPEG_PATH (see <strong>Settings → Audio Tools</strong>) to enable re-tagging.
             </p>
           )}
 

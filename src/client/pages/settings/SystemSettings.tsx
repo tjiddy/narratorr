@@ -18,6 +18,7 @@ import { BackupScheduleForm } from './BackupScheduleForm';
 import { HealthDashboard } from './HealthDashboard';
 import { ScheduledTasks } from './ScheduledTasks';
 import { SystemInfo } from './SystemInfo';
+import { ThirdPartyNotices } from './ThirdPartyNotices';
 import { GeneralSettingsForm } from './GeneralSettingsForm';
 
 function RestoreModal({ isOpen, restoreInfo, onConfirm, onClose }: {
@@ -176,6 +177,8 @@ export function SystemSettings() {
     <div className="space-y-8">
       <HealthDashboard />
 
+      <SystemInfo />
+
       <BackupScheduleForm />
 
       <SettingsSection
@@ -209,11 +212,11 @@ export function SystemSettings() {
         <BackupTable backups={backups} isLoading={isLoading} onDownload={handleDownload} onRestore={handleRestore} onDelete={setDeleteTarget} />
       </SettingsSection>
 
-      <SystemInfo />
-
       <GeneralSettingsForm />
 
       <ScheduledTasks />
+
+      <ThirdPartyNotices />
 
       <RestoreModal
         isOpen={restoreConfirmOpen}

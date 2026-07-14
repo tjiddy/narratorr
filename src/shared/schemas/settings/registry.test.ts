@@ -215,12 +215,12 @@ describe('settingsRegistry', () => {
 
     it('processing defaults have all expected values', () => {
       expect(DEFAULT_SETTINGS.processing).toEqual({
-        ffmpegPath: '',
         outputFormat: 'm4b',
         keepOriginalBitrate: true,
         bitrate: 128,
         mergeBehavior: 'multi-file-only',
         maxConcurrentProcessing: 1,
+        autoMergeDownloads: false,
         postProcessingScript: '',
         postProcessingScriptTimeout: 300,
       });
@@ -272,7 +272,7 @@ describe('settingsRegistry', () => {
         grabFloor: 0,
         protocolPreference: 'none',
         minSeeders: 1,
-        minDownloadSize: 0,
+        minDownloadSize: 50,
         maxDownloadSize: 5,
         searchImmediately: false,
         rejectWords: 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged',
@@ -526,9 +526,9 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(true);
     });
 
-    it('updateSettingsSchema accepts processing update with empty ffmpegPath (no enable-dependent rejection)', () => {
+    it('updateSettingsSchema accepts processing update with empty postProcessingScript (no enable-dependent rejection)', () => {
       const result = updateSettingsSchema.safeParse({
-        processing: { ffmpegPath: '' },
+        processing: { postProcessingScript: '' },
       });
       expect(result.success).toBe(true);
     });
@@ -613,12 +613,12 @@ describe('settingsRegistry', () => {
       }
     });
 
-    it('empty string defaults preserved: processing.ffmpegPath empty string', () => {
-      expect(DEFAULT_SETTINGS.processing.ffmpegPath).toBe('');
+    it('empty string defaults preserved: processing.postProcessingScript empty string', () => {
+      expect(DEFAULT_SETTINGS.processing.postProcessingScript).toBe('');
       const result = appSettingsSchema.safeParse(DEFAULT_SETTINGS);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect((result.data as AppSettings).processing.ffmpegPath).toBe('');
+        expect((result.data as AppSettings).processing.postProcessingScript).toBe('');
       }
     });
 
@@ -655,7 +655,7 @@ describe('settingsRegistry', () => {
 
     it('form schema requires fields even when base schema provides defaults', () => {
       // processing has multiple .default() fields. Form schema should require all of them.
-      const data = { ...DEFAULT_SETTINGS, processing: { ffmpegPath: '/usr/bin/ffmpeg' } as never };
+      const data = { ...DEFAULT_SETTINGS, processing: { postProcessingScript: '/x/script.sh' } as never };
       const result = updateSettingsFormSchema.safeParse(data);
       expect(result.success).toBe(false);
     });
@@ -849,11 +849,11 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(false);
     });
 
-    it('qualitySettingsSchema parses empty input with default minDownloadSize: 0', () => {
+    it('qualitySettingsSchema parses empty input with default minDownloadSize: 50', () => {
       const result = settingsRegistry.quality.schema.safeParse({});
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.minDownloadSize).toBe(0);
+        expect(result.data.minDownloadSize).toBe(50);
       }
     });
 

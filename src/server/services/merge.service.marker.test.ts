@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile, readdir, stat } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 import { createMockLogger, createMockDb, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { MergeService } from './merge.service.js';
@@ -26,7 +27,7 @@ import type { FastifyBaseLogger } from 'fastify';
  */
 
 // Only the audio engine + enrichment are mocked — fs and the recovery sequence are real.
-vi.mock('../../core/utils/audio-processor.js', () => ({ processAudioFiles: vi.fn() }));
+vi.mock('../../core/utils/audio-processor.js', () => ({ processAudioFiles: vi.fn(), resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') }));
 vi.mock('../../core/utils/audio-scanner.js', () => ({ scanAudioDirectory: vi.fn() }));
 vi.mock('./enrichment-utils.js', () => ({ enrichBookFromAudio: vi.fn() }));
 
@@ -101,7 +102,7 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
 
   function buildService(): MergeService {
     const settingsService = createMockSettingsService({
-      processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', bitrate: 128, keepOriginalBitrate: false, maxConcurrentProcessing: 1 },
+      processing: { outputFormat: 'm4b', bitrate: 128, keepOriginalBitrate: false, maxConcurrentProcessing: 1 },
       library: { path: libraryRoot },
     });
     return new MergeService(
@@ -187,7 +188,7 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
     expect(processAudioFiles).not.toHaveBeenCalled();
     expect(await listFiles(bookPath)).toEqual(['01.mp3', '02.mp3']);
     expect(await pathExists(`${bookPath}.import-bak`)).toBe(true);
-    expect(await pathExists(`${bookPath}.merge-tmp`)).toBe(false);
+    expect(await pathExists(dotPrefixBasename(`${bookPath}.merge-tmp`))).toBe(false);
     expect(emit).toHaveBeenCalledWith('merge_failed', expect.objectContaining({ book_id: 42, reason: 'error' }));
   });
 });

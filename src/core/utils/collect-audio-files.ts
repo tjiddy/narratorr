@@ -1,6 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
-import { AUDIO_EXTENSIONS } from './audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from './audio-constants.js';
 
 export interface CollectAudioFileOptions {
   /** Recurse into subdirectories (default: false). */
@@ -28,10 +28,13 @@ export async function collectAudioFilePaths(
 
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
-    if (entry.isFile() && extensions.has(extname(entry.name).toLowerCase())) {
+    // Dot-FILES are never book audio, regardless of `skipHidden` (which gates only directory
+    // recursion). Mirrors ABS's `shouldIgnoreFile` dotfile rule so a born-hidden transient
+    // (`.002.tmp.mp3`) is never collected as a real track. `My.Book.mp3` (interior dot) stays.
+    if (entry.isFile() && !isHiddenName(entry.name) && extensions.has(extname(entry.name).toLowerCase())) {
       results.push(fullPath);
     } else if (recursive && entry.isDirectory()) {
-      if (skipHidden && entry.name.startsWith('.')) continue;
+      if (skipHidden && isHiddenName(entry.name)) continue;
       results.push(...await collectAudioFilePaths(fullPath, options));
     }
   }
@@ -96,6 +99,30 @@ export const compareAudioNames = (a: string, b: string): number => {
 
   return baseA < baseB ? -1 : baseA > baseB ? 1 : 0;
 };
+
+/**
+ * Disambiguate a list of rendered filename stems given in play order.
+ *
+ * When the stems do NOT all render distinct (any two collide case-insensitively —
+ * the format carries no per-file discriminator, e.g. `{author} - {title}`), a
+ * zero-padded sequential ordinal `<stem> (N)` is appended to *every* stem including
+ * the first, in the caller's order. The ordinal width is `String(count).length`:
+ * 1 digit for 2–9 files, 2 digits for 10–99, 3 digits from 100. A single stem is
+ * never numbered, and an already-unique set (a `{trackNumber}`/`{partName}` token is
+ * present) passes through untouched.
+ *
+ * Shared by `planFileRenames` (rename path) and the convert path (`convertFiles`) so
+ * both disambiguate colliding outputs byte-for-byte identically — a Rename All Books
+ * pass after a convert is a no-op. Assumes `stems` is already in `compareAudioNames`
+ * order so the ordinal matches the import-baked play position.
+ */
+export function disambiguateStems(stems: string[]): string[] {
+  if (stems.length <= 1) return [...stems];
+  const uniqueCount = new Set(stems.map((s) => s.toLowerCase())).size;
+  if (uniqueCount === stems.length) return [...stems];
+  const width = String(stems.length).length;
+  return stems.map((stem, i) => `${stem} (${String(i + 1).padStart(width, '0')})`);
+}
 
 /** Sort mode for collectSortedAudioFiles. */
 export type AudioFileSortMode = 'lexicographic' | 'locale' | 'locale-numeric';

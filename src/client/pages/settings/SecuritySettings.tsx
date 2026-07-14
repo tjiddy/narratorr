@@ -15,12 +15,20 @@ import {
 import { SettingsSection } from './SettingsSection';
 import { CredentialsSection } from './CredentialsSection';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
+import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { useMutationWithToast } from '@/hooks/useMutationWithToast';
 
 const MODE_LABELS: Record<AuthMode, string> = {
   none: 'None (No Authentication)',
   basic: 'Basic (Browser Prompt)',
   forms: 'Forms (Login Page)',
+};
+
+const MODE_DESCRIPTIONS: Record<AuthMode, string> = {
+  none: 'Anyone with network access has full control',
+  basic: 'Browser credential prompt (HTTP Basic)',
+  forms: 'Login page with sessions',
 };
 
 export function SecuritySettings() {
@@ -98,25 +106,18 @@ function AuthModeSection({
       title="Authentication Mode"
       description="Control how users authenticate with Narratorr"
     >
-      <div className="space-y-3">
+      <SettingsTable>
         {(['none', 'basic', 'forms'] as AuthMode[]).map((m) => {
           const needsCredentials = m !== 'none' && !hasUser;
           return (
+            // Whole-row click target. The radio carries aria-label (exact mode name) +
+            // aria-describedby: with the description INSIDE this label, the label's text content
+            // would otherwise become the radio's accessible name and break exact-name queries.
             <label
               key={m}
-              className={`
-                flex items-center gap-3.5 p-4 rounded-xl border transition-all duration-200
-                ${needsCredentials
-                  ? 'cursor-not-allowed opacity-50'
-                  : 'cursor-pointer'
-                }
-                ${mode === m
-                  ? 'border-primary/60 bg-primary/5 shadow-sm shadow-primary/10'
-                  : needsCredentials
-                    ? 'border-border'
-                    : 'border-border hover:border-primary/30 hover:bg-muted/30'
-                }
-              `}
+              className={`flex items-start gap-3.5 px-4 py-4 transition-colors duration-200 ${
+                needsCredentials ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-muted/30'
+              }${mode === m ? ' bg-primary/5' : ''}`}
               title={needsCredentials ? 'Create credentials above first' : undefined}
             >
               <input
@@ -126,13 +127,20 @@ function AuthModeSection({
                 checked={mode === m}
                 disabled={needsCredentials}
                 onChange={() => handleModeChange(m)}
-                className="accent-primary"
+                aria-label={MODE_LABELS[m]}
+                aria-describedby={`auth-mode-desc-${m}`}
+                className="accent-primary mt-1"
               />
-              <span className="font-medium">{MODE_LABELS[m]}</span>
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold">{MODE_LABELS[m]}</span>
+                <span id={`auth-mode-desc-${m}`} className="block text-sm text-muted-foreground mt-0.5">
+                  {MODE_DESCRIPTIONS[m]}
+                </span>
+              </span>
             </label>
           );
         })}
-      </div>
+      </SettingsTable>
 
       <ConfirmModal
         isOpen={showConfirm}
@@ -163,20 +171,20 @@ function LocalBypassSection({ localBypass }: { localBypass: boolean }) {
       title="Local Network Bypass"
       description="Skip authentication for requests from local/private IP addresses"
     >
-      <label className="flex items-center gap-3 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={localBypass}
-          onChange={(e) => mutation.mutate(e.target.checked)}
-          className="w-4 h-4 accent-primary rounded"
-        />
-        <div>
-          <span className="font-medium">Enable local bypass</span>
-          <p className="text-sm text-muted-foreground">
-            Requests from private IPs (10.x, 172.16-31.x, 192.168.x, localhost) will skip authentication
-          </p>
-        </div>
-      </label>
+      <SettingsTable>
+        <SettingsRow
+          htmlFor="localBypass"
+          label="Enable local bypass"
+          description="Requests from private IPs (10.x, 172.16-31.x, 192.168.x, localhost) will skip authentication"
+        >
+          {/* Saves on flip (no dirty-Save on this section) — mutation wiring unchanged. */}
+          <ToggleSwitch
+            id="localBypass"
+            checked={localBypass}
+            onChange={(e) => mutation.mutate(e.target.checked)}
+          />
+        </SettingsRow>
+      </SettingsTable>
     </SettingsSection>
   );
 }
@@ -222,30 +230,41 @@ function ApiKeySection({ apiKey }: { apiKey: string }) {
     <SettingsSection
       icon={<KeyIcon className="w-5 h-5 text-primary" />}
       title="API Key"
-      description="Use this key for programmatic access via X-Api-Key header or ?apikey= query parameter"
+      description="Programmatic access to Narratorr"
     >
-      <div className="flex items-center gap-2">
-        <code className="flex-1 px-4 py-3 bg-muted/40 border border-border rounded-xl font-mono text-sm break-all select-all tracking-wide">
-          {apiKey}
-        </code>
-        <button
-          onClick={handleCopy}
-          className="shrink-0 p-3 rounded-xl border border-border hover:bg-muted hover:border-primary/30 transition-all duration-200 focus-ring"
-          title="Copy to clipboard"
+      <SettingsTable>
+        <SettingsRow
+          layout="stacked"
+          label="API key"
+          description={<>Send it in the <code className="px-1 py-0.5 bg-muted rounded text-xs">X-Api-Key</code> header or the <code className="px-1 py-0.5 bg-muted rounded text-xs">?apikey=</code> query parameter.</>}
         >
-          <CopyIcon className="w-4 h-4" />
-          {copied && <span className="sr-only">Copied!</span>}
-        </button>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => setShowConfirm(true)}
-        className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-xl hover:bg-amber-500/10 transition-all duration-200"
-      >
-        <RefreshIcon className="w-4 h-4" />
-        Regenerate API Key
-      </button>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 px-4 py-3 bg-muted/40 border border-border rounded-xl font-mono text-sm break-all select-all tracking-wide">
+              {apiKey}
+            </code>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="shrink-0 p-3 rounded-xl border border-border hover:bg-muted hover:border-primary/30 transition-all duration-200 focus-ring"
+              aria-label="Copy API key to clipboard"
+              title="Copy to clipboard"
+            >
+              <CopyIcon className="w-4 h-4" />
+              {copied && <span className="sr-only">Copied!</span>}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowConfirm(true)}
+              disabled={mutation.isPending}
+              className="shrink-0 p-3 rounded-xl border border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 disabled:opacity-50 transition-all duration-200 focus-ring"
+              aria-label="Regenerate API key"
+              title="Regenerate API key"
+            >
+              <RefreshIcon className="w-4 h-4" />
+            </button>
+          </div>
+        </SettingsRow>
+      </SettingsTable>
       <ConfirmModal
         isOpen={showConfirm}
         title="Regenerate API key?"

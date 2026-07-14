@@ -1,7 +1,8 @@
 import type { z } from 'zod';
 import { ZapIcon } from '@/components/icons';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
-import { errorInputClass } from '@/components/settings/formStyles';
+import { NumberField } from '@/components/settings/NumberField';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { DEFAULT_SETTINGS, discoveryFormSchema, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from '../settings/SettingsSection';
@@ -35,84 +36,52 @@ export function DiscoverySettingsSection() {
       description="Configure recommendation engine settings"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        {/* Enable/Disable Toggle */}
-        <div className="flex items-center justify-between gap-4">
-          <label htmlFor="discovery-enabled" className="cursor-pointer">
-            <span className="text-sm font-medium">Enable Discovery</span>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Automatically generate book recommendations based on your library
-            </p>
-          </label>
-          <label className="relative inline-flex items-center cursor-pointer">
+        <SettingsTable>
+          {/* "Enable discovery", not bare "Discovery" — the section title is already "Discovery"
+              and a same-text row label would break every getByText('Discovery') query (RTL throws
+              on ambiguous matches) and read redundantly under the header. */}
+          <SettingsRow htmlFor="discovery-enabled" label="Enable discovery" description="Automatically generate book recommendations based on your library">
             <ToggleSwitch id="discovery-enabled" {...register('enabled')} />
-          </label>
-        </div>
+          </SettingsRow>
 
-        {/* Refresh Interval */}
-        <div>
-          <label htmlFor="discovery-interval" className="text-sm font-medium">
-            Refresh Interval (hours)
-          </label>
-          <input
-            id="discovery-interval"
-            type="number"
-            {...register('intervalHours', { valueAsNumber: true })}
-            className={`mt-1 text-sm ${errorInputClass(!!errors.intervalHours)}`}
-            step={1}
-          />
-          {errors.intervalHours && (
-            <p className="text-xs text-destructive mt-1">{errors.intervalHours.message}</p>
-          )}
-        </div>
+          <SettingsRow htmlFor="discovery-interval" label="Refresh interval" description="How often to regenerate recommendations.">
+            <NumberField
+              id="discovery-interval"
+              {...register('intervalHours', { valueAsNumber: true })}
+              step={1}
+              suffix="hours"
+              error={errors.intervalHours?.message}
+            />
+          </SettingsRow>
 
-        {/* Max Suggestions Per Author */}
-        <div>
-          <label htmlFor="discovery-max-per-author" className="text-sm font-medium">
-            Max Suggestions Per Author
-          </label>
-          <input
-            id="discovery-max-per-author"
-            type="number"
-            {...register('maxSuggestionsPerAuthor', { valueAsNumber: true })}
-            className={`mt-1 text-sm ${errorInputClass(!!errors.maxSuggestionsPerAuthor)}`}
-            step={1}
-          />
-          {errors.maxSuggestionsPerAuthor && (
-            <p className="text-xs text-destructive mt-1">{errors.maxSuggestionsPerAuthor.message}</p>
-          )}
-        </div>
+          <SettingsRow htmlFor="discovery-max-per-author" label="Max suggestions per author" description="Cap how many recommendations any single author contributes.">
+            <NumberField
+              id="discovery-max-per-author"
+              {...register('maxSuggestionsPerAuthor', { valueAsNumber: true })}
+              step={1}
+              error={errors.maxSuggestionsPerAuthor?.message}
+            />
+          </SettingsRow>
 
-        {/* Suggestion Expiry */}
-        <div>
-          <label htmlFor="discovery-expiry" className="text-sm font-medium">
-            Suggestion Expiry (days)
-          </label>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Auto-expire pending suggestions older than this many days
-          </p>
-          <input
-            id="discovery-expiry"
-            type="number"
-            {...register('expiryDays', { valueAsNumber: true })}
-            className={`mt-1 text-sm ${errorInputClass(!!errors.expiryDays)}`}
-            step={1}
-          />
-          {errors.expiryDays && (
-            <p className="text-xs text-destructive mt-1">{errors.expiryDays.message}</p>
-          )}
-        </div>
+          <SettingsRow htmlFor="discovery-expiry" label="Suggestion expiry" description="Auto-expire pending suggestions older than this many days.">
+            <NumberField
+              id="discovery-expiry"
+              {...register('expiryDays', { valueAsNumber: true })}
+              step={1}
+              suffix="days"
+              error={errors.expiryDays?.message}
+            />
+          </SettingsRow>
+        </SettingsTable>
 
-        {/* Save Button — only visible when form is dirty */}
         {isDirty && (
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              disabled={mutation.isPending}
-              className="px-4 py-2 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-all focus-ring"
-            >
-              {mutation.isPending ? 'Saving...' : 'Save'}
-            </button>
-          </div>
+          <button
+            type="submit"
+            disabled={mutation.isPending}
+            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+          >
+            {mutation.isPending ? 'Saving...' : 'Save'}
+          </button>
         )}
       </form>
     </SettingsSection>

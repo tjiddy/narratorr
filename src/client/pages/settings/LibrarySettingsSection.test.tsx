@@ -41,10 +41,10 @@ describe('LibrarySettingsSection', () => {
     mockApi.getSettings.mockResolvedValue(mockSettings);
   });
 
-  it('renders Library Path field', async () => {
+  it('renders Library path field', async () => {
     renderWithProviders(<LibrarySettingsSection />);
     await waitFor(() => {
-      expect(screen.getByText('Library Path')).toBeInTheDocument();
+      expect(screen.getByText('Library path')).toBeInTheDocument();
     });
     expect(screen.getByPlaceholderText('/audiobooks')).toBeInTheDocument();
   });
@@ -52,10 +52,10 @@ describe('LibrarySettingsSection', () => {
   it('does not render naming UI — no Folder Format, File Format, Preset, Separator, or Case fields', async () => {
     renderWithProviders(<LibrarySettingsSection />);
     await waitFor(() => {
-      expect(screen.getByText('Library Path')).toBeInTheDocument();
+      expect(screen.getByText('Library path')).toBeInTheDocument();
     });
-    expect(screen.queryByText('Folder Format')).not.toBeInTheDocument();
-    expect(screen.queryByText('File Format')).not.toBeInTheDocument();
+    expect(screen.queryByText('Folder format')).not.toBeInTheDocument();
+    expect(screen.queryByText('File format')).not.toBeInTheDocument();
     expect(screen.queryByText('Preset')).not.toBeInTheDocument();
     expect(screen.queryByText('Separator')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Case')).not.toBeInTheDocument();
@@ -64,7 +64,7 @@ describe('LibrarySettingsSection', () => {
   it('does not render standalone Scan Library description text', async () => {
     renderWithProviders(<LibrarySettingsSection />);
     await waitFor(() => {
-      expect(screen.getByText('Library Path')).toBeInTheDocument();
+      expect(screen.getByText('Library path')).toBeInTheDocument();
     });
     expect(screen.queryByText('Scan the library folder to register existing audiobooks')).not.toBeInTheDocument();
   });
@@ -72,7 +72,7 @@ describe('LibrarySettingsSection', () => {
   it('does not render Scan Library link (moved to Library Actions section)', async () => {
     renderWithProviders(<LibrarySettingsSection />);
     await waitFor(() => {
-      expect(screen.getByText('Library Path')).toBeInTheDocument();
+      expect(screen.getByText('Library path')).toBeInTheDocument();
     });
     expect(screen.queryByRole('link', { name: /scan library/i })).not.toBeInTheDocument();
   });
@@ -257,20 +257,20 @@ describe('LibrarySettingsSection', () => {
     });
   });
 
-  // Finding 1: Scan Library removed from Library Path row (#227)
+  // Finding 1: Scan Library removed from Library path row (#227)
   describe('Scan Library removal (#227)', () => {
-    it('does NOT render Scan Library link in the Library Path row', async () => {
+    it('does NOT render Scan Library link in the Library path row', async () => {
       renderWithProviders(<LibrarySettingsSection />);
       await waitFor(() => {
-        expect(screen.getByText('Library Path')).toBeInTheDocument();
+        expect(screen.getByText('Library path')).toBeInTheDocument();
       });
       expect(screen.queryByRole('link', { name: /scan library/i })).not.toBeInTheDocument();
     });
 
-    it('Library section contains Library Path label, PathInput, and description text', async () => {
+    it('Library section contains Library path label, PathInput, and description text', async () => {
       renderWithProviders(<LibrarySettingsSection />);
       await waitFor(() => {
-        expect(screen.getByText('Library Path')).toBeInTheDocument();
+        expect(screen.getByText('Library path')).toBeInTheDocument();
       });
       expect(screen.getByPlaceholderText('/audiobooks')).toBeInTheDocument();
       expect(screen.getByText('The root folder where imported audiobooks will be stored')).toBeInTheDocument();
@@ -282,10 +282,10 @@ describe('LibrarySettingsSection', () => {
   // re-imported/rendered here, its buttons (and the un-mocked useBulkOperation API calls)
   // would surface and fail these assertions.
   describe('library actions removed from Settings (#1704)', () => {
-    it('renders only the Library Path field — no bulk/library action buttons', async () => {
+    it('renders only the Library path field — no bulk/library action buttons', async () => {
       renderWithProviders(<LibrarySettingsSection />);
       await waitFor(() => {
-        expect(screen.getByText('Library Path')).toBeInTheDocument();
+        expect(screen.getByText('Library path')).toBeInTheDocument();
       });
       expect(screen.queryByText('Library Actions')).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /rename all books/i })).not.toBeInTheDocument();
@@ -297,19 +297,21 @@ describe('LibrarySettingsSection', () => {
   });
 
   describe('card split — library card does NOT contain new-book defaults (#284)', () => {
-    it('does not render Search Immediately or Monitor for Upgrades toggles', async () => {
+    it('does not render Search immediately or Monitor for Upgrades toggles', async () => {
       renderWithProviders(<LibrarySettingsSection />);
       await waitFor(() => {
-        expect(screen.getByText('Library Path')).toBeInTheDocument();
+        expect(screen.getByText('Library path')).toBeInTheDocument();
       });
-      expect(screen.queryByLabelText('Search Immediately')).not.toBeInTheDocument();
+      // Label string must track the live NewBookDefaults label ('Search immediately' since the
+      // row-table conversion) or this NEGATIVE guard passes vacuously against a stale name.
+      expect(screen.queryByLabelText('Search immediately')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Monitor for Upgrades')).not.toBeInTheDocument();
     });
 
     it('does not render "When a New Book Is Added" heading', async () => {
       renderWithProviders(<LibrarySettingsSection />);
       await waitFor(() => {
-        expect(screen.getByText('Library Path')).toBeInTheDocument();
+        expect(screen.getByText('Library path')).toBeInTheDocument();
       });
       expect(screen.queryByText('When a New Book Is Added')).not.toBeInTheDocument();
     });
@@ -341,7 +343,7 @@ describe('LibrarySettingsSection', () => {
       mockApi.updateSettings.mockResolvedValue(mockSettings);
     });
 
-    it('Library Path field renders a Browse button', async () => {
+    it('Library path field renders a Browse button', async () => {
       renderWithProviders(<LibrarySettingsSection />);
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /browse/i })).toBeInTheDocument();

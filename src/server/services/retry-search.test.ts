@@ -75,6 +75,8 @@ function createDeps(overrides?: Partial<RetrySearchDeps>): RetrySearchDeps {
     }),
     downloadOrchestrator: inject<DownloadOrchestrator>({
       grab: vi.fn().mockResolvedValue(mockDownload),
+      grabForRetry: vi.fn().mockResolvedValue(mockDownload),
+      hasGrabBlocker: vi.fn().mockResolvedValue(false),
     }),
     blacklistService: inject<BlacklistService>({
       getBlacklistedHashes: vi.fn().mockResolvedValue(new Set<string>()),
@@ -100,13 +102,57 @@ describe('retrySearch', () => {
       expect(result.download.id).toBe(2);
     }
     expect(deps.indexerSearchService.searchAll).toHaveBeenCalled();
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({
         downloadUrl: 'magnet:?xt=urn:btih:def456',
         bookId: 1,
         skipDuplicateCheck: true,
       }),
     );
+  });
+
+  // #1857 — already_active dedup + budget accounting
+  describe('already_active (#1857 AC17/F43/F47)', () => {
+    it('early precheck: returns already_active with ZERO budget consumed when the book is already active', async () => {
+      const deps = createDeps({
+        downloadOrchestrator: inject<DownloadOrchestrator>({
+          grabForRetry: vi.fn().mockResolvedValue(mockDownload),
+          hasGrabBlocker: vi.fn().mockResolvedValue(true), // replacement present before retry starts
+        }),
+      });
+
+      const result = await retrySearch(1, deps);
+
+      expect(result.outcome).toBe('already_active');
+      expect(deps.retryBudget.hasRemaining(1, 1)).toBe(true); // 0 consumed (max 1, still remaining)
+      expect(deps.indexerSearchService.searchAll).not.toHaveBeenCalled();
+      expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+    });
+
+    it('in-lock detection: returns already_active having consumed ONE accepted attempt (no refund)', async () => {
+      const deps = createDeps({
+        downloadOrchestrator: inject<DownloadOrchestrator>({
+          // No blocker at the early precheck, but a grab blocker appears during the
+          // search → grabForRetry reports already_active from inside the mutex.
+          hasGrabBlocker: vi.fn().mockResolvedValue(false),
+          grabForRetry: vi.fn().mockResolvedValue('already_active'),
+        }),
+      });
+
+      const result = await retrySearch(1, deps);
+
+      expect(result.outcome).toBe('already_active');
+      expect(deps.indexerSearchService.searchAll).toHaveBeenCalled();
+      // One attempt consumed and NOT refunded (max 1 → now exhausted).
+      expect(deps.retryBudget.hasRemaining(1, 1)).toBe(false);
+      // #1861 F6 — the in-lock diagnostic is blocker-neutral (the outcome now also
+      // covers a QG-eligible completed row or a pending auto import job, not only a
+      // live download that "became active").
+      expect(deps.log.info).toHaveBeenCalledWith(
+        { bookId: 1, attempt: 1 },
+        'Retry search: book gained a grab blocker during search — skipping (attempt consumed, not refunded)',
+      );
+    });
   });
 
   it('returns exhausted when budget is spent', async () => {
@@ -165,7 +211,7 @@ describe('retrySearch', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('no_candidates');
-    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
   });
 
   // #1797 AC5 — audioDuration (seconds) wins over duration (minutes) on retry.
@@ -186,7 +232,7 @@ describe('retrySearch', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('no_candidates');
-    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
   });
 
   it('excludes newly blacklisted hash from retry search results', async () => {
@@ -208,7 +254,7 @@ describe('retrySearch', () => {
 
     expect(result.outcome).toBe('retried');
     // Should have grabbed the non-blacklisted result
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:def456' }),
     );
   });
@@ -323,7 +369,7 @@ describe('retrySearch', () => {
 
     // French result filtered out by language → no candidates
     expect(result.outcome).toBe('no_candidates');
-    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
   });
 
   it('languages filter allows matching language candidate to be grabbed', async () => {
@@ -361,7 +407,7 @@ describe('retrySearch', () => {
 
     // Only the English result should be grabbed
     expect(result.outcome).toBe('retried');
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:english' }),
     );
   });
@@ -386,7 +432,7 @@ describe('retrySearch', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('no_candidates');
-    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
     expect(deps.log.debug).toHaveBeenCalledWith(
       { inputCount: 1, outputCount: 0 },
       'Quality gate filtering applied',
@@ -413,7 +459,7 @@ describe('retrySearch', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('no_candidates');
-    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
     expect(deps.log.debug).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'The Way of Kings [MP3 64kbps]',
@@ -460,7 +506,7 @@ describe('retrySearch — imported-book guard (#1103 F1, F6)', () => {
 
     expect(result).toEqual({ outcome: 'no_candidates' });
     expect(deps.indexerSearchService.searchAll).not.toHaveBeenCalled();
-    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
   });
 
   it('does not consume a retry-budget attempt when guard fires', async () => {
@@ -580,7 +626,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('retried');
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({
         downloadUrl: 'https://nzb.example.com/download/xyz',
       }),
@@ -627,7 +673,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('retried');
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({
         guid: 'usenet-guid-123',
         downloadUrl: 'https://nzb.example.com/download/abc',
@@ -641,15 +687,15 @@ describe('retrySearch — GUID blacklist filtering', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('retried');
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalled();
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalled();
     // Producer-omit pattern: missing guid is dropped from the GrabParams
     // payload, not passed as explicit undefined (eopt invariant per #939 AC4).
-    const grabArg = vi.mocked(deps.downloadOrchestrator.grab).mock.calls[0]![0];
+    const grabArg = vi.mocked(deps.downloadOrchestrator.grabForRetry).mock.calls[0]![0];
     expect(grabArg).toMatchObject({ downloadUrl: 'magnet:?xt=urn:btih:def456' });
     expect(grabArg).not.toHaveProperty('guid');
   });
 
-  it('forwards indexerId from best search result to downloadOrchestrator.grab', async () => {
+  it('forwards indexerId from best search result to downloadOrchestrator.grabForRetry', async () => {
     const deps = createDeps({
       indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([{ ...mockSearchResult, indexerId: 42 }]),
@@ -658,7 +704,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
     await retrySearch(1, deps);
 
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ indexerId: 42 }),
     );
   });
@@ -668,11 +714,11 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
     await retrySearch(1, deps);
 
-    const grabCall = vi.mocked(deps.downloadOrchestrator.grab).mock.calls[0]![0];
+    const grabCall = vi.mocked(deps.downloadOrchestrator.grabForRetry).mock.calls[0]![0];
     expect(grabCall).not.toHaveProperty('indexerId');
   });
 
-  it('forwards isFreeleech=true from best search result to downloadOrchestrator.grab (#1156 F2)', async () => {
+  it('forwards isFreeleech=true from best search result to downloadOrchestrator.grabForRetry (#1156 F2)', async () => {
     const deps = createDeps({
       indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([{ ...mockSearchResult, isFreeleech: true }]),
@@ -681,7 +727,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
     await retrySearch(1, deps);
 
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ isFreeleech: true }),
     );
   });
@@ -691,7 +737,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
     await retrySearch(1, deps);
 
-    const grabCall = vi.mocked(deps.downloadOrchestrator.grab).mock.calls[0]![0];
+    const grabCall = vi.mocked(deps.downloadOrchestrator.grabForRetry).mock.calls[0]![0];
     expect(grabCall).not.toHaveProperty('isFreeleech');
   });
 
@@ -721,7 +767,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
     await retrySearch(1, deps);
 
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }),
     );
   });
@@ -780,7 +826,7 @@ describe('#502 retrySearch — enrichment before filtering', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('no_candidates');
-    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
   });
 
   // ── #932 F3 — Caller-level logging assertions for retry-search ──────────
@@ -866,10 +912,10 @@ describe('retrySearch — multi-part usenet filter (#1777)', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('retried');
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'http://nzb.test/valid' }),
     );
-    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'http://nzb.test/multi' }),
     );
   });
@@ -884,7 +930,7 @@ describe('retrySearch — multi-part usenet filter (#1777)', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('no_candidates');
-    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
   });
 
   it('still grabs a torrent whose title matches the multi-part pattern (protocol scoping)', async () => {
@@ -898,7 +944,7 @@ describe('retrySearch — multi-part usenet filter (#1777)', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('retried');
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:multi' }),
     );
   });
@@ -921,6 +967,6 @@ describe('retrySearch — multi-part usenet filter (#1777)', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('no_candidates');
-    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { WifiIcon, LoadingSpinner } from '@/components/icons';
 import { errorInputClass } from '@/components/settings/formStyles';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { networkFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
@@ -51,45 +52,47 @@ export function NetworkSettingsSection() {
       description="Configure proxy for indexer traffic"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <div>
-          <label htmlFor="proxyUrl" className="block text-sm font-medium mb-2">Proxy URL</label>
-          <div className="flex gap-3">
-            <input
-              id="proxyUrl"
-              type="text"
-              {...register('proxyUrl')}
-              className={`flex-1 ${errorInputClass(!!errors.proxyUrl)}`}
-              placeholder="http://user:pass@proxy:8888 or socks5://localhost:1080"
-            />
-            <button
-              type="button"
-              onClick={handleTestProxy}
-              disabled={!proxyUrl?.trim() || testing}
-              className="flex items-center gap-2 px-4 py-3 bg-muted text-foreground font-medium rounded-xl hover:bg-muted/80 disabled:opacity-50 transition-all whitespace-nowrap"
-            >
-              {testing ? (
-                <>
-                  <LoadingSpinner className="w-4 h-4" />
-                  Testing...
-                </>
-              ) : (
-                'Test Proxy'
-              )}
-            </button>
-          </div>
-          {errors.proxyUrl ? (
-            <p className="text-sm text-destructive mt-1">{errors.proxyUrl.message}</p>
-          ) : (
-            <>
-              <p className="text-sm text-muted-foreground mt-2">
-                Applies to indexer search and test traffic only — not metadata, cover art, or other outbound requests.
-              </p>
-              <p className="text-sm text-amber-500 mt-1">
+        <SettingsTable>
+          <SettingsRow
+            layout="stacked"
+            htmlFor="proxyUrl"
+            label="Proxy URL"
+            description="Applies to indexer search and test traffic only — not metadata, cover art, or other outbound requests."
+          >
+            <div className="flex gap-3">
+              <input
+                id="proxyUrl"
+                type="text"
+                {...register('proxyUrl')}
+                className={`flex-1 ${errorInputClass(!!errors.proxyUrl)}`}
+                placeholder="http://user:pass@proxy:8888 or socks5://localhost:1080"
+              />
+              <button
+                type="button"
+                onClick={handleTestProxy}
+                disabled={!proxyUrl?.trim() || testing}
+                className="flex items-center gap-2 px-4 py-3 bg-muted text-foreground font-medium rounded-xl hover:bg-muted/80 disabled:opacity-50 transition-all whitespace-nowrap"
+              >
+                {testing ? (
+                  <>
+                    <LoadingSpinner className="w-4 h-4" />
+                    Testing...
+                  </>
+                ) : (
+                  'Test Proxy'
+                )}
+              </button>
+            </div>
+            {errors.proxyUrl ? (
+              <p className="text-sm text-destructive mt-1">{errors.proxyUrl.message}</p>
+            ) : (
+              /* Load-bearing advisory — stays visible, deliberately NOT an InfoTip */
+              <p className="text-sm text-amber-500 mt-2">
                 Has no effect on its own — you must also turn on <span className="font-medium">Route through proxy</span> for each indexer that should use it (Settings &gt; Indexers).
               </p>
-            </>
-          )}
-        </div>
+            )}
+          </SettingsRow>
+        </SettingsTable>
 
         {isDirty && (
           <button

@@ -26,8 +26,9 @@ vi.mock('@/lib/api', async (importOriginal) => {
       deleteBook: vi.fn(),
       uploadBookCover: vi.fn(),
       refreshScanBook: vi.fn(),
+      getFfmpegStatus: vi.fn().mockResolvedValue({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' }),
       getSettings: vi.fn().mockResolvedValue({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1 },
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
         search: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 },
         import: { deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5 },
@@ -333,13 +334,23 @@ describe('useBookActions', () => {
     });
   });
 
-  describe('ffmpegConfigured', () => {
-    it('returns true when ffmpegPath is set', async () => {
+  describe('ffmpegConfigured (from getFfmpegStatus)', () => {
+    it('is true when ffmpeg is detected', async () => {
+      (api.getFfmpegStatus as Mock).mockResolvedValue({ detected: true, version: '8.0.1' });
       const { result } = renderHook(() => useBookActions(1), { wrapper: createTestHarness().wrapper });
+      await waitFor(() => expect(result.current.ffmpegConfigured).toBe(true));
+    });
 
-      await waitFor(() => {
-        expect(result.current.ffmpegConfigured).toBe(true);
-      });
+    it('is false when ffmpeg is not detected', async () => {
+      (api.getFfmpegStatus as Mock).mockResolvedValue({ detected: false });
+      const { result } = renderHook(() => useBookActions(1), { wrapper: createTestHarness().wrapper });
+      await waitFor(() => expect(result.current.ffmpegConfigured).toBe(false));
+    });
+
+    it('fails safe (false) when the status query errors', async () => {
+      (api.getFfmpegStatus as Mock).mockRejectedValue(new Error('network down'));
+      const { result } = renderHook(() => useBookActions(1), { wrapper: createTestHarness().wrapper });
+      await waitFor(() => expect(result.current.ffmpegConfigured).toBe(false));
     });
   });
 

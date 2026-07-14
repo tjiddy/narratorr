@@ -5,7 +5,7 @@ import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
 import { compareNarratorSignals, diceCoefficient, normalizeNarrator, scoreResult } from '../../core/utils/similarity.js';
 import { normalizeProductionType } from '../../core/metadata/production-type.js';
 import { cleanTagTitle, extractYear, hasTagSeriesMarker, isPureVolumeMarker } from '../utils/folder-parsing.js';
-import type { Confidence, MatchCandidate, MatchResult } from './match-job.service.js';
+import type { Confidence, MatchCandidate, MatchResult } from './match-job.types.js';
 import type { MatchSource } from './tag-search-planner.js';
 import type { BookService } from './book.service.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -88,9 +88,17 @@ export async function applyLibraryDuplicate(
   return result;
 }
 
-const DURATION_THRESHOLD_STRICT = 0.05;
-const DURATION_THRESHOLD_RELAXED = 0.15;
-const COMBINED_SCORE_GATE = 0.95;
+/**
+ * Absolute duration-match tolerance in SECONDS (#1850). A same-edition scanned
+ * runtime and the provider's `runtimeLengthMin × 60` differ by a *fixed-size*
+ * amount — the "This is Audible" intro + end credits (~40s) plus the provider's
+ * whole-minute runtime granularity (±30s) — that does NOT scale with book length
+ * (212 ASIN-verified same-edition pairs, 2026-07-07: max Δ 69s at any length,
+ * correlation with length ≈ 0.096). 90s = the 69s observed ceiling + ~21s
+ * headroom, and passes 100% of that set. UAT-tunable: raise it if live UAT shows
+ * too many false Reviews rather than reintroducing a relative/score tier.
+ */
+const DURATION_TOLERANCE_SECONDS = 90;
 const CAPPED_ATTEMPT_REASON = 'Low confidence match. Please verify.';
 
 /**
@@ -117,54 +125,64 @@ export interface DurationConfidenceResult {
   reason?: string;
 }
 
-/** Format minutes as hours with 1 decimal place. */
+/** Format minutes as hours with 1 decimal place (provider `runtimeLengthMin` side). */
 function formatHours(minutes: number): string {
   return (minutes / 60).toFixed(1);
+}
+
+/** Format seconds as hours with 1 decimal place (scanned `totalDuration` side). */
+function formatSecondsAsHours(seconds: number): string {
+  return (seconds / 3600).toFixed(1);
 }
 
 /**
  * Single source of truth for "does the scanned runtime independently corroborate
  * this candidate?". Returns true only when both the scanned duration and the
- * candidate's metadata duration are present and positive AND the relative
- * distance is within tolerance. The strict 5% band relaxes to 15% once the
- * combined similarity score clears `COMBINED_SCORE_GATE` (a strong textual match
- * earns a wider runtime tolerance).
+ * candidate's metadata duration are present and positive AND the absolute gap is
+ * within `DURATION_TOLERANCE_SECONDS` (#1850). The two runtimes carry different
+ * units — `scannedSeconds` is the unrounded scanner value in SECONDS,
+ * `meta.duration` is the provider `runtimeLengthMin` in MINUTES — so the minutes
+ * side is multiplied by 60 before the comparison. There is no relative %/score
+ * tier: the result is identical regardless of title/author score, because a
+ * duration gap answers the orthogonal "is this the complete edition I expect?"
+ * question, on which high title confidence makes a gap MORE diagnostic, not less.
  *
- * Guard hygiene (#1266): both the falsy and `<= 0` checks are load-bearing — a
- * bare `!scannedDuration` or `meta.duration > 0` alone misbehaves on the
- * `0`/`undefined` boundaries.
+ * Guard hygiene (#1266/#1821): both the falsy and `<= 0` checks are load-bearing —
+ * a bare `!scannedSeconds` or `meta.duration > 0` alone misbehaves on the
+ * `0`/`undefined` boundaries. A MISSING/zero runtime on either side is NOT a
+ * disagreement (returns false so the single-result path keeps `high`; absent data
+ * must not demote).
  */
 export function isDurationVerified(
   meta: BookMetadata,
-  scannedDuration: number | undefined,
-  score: number,
+  scannedSeconds: number | undefined,
 ): boolean {
-  if (!scannedDuration || scannedDuration <= 0) return false;
+  if (!scannedSeconds || scannedSeconds <= 0) return false;
   if (!meta.duration || meta.duration <= 0) return false;
-  const distance = Math.abs(meta.duration - scannedDuration) / scannedDuration;
-  const threshold = score >= COMBINED_SCORE_GATE ? DURATION_THRESHOLD_RELAXED : DURATION_THRESHOLD_STRICT;
-  return distance <= threshold;
+  return Math.abs(meta.duration * 60 - scannedSeconds) <= DURATION_TOLERANCE_SECONDS;
 }
 
 /**
  * Determines confidence from duration data without overriding the similarity-ranked winner.
  * The bestMatch stays as the top similarity-ranked result; duration only affects confidence level.
- * The high-vs-medium decision is delegated to `isDurationVerified` so the
- * strict/relaxed-threshold logic lives in exactly one place (#1266).
+ * The high-vs-medium decision is delegated to `isDurationVerified` so the single
+ * absolute band lives in exactly one place (#1266/#1850). `scannedSeconds` is the
+ * unrounded scanner runtime in SECONDS; the mismatch reason renders it from
+ * seconds and the provider side from minutes.
  */
 export function resolveConfidenceFromDuration(
-  scored: { meta: BookMetadata; score: number }[],
-  duration: number | undefined,
+  scored: { meta: BookMetadata }[],
+  scannedSeconds: number | undefined,
 ): DurationConfidenceResult {
-  if (!duration || duration <= 0) {
+  if (!scannedSeconds || scannedSeconds <= 0) {
     return { confidence: 'medium', reason: 'Multiple results — no duration data to disambiguate' };
   }
   const topResult = scored[0]!;
   if (topResult.meta.duration && topResult.meta.duration > 0) {
-    if (isDurationVerified(topResult.meta, duration, topResult.score)) return { confidence: 'high' };
+    if (isDurationVerified(topResult.meta, scannedSeconds)) return { confidence: 'high' };
     return {
       confidence: 'medium',
-      reason: `Duration mismatch — scanned ${formatHours(duration)}hrs vs expected ${formatHours(topResult.meta.duration)}hrs`,
+      reason: `Duration mismatch — scanned ${formatSecondsAsHours(scannedSeconds)}hrs vs expected ${formatHours(topResult.meta.duration)}hrs`,
     };
   }
   return { confidence: 'medium', reason: 'Best match missing duration — cannot verify' };
@@ -185,14 +203,13 @@ export function resolveConfidenceFromDuration(
  */
 export function resolveSingleResultConfidence(
   meta: BookMetadata,
-  scannedDuration: number | undefined,
-  score: number,
+  scannedSeconds: number | undefined,
 ): DurationConfidenceResult {
-  const bothPresent = !!scannedDuration && scannedDuration > 0 && !!meta.duration && meta.duration > 0;
-  if (bothPresent && !isDurationVerified(meta, scannedDuration, score)) {
+  const bothPresent = !!scannedSeconds && scannedSeconds > 0 && !!meta.duration && meta.duration > 0;
+  if (bothPresent && !isDurationVerified(meta, scannedSeconds)) {
     return {
       confidence: 'medium',
-      reason: `Duration mismatch — scanned ${formatHours(scannedDuration)}hrs vs expected ${formatHours(meta.duration!)}hrs`,
+      reason: `Duration mismatch — scanned ${formatSecondsAsHours(scannedSeconds)}hrs vs expected ${formatHours(meta.duration!)}hrs`,
     };
   }
   return { confidence: 'high' };
@@ -202,6 +219,10 @@ export interface TagQuery {
   title: string;
   author: string;
   year?: string;
+  /** Wanted series position from the audio tags (#1849), threaded to the
+   * shared position tiebreaker in `rankResultsCleaned`. Position 0 is valid
+   * (#1028) — preserved with `!== undefined`, never `||`. */
+  seriesPosition?: number;
 }
 
 /**
@@ -223,7 +244,9 @@ export function cleanTagAuthor(s: string): string {
  * the scan lacks usable tags (missing title or author after cleaning) — caller
  * falls through to Pass 2. `year` is carried through (when present in tags)
  * for use by the rankResultsCleaned tiebreaker; missing tagYear is fine —
- * tiebreaker no-ops.
+ * tiebreaker no-ops. `seriesPosition` is likewise carried through (when the
+ * scan tagged one) for the shared position tiebreaker; a genuine position `0`
+ * survives via the `!== undefined` guard (#1849/#1028).
  */
 export function deriveTagQuery(audioResult: AudioScanResult | null): TagQuery | null {
   if (!audioResult) return null;
@@ -235,7 +258,12 @@ export function deriveTagQuery(audioResult: AudioScanResult | null): TagQuery | 
   const searchTitle = resolveTagSearchTitle(rawTitle, audioResult.tagAlbum);
   if (!searchTitle) return null;
   const tagYear = audioResult.tagYear?.trim();
-  return { title: searchTitle, author: cleanedAuthor, ...(tagYear ? { year: tagYear } : {}) };
+  return {
+    title: searchTitle,
+    author: cleanedAuthor,
+    ...(tagYear ? { year: tagYear } : {}),
+    ...(audioResult.tagSeriesPosition !== undefined && { seriesPosition: audioResult.tagSeriesPosition }),
+  };
 }
 
 /** Normalize a title for the album-vs-prefix difference check: lowercase, trim, collapse internal whitespace. */
@@ -341,6 +369,30 @@ export function tagTitleScore(input: string, result: BookMetadata): number {
 }
 
 /**
+ * Shared position-agreement tiebreaker (#1849), consumed by BOTH `rankResults`
+ * (folder pass) and `rankResultsCleaned` (tag pass) so the two rankers can't
+ * drift (DRY-3). On a score tie between identically-titled series entries
+ * (the whole Fablehaven series is just "Fablehaven"), prefer the candidate
+ * whose primary-series position equals the wanted (parsed/tagged) position.
+ *
+ * Semantics:
+ *  - `wanted == null` → returns `0` (strict no-op); ranking falls through to
+ *    the year tiebreaker byte-for-byte, exactly as before this existed.
+ *  - Uses `pickPrimarySeries` (the one shared series resolver, #1088/#1097)
+ *    and `===` so a genuine position `0` (#1028) is respected, never coerced.
+ *  - A candidate with no position — or a differing one — is a non-match: it
+ *    loses ONLY to a candidate whose position equals `wanted`, and ties every
+ *    other non-match (returns `0`), so ordering among non-matches is unchanged.
+ *    Absence never demotes a candidate below another non-match and never throws.
+ */
+export function positionTiebreak(a: BookMetadata, b: BookMetadata, wanted: number | undefined): number {
+  if (wanted == null) return 0;
+  const aMatch = pickPrimarySeries(a)?.position === wanted ? 1 : 0;
+  const bMatch = pickPrimarySeries(b)?.position === wanted ? 1 : 0;
+  return bMatch - aMatch;
+}
+
+/**
  * Tag-pass scoring: composes the result-side title from `result.title` +
  * the canonical primary-series ref via `tagTitleScore`, removing the
  * cleanName-derived symmetry assumption from #984. Author side is preserved exactly from #995 —
@@ -351,9 +403,10 @@ export function tagTitleScore(input: string, result: BookMetadata): number {
  * `src/core/utils/similarity.ts:62-84`; we re-derive the combined score
  * inline because we no longer call `scoreResult` for the title side.
  *
- * Year tiebreaker (#995): when dice scores are tied within 0.001 and tagQuery
- * carries a year hint from the audio tags, candidates whose publishedDate year
- * matches tagYear rank first. Tag-derived only — folder year is NOT consulted
+ * Tiebreakers (score tie within 0.001): the shared `positionTiebreak` (#1849)
+ * runs first — series position is the stronger series-disambiguation signal —
+ * then the year tiebreaker (#995): candidates whose publishedDate year matches
+ * tagYear rank first. Both are tag-derived only; folder year is NOT consulted
  * here (Pass 2's signal stays out of Pass 1).
  */
 export function rankResultsCleaned(
@@ -378,12 +431,19 @@ export function rankResultsCleaned(
 
   const tagYear = tagQuery.year ? parseInt(tagQuery.year, 10) : undefined;
   scored.sort((a, b) => {
-    if (Math.abs(a.score - b.score) < 0.001 && tagYear) {
-      const aYear = parsePublishedYear(a.meta.publishedDate);
-      const bYear = parsePublishedYear(b.meta.publishedDate);
-      const aMatch = aYear === tagYear ? 1 : 0;
-      const bMatch = bYear === tagYear ? 1 : 0;
-      if (aMatch !== bMatch) return bMatch - aMatch;
+    if (Math.abs(a.score - b.score) < 0.001) {
+      // Series position is the stronger series-disambiguation signal (#1849),
+      // so it runs before the year tiebreaker; when positions tie or the wanted
+      // position is absent it no-ops and year decides exactly as before.
+      const posCmp = positionTiebreak(a.meta, b.meta, tagQuery.seriesPosition);
+      if (posCmp !== 0) return posCmp;
+      if (tagYear) {
+        const aYear = parsePublishedYear(a.meta.publishedDate);
+        const bYear = parsePublishedYear(b.meta.publishedDate);
+        const aMatch = aYear === tagYear ? 1 : 0;
+        const bMatch = bYear === tagYear ? 1 : 0;
+        if (aMatch !== bMatch) return bMatch - aMatch;
+      }
     }
     return b.score - a.score;
   });
@@ -406,12 +466,18 @@ export function rankResults(
 
   const folderYear = extractYear(basename(book.path));
   scored.sort((a, b) => {
-    if (Math.abs(a.score - b.score) < 0.001 && folderYear) {
-      const aYear = parsePublishedYear(a.meta.publishedDate);
-      const bYear = parsePublishedYear(b.meta.publishedDate);
-      const aMatch = aYear === folderYear ? 1 : 0;
-      const bMatch = bYear === folderYear ? 1 : 0;
-      if (aMatch !== bMatch) return bMatch - aMatch;
+    if (Math.abs(a.score - b.score) < 0.001) {
+      // Position agreement (#1849) outranks the folder-year tiebreaker; it
+      // no-ops when the wanted position is absent so year decides as before.
+      const posCmp = positionTiebreak(a.meta, b.meta, book.seriesPosition);
+      if (posCmp !== 0) return posCmp;
+      if (folderYear) {
+        const aYear = parsePublishedYear(a.meta.publishedDate);
+        const bYear = parsePublishedYear(b.meta.publishedDate);
+        const aMatch = aYear === folderYear ? 1 : 0;
+        const bMatch = bYear === folderYear ? 1 : 0;
+        if (aMatch !== bMatch) return bMatch - aMatch;
+      }
     }
     return b.score - a.score;
   });

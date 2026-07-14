@@ -303,22 +303,22 @@ describe('searchAndGrabForBook', () => {
   });
 
   it('returns skipped with reason when grab throws "already has an active download"', async () => {
-    vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
+    vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
-    expect(result).toEqual({ result: 'skipped', reason: 'already_has_active_download' });
+    expect(result).toEqual({ result: 'skipped', reason: 'grab_blocked' });
   });
 
   // #197 — DuplicateDownloadError instanceof catch (ERR-1)
   it('returns skipped when DuplicateDownloadError is thrown (instanceof check, not string match)', async () => {
-    vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
+    vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
-    expect(result).toEqual({ result: 'skipped', reason: 'already_has_active_download' });
+    expect(result).toEqual({ result: 'skipped', reason: 'grab_blocked' });
   });
 
   it('returns skipped when DuplicateDownloadError with PIPELINE_ACTIVE is thrown', async () => {
-    vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book has pipeline download', 'PIPELINE_ACTIVE'));
+    vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book has pipeline download', 'PIPELINE_ACTIVE', { reason: 'processing' }));
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
-    expect(result).toEqual({ result: 'skipped', reason: 'already_has_active_download' });
+    expect(result).toEqual({ result: 'skipped', reason: 'grab_blocked' });
   });
 
   it('returns grab_error when non-DuplicateDownloadError is thrown (not swallowed)', async () => {
@@ -1718,7 +1718,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
     });
 
     it('emits search_complete with outcome skipped on DuplicateDownloadError (not search_grabbed)', async () => {
-      vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Active download exists', 'ACTIVE_DOWNLOAD_EXISTS'));
+      vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Active download exists', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
       await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory, broadcaster });
       expect(broadcaster.emit).not.toHaveBeenCalledWith('search_grabbed', expect.anything());
       expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({
@@ -1895,8 +1895,8 @@ describe('#1310 searchAndGrabForBook broadcaster/non-broadcaster parity', () => 
     {
       name: 'skipped (DuplicateDownloadError)',
       results: [makeResult({ indexerId: 10 })],
-      grab: () => vi.fn().mockRejectedValue(new DuplicateDownloadError('Active download exists', 'ACTIVE_DOWNLOAD_EXISTS')),
-      expected: { result: 'skipped', reason: 'already_has_active_download' },
+      grab: () => vi.fn().mockRejectedValue(new DuplicateDownloadError('Active download exists', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } })),
+      expected: { result: 'skipped', reason: 'grab_blocked' },
     },
     {
       name: 'grab_error (generic grab rejection)',

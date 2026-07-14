@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { scanAudioDirectory, getFFprobeDuration, getFFprobeStreamInfo, getFFprobeStreamDuration, readAlbumTag } from './audio-scanner.js';
+import {
+  isPlausibleDuration,
+  resolveFileDuration,
+  MIN_PLAUSIBLE_BITRATE_BPS,
+  MIN_GUARDED_DURATION_SECONDS,
+  MAX_PLAUSIBLE_BITRATE_BPS,
+} from './audio-probe.js';
 
 // Mock music-metadata
 vi.mock('music-metadata', () => ({
@@ -127,6 +134,33 @@ describe('scanAudioDirectory', () => {
     expect(result!.tagSeries).toBe('Test Series');
     expect(result!.tagYear).toBe('2020');
     expect(result!.tagPublisher).toBe('Test Publisher');
+    expect(result!.tagSeriesPosition).toBe(1);
+  });
+
+  // #1849/#1028 — a genuine position-0 tag must survive the extraction gate.
+  // Pre-fix the truthy `common.track?.no` gate dropped a falsy 0.
+  it('emits tagSeriesPosition: 0 for a track/position 0 with a grouping', async () => {
+    mockReaddir.mockResolvedValue([makeDirent('chapter1.mp3', true)] as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+    mockParseFile.mockResolvedValue(makeMetadata({
+      common: { title: 'Test Book', albumartist: 'Test Author', grouping: 'Test Series', track: { no: 0, of: 10 } },
+    }) as never);
+
+    const result = await scanAudioDirectory('/audiobooks/test');
+
+    expect(result!.tagSeriesPosition).toBe(0);
+  });
+
+  it('omits tagSeriesPosition when there is no grouping', async () => {
+    mockReaddir.mockResolvedValue([makeDirent('chapter1.mp3', true)] as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+    mockParseFile.mockResolvedValue(makeMetadata({
+      common: { title: 'Test Book', albumartist: 'Test Author', grouping: undefined, track: { no: 3, of: 10 } },
+    }) as never);
+
+    const result = await scanAudioDirectory('/audiobooks/test');
+
+    expect(result!.tagSeriesPosition).toBeUndefined();
   });
 
   it('aggregates duration across multiple files', async () => {
@@ -782,6 +816,33 @@ describe('scanAudioDirectory', () => {
       expect(mockReaddir).not.toHaveBeenCalled();
     });
 
+    it('#1852: returns null for a direct hidden audio file (born-hidden temp)', async () => {
+      mockStat.mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 10_000_000 } as never);
+
+      const result = await scanAudioDirectory('/complete/.BookTitle.tmp.m4b');
+
+      expect(result).toBeNull();
+      expect(mockReaddir).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('#1852 dot-led temp beside a real file', () => {
+    it('counts only the real file: 002.mp3 + .002.tmp.mp3 → fileCount 1, single-file totals', async () => {
+      mockReaddir.mockResolvedValue([
+        makeDirent('002.mp3', true),
+        makeDirent('.002.tmp.mp3', true), // duplicated born-hidden temp from a tagging op
+      ] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 35_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata() as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+
+      expect(result).not.toBeNull();
+      expect(result!.fileCount).toBe(1);        // the temp is invisible to the scan
+      expect(result!.totalSize).toBe(35_000_000);
+      expect(result!.totalDuration).toBe(3600); // one file's duration, not double-counted
+    });
+
     it('returns valid AudioScanResult for single audio file with uppercase extension', async () => {
       mockReaddir.mockRejectedValue(Object.assign(new Error('ENOTDIR'), { code: 'ENOTDIR' }));
       mockStat
@@ -984,12 +1045,201 @@ describe('scanAudioDirectory', () => {
       });
     });
 
+    describe('isPlausibleDuration predicate', () => {
+      it('exposes the three named constants at the documented values (all bps / seconds)', () => {
+        expect(MIN_PLAUSIBLE_BITRATE_BPS).toBe(8000);
+        expect(MIN_GUARDED_DURATION_SECONDS).toBe(1800);
+        expect(MAX_PLAUSIBLE_BITRATE_BPS).toBe(10_000_000);
+      });
+
+      // Floor is duration-gated: it only fires once the claimed duration exceeds 1800 s.
+      it('is plausible at exactly 8,000 bps implied for a long file (floor is exclusive)', () => {
+        // 3,600,000 bytes / 3600 s ⇒ 8000 bps exactly.
+        expect(isPlausibleDuration(3600, 3_600_000)).toBe(true);
+      });
+
+      it('is implausible just below 8,000 bps implied for a long file', () => {
+        // 3,500,000 bytes / 3600 s ⇒ ~7778 bps < 8000, duration 3600 > 1800.
+        expect(isPlausibleDuration(3600, 3_500_000)).toBe(false);
+      });
+
+      it('is plausible below 8,000 bps implied when the duration is short (silent.m4b shape)', () => {
+        // 4,297 bytes / 10 s ⇒ ~3438 bps, but 10 s ≤ 1800 s so the floor never fires.
+        expect(isPlausibleDuration(10, 4_297)).toBe(true);
+      });
+
+      it('is plausible right at the 30-minute floor gate even at a low implied bitrate', () => {
+        // duration exactly 1800 s (gate is strictly `> 1800`), ~4444 bps implied — still passes.
+        expect(isPlausibleDuration(1800, 1_000_000)).toBe(true);
+      });
+
+      it('is plausible at exactly 10,000,000 bps implied (ceiling is exclusive)', () => {
+        // 12,500,000 bytes / 10 s ⇒ 10,000,000 bps exactly.
+        expect(isPlausibleDuration(10, 12_500_000)).toBe(true);
+      });
+
+      it('is implausible just above 10,000,000 bps implied, regardless of duration', () => {
+        // 12,600,000 bytes / 10 s ⇒ ~10.08 Mbps > ceiling.
+        expect(isPlausibleDuration(10, 12_600_000)).toBe(false);
+        // Same over-ceiling ratio at a long duration is still implausible.
+        expect(isPlausibleDuration(3600, 4_600_000_000)).toBe(false);
+      });
+
+      it('treats a short file with a cover-art-inflated size as plausible', () => {
+        // 10 s / 2 MB ⇒ ~1.6 Mbps — inside both bounds.
+        expect(isPlausibleDuration(10, 2_000_000)).toBe(true);
+      });
+
+      it('is implausible for a non-finite or non-positive duration (before any bitrate math)', () => {
+        expect(isPlausibleDuration(0, 10_000_000)).toBe(false);
+        expect(isPlausibleDuration(-100, 10_000_000)).toBe(false);
+        expect(isPlausibleDuration(Number.NaN, 10_000_000)).toBe(false);
+        expect(isPlausibleDuration(Number.POSITIVE_INFINITY, 10_000_000)).toBe(false);
+        expect(isPlausibleDuration(undefined, 10_000_000)).toBe(false);
+      });
+
+      it('is implausible for a non-finite or non-positive file size (before any bitrate math)', () => {
+        expect(isPlausibleDuration(3600, 0)).toBe(false);
+        expect(isPlausibleDuration(3600, -5)).toBe(false);
+        expect(isPlausibleDuration(3600, Number.NaN)).toBe(false);
+        expect(isPlausibleDuration(3600, Number.POSITIVE_INFINITY)).toBe(false);
+        // fileSize 0 at a SHORT duration must not slip through the duration-gated floor.
+        expect(isPlausibleDuration(10, 0)).toBe(false);
+      });
+    });
+
+    describe('resolveFileDuration resolution matrix', () => {
+      const FFPROBE_PATH = '/usr/bin/ffprobe';
+      // A 50 MB file: 3600 s ⇒ ~111 kbps (plausible); a 2.88 MB file: 240 s ⇒ ~96 kbps
+      // (plausible) but 27,868 s ⇒ 827 bps (implausible — the Endymion lying-header shape).
+      const PLAUSIBLE_SIZE = 50_000_000;
+      const ENDYMION_SIZE = 2_882_020;
+      const onWarn = vi.fn();
+      const onDebug = vi.fn();
+
+      beforeEach(() => {
+        onWarn.mockReset();
+        onDebug.mockReset();
+      });
+
+      it('returns the music-metadata duration and does NOT spawn ffprobe when it is plausible', async () => {
+        const result = await resolveFileDuration('/a/book.m4b', 3600, PLAUSIBLE_SIZE, FFPROBE_PATH, onWarn, onDebug);
+        expect(result).toBe(3600);
+        expect(mockExecFile).not.toHaveBeenCalled();
+      });
+
+      it('falls back to a plausible ffprobe duration when music-metadata is missing (v1-tkhd class)', async () => {
+        mockExecFileSuccess(JSON.stringify({ format: { duration: '3600.0' } }));
+        const result = await resolveFileDuration('/a/book.m4b', undefined, PLAUSIBLE_SIZE, FFPROBE_PATH, onWarn, onDebug);
+        expect(result).toBe(3600);
+        expect(mockExecFile).toHaveBeenCalledTimes(1);
+      });
+
+      it('uses a plausible ffprobe duration when music-metadata is implausible, warning on >10% disagreement', async () => {
+        // mm claims 27,868 s for a 2.88 MB file (827 bps ⇒ implausible); ffprobe reads 240 s (plausible).
+        mockExecFileSuccess(JSON.stringify({ format: { duration: '240.0' } }));
+        const result = await resolveFileDuration('/a/book.mp3', 27_868, ENDYMION_SIZE, FFPROBE_PATH, onWarn, onDebug);
+        expect(result).toBe(240);
+        expect(onWarn).toHaveBeenCalledWith(
+          expect.stringContaining('duration mismatch'),
+          expect.objectContaining({ ffprobeDuration: 240, metadataDuration: 27_868 }),
+        );
+      });
+
+      it('uses ffprobe when music-metadata is 0 and does NOT emit a disagreement warn (the >0 guard)', async () => {
+        mockExecFileSuccess(JSON.stringify({ format: { duration: '3600.0' } }));
+        const result = await resolveFileDuration('/a/book.m4b', 0, PLAUSIBLE_SIZE, FFPROBE_PATH, onWarn, onDebug);
+        expect(result).toBe(3600);
+        expect(onWarn).not.toHaveBeenCalled();
+      });
+
+      it('omits the duration and warns (naming both values + implied bitrates) when both sources are implausible', async () => {
+        // mm 27,868 s (827 bps) and ffprobe 30,000 s (~768 bps) are both implausible for a 2.88 MB file.
+        mockExecFileSuccess(JSON.stringify({ format: { duration: '30000.0' } }));
+        const result = await resolveFileDuration('/a/book.mp3', 27_868, ENDYMION_SIZE, FFPROBE_PATH, onWarn, onDebug);
+        expect(result).toBeUndefined();
+        expect(onWarn).toHaveBeenCalledWith(
+          expect.stringContaining('omitted'),
+          expect.objectContaining({
+            metadataDuration: 27_868,
+            ffprobeDuration: 30_000,
+            metadataImpliedBitrateBps: expect.any(Number),
+            ffprobeImpliedBitrateBps: expect.any(Number),
+          }),
+        );
+      });
+
+      it('omits the duration and does NOT resurrect the implausible mm value when ffprobe spawn-fails', async () => {
+        mockExecFileError(new Error('spawn ENOENT'));
+        const result = await resolveFileDuration('/a/book.mp3', 27_868, ENDYMION_SIZE, FFPROBE_PATH, onWarn, onDebug);
+        expect(result).toBeUndefined(); // NOT 27,868 — the old code fell back to it here
+        expect(onWarn).toHaveBeenCalledWith(
+          expect.stringContaining('omitted'),
+          expect.objectContaining({ metadataDuration: 27_868, ffprobeDuration: null }),
+        );
+      });
+
+      it('omits the duration with a DEBUG diagnostic (not a warn) when mm is missing and ffprobe is null', async () => {
+        mockExecFileError(new Error('spawn ENOENT'));
+        const result = await resolveFileDuration('/a/book.m4b', undefined, PLAUSIBLE_SIZE, FFPROBE_PATH, onWarn, onDebug);
+        expect(result).toBeUndefined();
+        expect(onDebug).toHaveBeenCalledWith(
+          expect.stringContaining('duration'),
+          expect.objectContaining({ filePath: '/a/book.m4b' }),
+        );
+        expect(onWarn).not.toHaveBeenCalled();
+      });
+
+      // F1: a present-but-invalid mm value (0 / negative / NaN / Infinity) is present-but-implausible
+      // per the predicate, so a full rejection must WARN (naming the rejected value), not degrade to
+      // debug — even when ffprobe is null. Only a genuinely absent mm (undefined) + null ffprobe debugs.
+      it.each([
+        ['0', 0],
+        ['negative', -5],
+        ['NaN', Number.NaN],
+        ['Infinity', Number.POSITIVE_INFINITY],
+      ])('warns (not debug) when a present-but-invalid mm value (%s) is rejected and ffprobe is null', async (_label, mmValue) => {
+        mockExecFileError(new Error('spawn ENOENT'));
+        const result = await resolveFileDuration('/a/book.m4b', mmValue as number, PLAUSIBLE_SIZE, FFPROBE_PATH, onWarn, onDebug);
+        expect(result).toBeUndefined();
+        expect(onWarn).toHaveBeenCalledWith(
+          expect.stringContaining('omitted'),
+          expect.objectContaining({ metadataDuration: mmValue, ffprobeDuration: null }),
+        );
+        expect(onDebug).not.toHaveBeenCalled();
+      });
+
+      it('returns a plausible mm duration without spawning when no ffprobePath is configured', async () => {
+        const result = await resolveFileDuration('/a/book.m4b', 3600, PLAUSIBLE_SIZE, undefined, onWarn, onDebug);
+        expect(result).toBe(3600);
+        expect(mockExecFile).not.toHaveBeenCalled();
+      });
+
+      it('omits an implausible mm duration (with a warn) when no ffprobePath is configured', async () => {
+        const result = await resolveFileDuration('/a/book.mp3', 27_868, ENDYMION_SIZE, undefined, onWarn, onDebug);
+        expect(result).toBeUndefined();
+        expect(mockExecFile).not.toHaveBeenCalled();
+        expect(onWarn).toHaveBeenCalledWith(
+          expect.stringContaining('omitted'),
+          expect.objectContaining({ metadataDuration: 27_868 }),
+        );
+      });
+
+      it('pins the Endymion regression: plausible mm (~240 s) wins over a lying ffprobe (~27,868 s), zero spawns', async () => {
+        // If ffprobe were consulted it would return the 27,868 s lie — assert it is never called.
+        mockExecFileSuccess(JSON.stringify({ format: { duration: '27868.0' } }));
+        const result = await resolveFileDuration('/a/endymion-001.mp3', 240, ENDYMION_SIZE, FFPROBE_PATH, onWarn, onDebug);
+        expect(result).toBe(240);
+        expect(mockExecFile).not.toHaveBeenCalled();
+      });
+    });
+
     describe('scanAudioDirectory with ffprobePath', () => {
       const FFPROBE_PATH = '/usr/bin/ffprobe';
 
-      function setupSingleFile() {
+      function setupSingleFile(size = 50_000_000) {
         mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
-        mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 50_000_000 } as never);
+        mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size } as never);
       }
 
       const onWarn = vi.fn();
@@ -1000,43 +1250,50 @@ describe('scanAudioDirectory', () => {
         onDebug.mockReset();
       });
 
-      it('uses ffprobe duration instead of music-metadata when ffprobePath is provided', async () => {
-        setupSingleFile();
-        // music-metadata says 1800s (half), ffprobe says 3600s (correct)
-        mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 1800 } }) as never);
+      it('returns the music-metadata duration and spawns NO ffprobe when it is plausible', async () => {
+        setupSingleFile(50_000_000); // 3600 s ⇒ ~111 kbps, plausible
+        mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 3600 } }) as never);
+
+        const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH });
+
+        expect(result!.totalDuration).toBe(3600);
+        expect(mockExecFile).not.toHaveBeenCalled();
+      });
+
+      it('sources duration from ffprobe when music-metadata is missing', async () => {
+        setupSingleFile(50_000_000);
+        mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: undefined } }) as never);
         mockExecFileSuccess(JSON.stringify({ format: { duration: '3600.0' } }));
 
         const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH });
 
         expect(result!.totalDuration).toBe(3600);
+        expect(mockExecFile).toHaveBeenCalledTimes(1);
       });
 
-      it('falls back to music-metadata duration for a file when ffprobe fails', async () => {
-        setupSingleFile();
-        mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 1800 } }) as never);
-        mockExecFileError(new Error('ffprobe failed'));
+      it('sources duration from ffprobe and warns when music-metadata is implausible and disagrees >10%', async () => {
+        setupSingleFile(2_882_020); // mm 27,868 s ⇒ 827 bps, implausible
+        mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 27_868 } }) as never);
+        mockExecFileSuccess(JSON.stringify({ format: { duration: '240.0' } })); // ~96 kbps, plausible
 
         const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH, onWarn, onDebug });
 
-        expect(result!.totalDuration).toBe(1800);
-        expect(onDebug).toHaveBeenCalledWith(
-          expect.stringContaining('ffprobe failed'),
-          expect.objectContaining({ filePath: expect.any(String) }),
+        expect(result!.totalDuration).toBe(240);
+        expect(onWarn).toHaveBeenCalledWith(
+          expect.stringContaining('duration mismatch'),
+          expect.objectContaining({ ffprobeDuration: 240, metadataDuration: 27_868 }),
         );
       });
 
-      it('falls back to music-metadata for ALL files when ffprobe fails on every file', async () => {
-        mockReaddir.mockResolvedValue([
-          makeDirent('ch1.mp3', true),
-          makeDirent('ch2.mp3', true),
-        ] as never);
-        mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
-        mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'MPEG 1 Layer 3', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 900 } }) as never);
-        mockExecFileError(new Error('ffprobe failed'));
+      it('omits a file duration (contributing 0) when both music-metadata and ffprobe are implausible', async () => {
+        setupSingleFile(2_882_020);
+        mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 27_868 } }) as never);
+        mockExecFileSuccess(JSON.stringify({ format: { duration: '30000.0' } })); // ~768 bps, also implausible
 
-        const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH });
+        const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH, onWarn });
 
-        expect(result!.totalDuration).toBe(1800); // 2 x 900 from music-metadata
+        expect(result!.totalDuration).toBe(0);
+        expect(onWarn).toHaveBeenCalledWith(expect.stringContaining('omitted'), expect.any(Object));
       });
 
       it('uses music-metadata duration when ffprobePath is not provided (backward compat)', async () => {
@@ -1049,55 +1306,55 @@ describe('scanAudioDirectory', () => {
         expect(mockExecFile).not.toHaveBeenCalled();
       });
 
-      it('sums ffprobe durations correctly across multiple files', async () => {
+      it('sums plausible music-metadata durations across multiple files with zero duration spawns', async () => {
         mockReaddir.mockResolvedValue([
           makeDirent('ch1.mp3', true),
           makeDirent('ch2.mp3', true),
           makeDirent('ch3.mp3', true),
         ] as never);
+        // 10 MB / 500 s ⇒ 160 kbps, plausible.
         mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
         mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'MPEG 1 Layer 3', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 500 } }) as never);
 
-        let callCount = 0;
-        mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-          callCount++;
-          const duration = callCount * 1000; // 1000, 2000, 3000
-          (callback as (...args: unknown[]) => void)(null, JSON.stringify({ format: { duration: String(duration) } }), '');
-          return {} as never;
-        });
+        const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH });
+
+        expect(result!.totalDuration).toBe(1500); // 3 x 500 from music-metadata
+        expect(mockExecFile).not.toHaveBeenCalled();
+      });
+
+      it('spawns ffprobe only for the mm-missing file in a mixed directory', async () => {
+        mockReaddir.mockResolvedValue([
+          makeDirent('ch1.mp3', true),
+          makeDirent('ch2.mp3', true),
+        ] as never);
+        mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+        mockParseFile
+          .mockResolvedValueOnce(makeMetadata({ format: { codec: 'MPEG 1 Layer 3', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 900 } }) as never)
+          .mockResolvedValueOnce(makeMetadata({ format: { codec: 'MPEG 1 Layer 3', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: undefined } }) as never);
+        mockExecFileSuccess(JSON.stringify({ format: { duration: '900.0' } }));
 
         const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH });
 
-        expect(result!.totalDuration).toBe(6000); // 1000 + 2000 + 3000
+        expect(result!.totalDuration).toBe(1800); // 900 (mm) + 900 (ffprobe)
+        expect(mockExecFile).toHaveBeenCalledTimes(1); // only the mm-missing file
       });
 
-      it('invokes onWarn when ffprobe and music-metadata differ by >10%', async () => {
-        setupSingleFile();
-        // music-metadata: 1000, ffprobe: 2000 → 100% diff, well above 10%
-        mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 1000 } }) as never);
-        mockExecFileSuccess(JSON.stringify({ format: { duration: '2000.0' } }));
+      it('a file rejected by both sources contributes 0 while others still count; scan succeeds', async () => {
+        mockReaddir.mockResolvedValue([
+          makeDirent('ch1.mp3', true),
+          makeDirent('ch2.mp3', true),
+        ] as never);
+        // Uniform 10 MB size: 900 s ⇒ 88 kbps (plausible); 27,868 s ⇒ ~2871 bps (implausible).
+        mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+        mockParseFile
+          .mockResolvedValueOnce(makeMetadata({ format: { codec: 'MPEG 1 Layer 3', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 900 } }) as never)
+          .mockResolvedValueOnce(makeMetadata({ format: { codec: 'MPEG 1 Layer 3', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 27_868 } }) as never);
+        mockExecFileSuccess(JSON.stringify({ format: { duration: '30000.0' } })); // ffprobe also implausible
 
-        await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH, onWarn, onDebug });
+        const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH });
 
-        expect(onWarn).toHaveBeenCalledWith(
-          expect.stringContaining('duration mismatch'),
-          expect.objectContaining({
-            filePath: expect.any(String),
-            ffprobeDuration: 2000,
-            metadataDuration: 1000,
-          }),
-        );
-      });
-
-      it('does not invoke onWarn when ffprobe and music-metadata differ by ≤10%', async () => {
-        setupSingleFile();
-        // music-metadata: 1000, ffprobe: 1050 → 5% diff
-        mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 1000 } }) as never);
-        mockExecFileSuccess(JSON.stringify({ format: { duration: '1050.0' } }));
-
-        await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH, onWarn, onDebug });
-
-        expect(onWarn).not.toHaveBeenCalled();
+        expect(result).not.toBeNull();
+        expect(result!.totalDuration).toBe(900); // only the plausible file counts
       });
 
       it('contributes 0 to totalDuration when music-metadata duration is undefined AND ffprobe fails', async () => {
@@ -1111,26 +1368,25 @@ describe('scanAudioDirectory', () => {
       });
 
       it('does not crash when onWarn/onDebug callbacks are not provided', async () => {
-        setupSingleFile();
-        mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 1000 } }) as never);
+        setupSingleFile(2_882_020);
+        // Implausible mm + ffprobe failure exercises the omission diagnostic path with no callbacks.
+        mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 27_868 } }) as never);
         mockExecFileError(new Error('ffprobe failed'));
 
-        // Should not throw — no callbacks provided, optional-chaining preserved
         const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH });
 
-        expect(result!.totalDuration).toBe(1000);
+        expect(result!.totalDuration).toBe(0);
       });
 
       it('still sources all other metadata from music-metadata regardless of ffprobePath', async () => {
         setupSingleFile();
-        mockParseFile.mockResolvedValue(makeMetadata() as never);
-        mockExecFileSuccess(JSON.stringify({ format: { duration: '9999.0' } }));
+        mockParseFile.mockResolvedValue(makeMetadata() as never); // default duration 3600, plausible
 
         const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH });
 
-        // Duration comes from ffprobe
-        expect(result!.totalDuration).toBe(9999);
-        // Everything else comes from music-metadata
+        // Duration comes from (plausible) music-metadata, with no ffprobe spawn.
+        expect(result!.totalDuration).toBe(3600);
+        expect(mockExecFile).not.toHaveBeenCalled();
         expect(result!.codec).toBe('MPEG 1 Layer 3');
         expect(result!.tagTitle).toBe('Test Book');
         expect(result!.tagNarrator).toBe('Test Narrator');

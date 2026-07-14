@@ -1,14 +1,14 @@
-import { useRef, useMemo, useState, type ReactNode } from 'react';
-import { type FieldError } from 'react-hook-form';
-import { TagIcon, ChevronRightIcon } from '@/components/icons';
-import { errorInputClass } from '@/components/settings/formStyles';
+import { useRef, useMemo, useState } from 'react';
+import { TagIcon } from '@/components/icons';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { NamingTokenModal } from '@/components/settings/NamingTokenModal';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
+import { FormatField, FormatFieldHeader } from './NamingFormatField';
 import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP, TOKEN_PATTERN_SOURCE, templateHasToken, composeEditionSuffixLeaf, sanitizeEditionDiscriminator } from '@core/utils/index.js';
 import { DEFAULT_SETTINGS, namingSeparatorValues, namingCaseValues, namingFormSchema, hasTitle, hasAuthor, FOLDER_TITLE_MSG, AUTHOR_ADVISORY_MSG, type AppSettings } from '../../../shared/schemas.js';
 import type { NamingSeparator, NamingCase } from '../../../shared/schemas/settings/library.js';
-import type { NamingOptions, TokenGroup } from '@core/utils/naming.js';
+import type { NamingOptions } from '@core/utils/naming.js';
 import { SettingsSection } from './SettingsSection';
 import type { z } from 'zod';
 
@@ -77,137 +77,46 @@ function createFormatKeyDownHandler(
   };
 }
 
-interface FormatFieldProps {
-  id: string;
-  label: string;
-  ariaLabel: string;
-  placeholder: string;
-  error?: FieldError | undefined;
-  preview: string;
-  previewNoSeries: string;
-  previewMultiFile?: string | undefined;
-  previewMultiEdition?: string | undefined;
-  previewFileEdition?: { hasToken: boolean; rendered: string } | undefined;
-  previewSuffix?: string | undefined;
-  previewSuffixMultiFile?: string | undefined;
-  previewNote?: ReactNode;
-  warnings?: ReactNode;
-  onOpenTokenModal: () => void;
-  onInsertToken: (token: string) => void;
-  tokenGroups: readonly TokenGroup[];
-  inlinePanelOpen: boolean;
-  onToggleInlinePanel: () => void;
-  registerProps: Record<string, unknown>;
-  inputRef: (el: HTMLInputElement | null) => void;
-  hasValue: boolean;
-  onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
-}
+/**
+ * Live-preview derivations for both format editors — extracted from the component solely to keep
+ * it under max-lines-per-function; behavior is byte-identical (pure relocation of the memos).
+ */
+function useNamingPreviews(folderFormat: string | undefined, fileFormat: string | undefined, namingOptions: NamingOptions) {
+  const folderPreview = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS, namingOptions) : '', [folderFormat, namingOptions]);
+  const folderPreviewNoSeries = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [folderFormat, namingOptions]);
+  // "Multiple editions" folder row (#1774): mirror `buildTargetPath`'s two branches exactly.
+  // If the template places {edition} itself, render it in place (verbatim, no suffix) so the row
+  // matches production's double-render guard. Otherwise apply the mandatory collision suffix to the
+  // With-series leaf via the real core primitives — byte-identical to the suffix branch by construction.
+  const folderPreviewMultiEdition = useMemo(() => {
+    if (!folderFormat) return '';
+    if (templateHasToken(folderFormat, 'edition')) {
+      return renderTemplate(folderFormat, { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION }, namingOptions);
+    }
+    const discriminator = sanitizeEditionDiscriminator(SAMPLE_EDITION);
+    if (!discriminator) return folderPreview;
+    const segments = folderPreview.split('/');
+    segments[segments.length - 1] = composeEditionSuffixLeaf(segments[segments.length - 1] ?? '', discriminator);
+    return segments.join('/');
+  }, [folderFormat, namingOptions, folderPreview]);
+  const filePreview = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS, namingOptions) : '', [fileFormat, namingOptions]);
+  const filePreviewNoSeries = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [fileFormat, namingOptions]);
+  const filePreviewMultiFile = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_MULTIFILE, namingOptions) : '', [fileFormat, namingOptions]);
+  // "With edition" file row (#1819): {edition} is file-supported but never appears in the baseline
+  // rows (they render edition-free). Unlike the folder row there is NO automatic-append branch to
+  // mirror — files get no side-by-side discriminator. So only render the sample when the template
+  // actually places {edition}; otherwise the row would be byte-identical to With-series and read as
+  // a bug. When absent, the row teaches the capability with a muted hint instead. `templateHasToken`
+  // detects {edition} inside conditional wrappers (e.g. `{ (?edition?)}`), so gating on it is safe.
+  const filePreviewEdition = useMemo((): { hasToken: boolean; rendered: string } => {
+    const hasToken = !!fileFormat && templateHasToken(fileFormat, 'edition');
+    return {
+      hasToken,
+      rendered: hasToken ? renderFilename(fileFormat!, { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION }, namingOptions) : '',
+    };
+  }, [fileFormat, namingOptions]);
 
-function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewMultiFile, previewMultiEdition, previewFileEdition, previewSuffix, previewSuffixMultiFile, previewNote, warnings, onOpenTokenModal, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
-  const panelId = `${id}-token-panel`;
-  return (
-    <div>
-      <div className="flex items-center gap-2 mb-2">
-        <label htmlFor={id} className="text-sm font-medium">{label}</label>
-        <button
-          type="button"
-          onClick={onOpenTokenModal}
-          className="w-5 h-5 rounded-full bg-muted hover:bg-muted/80 text-xs font-bold text-muted-foreground hover:text-foreground transition-colors flex items-center justify-center cursor-pointer"
-          aria-label={ariaLabel}
-        >
-          ?
-        </button>
-      </div>
-      <input
-        id={id}
-        type="text"
-        {...registerProps}
-        ref={inputRef}
-        onKeyDown={onKeyDown}
-        className={`${errorInputClass(!!error)} font-mono text-sm`}
-        placeholder={placeholder}
-      />
-      {error && <p className="text-sm text-destructive mt-1">{error.message}</p>}
-      {warnings}
-      <button
-        type="button"
-        onClick={onToggleInlinePanel}
-        aria-expanded={inlinePanelOpen}
-        aria-controls={panelId}
-        aria-label={`Toggle ${id === 'folderFormat' ? 'folder' : 'file'} tokens`}
-        className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-      >
-        <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${inlinePanelOpen ? 'rotate-90' : ''}`} />
-        <span>Tokens</span>
-      </button>
-      {inlinePanelOpen && (
-        <div id={panelId} className="mt-1.5 p-3 bg-muted/30 rounded-lg border border-border/50 space-y-2">
-          {tokenGroups.map((group) => (
-            <div key={group.label}>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
-                {group.label}
-              </h4>
-              <div className="flex flex-wrap gap-1">
-                {group.tokens.map((token) => (
-                  <button
-                    key={token}
-                    type="button"
-                    onClick={() => onInsertToken(token)}
-                    className="px-2 py-0.5 bg-muted hover:bg-muted/80 text-xs font-mono rounded transition-colors cursor-pointer hover:ring-1 hover:ring-primary/30"
-                  >
-                    {`{${token}}`}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {hasValue && (
-        <div className="mt-2 p-3 bg-muted/50 rounded-lg border border-border space-y-1">
-          <div className="flex items-baseline gap-3">
-            <span className="w-24 text-right shrink-0 text-xs text-muted-foreground">With series</span>
-            <span data-testid="preview-with-series" className="text-sm font-mono break-all">
-              {preview ? <>{preview}{previewSuffix}</> : <span className="text-muted-foreground italic">Empty</span>}
-            </span>
-          </div>
-          <div className="flex items-baseline gap-3">
-            <span className="w-24 text-right shrink-0 text-xs text-muted-foreground">Without series</span>
-            <span data-testid="preview-without-series" className="text-sm font-mono break-all">
-              {previewNoSeries ? <>{previewNoSeries}{previewSuffix}</> : <span className="text-muted-foreground italic">Empty</span>}
-            </span>
-          </div>
-          {previewMultiFile !== undefined && (
-            <div className="flex items-baseline gap-3">
-              <span className="w-24 text-right shrink-0 text-xs text-muted-foreground">Multi-file</span>
-              <span data-testid="preview-multi-file" className="text-sm font-mono break-all">
-                {previewMultiFile ? <>{previewMultiFile}{previewSuffixMultiFile ?? previewSuffix}</> : <span className="text-muted-foreground italic">Empty</span>}
-              </span>
-            </div>
-          )}
-          {previewMultiEdition !== undefined && (
-            <div className="flex items-baseline gap-3">
-              <span className="w-24 text-right shrink-0 text-xs text-muted-foreground">Multiple editions</span>
-              <span data-testid="preview-multi-edition" className="text-sm font-mono break-all">
-                {previewMultiEdition ? previewMultiEdition : <span className="text-muted-foreground italic">Empty</span>}
-              </span>
-            </div>
-          )}
-          {previewFileEdition !== undefined && (
-            <div className="flex items-baseline gap-3">
-              <span className="w-24 text-right shrink-0 text-xs text-muted-foreground">With edition</span>
-              <span data-testid="preview-file-edition" className="text-sm font-mono break-all">
-                {previewFileEdition.hasToken
-                  ? <>{previewFileEdition.rendered}{previewSuffix}</>
-                  : <span className="text-muted-foreground italic">Add {'{edition}'} to include the edition label in filenames</span>}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-      {previewNote}
-    </div>
-  );
+  return { folderPreview, folderPreviewNoSeries, folderPreviewMultiEdition, filePreview, filePreviewNoSeries, filePreviewMultiFile, filePreviewEdition };
 }
 
 export function NamingSettingsSection() {
@@ -245,39 +154,7 @@ export function NamingSettingsSection() {
   }), [namingSeparator, namingCase]);
   const currentPreset = useMemo(() => detectPreset(folderFormat ?? '', fileFormat ?? ''), [folderFormat, fileFormat]);
 
-  const folderPreview = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS, namingOptions) : '', [folderFormat, namingOptions]);
-  const folderPreviewNoSeries = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [folderFormat, namingOptions]);
-  // "Multiple editions" folder row (#1774): mirror `buildTargetPath`'s two branches exactly.
-  // If the template places {edition} itself, render it in place (verbatim, no suffix) so the row
-  // matches production's double-render guard. Otherwise apply the mandatory collision suffix to the
-  // With-series leaf via the real core primitives — byte-identical to the suffix branch by construction.
-  const folderPreviewMultiEdition = useMemo(() => {
-    if (!folderFormat) return '';
-    if (templateHasToken(folderFormat, 'edition')) {
-      return renderTemplate(folderFormat, { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION }, namingOptions);
-    }
-    const discriminator = sanitizeEditionDiscriminator(SAMPLE_EDITION);
-    if (!discriminator) return folderPreview;
-    const segments = folderPreview.split('/');
-    segments[segments.length - 1] = composeEditionSuffixLeaf(segments[segments.length - 1] ?? '', discriminator);
-    return segments.join('/');
-  }, [folderFormat, namingOptions, folderPreview]);
-  const filePreview = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS, namingOptions) : '', [fileFormat, namingOptions]);
-  const filePreviewNoSeries = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [fileFormat, namingOptions]);
-  const filePreviewMultiFile = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_MULTIFILE, namingOptions) : '', [fileFormat, namingOptions]);
-  // "With edition" file row (#1819): {edition} is file-supported but never appears in the baseline
-  // rows (they render edition-free). Unlike the folder row there is NO automatic-append branch to
-  // mirror — files get no side-by-side discriminator. So only render the sample when the template
-  // actually places {edition}; otherwise the row would be byte-identical to With-series and read as
-  // a bug. When absent, the row teaches the capability with a muted hint instead. `templateHasToken`
-  // detects {edition} inside conditional wrappers (e.g. `{ (?edition?)}`), so gating on it is safe.
-  const filePreviewEdition = useMemo((): { hasToken: boolean; rendered: string } => {
-    const hasToken = !!fileFormat && templateHasToken(fileFormat, 'edition');
-    return {
-      hasToken,
-      rendered: hasToken ? renderFilename(fileFormat!, { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION }, namingOptions) : '',
-    };
-  }, [fileFormat, namingOptions]);
+  const { folderPreview, folderPreviewNoSeries, folderPreviewMultiEdition, filePreview, filePreviewNoSeries, filePreviewMultiFile, filePreviewEdition } = useNamingPreviews(folderFormat, fileFormat, namingOptions);
 
   const hasTitleToken = folderFormat ? hasTitle(folderFormat) : true;
   const hasAuthorToken = folderFormat ? hasAuthor(folderFormat) : true;
@@ -317,54 +194,78 @@ export function NamingSettingsSection() {
   return (
     <SettingsSection icon={<TagIcon className="w-5 h-5 text-primary" />} title="File Naming" description="Configure how audiobook files and folders are named">
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <SelectWithChevron id="namingPreset" label="Preset" value={currentPreset} onChange={(e) => handlePresetChange(e.currentTarget.value)}>
-            {NAMING_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            {currentPreset === 'custom' && <option value="custom">Custom</option>}
-          </SelectWithChevron>
-          <SelectWithChevron id="namingSeparator" label="Separator" {...register('namingSeparator')}>
-            {namingSeparatorValues.map((v) => <option key={v} value={v}>{SEPARATOR_LABELS[v]}</option>)}
-          </SelectWithChevron>
-          <SelectWithChevron id="namingCase" label="Case" {...register('namingCase')}>
-            {namingCaseValues.map((v) => <option key={v} value={v}>{CASE_LABELS[v]}</option>)}
-          </SelectWithChevron>
-        </div>
+        <SettingsTable>
+          <SettingsRow htmlFor="namingPreset" label="Preset" description="A starting point — editing the formats below switches this to Custom.">
+            <div className="w-48">
+              <SelectWithChevron id="namingPreset" value={currentPreset} onChange={(e) => handlePresetChange(e.currentTarget.value)}>
+                {NAMING_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {currentPreset === 'custom' && <option value="custom">Custom</option>}
+              </SelectWithChevron>
+            </div>
+          </SettingsRow>
 
-        <FormatField
-          id="folderFormat" label="Folder Format" ariaLabel="Folder token reference" placeholder="{author}/{title}"
-          error={errors.folderFormat} preview={folderPreview} previewNoSeries={folderPreviewNoSeries} previewMultiEdition={folderPreviewMultiEdition} hasValue={!!folderFormat}
-          previewNote={
-            <p className="mt-2 text-xs text-muted-foreground">
-              Multiple editions of a book are kept side-by-side automatically — narratorr appends the edition to the folder. Add {'{edition}'} above to control where it appears.
-            </p>
-          }
-          onOpenTokenModal={() => setTokenModalScope('folder')}
-          onInsertToken={(token) => insertTokenAtCursor(folderFormatRef, 'folderFormat', token)}
-          onKeyDown={(e) => createFormatKeyDownHandler(folderFormatRef, 'folderFormat', setValue)(e)}
-          tokenGroups={FOLDER_TOKEN_GROUPS}
-          inlinePanelOpen={folderPanelOpen}
-          onToggleInlinePanel={() => setFolderPanelOpen((v) => !v)}
-          registerProps={{ ...folderReg, ref: undefined }}
-          inputRef={(el) => { folderReg.ref(el); folderFormatRef.current = el; }}
-          warnings={<>
-            {!hasTitleToken && <p className="text-sm text-destructive mt-1.5">{FOLDER_TITLE_MSG}</p>}
-            {hasTitleToken && !hasAuthorToken && <p className="text-sm text-amber-500 mt-1.5">{AUTHOR_ADVISORY_MSG}</p>}
-          </>}
-        />
+          <SettingsRow htmlFor="namingSeparator" label="Separator" description="Character used between words in generated names.">
+            <div className="w-48">
+              <SelectWithChevron id="namingSeparator" {...register('namingSeparator')}>
+                {namingSeparatorValues.map((v) => <option key={v} value={v}>{SEPARATOR_LABELS[v]}</option>)}
+              </SelectWithChevron>
+            </div>
+          </SettingsRow>
 
-        <FormatField
-          id="fileFormat" label="File Format" ariaLabel="File token reference" placeholder="{author} - {title}"
-          error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewMultiFile={filePreviewMultiFile} previewFileEdition={filePreviewEdition} previewSuffix=".m4b" previewSuffixMultiFile=".mp3" hasValue={!!fileFormat}
-          onOpenTokenModal={() => setTokenModalScope('file')}
-          onInsertToken={(token) => insertTokenAtCursor(fileFormatRef, 'fileFormat', token)}
-          onKeyDown={(e) => createFormatKeyDownHandler(fileFormatRef, 'fileFormat', setValue)(e)}
-          tokenGroups={[...FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP]}
-          inlinePanelOpen={filePanelOpen}
-          onToggleInlinePanel={() => setFilePanelOpen((v) => !v)}
-          registerProps={{ ...fileReg, ref: undefined }}
-          inputRef={(el) => { fileReg.ref(el); fileFormatRef.current = el; }}
-          warnings={!fileTitleToken ? <p className="text-sm text-destructive mt-1.5">{FOLDER_TITLE_MSG}</p> : null}
-        />
+          <SettingsRow htmlFor="namingCase" label="Case" description="Letter casing applied to generated names.">
+            <div className="w-48">
+              <SelectWithChevron id="namingCase" {...register('namingCase')}>
+                {namingCaseValues.map((v) => <option key={v} value={v}>{CASE_LABELS[v]}</option>)}
+              </SelectWithChevron>
+            </div>
+          </SettingsRow>
+
+          <SettingsRow
+            layout="stacked"
+            label={<FormatFieldHeader text="Folder format" ariaLabel="Folder token reference" onOpenTokenModal={() => setTokenModalScope('folder')} />}
+            description="Template for audiobook folder paths."
+          >
+            <FormatField
+              id="folderFormat" inputAriaLabel="Folder format" placeholder="{author}/{title}"
+              error={errors.folderFormat} preview={folderPreview} previewNoSeries={folderPreviewNoSeries} previewMultiEdition={folderPreviewMultiEdition} hasValue={!!folderFormat}
+              previewNote={
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Multiple editions of a book are kept side-by-side automatically — narratorr appends the edition to the folder. Add {'{edition}'} above to control where it appears.
+                </p>
+              }
+              onInsertToken={(token) => insertTokenAtCursor(folderFormatRef, 'folderFormat', token)}
+              onKeyDown={(e) => createFormatKeyDownHandler(folderFormatRef, 'folderFormat', setValue)(e)}
+              tokenGroups={FOLDER_TOKEN_GROUPS}
+              inlinePanelOpen={folderPanelOpen}
+              onToggleInlinePanel={() => setFolderPanelOpen((v) => !v)}
+              registerProps={{ ...folderReg, ref: undefined }}
+              inputRef={(el) => { folderReg.ref(el); folderFormatRef.current = el; }}
+              warnings={<>
+                {!hasTitleToken && <p className="text-sm text-destructive mt-1.5">{FOLDER_TITLE_MSG}</p>}
+                {hasTitleToken && !hasAuthorToken && <p className="text-sm text-amber-500 mt-1.5">{AUTHOR_ADVISORY_MSG}</p>}
+              </>}
+            />
+          </SettingsRow>
+
+          <SettingsRow
+            layout="stacked"
+            label={<FormatFieldHeader text="File format" ariaLabel="File token reference" onOpenTokenModal={() => setTokenModalScope('file')} />}
+            description="Template for audio file names."
+          >
+            <FormatField
+              id="fileFormat" inputAriaLabel="File format" placeholder="{author} - {title}"
+              error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewMultiFile={filePreviewMultiFile} previewFileEdition={filePreviewEdition} previewSuffix=".m4b" previewSuffixMultiFile=".mp3" hasValue={!!fileFormat}
+              onInsertToken={(token) => insertTokenAtCursor(fileFormatRef, 'fileFormat', token)}
+              onKeyDown={(e) => createFormatKeyDownHandler(fileFormatRef, 'fileFormat', setValue)(e)}
+              tokenGroups={[...FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP]}
+              inlinePanelOpen={filePanelOpen}
+              onToggleInlinePanel={() => setFilePanelOpen((v) => !v)}
+              registerProps={{ ...fileReg, ref: undefined }}
+              inputRef={(el) => { fileReg.ref(el); fileFormatRef.current = el; }}
+              warnings={!fileTitleToken ? <p className="text-sm text-destructive mt-1.5">{FOLDER_TITLE_MSG}</p> : null}
+            />
+          </SettingsRow>
+        </SettingsTable>
 
         {isDirty && (
           <button type="submit" disabled={mutation.isPending} className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in">

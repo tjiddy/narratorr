@@ -30,8 +30,13 @@ describe('formatBytes', () => {
     expect(formatBytes(1099511627776)).toBe('1 TB');
   });
 
-  it('formats fractional values', () => {
-    expect(formatBytes(1536)).toBe('1.5 KB');
+  it('rounds MB and below to whole numbers', () => {
+    expect(formatBytes(1536)).toBe('2 KB');
+    expect(formatBytes(549049958)).toBe('524 MB');
+  });
+
+  it('keeps decimals at GB and up', () => {
+    expect(formatBytes(1438814182)).toBe('1.34 GB');
   });
 
   it('returns Unknown for negative sentinel value -1', () => {

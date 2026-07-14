@@ -131,6 +131,55 @@ describe('ImportCard', () => {
     });
   });
 
+  // T1 — the matched series + #position on the review row, so same-titled series
+  // entries (Fablehaven) are distinguishable at a glance. Sourced from the RESOLVED
+  // match metadata, never from the folder-parsed edited.series.
+  describe('series / #position display', () => {
+    it('shows the matched series name and #position from edited.metadata', () => {
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult(),
+          edited: { title: 'Book Title', author: 'Author Name', series: 'Series Name', metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Children of Time', position: 3 } } },
+        })}
+      />);
+      expect(screen.getByText('Children of Time #3')).toBeInTheDocument();
+    });
+
+    it('sources from matched metadata, NOT the folder-parsed edited.series (unmatched row shows no series line)', () => {
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          // No metadata → no match yet. edited.series carries the folder guess, which must NOT render here.
+          edited: { title: 'Book Title', author: 'Author Name', series: 'Only In Edited Not Metadata' },
+        })}
+      />);
+      expect(screen.queryByText('Only In Edited Not Metadata')).not.toBeInTheDocument();
+    });
+
+    it('shows the series name alone when the matched series has no position', () => {
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult(),
+          edited: { title: 'Book Title', author: 'Author Name', series: '', metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Standalone Saga' } } },
+        })}
+      />);
+      expect(screen.getByText('Standalone Saga')).toBeInTheDocument();
+    });
+
+    it('renders a series position of 0 as #0 (not swallowed — #1028 guard)', () => {
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult(),
+          edited: { title: 'Book Title', author: 'Author Name', series: '', metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Prequels', position: 0 } } },
+        })}
+      />);
+      expect(screen.getByText('Prequels #0')).toBeInTheDocument();
+    });
+  });
+
   describe('narrator display', () => {
     it('shows narrator from edited.metadata.narrators when present', () => {
       render(<ImportCard

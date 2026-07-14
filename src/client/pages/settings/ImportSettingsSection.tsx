@@ -1,7 +1,8 @@
 import type { z } from 'zod';
 import { PackageIcon } from '@/components/icons';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
-import { errorInputClass } from '@/components/settings/formStyles';
+import { NumberField } from '@/components/settings/NumberField';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { DEFAULT_SETTINGS, importSettingsSchema, stripDefaults, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
@@ -30,88 +31,62 @@ export function ImportSettingsSection() {
       description="Configure post-download import behavior"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <label htmlFor="deleteAfterImport" className="block text-sm font-medium">Delete After Import</label>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Remove torrent from download client after files are imported
-            </p>
-          </div>
-          <label className="relative inline-flex items-center cursor-pointer">
+        <SettingsTable>
+          <SettingsRow htmlFor="deleteAfterImport" label="Delete after import" description="Remove torrent from download client after files are imported">
             <ToggleSwitch id="deleteAfterImport" {...register('deleteAfterImport')} />
-          </label>
-        </div>
+          </SettingsRow>
 
-        <div>
-          <label htmlFor="minSeedTime" className="block text-sm font-medium mb-2">Minimum Seed Time (minutes)</label>
-          <input
-            id="minSeedTime"
-            type="number"
-            {...register('minSeedTime', { valueAsNumber: true })}
-            disabled={!deleteAfterImport}
-            className={`${errorInputClass(!!errors.minSeedTime)} disabled:cursor-not-allowed disabled:opacity-50`}
-            min={0}
-            step={1}
-            placeholder="60"
-          />
-          {errors.minSeedTime && (
-            <p className="text-sm text-destructive mt-1">{errors.minSeedTime.message}</p>
-          )}
-          <p className="text-sm text-muted-foreground mt-2">
-            How long to seed before removing the torrent (only applies when delete after import is enabled)
-          </p>
-        </div>
+          <SettingsRow
+            htmlFor="minSeedTime"
+            label="Minimum seed time"
+            description="How long to seed before removing the torrent — applies only when delete after import is on."
+            muted={!deleteAfterImport}
+          >
+            <NumberField
+              id="minSeedTime"
+              {...register('minSeedTime', { valueAsNumber: true })}
+              disabled={!deleteAfterImport}
+              min={0}
+              step={1}
+              placeholder="60"
+              suffix="minutes"
+              error={errors.minSeedTime?.message}
+            />
+          </SettingsRow>
 
-        <div>
-          <label htmlFor="minSeedRatio" className="block text-sm font-medium mb-2">Minimum Seed Ratio</label>
-          <input
-            id="minSeedRatio"
-            type="number"
-            {...register('minSeedRatio', { valueAsNumber: true })}
-            disabled={!deleteAfterImport}
-            className={`${errorInputClass(!!errors.minSeedRatio)} disabled:cursor-not-allowed disabled:opacity-50`}
-            min={0}
-            step={0.1}
-            placeholder="0"
-          />
-          {errors.minSeedRatio && (
-            <p className="text-sm text-destructive mt-1">{errors.minSeedRatio.message}</p>
-          )}
-          <p className="text-sm text-muted-foreground mt-2">
-            Minimum upload ratio before removing the torrent. Set to 0 to disable (only applies when delete after import is enabled)
-          </p>
-        </div>
+          <SettingsRow
+            htmlFor="minSeedRatio"
+            label="Minimum seed ratio"
+            description="Minimum upload ratio before removing the torrent. Set to 0 to disable — applies only when delete after import is on."
+            muted={!deleteAfterImport}
+          >
+            <NumberField
+              id="minSeedRatio"
+              {...register('minSeedRatio', { valueAsNumber: true })}
+              disabled={!deleteAfterImport}
+              min={0}
+              step={0.1}
+              placeholder="0"
+              error={errors.minSeedRatio?.message}
+            />
+          </SettingsRow>
 
-        <div className="flex items-center justify-between">
-          <div>
-            <label htmlFor="redownloadFailed" className="block text-sm font-medium">Redownload Failed</label>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Automatically search for and attempt to download a different release when a download fails
-            </p>
-          </div>
-          <label className="relative inline-flex items-center cursor-pointer">
+          <SettingsRow htmlFor="redownloadFailed" label="Redownload failed" description="Automatically search for and attempt to download a different release when a download fails">
             <ToggleSwitch id="redownloadFailed" {...register('redownloadFailed')} />
-          </label>
-        </div>
+          </SettingsRow>
 
-        <div>
-          <label htmlFor="minFreeSpaceGB" className="block text-sm font-medium mb-2">Minimum Free Space (GB)</label>
-          <input
-            id="minFreeSpaceGB"
-            type="number"
-            {...register('minFreeSpaceGB', { valueAsNumber: true })}
-            className={errorInputClass(!!errors.minFreeSpaceGB)}
-            min={0}
-            step="any"
-            placeholder="5"
-          />
-          {errors.minFreeSpaceGB && (
-            <p className="text-sm text-destructive mt-1">{errors.minFreeSpaceGB.message}</p>
-          )}
-          <p className="text-sm text-muted-foreground mt-2">
-            Block imports when free disk space is below this threshold. Set to 0 to disable.
-          </p>
-        </div>
+          <SettingsRow htmlFor="minFreeSpaceGB" label="Minimum free space" description="Block imports when free disk space is below this threshold. Set to 0 to disable.">
+            <NumberField
+              id="minFreeSpaceGB"
+              {...register('minFreeSpaceGB', { valueAsNumber: true })}
+              min={0}
+              step="any"
+              placeholder="5"
+              suffix="GB"
+              error={errors.minFreeSpaceGB?.message}
+            />
+          </SettingsRow>
+        </SettingsTable>
 
         {isDirty && (
           <button

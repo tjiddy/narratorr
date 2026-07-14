@@ -98,8 +98,21 @@ async function handleMissingItem(
 ): Promise<void> {
   log.warn({ id: download.id }, 'Download not found in client');
   const errorMessage = 'Download not found in download client';
-  // Client-side failure: poller writes only the `clientStatus` axis.
-  await transitionDownloadState(db, download.id, { clientStatus: 'failed', errorMessage });
+  // Client-side failure: poller writes only the `clientStatus` axis, GUARDED
+  // against the exact polled tuple (#1857 F14). A replacement that removed this
+  // row's external item between monitor selection and `getDownload` has already
+  // transitioned it to `(failed, idle)`; the guard then MISSES and we return
+  // BEFORE any failure/history/retry/recovery/notify side effect — so the missing-item
+  // path can't drive a competing download or delete the replaced row.
+  const landed = await transitionDownloadState(db, download.id, {
+    expected: { clientStatus: download.clientStatus, pipelineStage: download.pipelineStage },
+    clientStatus: 'failed',
+    errorMessage,
+  });
+  if (!landed) {
+    log.debug({ id: download.id }, 'Missing-item handling skipped — row changed since poll (guarded)');
+    return;
+  }
 
   recordDownloadFailedEvent({ eventHistory, downloadId: download.id, bookId: download.bookId ?? undefined, bookTitle: download.title, errorMessage, log });
 
@@ -153,8 +166,14 @@ async function processDownloadUpdate(
   const resolvedOutputPath = await resolveOutputPath(download, item, remotePathMappingService, log, isCompletionTransition);
 
   const progressChanged = progress !== download.progress;
-  // Client poller writes ONLY the `clientStatus` axis (never `pipelineStage`).
-  await transitionDownloadState(db, download.id, {
+  // Client poller writes ONLY the `clientStatus` axis (never `pipelineStage`),
+  // GUARDED against the exact polled tuple (#1857 F2). A cancel landing between
+  // this poll's client-state read and its write has already moved the row to
+  // `(failed, idle)`; the guard then MISSES, suppressing the stale progress/status
+  // write AND all its SSE / failure / completion side effects (a progress-only
+  // write on an unchanged row still matches its own tuple and lands as before).
+  const landed = await transitionDownloadState(db, download.id, {
+    expected: { clientStatus: download.clientStatus, pipelineStage: download.pipelineStage },
     clientStatus: newStatus,
     progress,
     completedAt: isCompleted && !download.completedAt ? new Date() : download.completedAt,
@@ -162,6 +181,10 @@ async function processDownloadUpdate(
     ...(item.errorMessage ? { errorMessage: item.errorMessage } : {}),
     ...(resolvedOutputPath ? { outputPath: resolvedOutputPath } : {}),
   });
+  if (!landed) {
+    log.debug({ id: download.id }, 'Monitor update skipped — row changed since poll (guarded)');
+    return;
+  }
 
   emitProgressEvents(download, oldDisplay, progress, newStatus, item.downloadSpeed, broadcaster, log);
   await handleFailureTransition(db, download, newStatus, item.errorMessage, retryDeps, log, eventHistory, broadcaster);
@@ -372,6 +395,13 @@ async function handleDownloadFailure(
         await db.update(downloads).set({ errorMessage: 'Retries exhausted' }).where(eq(downloads.id, downloadId));
         await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
         return 'exhausted';
+      case 'already_active':
+        // Book already served by a grab blocker — a live download (a replacement's
+        // winner), a QG-eligible completed row, or a pending auto import job (#1861).
+        // Leave the failed row + errorMessage untouched and do NOT recoverBookStatus —
+        // the book keeps the blocker's status (#1857 AC17).
+        log.info({ downloadId, bookId }, 'Retry skipped — book already has a blocking download or import');
+        return 'already_active';
       case 'no_candidates':
         await db.update(downloads).set({ errorMessage: 'No viable candidates' }).where(eq(downloads.id, downloadId));
         await recoverBookStatus(db, bookId, downloadId, log, broadcaster);

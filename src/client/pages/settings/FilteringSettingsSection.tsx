@@ -1,6 +1,9 @@
 import { useWatch } from 'react-hook-form';
 import type { z } from 'zod';
 import { GlobeIcon } from '@/components/icons';
+import { NumberField } from '@/components/settings/NumberField';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
+import { inputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { filteringFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { CANONICAL_LANGUAGES, type CanonicalLanguage } from '../../../shared/language-constants.js';
@@ -39,7 +42,7 @@ export function FilteringSettingsSection() {
     successMessage: 'Filtering settings saved',
   });
 
-  const { register, handleSubmit, control, setValue, formState: { isDirty } } = form;
+  const { register, handleSubmit, control, setValue, formState: { errors, isDirty } } = form;
 
   const selectedLanguages = useWatch({ control, name: 'languages' }) ?? [];
 
@@ -57,69 +60,69 @@ export function FilteringSettingsSection() {
       description="What search results to keep"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <div>
-          <span className="block text-sm font-medium mb-2">Languages</span>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {CANONICAL_LANGUAGES.map((lang) => (
-              <label key={lang} className="flex items-center gap-2 text-sm cursor-pointer capitalize">
-                <input
-                  type="checkbox"
-                  checked={selectedLanguages.includes(lang)}
-                  onChange={() => toggleLanguage(lang)}
-                  className="rounded border-border text-primary focus-ring"
-                />
-                {lang}
-              </label>
-            ))}
-          </div>
-          <p className="text-sm text-muted-foreground mt-2">
-            Search results in unselected languages are excluded. Results with no language metadata always pass through. Deselect all for unrestricted search.
-          </p>
-        </div>
+        <SettingsTable>
+          <SettingsRow
+            layout="stacked"
+            label="Languages"
+            description="Search results in unselected languages are excluded. Results with no language metadata always pass through. Deselect all for unrestricted search."
+          >
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {CANONICAL_LANGUAGES.map((lang) => (
+                <label key={lang} className="flex items-center gap-2 text-sm cursor-pointer capitalize">
+                  <input
+                    type="checkbox"
+                    checked={selectedLanguages.includes(lang)}
+                    onChange={() => toggleLanguage(lang)}
+                    className="rounded border-border text-primary focus-ring"
+                  />
+                  {lang}
+                </label>
+              ))}
+            </div>
+          </SettingsRow>
 
-        <div>
-          <label htmlFor="minDurationMinutes" className="block text-sm font-medium mb-2">Minimum Duration (minutes)</label>
-          <input
-            id="minDurationMinutes"
-            type="number"
-            min={0}
-            step={1}
-            {...register('minDurationMinutes', { valueAsNumber: true })}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-            placeholder="0"
-          />
-          <p className="text-sm text-muted-foreground mt-2">
-            Filter out promotional excerpts, TTS knockoffs, and supplementary clips. Set to 0 to disable. Recommended: 30 minutes.
-          </p>
-        </div>
+          <SettingsRow htmlFor="minDurationMinutes" label="Minimum duration" description="Filter out promotional excerpts, TTS knockoffs, and supplementary clips. Set to 0 to disable. Recommended: 30 minutes.">
+            <NumberField
+              id="minDurationMinutes"
+              {...register('minDurationMinutes', { valueAsNumber: true })}
+              min={0}
+              step={1}
+              placeholder="0"
+              suffix="minutes"
+              error={errors.minDurationMinutes?.message}
+            />
+          </SettingsRow>
 
-        <div>
-          <label htmlFor="rejectWords" className="block text-sm font-medium mb-2">Reject Words</label>
-          <input
-            id="rejectWords"
-            type="text"
-            {...register('rejectWords')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-            placeholder="Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged"
-          />
-          <p className="text-sm text-muted-foreground mt-2">
-            Comma-separated words. Releases or metadata results matching any word in title, subtitle, author, narrator, or format type are excluded.
-          </p>
-        </div>
+          <SettingsRow
+            layout="stacked"
+            htmlFor="rejectWords"
+            label="Reject words"
+            description="Comma-separated words. Releases or metadata results matching any word in title, subtitle, author, narrator, or format type are excluded."
+          >
+            <input
+              id="rejectWords"
+              type="text"
+              {...register('rejectWords')}
+              className={inputClass}
+              placeholder="Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged"
+            />
+          </SettingsRow>
 
-        <div>
-          <label htmlFor="requiredWords" className="block text-sm font-medium mb-2">Required Words</label>
-          <input
-            id="requiredWords"
-            type="text"
-            {...register('requiredWords')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-            placeholder="M4B, Unabridged"
-          />
-          <p className="text-sm text-muted-foreground mt-2">
-            Comma-separated words. When set, only releases with titles matching at least one word are shown.
-          </p>
-        </div>
+          <SettingsRow
+            layout="stacked"
+            htmlFor="requiredWords"
+            label="Required words"
+            description="Comma-separated words. When set, only releases with titles matching at least one word are shown."
+          >
+            <input
+              id="requiredWords"
+              type="text"
+              {...register('requiredWords')}
+              className={inputClass}
+              placeholder="M4B, Unabridged"
+            />
+          </SettingsRow>
+        </SettingsTable>
 
         {isDirty && (
           <button

@@ -46,10 +46,10 @@ describe('NewBookDefaultsSection (#284)', () => {
     expect(screen.getByText('Applied when books are added manually or via import lists or discovery')).toBeInTheDocument();
   });
 
-  it('contains Search Immediately toggle (Monitor for Upgrades removed)', async () => {
+  it('contains Search immediately toggle (Monitor for Upgrades removed)', async () => {
     renderWithProviders(<NewBookDefaultsSection />);
     await waitFor(() => {
-      expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      expect(screen.getByLabelText('Search immediately')).toBeInTheDocument();
     });
     expect(screen.queryByLabelText('Monitor for Upgrades')).not.toBeInTheDocument();
   });
@@ -63,7 +63,7 @@ describe('NewBookDefaultsSection (#284)', () => {
     renderWithProviders(<NewBookDefaultsSection />);
 
     await waitFor(() => {
-      expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
+      expect((screen.getByLabelText('Search immediately') as HTMLInputElement).checked).toBe(true);
     });
   });
 
@@ -73,10 +73,10 @@ describe('NewBookDefaultsSection (#284)', () => {
     renderWithProviders(<NewBookDefaultsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      expect(screen.getByLabelText('Search immediately')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByLabelText('Search Immediately'));
+    await user.click(screen.getByLabelText('Search immediately'));
 
     const saveButton = screen.getByRole('button', { name: /save/i });
     expect(saveButton).toBeInTheDocument();
@@ -95,10 +95,10 @@ describe('NewBookDefaultsSection (#284)', () => {
     renderWithProviders(<NewBookDefaultsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      expect(screen.getByLabelText('Search immediately')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByLabelText('Search Immediately'));
+    await user.click(screen.getByLabelText('Search immediately'));
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
 
     await waitFor(() => {
@@ -112,10 +112,10 @@ describe('NewBookDefaultsSection (#284)', () => {
     renderWithProviders(<NewBookDefaultsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      expect(screen.getByLabelText('Search immediately')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByLabelText('Search Immediately'));
+    await user.click(screen.getByLabelText('Search immediately'));
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
 
     await waitFor(() => {
@@ -129,10 +129,10 @@ describe('NewBookDefaultsSection (#284)', () => {
     renderWithProviders(<NewBookDefaultsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      expect(screen.getByLabelText('Search immediately')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByLabelText('Search Immediately'));
+    await user.click(screen.getByLabelText('Search immediately'));
     expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
 
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
@@ -152,12 +152,12 @@ describe('NewBookDefaultsSection (#284)', () => {
     renderWithProviders(<NewBookDefaultsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      expect(screen.getByLabelText('Search immediately')).toBeInTheDocument();
     });
 
     const initialGetCallCount = mockApi.getSettings.mock.calls.length;
 
-    await user.click(screen.getByLabelText('Search Immediately'));
+    await user.click(screen.getByLabelText('Search immediately'));
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
 
     await waitFor(() => {
@@ -175,11 +175,11 @@ describe('NewBookDefaultsSection (#284)', () => {
     renderWithProviders(<NewBookDefaultsSection />, { queryClient });
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      expect(screen.getByLabelText('Search immediately')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByLabelText('Search Immediately'));
-    expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
+    await user.click(screen.getByLabelText('Search immediately'));
+    expect((screen.getByLabelText('Search immediately') as HTMLInputElement).checked).toBe(true);
 
     const refetchedSettings = createMockSettings({
       library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
@@ -192,7 +192,7 @@ describe('NewBookDefaultsSection (#284)', () => {
       expect(mockApi.getSettings.mock.calls.length).toBeGreaterThan(callsBefore);
     });
 
-    expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Search immediately') as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
   });
 });

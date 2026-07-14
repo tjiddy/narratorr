@@ -85,6 +85,85 @@ describe('enrichBookFromAudio', () => {
     );
   });
 
+  it('#1852: excludes a born-hidden temp from topLevelAudioFileCount', async () => {
+    vi.mocked(scanAudioDirectory).mockResolvedValue({
+      codec: 'mp3', bitrate: 128000, sampleRate: 44100, channels: 2, bitrateMode: 'CBR',
+      fileFormat: 'mp3', fileCount: 1, totalSize: 1000, totalDuration: 600, hasCoverArt: false,
+    } as never);
+    vi.mocked(readdir).mockResolvedValue(['01.mp3', '.01.tmp.mp3', 'cover.jpg'] as never);
+
+    await enrichBookFromAudio(
+      1, '/books/test', { narrators: null, duration: null, coverUrl: null }, inject<Db>(mockDb), log,
+    );
+
+    const setCall = mockDb.update.mock.results[0]!.value.set;
+    expect(setCall).toHaveBeenCalledWith(
+      expect.objectContaining({ topLevelAudioFileCount: 1 }),
+    );
+  });
+
+  // Zero-duration skip-write guard: an all-rejected scan yields totalDuration 0 and must NOT
+  // clobber the stored audioDuration; other technical fields still refresh.
+  it('omits audioDuration (but writes other technical fields) when totalDuration is 0', async () => {
+    vi.mocked(scanAudioDirectory).mockResolvedValue({
+      codec: 'mp3',
+      bitrate: 128000,
+      sampleRate: 44100,
+      channels: 2,
+      bitrateMode: 'cbr' as const,
+      fileFormat: 'MPEG',
+      fileCount: 10,
+      totalSize: 500_000_000,
+      totalDuration: 0,
+      hasCoverArt: false,
+    });
+    vi.mocked(readdir).mockResolvedValue(['01.mp3'] as never);
+
+    const result = await enrichBookFromAudio(
+      1,
+      '/books/test',
+      { narrators: null, duration: null, coverUrl: null },
+      inject<Db>(mockDb),
+      log,
+    );
+
+    expect(result.enriched).toBe(true);
+    const setArg = mockDb.update.mock.results[0]!.value.set.mock.calls[0]![0];
+    expect(setArg).not.toHaveProperty('audioDuration');
+    // The fill-empty `duration` also stays unwritten because totalDuration is 0.
+    expect(setArg).not.toHaveProperty('duration');
+    // Other technical fields still refresh.
+    expect(setArg).toEqual(expect.objectContaining({ audioCodec: 'mp3', audioTotalSize: 500_000_000 }));
+    expect(log.warn).toHaveBeenCalled();
+  });
+
+  it('writes audioDuration when totalDuration is > 0 (guard not triggered)', async () => {
+    vi.mocked(scanAudioDirectory).mockResolvedValue({
+      codec: 'mp3',
+      bitrate: 128000,
+      sampleRate: 44100,
+      channels: 2,
+      bitrateMode: 'cbr' as const,
+      fileFormat: 'MPEG',
+      fileCount: 10,
+      totalSize: 500_000_000,
+      totalDuration: 36000,
+      hasCoverArt: false,
+    });
+    vi.mocked(readdir).mockResolvedValue(['01.mp3'] as never);
+
+    await enrichBookFromAudio(
+      1,
+      '/books/test',
+      { narrators: null, duration: null, coverUrl: null },
+      inject<Db>(mockDb),
+      log,
+    );
+
+    const setArg = mockDb.update.mock.results[0]!.value.set.mock.calls[0]![0];
+    expect(setArg).toEqual(expect.objectContaining({ audioDuration: 36000, duration: 600 }));
+  });
+
   it('returns not enriched when scan returns null', async () => {
     vi.mocked(scanAudioDirectory).mockResolvedValue(null);
 

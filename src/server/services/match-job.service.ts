@@ -3,9 +3,10 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { BookService } from './book.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
-import type { DuplicateReason, RecordingVerdict } from '../../shared/schemas.js';
+import type { Confidence, MatchCandidate, MatchResult, MatchJobStatus } from './match-job.types.js';
 import { scanAudioDirectory, type AudioScanResult } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
+import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 import type { SettingsService } from './settings.service.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.js';
@@ -16,43 +17,9 @@ import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuer
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
 
 
-export type Confidence = 'high' | 'medium' | 'none';
-
-export interface MatchCandidate {
-  path: string;
-  title: string;
-  author?: string | undefined;
-}
-
-export interface MatchResult {
-  path: string;
-  confidence: Confidence;
-  bestMatch: BookMetadata | null;
-  alternatives: BookMetadata[];
-  error?: string;
-  reason?: string;
-  /** Post-match library-duplicate flags (#1662), set from the resolved `bestMatch`
-   * (which carries the author/asin a no-author filename lacks). The client merge
-   * propagates these onto `row.book` so the badge lights up and the row fails closed. */
-  isDuplicate?: boolean;
-  existingBookId?: number; duplicateReason?: DuplicateReason;
-  /** Display-only recording-review warning (#1711): the matched recording may be a
-   * DIFFERENT recording of a book you own but narrators could not be compared. Not
-   * a hard duplicate — the row still flows; the client surfaces it on `row.book`. */
-  reviewReason?: string;
-  /** Recording-identity verdict for a library hit (#1712), set by `applyLibraryDuplicate`.
-   * Drives the three-way import-review badge; absent for a genuinely new book. Mirrored on
-   * the shared `discoveredBookSchema` + client `MatchResult`. */
-  recordingVerdict?: RecordingVerdict;
-}
-
-export interface MatchJobStatus {
-  id: string;
-  status: 'matching' | 'completed' | 'cancelled';
-  total: number;
-  matched: number;
-  results: MatchResult[];
-}
+// Data contracts live in match-job.types.ts (#1864 file-size cap); re-exported so the
+// public surface (`import { type MatchCandidate } from './match-job.service.js'`) is unchanged.
+export type { Confidence, MatchCandidate, MatchResult, MatchJobStatus } from './match-job.types.js';
 
 const MAX_CONCURRENCY = 5;
 const TTL_MS = 10 * 60 * 1000; // 10 minutes after completion
@@ -93,9 +60,13 @@ export class MatchJobService {
   cancelJob(jobId: string): boolean {
     const job = this.jobs.get(jobId);
     if (!job) return false;
-    job.cancel();
-    this.log.info({ jobId }, 'Match job cancelled');
-    return true;
+    // `cancel()` returns true ONLY when it performed the matching→`cancelled`
+    // transition; a job that already reached a terminal state returns false —
+    // nothing was cancelled (#1864 F11). The route/client boolean contract is
+    // unchanged; only this terminal/missing→false semantics is new.
+    const cancelled = job.cancel();
+    if (cancelled) this.log.info({ jobId }, 'Match job cancelled');
+    return cancelled;
   }
 
   /** Clean up expired jobs (called internally on TTL) */
@@ -111,70 +82,111 @@ export class MatchJobService {
 
 class MatchJob {
   private results: MatchResult[] = [];
-  private cancelled = false;
-  private done = false;
+  /**
+   * Single write-once terminal field — first terminal event wins, immutable
+   * thereafter (#1864 §6a). Replaces the old derived `cancelled`/`done` flags so
+   * a late completion can never overwrite a `failed`, a `cancelled` is never
+   * re-reported, and cleanup is scheduled exactly once. `null` === still matching.
+   */
+  private terminal: 'completed' | 'failed' | 'cancelled' | null = null;
+  private error?: string;
   private startMs = Date.now();
   private semaphore = new Semaphore(MAX_CONCURRENCY);
+
+  private get isCancelled(): boolean {
+    return this.terminal === 'cancelled';
+  }
 
   constructor(
     private id: string,
     private books: MatchCandidate[],
     private metadataService: MetadataService,
     private log: FastifyBaseLogger,
-    private settingsService: SettingsService,
+    _settingsService: SettingsService,
     private bookService: BookService,
     private onComplete: () => void,
   ) {}
 
   private async resolveFfprobePath(): Promise<string | undefined> {
-    const s = await this.settingsService.get('processing');
-    return resolveFfprobePathFromSettings(s?.ffmpegPath);
+    return resolveFfprobePathFromSettings(await resolveFfmpegPath());
   }
 
   getStatus(): MatchJobStatus {
     return {
       id: this.id,
-      status: this.cancelled ? 'cancelled' : this.done ? 'completed' : 'matching',
+      status: this.terminal ?? 'matching',
       total: this.books.length,
       matched: this.results.length,
       results: [...this.results],
+      ...(this.error !== undefined && { error: this.error }),
     };
   }
 
-  cancel(): void {
-    this.cancelled = true;
+  /**
+   * Set the terminal state exactly once (§6a). Every event after the first
+   * terminal is a no-op — so completion-then-cancel stays `completed`,
+   * cancel-then-completion stays `cancelled`, failure-then-completion stays
+   * `failed`. Returns true only when THIS call performed the transition; the
+   * transition that first sets the terminal owns the single TTL cleanup schedule.
+   */
+  private terminalize(state: 'completed' | 'failed' | 'cancelled', error?: string): boolean {
+    if (this.terminal) return false;
+    this.terminal = state;
+    if (error !== undefined) this.error = error;
+    this.onComplete();
+    return true;
+  }
+
+  /** True only on the matching→`cancelled` transition; false when already terminal (#1864 F11). */
+  cancel(): boolean {
+    return this.terminalize('cancelled');
   }
 
   start(): void {
-    this.run().catch(error => {
-      this.log.error({ error: serializeError(error), jobId: this.id }, 'Match job failed unexpectedly');
-    });
+    // `run()` terminalizes a top-level crash itself (see below), then resolves — so this
+    // completion is unconditionally attempted and is first-terminal-wins: it no-ops when a
+    // crash already set `failed`, or a cancel already set `cancelled` (§6a). The `.catch`
+    // is a defensive backstop for a truly-unexpected `run()` rejection (never expected).
+    this.run()
+      .then(() => { this.terminalize('completed'); })
+      .catch((error: unknown) => {
+        this.log.error({ error: serializeError(error), jobId: this.id }, 'Match job failed unexpectedly');
+        this.terminalize('failed', getErrorMessage(error));
+      });
   }
 
   private async run(): Promise<void> {
     const promises = this.books.map(book => this.matchWithSemaphore(book));
-    await Promise.allSettled(promises);
-    this.done = true;
+    try {
+      await Promise.allSettled(promises);
+    } catch (error: unknown) {
+      // A top-level orchestration crash (remote in practice — `allSettled` + the per-book
+      // catch contain per-book failures) terminalizes the job `failed` HERE so a client
+      // never polls a stuck `matching` job forever (#1864 §6). Retaining partial results.
+      // Resolving afterward lets `start()`'s completion fire as a proven-no-op — the real
+      // failure→completion precedence path the §6a matrix asserts (F7).
+      this.log.error({ error: serializeError(error), jobId: this.id }, 'Match job failed unexpectedly');
+      this.terminalize('failed', getErrorMessage(error));
+      return;
+    }
 
     this.log.info(
       {
         jobId: this.id,
         total: this.books.length,
         matched: this.results.filter(r => r.confidence !== 'none').length,
-        cancelled: this.cancelled,
+        cancelled: this.isCancelled,
         elapsedMs: Date.now() - this.startMs,
       },
       'Match job finished',
     );
-
-    this.onComplete();
   }
 
   private async matchWithSemaphore(book: MatchCandidate): Promise<void> {
-    if (this.cancelled) return;
+    if (this.isCancelled) return;
     await this.semaphore.acquire();
     try {
-      if (this.cancelled) return;
+      if (this.isCancelled) return;
       const result = await this.matchSingleBook(book);
       this.results.push(result);
     } finally {
@@ -213,7 +225,7 @@ class MatchJob {
       // Pass 1 — tag-derived search (#984). Fires when both tagTitle and tagAuthor
       // are populated. Bypasses searchWithSwapRetryTrace (no swap-on-zero) because
       // tag.title and tag.albumartist are structurally distinct fields.
-      const tagMatch = await this.tryTagDerivedMatch(book, audioResult, duration);
+      const tagMatch = await this.tryTagDerivedMatch(book, audioResult);
       if (tagMatch) {
         ({ result: resolved, ctx: capCtx } = tagMatch);
       } else {
@@ -246,11 +258,11 @@ class MatchJob {
         const scored = rankResults(detailed, context);
         const topScored = scored[0];
         if (!topScored) {
-          // §6.1 — fetchDetails breaks on this.cancelled, so detailed (and thus
+          // §6.1 — fetchDetails breaks on cancellation, so detailed (and thus
           // scored) can be empty even when trace.results was non-empty. Return
           // a clean 'none' result instead of crashing on topScored.meta.title.
           this.log.debug(
-            { path: book.path, cancelled: this.cancelled, resultCount: trace.results.length },
+            { path: book.path, cancelled: this.isCancelled, resultCount: trace.results.length },
             'No scored results after ranking — cancelled mid-flight or all filtered',
           );
           return { path: book.path, confidence: 'none', bestMatch: null, alternatives: [] };
@@ -279,11 +291,14 @@ class MatchJob {
           // stays high (absent data does not demote). `durationVerified` is derived
           // independently (a missing-runtime single is high-but-unverified, NOT
           // disproven) — never inferred from the resolved confidence.
-          resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...resolveSingleResultConfidence(topScored.meta, duration, topScored.score) };
-          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: isDurationVerified(topScored.meta, duration, topScored.score) };
+          // Unrounded scanned seconds (#1850) — the tolerance check compares
+          // full-precision seconds (the minute-rounded `duration` is logging only).
+          resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...resolveSingleResultConfidence(topScored.meta, audioResult?.totalDuration) };
+          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: isDurationVerified(topScored.meta, audioResult?.totalDuration) };
         } else {
-          // Multiple results — use duration to determine confidence (not to override winner)
-          const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
+          // Multiple results — use duration to determine confidence (not to override winner).
+          // Unrounded seconds (#1850); `duration` (minutes) below is logging only.
+          const { confidence, reason } = resolveConfidenceFromDuration(scored, audioResult?.totalDuration);
           this.log.debug(
             {
               path: book.path,
@@ -337,10 +352,12 @@ class MatchJob {
   private async tryTagDerivedMatch(
     book: MatchCandidate,
     audioResult: AudioScanResult | null,
-    duration: number | undefined,
   ): Promise<{ result: MatchResult; ctx: NarratorCapContext } | null> {
     const tagQuery = deriveTagQuery(audioResult);
     if (!tagQuery || !audioResult) return null;
+    // Unrounded scanned seconds (#1850) — the confidence helpers compare in
+    // seconds against the provider's `runtimeLengthMin × 60`, not minutes.
+    const scannedSeconds = audioResult.totalDuration;
     this.log.debug({ path: book.path, tagTitle: tagQuery.title, tagAuthor: tagQuery.author }, 'Tag-derived metadata search');
     const outcome = await this.runTagSearch(book, audioResult, tagQuery);
     if (!outcome) return null;
@@ -353,7 +370,7 @@ class MatchJob {
     // `capBypassedByDuration`, which is gated on `maxConfidence === 'medium'` and
     // only governs the strip-attempt cap bypass — an exact/ASIN attempt
     // (`maxConfidence: 'high'`) can be durationVerified while capBypassed is false.
-    const durationVerified = isDurationVerified(top.meta, duration, top.score);
+    const durationVerified = isDurationVerified(top.meta, scannedSeconds);
     // #1266 — when the scanned runtime verifies the top candidate, bypass the strip `medium` cap and keep `high`.
     const capBypassedByDuration = attempt.maxConfidence === 'medium' && durationVerified;
     const cap = (raw: Confidence, reason: string | undefined): { confidence: Confidence; reason?: string } =>
@@ -365,7 +382,7 @@ class MatchJob {
     // below: a mismatch → raw `medium` survives (durationVerified false, so
     // capBypassedByDuration false); a missing runtime → raw `high`, clamped to
     // `medium` by a `maxConfidence: 'medium'` attempt exactly as before.
-    const { confidence, reason } = single ? resolveSingleResultConfidence(top.meta, duration, top.score) : resolveConfidenceFromDuration(scored, duration);
+    const { confidence, reason } = single ? resolveSingleResultConfidence(top.meta, scannedSeconds) : resolveConfidenceFromDuration(scored, scannedSeconds);
     const result: MatchResult = { path: book.path, ...cap(confidence, reason), bestMatch: top.meta, alternatives: single ? [] : scored.slice(1).map(s => s.meta) };
     return { result, ctx: { log: this.log, matchSource: attempt.source, durationVerified } };
   }
@@ -449,7 +466,10 @@ class MatchJob {
     const detailed = await this.fetchDetails(candidates);
     if (detailed.length === 0) return null;
 
-    const attemptQuery: TagQuery = { title: attempt.title, author: attempt.author, ...(tagQuery.year ? { year: tagQuery.year } : {}) };
+    // Re-thread the wanted series position (#1849) — the attempt loop rebuilds
+    // TagQuery from `attempt`, so without this the position never reaches
+    // `rankResultsCleaned` on the real tag path. `!== undefined` so position 0 survives.
+    const attemptQuery: TagQuery = { title: attempt.title, author: attempt.author, ...(tagQuery.year ? { year: tagQuery.year } : {}), ...(tagQuery.seriesPosition !== undefined && { seriesPosition: tagQuery.seriesPosition }) };
     const scored = rankResultsCleaned(detailed, attemptQuery);
     const top = scored[0];
     if (!top) return null;
@@ -494,7 +514,7 @@ class MatchJob {
   private async fetchDetails(results: BookMetadata[]): Promise<BookMetadata[]> {
     const detailed: BookMetadata[] = [];
     for (const result of results) {
-      if (this.cancelled) break;
+      if (this.isCancelled) break;
       if (result.providerId && !result.asin) {
         try {
           this.log.debug({ providerId: result.providerId, title: result.title }, 'Fetching full detail for candidate');

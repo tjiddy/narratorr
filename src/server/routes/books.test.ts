@@ -596,7 +596,7 @@ describe('books routes', () => {
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
       mockStreamingSearch([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500_000_000, seeders: 10, indexerId: 1 },
       ]);
 
       const res = await app.inject({
@@ -624,8 +624,8 @@ describe('books routes', () => {
         requiredWords: '',
       });
       mockStreamingSearch([
-        { title: 'The Way of Kings Abridged', rawTitle: 'The Way of Kings Abridged', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 10 },
-        { title: 'The Way of Kings', rawTitle: 'The Way of Kings Full', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500000, seeders: 5 },
+        { title: 'The Way of Kings Abridged', rawTitle: 'The Way of Kings Abridged', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500_000_000, seeders: 10 },
+        { title: 'The Way of Kings', rawTitle: 'The Way of Kings Full', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500_000_000, seeders: 5 },
       ]);
 
       const res = await app.inject({
@@ -652,7 +652,7 @@ describe('books routes', () => {
         requiredWords: 'unabridged',
       });
       mockStreamingSearch([
-        { title: 'The Way of Kings', rawTitle: 'The Way of Kings MP3', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 10 },
+        { title: 'The Way of Kings', rawTitle: 'The Way of Kings MP3', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500_000_000, seeders: 10 },
       ]);
 
       const res = await app.inject({
@@ -678,7 +678,7 @@ describe('books routes', () => {
         return Promise.resolve(undefined);
       });
       mockStreamingSearch([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500_000_000, seeders: 10, indexerId: 1 },
       ]);
 
       const res = await app.inject({
@@ -705,8 +705,8 @@ describe('books routes', () => {
         return Promise.resolve(undefined);
       });
       mockStreamingSearch([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl-fr', protocol: 'torrent', size: 500000, seeders: 10, language: 'french' },
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl-en', protocol: 'torrent', size: 500000, seeders: 10, language: 'english' },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl-fr', protocol: 'torrent', size: 500_000_000, seeders: 10, language: 'french' },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl-en', protocol: 'torrent', size: 500_000_000, seeders: 10, language: 'english' },
       ]);
 
       const res = await app.inject({
@@ -735,8 +735,8 @@ describe('books routes', () => {
         blacklistedGuids: new Set(),
       });
       mockStreamingSearch([
-        { title: 'Blacklisted Book', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 100, infoHash: 'bad-hash', indexerId: 1 },
-        { title: 'Clean Book', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500000, seeders: 5, infoHash: 'good-hash', indexerId: 1 },
+        { title: 'Blacklisted Book', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500_000_000, seeders: 100, infoHash: 'bad-hash', indexerId: 1 },
+        { title: 'Clean Book', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500_000_000, seeders: 5, infoHash: 'good-hash', indexerId: 1 },
       ]);
 
       const res = await app.inject({
@@ -1613,6 +1613,28 @@ describe('books routes', () => {
       expect(body[1]).toEqual({ name: 'Chapter 02.m4b', size: 48234496 });
     });
 
+    it('#1852: excludes a hidden staging subtree — never descends `.merge-tmp/` (skipHidden wiring)', async () => {
+      // A hidden DIRECTORY holding a VISIBLE audio file: the file-level dot rule can't catch this
+      // (the inner file is not dot-led), so this pins the route's `skipHidden: true` wiring — the
+      // dot-dir is never descended. Removing `skipHidden: true` would fold `staged.m4b` in and fail.
+      const readdirCalls: string[] = [];
+      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (readdir as Mock).mockImplementation((dir: string) => {
+        readdirCalls.push(dir);
+        if (dir === '/library/book1') return Promise.resolve([asFile('Chapter 01.m4b'), asDir('.merge-tmp')]);
+        if (dir.endsWith('.merge-tmp')) return Promise.resolve([asFile('staged.m4b')]);
+        return Promise.resolve([]);
+      });
+      (stat as Mock).mockResolvedValue({ size: 1000 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/files' });
+
+      const body = JSON.parse(res.payload) as { name: string }[];
+      expect(body.map(f => f.name)).toEqual(['Chapter 01.m4b']);
+      // The hidden subtree was never entered (no readdir on it), not merely filtered post-scan.
+      expect(readdirCalls.some(d => d.endsWith('.merge-tmp'))).toBe(false);
+    });
+
     it('sorts files numerically (ch2 before ch10)', async () => {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
       (readdir as Mock).mockResolvedValue(
@@ -1941,7 +1963,7 @@ describe('books routes', () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(qualitySettings);
       mockStreamingSearch([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500_000_000, seeders: 10, indexerId: 1 },
       ]);
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
@@ -1968,16 +1990,16 @@ describe('books routes', () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(qualitySettings);
       mockStreamingSearch([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500_000_000, seeders: 10, indexerId: 1 },
       ]);
-      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
+      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body.result).toBe('skipped');
-      expect(body.reason).toBe('already_has_active_download');
+      expect(body.reason).toBe('grab_blocked');
     });
 
     it('returns 404 when book ID does not exist', async () => {
@@ -2010,7 +2032,7 @@ describe('books routes', () => {
         return Promise.resolve(undefined);
       });
       mockStreamingSearch([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500_000_000, seeders: 10, indexerId: 1 },
       ]);
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
@@ -2028,8 +2050,8 @@ describe('books routes', () => {
         return Promise.resolve(undefined);
       });
       mockStreamingSearch([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl-fr', protocol: 'torrent', size: 500000, seeders: 10, language: 'french' },
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl-en', protocol: 'torrent', size: 500000, seeders: 10, language: 'english' },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl-fr', protocol: 'torrent', size: 500_000_000, seeders: 10, language: 'french' },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl-en', protocol: 'torrent', size: 500_000_000, seeders: 10, language: 'english' },
       ]);
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
@@ -2074,8 +2096,8 @@ describe('books routes', () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(strictQuality);
       mockStreamingSearch([
-        { title: 'The Way of Kings Abridged', rawTitle: 'The Way of Kings Abridged', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 10 },
-        { title: 'The Way of Kings', rawTitle: 'The Way of Kings Full', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500000, seeders: 10 },
+        { title: 'The Way of Kings Abridged', rawTitle: 'The Way of Kings Abridged', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500_000_000, seeders: 10 },
+        { title: 'The Way of Kings', rawTitle: 'The Way of Kings Full', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500_000_000, seeders: 10 },
       ]);
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
@@ -2094,7 +2116,7 @@ describe('books routes', () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(qualitySettings);
       mockStreamingSearch([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500_000_000, seeders: 10, indexerId: 1 },
       ]);
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
@@ -2107,7 +2129,7 @@ describe('books routes', () => {
           title: 'The Way of Kings',
           protocol: 'torrent',
           bookId: mockBook.id,
-          size: 500000,
+          size: 500_000_000,
           seeders: 10,
         }),
       );
@@ -2117,7 +2139,7 @@ describe('books routes', () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(qualitySettings);
       mockStreamingSearch([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500_000_000, seeders: 10, indexerId: 1 },
       ]);
       (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new Error('Download client connection refused'));
 
@@ -2136,8 +2158,8 @@ describe('books routes', () => {
         blacklistedGuids: new Set(),
       });
       mockStreamingSearch([
-        { title: 'Result 1', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 10, infoHash: 'h1', indexerId: 1 },
-        { title: 'Result 2', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500000, seeders: 5, infoHash: 'h2', indexerId: 1 },
+        { title: 'Result 1', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500_000_000, seeders: 10, infoHash: 'h1', indexerId: 1 },
+        { title: 'Result 2', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500_000_000, seeders: 5, infoHash: 'h2', indexerId: 1 },
       ]);
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
@@ -2157,8 +2179,8 @@ describe('books routes', () => {
         blacklistedGuids: new Set(['bad-guid']),
       });
       mockStreamingSearch([
-        { title: 'Blacklisted', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 100, guid: 'bad-guid', indexerId: 1 },
-        { title: 'Clean', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500000, seeders: 5, guid: 'good-guid', indexerId: 1 },
+        { title: 'Blacklisted', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500_000_000, seeders: 100, guid: 'bad-guid', indexerId: 1 },
+        { title: 'Clean', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500_000_000, seeders: 5, guid: 'good-guid', indexerId: 1 },
       ]);
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
