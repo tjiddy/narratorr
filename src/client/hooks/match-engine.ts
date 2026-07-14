@@ -61,6 +61,14 @@ export class MatchEngine {
   private original: MatchCandidate[] = [];
   private chunks: MatchCandidate[][] = [];
   private chunkIndex = 0;
+  /**
+   * Original-set remainder count captured at the very start of the current run — before
+   * oversized ingestion — so a run that drains its chunks without shrinking the remainder
+   * (a partial `completed` that omits a candidate) pauses instead of re-running the same
+   * candidates forever (no-progress guard in `startRemainderOrFinish`). Measured against
+   * `remaining()` (original-set only), never `observed.size` (grows on off-domain paths).
+   */
+  private runEntryRemaining = 0;
   private phase: RunPhase = 'auto-initial';
   private allowanceSpent = false;
   private hasPaused = false;
@@ -155,6 +163,10 @@ export class MatchEngine {
     // here, so an exhaustion probe that advances into more work never carries its stale
     // `failureCount` into the remainder (which would probe/pause after a single blip).
     this.failureCount = 0;
+    // Baseline BEFORE oversized ingestion: an oversized ejection removes a candidate from
+    // the remainder, so capturing here lets that ejection count as forward progress and earn
+    // one legitimate remainder attempt (F4 discriminator).
+    this.runEntryRemaining = this.remaining().length;
     const { chunks, oversized } = packMatchCandidates(candidates);
     // A candidate too large to ever fit a within-budget request (F15) is never sent — it is
     // surfaced as an unmatchable `none` result so it leaves the remainder (no infinite loop)
@@ -214,6 +226,14 @@ export class MatchEngine {
     const remaining = this.remaining();
     if (remaining.length === 0) {
       this.finishLogical();
+      return;
+    }
+    // No-progress guard: the run drained all its chunks but did not shrink the original-set
+    // remainder (a partial `completed` response omitted a candidate). Re-running would loop the
+    // same candidates forever, so pause with the existing `run-expired` reason. A Resume makes
+    // exactly one further bounded attempt (jobId is null here → start-failure carve-out).
+    if (remaining.length >= this.runEntryRemaining) {
+      this.pause('run-expired');
       return;
     }
     this.jobId = null;

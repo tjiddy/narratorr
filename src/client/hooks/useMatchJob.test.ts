@@ -250,6 +250,157 @@ describe('useMatchJob', () => {
     });
   });
 
+  // #1870 — no-progress guard against a partial `completed` response that omits a candidate.
+  // The rechunked remainder must not re-run the same result-less candidates forever: a run that
+  // drains all its chunks without shrinking the ORIGINAL-set remainder pauses `run-expired`.
+  describe('no-progress remainder guard (#1870)', () => {
+    // Explicit-total partial completion: `total` stays the SUBMITTED candidate count while
+    // `results` reflects the omission (the engine reads only status.status / status.results,
+    // so this keeps the fixture contract-honest without changing engine behavior).
+    const partial = (id: string, total: number, results: MatchResult[]): MatchJobStatus =>
+      ({ id, status: 'completed', total, matched: results.length, results });
+    // A single-item body above the 400 KiB budget — the packer diverts it to a `none` result.
+    const oversized = (path: string): MatchCandidate => ({ path, title: 'x'.repeat(450 * 1024) });
+
+    it('a no-progress remainder pauses run-expired instead of re-running the same candidates', async () => {
+      mockStartMatchJob
+        .mockResolvedValueOnce({ jobId: 'job-1' })
+        .mockResolvedValueOnce({ jobId: 'job-2' });
+      mockGetMatchJob
+        .mockResolvedValueOnce(partial('job-1', 2, [R('/a')])) // omits /b → remainder shrinks 2→1
+        .mockResolvedValueOnce(partial('job-2', 1, []));        // omits /b again → no progress
+      const { result } = renderHook(() => useMatchJob());
+
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }, { path: '/b', title: 'B' }]); });
+      await advance(POLL); // job-1 completed (/a) → remainder [/b] → job-2
+      await advance(POLL); // job-2 completed omits /b → guard pauses
+
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(2); // never a third
+      expect(result.current.paused).toBe(true);
+      expect(result.current.reason).toBe('run-expired');
+      expect(result.current.remaining).toBe(1);
+    });
+
+    it('an off-domain result does NOT count as progress (F2 discriminator — remaining, not observed.size)', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      // A completed response carrying a path outside `original` while omitting /a: it grows
+      // observed.size but does not shrink the original-set remainder, so the guard must pause.
+      mockGetMatchJob.mockResolvedValueOnce(partial('job-1', 1, [R('/unexpected')]));
+      const { result } = renderHook(() => useMatchJob());
+
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL);
+
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(1); // guard pauses, no remainder started
+      expect(result.current.reason).toBe('run-expired');
+      expect(result.current.remaining).toBe(1);
+    });
+
+    it('an oversized ejection counts as progress and buys one remainder attempt (F4 discriminator — pre-ingestion baseline)', async () => {
+      mockStartMatchJob
+        .mockResolvedValueOnce({ jobId: 'job-1' })
+        .mockResolvedValueOnce({ jobId: 'job-2' });
+      mockGetMatchJob
+        .mockResolvedValueOnce(partial('job-1', 1, [])) // the sendable /b omitted
+        .mockResolvedValueOnce(partial('job-2', 1, [])); // omitted again
+      const { result } = renderHook(() => useMatchJob());
+
+      await act(async () => { result.current.startMatching([oversized('/big'), { path: '/b', title: 'B' }]); });
+      await advance(POLL); // /big ejected (2→1) is progress → remainder [/b] → job-2
+      await advance(POLL); // job-2 completed omits /b → no progress → pause
+
+      const bigResult = result.current.results.find(r => r.path === '/big');
+      expect(bigResult?.confidence).toBe('none');
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(2); // the ejection earned one legitimate remainder
+      expect(result.current.reason).toBe('run-expired');
+    });
+
+    it('a progress-making remainder still proceeds — the guard does not fire (regression)', async () => {
+      const big = (path: string): MatchCandidate => ({ path, title: 'x'.repeat(300 * 1024) });
+      mockStartMatchJob
+        .mockResolvedValueOnce({ jobId: 'job-1' })
+        .mockResolvedValueOnce({ jobId: 'job-2' })
+        .mockResolvedValueOnce({ jobId: 'job-3' });
+      mockGetMatchJob
+        .mockRejectedValueOnce(new ApiError(404, { error: 'gone' })) // job-1 (chunk 1) gone → remainder
+        .mockResolvedValueOnce(completed('job-2', [R('/a')]))
+        .mockResolvedValueOnce(completed('job-3', [R('/b')]));
+      const { result } = renderHook(() => useMatchJob());
+
+      await act(async () => { result.current.startMatching([big('/a'), big('/b')]); });
+      await advance(POLL); // job-1 404 → remainder re-packs [/a, /b] → job-2 (/a)
+      await advance(POLL); // job-2 completes → job-3 (/b)
+      await advance(POLL); // job-3 completes → logical run done
+
+      expect(result.current.results.map(r => r.path).sort()).toEqual(['/a', '/b']);
+      expect(result.current.paused).toBe(false);
+    });
+
+    it('the probe-completed drain path triggers the guard when a book is omitted', async () => {
+      mockStartMatchJob
+        .mockResolvedValueOnce({ jobId: 'job-1' })
+        .mockResolvedValueOnce({ jobId: 'job-2' });
+      mockGetMatchJob
+        .mockRejectedValueOnce(new ApiError(404, { error: 'gone' })) // job-1 → allowance → auto-remainder job-2
+        .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+        .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t')) // job-2 exhausted → probe
+        .mockResolvedValueOnce(partial('job-2', 1, [])); // probe completed omits /a → no progress
+      const { result } = renderHook(() => useMatchJob());
+
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL);    // job-1 404 → auto-remainder job-2
+      await advance(POLL);    // job-2 poll fail (1)
+      await advance(BACKOFF); // fail (2)
+      await advance(BACKOFF); // fail (3)
+      await advance(BACKOFF); // fail (4) → in-attempt probe → completed omits /a → guard pauses
+
+      expect(result.current.paused).toBe(true);
+      expect(result.current.reason).toBe('run-expired');
+      expect(result.current.remaining).toBe(1);
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(2); // no job-3
+    });
+
+    it('Resume after the guard makes exactly one more bounded attempt, then re-pauses run-expired', async () => {
+      mockStartMatchJob
+        .mockResolvedValueOnce({ jobId: 'job-1' })
+        .mockResolvedValueOnce({ jobId: 'job-2' })
+        .mockResolvedValueOnce({ jobId: 'job-3' });
+      mockGetMatchJob
+        .mockResolvedValueOnce(partial('job-1', 2, [R('/a')])) // omits /b
+        .mockResolvedValueOnce(partial('job-2', 1, []));        // omits /b → pause
+      const { result } = renderHook(() => useMatchJob());
+
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }, { path: '/b', title: 'B' }]); });
+      await advance(POLL);
+      await advance(POLL);
+      expect(result.current.reason).toBe('run-expired');
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
+
+      // Resume: jobId is null at the guard → start-failure carve-out starts a human remainder.
+      mockGetMatchJob.mockResolvedValueOnce(partial('job-3', 1, [])); // still omits /b
+      await act(async () => { result.current.resume(); });
+      await advance(POLL); // job-3 completed omits /b → guard re-pauses
+
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(3); // exactly one more, no runaway loop
+      expect(result.current.reason).toBe('run-expired');
+      expect(result.current.remaining).toBe(1);
+    });
+
+    it('an empty completed response on the initial run pauses immediately, no remainder started', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      mockGetMatchJob.mockResolvedValueOnce(partial('job-1', 1, []));
+      const { result } = renderHook(() => useMatchJob());
+
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL);
+
+      expect(result.current.paused).toBe(true);
+      expect(result.current.reason).toBe('run-expired');
+      expect(result.current.remaining).toBe(1);
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // #1864 §4 — no retry on chunk-start POSTs; start-failure carve-out.
   describe('chunk-start failure (#1864 §4)', () => {
     it('a rejected start POST pauses start-failed with no active job id', async () => {
