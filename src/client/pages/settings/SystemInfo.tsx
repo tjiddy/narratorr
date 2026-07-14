@@ -50,10 +50,8 @@ export function SystemInfo() {
           <SettingsRow label="Free Space">
             <InfoValue value={info.freeSpace != null ? formatBytes(info.freeSpace) : 'N/A'} />
           </SettingsRow>
-          <SettingsRow layout="stacked" label="Library Path">
-            <span className="font-medium font-mono text-xs tracking-tight break-all">
-              {info.libraryPath ?? 'Not configured'}
-            </span>
+          <SettingsRow label="Library Path">
+            <InfoValue mono value={info.libraryPath ?? 'Not configured'} />
           </SettingsRow>
         </SettingsTable>
       )}
