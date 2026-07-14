@@ -44,15 +44,16 @@ export function isClientStageReplaceable(d: Pick<DownloadRow, 'clientStatus' | '
  * import pipeline — a **non-replaceable** blocker. Enumerated by an exact
  * predicate (F59):
  *   - any non-idle pipeline stage (`checking`/`pending_review`/`importing`), OR
- *   - a *tracked* `completed`-display download with a non-null `externalId`
+ *   - a *tracked* `completed`-display download with a non-empty `externalId`
  *     (QG-eligible). This mirrors the quality gate's own batch query exactly
- *     (`quality-gate.service.ts:39` — `... AND isNotNull(downloads.externalId)`),
- *     so a row counts as a "will-be-imported" blocker iff the QG will actually
- *     pick it up.
+ *     (both delegate row eligibility to the shared
+ *     `qualityGateEligibleDownloadCondition` / `isQualityGateEligibleRow`
+ *     predicate), so a row counts as a "will-be-imported" blocker iff the QG
+ *     will actually pick it up.
  *
- * A **Blackhole handoff** `(completed, idle, externalId = null)` is deliberately
- * NOT a blocker: not QG-eligible, terminal, and the accepted post-settlement
- * re-grab must proceed.
+ * A **Blackhole handoff** `(completed, idle, externalId = null OR '')` is
+ * deliberately NOT a blocker: not QG-eligible, terminal, and the accepted
+ * post-settlement re-grab must proceed.
  */
 export function isPipelineBlocker(d: BlockerFields): boolean {
   if (d.pipelineStage === 'checking' || d.pipelineStage === 'pending_review' || d.pipelineStage === 'importing') {
@@ -73,8 +74,9 @@ export interface BookBlockers {
 }
 
 /** SQL selecting the rows relevant to blocker classification for one book:
- *  in-progress rows PLUS tracked (`externalId != null`) completed rows. A
- *  Blackhole handoff (completed, externalId null) is excluded by construction. */
+ *  in-progress rows PLUS tracked (non-empty `externalId`) completed rows. A
+ *  Blackhole handoff (completed, externalId null OR '') is excluded by
+ *  construction. */
 function bookBlockerRowsCondition(bookId: number) {
   return and(
     eq(downloads.bookId, bookId),
