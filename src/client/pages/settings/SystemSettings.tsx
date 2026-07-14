@@ -177,6 +177,8 @@ export function SystemSettings() {
     <div className="space-y-8">
       <HealthDashboard />
 
+      <SystemInfo />
+
       <BackupScheduleForm />
 
       <SettingsSection
@@ -209,8 +211,6 @@ export function SystemSettings() {
 
         <BackupTable backups={backups} isLoading={isLoading} onDownload={handleDownload} onRestore={handleRestore} onDelete={setDeleteTarget} />
       </SettingsSection>
-
-      <SystemInfo />
 
       <GeneralSettingsForm />
 
