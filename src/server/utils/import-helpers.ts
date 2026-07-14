@@ -192,78 +192,74 @@ export function buildTargetPath(
   return join(libraryPath, ...rendered.split('/')).split('\\').join('/');
 }
 
-/** Recursively get total size of a path (file or directory). */
-export async function getPathSize(path: string): Promise<number> {
-  const stats = await stat(path);
-  if (stats.isFile()) return stats.size;
-
-  let total = 0;
-  const entries = await readdir(path, { withFileTypes: true });
-  for (const entry of entries) {
-    const entryPath = join(path, entry.name);
-    if (entry.isFile()) {
-      const s = await stat(entryPath);
-      total += s.size;
-    } else if (entry.isDirectory()) {
-      total += await getPathSize(entryPath);
-    }
-  }
-  return total;
-}
-
-/** Recursively get total size of audio files only (filtered by AUDIO_EXTENSIONS). */
-export async function getAudioPathSize(path: string): Promise<number> {
+/**
+ * Shared recursive byte walker behind {@link getPathSize}, {@link getAudioPathSize}, and
+ * {@link getVisiblePathSize}. Kept **private** (per `esm-same-module-vi-mock-bypass`): the wrappers
+ * call it through the local binding, so tests mock at the `node:fs/promises` boundary, not the
+ * sizer export. Do NOT export it or add `__internal` indirection just to enable mocking.
+ *
+ * Four policy axes, preserved byte-for-byte from the three original walkers:
+ *  - **Hidden:** `includeHidden` false skips any `isHiddenName(entry.name)` entry **before** its
+ *    path is built or `stat`/`readdir` is called, so an unreadable/vanishing hidden subtree is
+ *    never entered (F40); `includeHidden` true visits every entry.
+ *  - **Audio predicate:** `audioOnly` true counts a file only when its **lowercased** extension is
+ *    in `AUDIO_EXTENSIONS`, decided from `entry.name` **before** `stat` (a visible non-audio child
+ *    is never stat'd); otherwise every admitted file counts.
+ *  - **Direct-file root:** a `path` that stats as a file returns `stats.size` for the all-files
+ *    presets; for `audioOnly`, `stats.size` only when the basename is non-hidden **and** audio,
+ *    else `0` (F32).
+ *  - **Identity root (F38):** the hidden skip applies to `readdir` entries, not the root — a hidden
+ *    **directory** root is still descended.
+ *
+ * Children are classified by `Dirent` **only** (`isFile()` counts, `isDirectory()` recurses, any
+ * other kind ignored with no further I/O) — deliberately asymmetric with the root, whose following
+ * `stat(path)` follows a root symlink and lets a non-file/non-dir root fall through to `readdir`
+ * (no `isDirectory()` guard) so its error propagates. No `try/catch`: a rejected root `stat`,
+ * root/directory `readdir`, or **admitted** child `stat` propagates — the walker fails loudly
+ * rather than adopt the catch-and-return-zero contract of `getAudioStats`.
+ */
+async function walkSize(path: string, { includeHidden, audioOnly }: { includeHidden: boolean; audioOnly: boolean }): Promise<number> {
   const stats = await stat(path);
   if (stats.isFile()) {
-    // Direct-file branch: a hidden file is never book audio (F32) — `getAudioPathSize('/x/.foo.mp3')` is 0.
+    if (!audioOnly) return stats.size;
+    // Direct-file audio branch: a hidden file is never book audio (F32) — `getAudioPathSize('/x/.foo.mp3')` is 0.
     return !isHiddenName(basename(path)) && AUDIO_EXTENSIONS.has(extname(path).toLowerCase()) ? stats.size : 0;
   }
 
   let total = 0;
   const entries = await readdir(path, { withFileTypes: true });
   for (const entry of entries) {
-    if (isHiddenName(entry.name)) continue; // skip hidden files AND dot-dir subtrees at every depth
-    const entryPath = join(path, entry.name);
-    if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-      const s = await stat(entryPath);
+    if (!includeHidden && isHiddenName(entry.name)) continue; // skip hidden files AND dot-dir subtrees, before any child I/O
+    if (entry.isFile()) {
+      // Audio predicate is evaluated on the Dirent name, BEFORE stat — a non-audio child is never stat'd.
+      if (audioOnly && !AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) continue;
+      const s = await stat(join(path, entry.name));
       total += s.size;
     } else if (entry.isDirectory()) {
-      total += await getAudioPathSize(entryPath);
+      total += await walkSize(join(path, entry.name), { includeHidden, audioOnly });
     }
   }
   return total;
 }
 
+/** Recursively get total size of a path (file or directory), counting every entry including hidden ones. */
+export async function getPathSize(path: string): Promise<number> {
+  return walkSize(path, { includeHidden: true, audioOnly: false });
+}
+
+/** Recursively get total size of audio files only (filtered by AUDIO_EXTENSIONS), skipping hidden entries. */
+export async function getAudioPathSize(path: string): Promise<number> {
+  return walkSize(path, { includeHidden: false, audioOnly: true });
+}
+
 /**
- * Recursively total the bytes of **visible** (non-hidden) entries — ALL files, not just audio.
- *
- * Skips leading-dot files and leading-dot directory subtrees at every depth, so a born-hidden
- * transient (`.merge-tmp/`, `.x.tmp.mp3`) never inflates the total AND an unreadable hidden
- * subtree is never traversed (no `readdir`/`stat` on it — so it can't abort the walk with
- * EACCES/ENOENT). The root itself is taken by identity: a hidden *directory* root is still
- * descended (its visible children count), matching the F38 root policy.
- *
- * Backs refresh `size` and `checkDiskSpace`'s directory-source estimate. Distinct from the
- * audio-only, exact-all-entry {@link getPathSize} used by import verification, which is
- * intentionally left unchanged.
+ * Recursively total the bytes of **visible** (non-hidden) entries — ALL files, not just audio — so a
+ * born-hidden transient (`.merge-tmp/`, `.x.tmp.mp3`) never inflates the total (see {@link walkSize}
+ * for the hidden/F38/F40 policy). Backs refresh `size` and `checkDiskSpace`'s directory-source
+ * estimate; distinct from the hidden-inclusive {@link getPathSize} used by import verification.
  */
 export async function getVisiblePathSize(path: string): Promise<number> {
-  const stats = await stat(path);
-  if (stats.isFile()) return stats.size;
-
-  let total = 0;
-  const entries = await readdir(path, { withFileTypes: true });
-  for (const entry of entries) {
-    if (isHiddenName(entry.name)) continue;
-    const entryPath = join(path, entry.name);
-    if (entry.isFile()) {
-      const s = await stat(entryPath);
-      total += s.size;
-    } else if (entry.isDirectory()) {
-      total += await getVisiblePathSize(entryPath);
-    }
-  }
-  return total;
+  return walkSize(path, { includeHidden: false, audioOnly: false });
 }
 
 /** Check if a path contains audio files (recursively). */
