@@ -424,6 +424,17 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
     expect(await getVisiblePathSize(p)).toBe(50);
   });
 
+  // F2 — the direct-file-root audio predicate has its OWN toLowerCase() (walkSize root branch),
+  // separate from the child predicate. A lowercase-only root fixture would leave that call untested,
+  // so `getAudioPathSize('/x/BOOK.M4B')` regressing to 0 would pass. This pins the root case-fold.
+  it('direct file root uppercase BOOK.M4B (100): 100 / 100 / 100 (case-insensitive root predicate, F2)', async () => {
+    const p = '/x/BOOK.M4B';
+    mockFs({}, { [p]: 100 });
+    expect(await getPathSize(p)).toBe(100);
+    expect(await getAudioPathSize(p)).toBe(100); // root predicate lowercases the extension → .m4b matches
+    expect(await getVisiblePathSize(p)).toBe(100);
+  });
+
   it('direct hidden file root .a.mp3 (100): 100 / 0 / 100 (F32)', async () => {
     const p = '/x/.a.mp3';
     mockFs({}, { [p]: 100 });
@@ -449,6 +460,42 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
     expect(await getPathSize(staging)).toBe(57); // both children
     expect(await getAudioPathSize(staging)).toBe(42); // audio child only
     expect(await getVisiblePathSize(staging)).toBe(57); // visible children
+  });
+
+  // F1 — the recursive descent (walkSize's `else if isDirectory` branch) is the ONLY place both
+  // `includeHidden` and `audioOnly` are forwarded into a nested visible directory. Every other
+  // fixture puts the hidden/non-audio entries at the ROOT, so hard-coding the recursive call to the
+  // all-files preset would still pass them. This case buries audio, non-audio, and hidden entries a
+  // level down under a VISIBLE subdir and asserts distinct per-wrapper totals — the only way all
+  // three match is if both flags propagate through the recursion.
+  it('recursive descent forwards both policies into a nested visible subdir (F1)', async () => {
+    const sub = join(ROOT, 'sub');
+    const nested = join(sub, '.nested');
+    mockFs(
+      {
+        [ROOT]: [makeDirent('top.mp3', true, false), makeDirent('sub', false, true)],
+        [sub]: [
+          makeDirent('deep.mp3', true, false),
+          makeDirent('notes.txt', true, false),
+          makeDirent('.hidden.mp3', true, false),
+          makeDirent('.nested', false, true),
+        ],
+        [nested]: [makeDirent('buried.mp3', true, false)],
+      },
+      {
+        [join(ROOT, 'top.mp3')]: 100,
+        [join(sub, 'deep.mp3')]: 200,
+        [join(sub, 'notes.txt')]: 30,
+        [join(sub, '.hidden.mp3')]: 999,
+        [join(nested, 'buried.mp3')]: 5000,
+      },
+    );
+    // all-entries: top + deep + notes + .hidden.mp3 + .nested/buried = 100+200+30+999+5000
+    expect(await getPathSize(ROOT)).toBe(6329);
+    // audio + skip-hidden: top + deep only (notes non-audio, .hidden.mp3 hidden, .nested skipped)
+    expect(await getAudioPathSize(ROOT)).toBe(300);
+    // all-visible: top + deep + notes (.hidden.mp3 hidden, .nested skipped)
+    expect(await getVisiblePathSize(ROOT)).toBe(330);
   });
 
   // Section 3a — the hidden skip runs BEFORE any I/O on the child (the F40 failure mode): a hidden
