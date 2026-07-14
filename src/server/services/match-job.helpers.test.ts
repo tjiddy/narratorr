@@ -825,7 +825,7 @@ describe('resolveSingleResultConfidence', () => {
     // scanned 33360s (9.3hrs) vs candidate 807min (13.4hrs) — the Fablehaven case
     const result = resolveSingleResultConfidence(makeBook({ duration: 807 }), 33360);
     expect(result.confidence).toBe('medium');
-    expect(result.reason).toBe('Duration mismatch — scanned 9.3hrs vs expected 13.4hrs');
+    expect(result.reason).toBe('Duration mismatch — scanned 9h 16m vs expected 13h 27m');
   });
 
   it('both present + within 90s → high, no reason', () => {
@@ -863,14 +863,16 @@ describe('resolveSingleResultConfidence', () => {
     // provider 660min (11.0hrs) → 39600s; scanned 36000s (10.0hrs) → Δ3600s
     const result = resolveSingleResultConfidence(makeBook({ duration: 660 }), 36000);
     expect(result.confidence).toBe('medium');
-    expect(result.reason).toBe('Duration mismatch — scanned 10.0hrs vs expected 11.0hrs');
+    expect(result.reason).toBe('Duration mismatch — scanned 10h 0m vs expected 11h 0m');
   });
 
-  it('reason renders correct hours from the new units (seconds scanned, minutes expected)', () => {
-    // provider 1789min → 107340s (29.8hrs); scanned 107440s → Δ100s beyond 90s (29.8hrs)
+  it('a sub-decimal mismatch renders visibly different values (h:mm regression)', () => {
+    // provider 1789min → 107340s; scanned 107440s → Δ100s beyond 90s. Under the old
+    // one-decimal hours display BOTH sides rendered "29.8hrs" — a flagged mismatch
+    // whose message showed no difference. Minute resolution must keep them distinct.
     const result = resolveSingleResultConfidence(makeBook({ duration: 1789 }), 107440);
     expect(result.confidence).toBe('medium');
-    expect(result.reason).toBe('Duration mismatch — scanned 29.8hrs vs expected 29.8hrs');
+    expect(result.reason).toBe('Duration mismatch — scanned 29h 51m vs expected 29h 49m');
   });
 });
 

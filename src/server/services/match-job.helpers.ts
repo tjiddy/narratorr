@@ -125,14 +125,17 @@ export interface DurationConfidenceResult {
   reason?: string;
 }
 
-/** Format minutes as hours with 1 decimal place (provider `runtimeLengthMin` side). */
-function formatHours(minutes: number): string {
-  return (minutes / 60).toFixed(1);
-}
-
-/** Format seconds as hours with 1 decimal place (scanned `totalDuration` side). */
-function formatSecondsAsHours(seconds: number): string {
-  return (seconds / 3600).toFixed(1);
+/**
+ * Format a runtime as whole hours + minutes ("9h 28m"). Minute resolution is
+ * load-bearing: the mismatch band is 90 seconds (#1850), and the old one-decimal
+ * hours display rendered both sides of a real mismatch identically ("scanned
+ * 9.5hrs vs expected 9.5hrs" — 0.05h ≈ 3min of rounding vs a 1.5min band). Two
+ * values more than 90s apart can never round to the same whole minute, so this
+ * display always shows a visible difference for every mismatch it accompanies.
+ */
+function formatDuration(seconds: number): string {
+  const totalMinutes = Math.round(seconds / 60);
+  return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
 }
 
 /**
@@ -182,7 +185,7 @@ export function resolveConfidenceFromDuration(
     if (isDurationVerified(topResult.meta, scannedSeconds)) return { confidence: 'high' };
     return {
       confidence: 'medium',
-      reason: `Duration mismatch — scanned ${formatSecondsAsHours(scannedSeconds)}hrs vs expected ${formatHours(topResult.meta.duration)}hrs`,
+      reason: `Duration mismatch — scanned ${formatDuration(scannedSeconds)} vs expected ${formatDuration(topResult.meta.duration * 60)}`,
     };
   }
   return { confidence: 'medium', reason: 'Best match missing duration — cannot verify' };
@@ -209,7 +212,7 @@ export function resolveSingleResultConfidence(
   if (bothPresent && !isDurationVerified(meta, scannedSeconds)) {
     return {
       confidence: 'medium',
-      reason: `Duration mismatch — scanned ${formatSecondsAsHours(scannedSeconds)}hrs vs expected ${formatHours(meta.duration!)}hrs`,
+      reason: `Duration mismatch — scanned ${formatDuration(scannedSeconds)} vs expected ${formatDuration(meta.duration! * 60)}`,
     };
   }
   return { confidence: 'high' };
