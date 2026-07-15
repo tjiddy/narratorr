@@ -742,9 +742,9 @@ describe('resolveConfidenceFromDuration', () => {
     expect(result).toEqual({ confidence: 'high' });
   });
 
-  it('returns medium duration mismatch when the gap exceeds 90s', () => {
-    // provider 60min → 3600s; scanned 3750s → Δ150s — beyond 90s
-    const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 60 }) }], 3750);
+  it('returns medium duration mismatch when the gap exceeds the band', () => {
+    // provider 60min → 3600s; scanned 3900s → Δ300s — beyond 240s
+    const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 60 }) }], 3900);
     expect(result.confidence).toBe('medium');
     expect(result.reason).toContain('Duration mismatch');
   });
@@ -759,12 +759,12 @@ describe('resolveConfidenceFromDuration', () => {
 
   it('multi-result mismatch reason uses the shared FLOOR formatter on both sides (F1)', () => {
     // Discriminates floor from round on the SCANNED side of the line-166 reason:
-    // provider 1789min → 107340s (29h 49m); scanned 107440s → Δ100s beyond 90s.
-    // 107440s floors to 29h 50m (round-based formatting would render 29h 51m), so
+    // provider 1789min → 107340s (29h 49m); scanned 107620s → Δ280s beyond 240s.
+    // 107620s floors to 29h 53m (round-based formatting would render 29h 54m), so
     // this exact-string assertion fails if line 166 ever reverts to round semantics.
-    const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 1789 }) }], 107440);
+    const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 1789 }) }], 107620);
     expect(result.confidence).toBe('medium');
-    expect(result.reason).toBe('Duration mismatch — scanned 29h 50m vs expected 29h 49m');
+    expect(result.reason).toBe('Duration mismatch — scanned 29h 53m vs expected 29h 49m');
   });
 });
 
@@ -794,14 +794,14 @@ describe('isDurationVerified', () => {
     expect(isDurationVerified(makeBook({ duration: 60 }), 3650)).toBe(true);
   });
 
-  it('returns true at exactly 90s (inclusive boundary)', () => {
-    // provider 60min → 3600s; scanned 3690s → Δ90s
-    expect(isDurationVerified(makeBook({ duration: 60 }), 3690)).toBe(true);
+  it('returns true at exactly 240s (inclusive boundary)', () => {
+    // provider 60min → 3600s; scanned 3840s → Δ240s
+    expect(isDurationVerified(makeBook({ duration: 60 }), 3840)).toBe(true);
   });
 
-  it('returns false beyond the 90s band', () => {
-    // provider 60min → 3600s; scanned 3720s → Δ120s
-    expect(isDurationVerified(makeBook({ duration: 60 }), 3720)).toBe(false);
+  it('returns false beyond the 240s band', () => {
+    // provider 60min → 3600s; scanned 3900s → Δ300s
+    expect(isDurationVerified(makeBook({ duration: 60 }), 3900)).toBe(false);
   });
 
   it('compares in seconds — a sub-minute delta near a minute boundary verifies (no rounding inflation)', () => {
@@ -876,15 +876,15 @@ describe('resolveSingleResultConfidence', () => {
     expect(result.reason).toBe('Duration mismatch — scanned 10h 0m vs expected 11h 0m');
   });
 
-  it('a sub-decimal mismatch renders visibly different values (h:mm regression)', () => {
-    // provider 1789min → 107340s; scanned 107440s → Δ100s beyond 90s. Under the old
-    // one-decimal hours display BOTH sides rendered "29.8hrs" — a flagged mismatch
-    // whose message showed no difference. Minute resolution must keep them distinct.
-    // Shared floor formatter (#1854): 107440s floors to 29h 50m (not the old
-    // round-based 29h 51m); still visibly distinct from expected 29h 49m.
-    const result = resolveSingleResultConfidence(makeBook({ duration: 1789 }), 107440);
+  it('mismatch reason renders h:mm via the shared floor formatter', () => {
+    // provider 1789min → 107340s; scanned 107620s → Δ280s beyond 240s. Historical
+    // note: at the old 90s band a flagged mismatch could render identically at
+    // one-decimal hours ("29.8hrs vs 29.8hrs"); at a 240s band any mismatch is
+    // ≥4min (≥0.067h) so that collision is impossible — h:mm stays for readability
+    // and this test now pins the FLOOR semantic (107620s → 29h 53m; round → 29h 54m).
+    const result = resolveSingleResultConfidence(makeBook({ duration: 1789 }), 107620);
     expect(result.confidence).toBe('medium');
-    expect(result.reason).toBe('Duration mismatch — scanned 29h 50m vs expected 29h 49m');
+    expect(result.reason).toBe('Duration mismatch — scanned 29h 53m vs expected 29h 49m');
   });
 });
 

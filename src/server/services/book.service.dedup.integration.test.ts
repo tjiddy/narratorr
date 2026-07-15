@@ -157,13 +157,13 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       expect(res.book?.id).toBe(id);
     });
 
-    it('outside the 90s duration band over equal narrators → review (#1854)', async () => {
-      // library 60min (3600s) vs candidate 62min (3720s) → Δ120s > 90s, downgrades an
+    it('outside the 240s duration band over equal narrators → review (#1854)', async () => {
+      // library 60min (3600s) vs candidate 66min (3960s) → Δ360s > 240s, downgrades an
       // equal-narrator match to review over real hydrated rows. The adapter's minutes
       // column feeds the resolver, which converts * 60 before the band.
       const id = await seed({ title: 'Beyond Boundary', author: 'Dur Author', narrators: ['Jim Dale'], duration: 60 });
       const res = await service.findDuplicate({
-        title: 'Beyond Boundary', authors: [{ name: 'Dur Author' }], narrators: ['Jim Dale'], duration: 62,
+        title: 'Beyond Boundary', authors: [{ name: 'Dur Author' }], narrators: ['Jim Dale'], duration: 66,
       });
       expect(res.verdict).toBe('review');
       expect(res.book?.id).toBe(id);

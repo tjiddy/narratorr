@@ -8,8 +8,8 @@
  *
  * FLOOR (not round) is the chosen semantic: hours = `Math.floor(seconds/3600)`,
  * minutes = `Math.floor((seconds%3600)/60)`. Minute resolution is load-bearing
- * for the match-job mismatch reason: the mismatch band is 90 seconds (#1850), and
- * two values more than 90s apart can never fall in the same 60-second minute
+ * for the match-job mismatch reason: the mismatch band is absolute seconds-scale (#1850/#1854), and
+ * two values a band-width apart can never fall in the same 60-second minute
  * bucket, so this display always shows a visible difference for every mismatch it
  * accompanies (the old one-decimal-hours display rendered both sides of a real
  * mismatch identically).

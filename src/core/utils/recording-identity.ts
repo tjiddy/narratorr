@@ -199,7 +199,7 @@ function productionTypesConflict(candidate: string | null | undefined, library: 
  * `different-recording`. Two corroborators, in priority order:
  *
  *  1. Duration (authoritative when present): both sides present + within the
- *     absolute 90s band → `same-recording` (the Tehanu case); beyond the band →
+ *     absolute shared band (240s) → `same-recording` (the Tehanu case); beyond the band →
  *     `review` (`duration-mismatch`). When duration corroborates, production form
  *     is ignored — two unabridged readings whose `productionType` happens to differ
  *     must not be forced to review when their durations agree.

@@ -1377,9 +1377,9 @@ describe('MatchJobService', () => {
       expect(result!.reason).toContain('Duration mismatch');
     });
 
-    it('high combined score (1.0) + duration just beyond 90s → confidence medium', async () => {
+    it('high combined score (1.0) + duration just beyond the band → confidence medium', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36120, // 600min provider (36000s) + 120s → Δ120s
+        totalDuration: 36300, // 600min provider (36000s) + 300s → Δ300s
         files: [],
       });
 

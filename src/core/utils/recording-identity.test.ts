@@ -414,11 +414,11 @@ describe('resolveRecordingIdentity (#1710)', () => {
 
     // UNITS REGRESSION GUARD (AC8): two editions ~2 min apart are >90s but <90 min.
     // With the mandatory internal * 60 conversion this is review; if the conversion
-    // were dropped it would land inside a 90-*minute* band (|602-600| = 2 ≤ 90) and
+    // were dropped it would land inside a 240-*minute* band (|606-600| = 6 ≤ 240) and
     // wrongly return same-recording. This case is the durable guard against that.
-    it('units regression: ~2 min apart (>90s, <90 min) → review, NOT same-recording', () => {
-      // library 600min (36000s) vs candidate 602min (36120s) → Δ120s > 90s.
-      expect(verdictOf(candidate({ ...eq, duration: 602 }), library({ ...eqLib, duration: 600 }))).toBe('review');
+    it('units regression: ~6 min apart (>240s, <240 min) → review, NOT same-recording', () => {
+      // library 600min (36000s) vs candidate 606min (36360s) → Δ360s > 240s.
+      expect(verdictOf(candidate({ ...eq, duration: 606 }), library({ ...eqLib, duration: 600 }))).toBe('review');
     });
 
     it('duration never yields different-recording for equal narrators', () => {
@@ -428,17 +428,17 @@ describe('resolveRecordingIdentity (#1710)', () => {
       }
     });
 
-    // Inclusive-at-90 boundary parity (AC5): Δ exactly 90s is inside, 91s outside —
+    // Inclusive-at-240 boundary parity (AC5): Δ exactly 240s is inside, 241s outside —
     // identically to quality-gate and match-job. Fractional minutes land the * 60
     // product on the exact second boundary (library 600min = 36000s).
-    it('exact 90s boundary → same-recording (inclusive)', () => {
-      // candidate 601.5min = 36090s → Δ90s.
-      expect(verdictOf(candidate({ ...eq, duration: 36090 / 60 }), library({ ...eqLib, duration: 600 }))).toBe('same-recording');
+    it('exact 240s boundary → same-recording (inclusive)', () => {
+      // candidate 604min = 36240s → Δ240s.
+      expect(verdictOf(candidate({ ...eq, duration: 604 }), library({ ...eqLib, duration: 600 }))).toBe('same-recording');
     });
 
-    it('one tick beyond 90s → review', () => {
-      // candidate 36091s → Δ91s.
-      expect(verdictOf(candidate({ ...eq, duration: 36091 / 60 }), library({ ...eqLib, duration: 600 }))).toBe('review');
+    it('one tick beyond 240s → review', () => {
+      // candidate 36241s → Δ241s.
+      expect(verdictOf(candidate({ ...eq, duration: 36241 / 60 }), library({ ...eqLib, duration: 600 }))).toBe('review');
     });
   });
 
