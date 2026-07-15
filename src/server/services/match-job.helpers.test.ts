@@ -756,6 +756,16 @@ describe('resolveConfidenceFromDuration', () => {
     expect(result.confidence).toBe('medium');
     expect(result.reason).toContain('Duration mismatch');
   });
+
+  it('multi-result mismatch reason uses the shared FLOOR formatter on both sides (F1)', () => {
+    // Discriminates floor from round on the SCANNED side of the line-166 reason:
+    // provider 1789min → 107340s (29h 49m); scanned 107440s → Δ100s beyond 90s.
+    // 107440s floors to 29h 50m (round-based formatting would render 29h 51m), so
+    // this exact-string assertion fails if line 166 ever reverts to round semantics.
+    const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 1789 }) }], 107440);
+    expect(result.confidence).toBe('medium');
+    expect(result.reason).toBe('Duration mismatch — scanned 29h 50m vs expected 29h 49m');
+  });
 });
 
 // ============================================================================
