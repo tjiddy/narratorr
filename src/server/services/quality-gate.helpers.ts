@@ -83,8 +83,8 @@ export function buildQualityAssessment(
   if (book && book.path !== null && existingInputs) {
     if (existingInputs.durationSeconds && existingInputs.durationSeconds > 0 && newDurationSeconds > 0) {
       // The ratio is still computed and persisted for telemetry (unchanged shape),
-      // but the HOLD decision moved to the shared absolute 90s band (#1854): both
-      // operands are already SECONDS, so no conversion. Δ ≤ 90s → no hold; > 90s →
+      // but the HOLD decision moved to the shared absolute band (240s, #1854): both
+      // operands are already SECONDS, so no conversion. Δ within the band → no hold; beyond →
       // held (inclusive at 90, matching every other duration-band call site).
       durationDelta = (newDurationSeconds - existingInputs.durationSeconds) / existingInputs.durationSeconds;
       if (!withinDurationTolerance(newDurationSeconds, existingInputs.durationSeconds)) {
