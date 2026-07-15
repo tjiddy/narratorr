@@ -16,8 +16,6 @@ export class QualityGateServiceError extends Error {
  */
 export type QualityDecisionReason = QualityGateReason;
 
-export const DURATION_TOLERANCE = 0.15; // 15%
-
 export const NULL_REASON: QualityDecisionReason = {
   action: 'held',
   mbPerHour: null,

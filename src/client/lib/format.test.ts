@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatDate, formatRelativeDate, formatDurationMinutes, formatDurationSeconds, formatChannels, formatYear } from './format';
+import { formatDate, formatRelativeDate, formatDurationMinutes, formatChannels, formatYear } from './format';
 
 describe('formatDate', () => {
   it('returns locale-formatted absolute date string for valid ISO input', () => {
@@ -119,60 +119,8 @@ describe('formatDurationMinutes', () => {
   });
 });
 
-describe('formatDurationSeconds', () => {
-  describe('alwaysShowBoth: true (default)', () => {
-    it('formats standard hours and minutes', () => {
-      expect(formatDurationSeconds(5400)).toBe('1h 30m');
-      expect(formatDurationSeconds(7260)).toBe('2h 1m');
-    });
-
-    it('always shows both parts for sub-hour values', () => {
-      expect(formatDurationSeconds(2700)).toBe('0h 45m');
-    });
-
-    it('formats hours with zero minutes', () => {
-      expect(formatDurationSeconds(3600)).toBe('1h 0m');
-    });
-
-    it('returns "0h 0m" for zero seconds', () => {
-      expect(formatDurationSeconds(0)).toBe('0h 0m');
-    });
-
-    it('returns "0h 0m" for sub-minute seconds', () => {
-      expect(formatDurationSeconds(59)).toBe('0h 0m');
-    });
-
-    it('returns "0h 1m" for exactly 60 seconds', () => {
-      expect(formatDurationSeconds(60)).toBe('0h 1m');
-    });
-  });
-
-  describe('alwaysShowBoth: false (elides zero parts)', () => {
-    it('formats standard hours and minutes', () => {
-      expect(formatDurationSeconds(5400, { alwaysShowBoth: false })).toBe('1h 30m');
-    });
-
-    it('elides zero hours for sub-hour values', () => {
-      expect(formatDurationSeconds(2700, { alwaysShowBoth: false })).toBe('45m');
-    });
-
-    it('elides zero minutes for exact hours', () => {
-      expect(formatDurationSeconds(3600, { alwaysShowBoth: false })).toBe('1h');
-    });
-
-    it('elides zero hours for exactly 1 minute', () => {
-      expect(formatDurationSeconds(60, { alwaysShowBoth: false })).toBe('1m');
-    });
-  });
-
-  it('returns empty string for null with no fallback', () => {
-    expect(formatDurationSeconds(null)).toBe('');
-  });
-
-  it('returns custom fallback string for null', () => {
-    expect(formatDurationSeconds(null, { fallback: '—' })).toBe('—');
-  });
-});
+// formatDurationSeconds behavior tests moved to the shared home
+// `src/shared/format-duration.test.ts` (#1854), where the implementation now lives.
 
 describe('formatChannels', () => {
   it('returns "Mono" for 1 channel', () => {
@@ -243,13 +191,5 @@ describe('formatYear', () => {
   });
 });
 
-describe('#514 formatDurationSeconds nullability alignment', () => {
-  it('formatDurationSeconds accepts undefined and returns fallback', () => {
-    expect(formatDurationSeconds(undefined)).toBe('');
-    expect(formatDurationSeconds(undefined, { fallback: '—' })).toBe('—');
-  });
-
-  it('formatDurationSeconds(0) returns valid duration string (not falsy shortcut)', () => {
-    expect(formatDurationSeconds(0)).toBe('0h 0m');
-  });
-});
+// (#514 formatDurationSeconds nullability alignment cases moved with the rest of
+// the formatter suite to `src/shared/format-duration.test.ts`, #1854.)

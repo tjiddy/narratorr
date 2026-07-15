@@ -29,19 +29,10 @@ export function formatDurationMinutes(minutes?: number | null): string | null {
   return `${h}h ${m}m`;
 }
 
-export function formatDurationSeconds(
-  seconds?: number | null,
-  opts?: { alwaysShowBoth?: boolean; fallback?: string },
-): string {
-  if (seconds == null) return opts?.fallback ?? '';
-  const alwaysShowBoth = opts?.alwaysShowBoth ?? true;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (alwaysShowBoth) return `${h}h ${m}m`;
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
-}
+// Single home is now `src/shared/format-duration.ts` (#1854) so the client and the
+// server match-job reason string share one floor-based "Xh Ym" semantic. Re-exported
+// here so the existing `@/lib/format` call sites are unchanged.
+export { formatDurationSeconds } from '../../shared/format-duration.js';
 
 export function formatYear(input?: string | null): string | null {
   if (!input) return null;

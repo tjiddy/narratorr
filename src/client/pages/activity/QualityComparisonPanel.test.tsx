@@ -242,20 +242,46 @@ describe('QualityComparisonPanel — existing audio metadata display', () => {
     expect(screen.queryByText('+4%')).not.toBeInTheDocument();
   });
 
-  it('flags duration row when durationDelta exceeds 15% tolerance', () => {
+  // #1854: the duration row now flags off the server's persisted hold decision
+  // (`holdReasons.includes('duration_delta')`), not an independent 15% ratio test,
+  // so the visible warning tracks the actual 90s server hold. `narratorMatch: null`
+  // suppresses the narrator row so the only possible flag icon is the duration row.
+  it('flags duration row when holdReasons includes duration_delta (independent of ratio value)', () => {
     const { container } = render(<QualityComparisonPanel data={{
-      ...baseGateData, existingDuration: 7200, downloadedDuration: 9000,
-      durationDelta: 0.25, narratorMatch: null,
+      ...baseGateData, existingDuration: 7200, downloadedDuration: 7500,
+      durationDelta: 0.042, narratorMatch: null, holdReasons: ['duration_delta'],
     }} />);
-    // Should have a warning icon on the duration row
-    expect(container.querySelectorAll('svg').length).toBeGreaterThanOrEqual(1);
+    expect(container.querySelectorAll('svg')).toHaveLength(1);
   });
 
-  it('does NOT flag duration row when delta is exactly 15% (boundary exclusive)', () => {
+  it('does NOT flag duration row when holdReasons omits duration_delta (independent of ratio value)', () => {
     const { container } = render(<QualityComparisonPanel data={{
-      ...baseGateData, existingDuration: 7200, downloadedDuration: 8280,
-      durationDelta: 0.15, narratorMatch: null, codec: null, channels: null,
-      existingCodec: null, existingChannels: null,
+      ...baseGateData, existingDuration: 7200, downloadedDuration: 9000,
+      durationDelta: 0.25, narratorMatch: null, codec: null, channels: null,
+      existingCodec: null, existingChannels: null, holdReasons: [],
+    }} />);
+    expect(container.querySelectorAll('svg')).toHaveLength(0);
+  });
+
+  // Divergence (a) — AC9: a +91s upgrade on a 10h (36000s) incumbent is a TINY ratio
+  // (~0.25%) the old 15% UI would pass, but it is outside the 90s band so the server
+  // held. Flag off the server decision → flagged.
+  it('flags on a small ratio when the server held it (old 15% policy would not)', () => {
+    const { container } = render(<QualityComparisonPanel data={{
+      ...baseGateData, existingDuration: 36000, downloadedDuration: 36091,
+      durationDelta: 91 / 36000, narratorMatch: null, holdReasons: ['duration_delta'],
+    }} />);
+    expect(container.querySelectorAll('svg')).toHaveLength(1);
+  });
+
+  // Divergence (b) — AC9: a +90s upgrade on a 5-minute (300s) incumbent is a LARGE
+  // ratio (~30%) the old 15% UI would flag, but it is inside the inclusive 90s band
+  // so the server did not hold. Flag off the server decision → unflagged.
+  it('does NOT flag on a large ratio when the server did not hold (old 15% policy would)', () => {
+    const { container } = render(<QualityComparisonPanel data={{
+      ...baseGateData, existingDuration: 300, downloadedDuration: 390,
+      durationDelta: 90 / 300, narratorMatch: null, codec: null, channels: null,
+      existingCodec: null, existingChannels: null, holdReasons: [],
     }} />);
     expect(container.querySelectorAll('svg')).toHaveLength(0);
   });

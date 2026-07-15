@@ -21,6 +21,7 @@
 import { normalizeNarrator, tokenizeNarrators, NARRATOR_PLACEHOLDERS } from './similarity.js';
 import { matchesLibraryIdentity } from '../../shared/dedup.js';
 import { canonicalizeAsin } from '../../shared/asin.js';
+import { withinDurationTolerance } from '../../shared/duration-tolerance.js';
 import type { RecordingVerdict, RecordingReviewReason } from '../../shared/schemas/recording-verdict.js';
 
 /**
@@ -35,19 +36,6 @@ export type { RecordingVerdict, RecordingReviewReason } from '../../shared/schem
 
 /** Narrator-set comparison verdict. Duration is NOT an input — the resolver applies it separately. */
 export type NarratorEquality = 'equal' | 'not-equal' | 'no-signal';
-
-/**
- * Relaxed duration tolerance band (15%) for the equal-narrator corroborator.
- * Historically COPIED (not imported) from `match-job.helpers.ts`'s relative
- * duration band to keep core free of server imports. #1850 replaced the match-job
- * band with a single absolute 90s tolerance, but the same-vs-different-recording
- * decision is a different question with its own edge cases, so this relative band
- * is retained deliberately (evaluating the same first-principles critique here is
- * tracked as a separate follow-up). Two unabridged readings of one book are ~the
- * same length, so duration can only *downgrade* an equal-narrator match, never
- * separate editions on its own.
- */
-const DURATION_TOLERANCE = 0.15;
 
 /** A narrator side split into usable signal tokens plus whether any placeholder was seen. */
 interface NarratorTokens {
@@ -210,10 +198,10 @@ function productionTypesConflict(candidate: string | null | undefined, library: 
  * can only DOWNGRADE the equal match to `review`, never flip it to
  * `different-recording`. Two corroborators, in priority order:
  *
- *  1. Duration (authoritative when present): both sides present + within the 15%
- *     band → `same-recording` (the Tehanu case); beyond the band → `review`
- *     (`duration-mismatch`). When duration corroborates, production form is
- *     ignored — two unabridged readings whose `productionType` happens to differ
+ *  1. Duration (authoritative when present): both sides present + within the
+ *     absolute 90s band → `same-recording` (the Tehanu case); beyond the band →
+ *     `review` (`duration-mismatch`). When duration corroborates, production form
+ *     is ignored — two unabridged readings whose `productionType` happens to differ
  *     must not be forced to review when their durations agree.
  *  2. Production-form veto (#1728): ONLY on the no-signal-duration branch (either
  *     side missing/zero). When both forms are known and different (e.g. unabridged
@@ -222,8 +210,13 @@ function productionTypesConflict(candidate: string | null | undefined, library: 
  */
 function corroborateWithDuration(candidate: RecordingCandidate, library: LibraryRecording): RecordingIdentityResult {
   if (!durationNoSignal(candidate.duration) && !durationNoSignal(library.duration)) {
-    const distance = Math.abs(candidate.duration! - library.duration!) / library.duration!;
-    return distance <= DURATION_TOLERANCE ? { verdict: 'same-recording' } : { verdict: 'review', recordingReviewReason: 'duration-mismatch' };
+    // Both `candidate.duration` and `library.duration` are MINUTES (provider
+    // `runtimeLengthMin` / the `books.duration` column). The shared band is
+    // SECONDS, so BOTH sides multiply by 60 — dropping the `* 60` would apply a
+    // 90-*minute* tolerance (60× too loose). See AC8 / the units regression test.
+    return withinDurationTolerance(candidate.duration! * 60, library.duration! * 60)
+      ? { verdict: 'same-recording' }
+      : { verdict: 'review', recordingReviewReason: 'duration-mismatch' };
   }
   if (productionTypesConflict(candidate.productionType, library.productionType)) {
     return { verdict: 'review', recordingReviewReason: 'production-type-mismatch' };
