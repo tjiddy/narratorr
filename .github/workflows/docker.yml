@@ -201,8 +201,9 @@ jobs:
           fi
 
           # Verify the ffmpeg third-party notice + project LICENSE shipped in the image and
-          # are non-empty (#1862). Substantive compliance validation is the docker-build gate;
-          # this is runtime deployment evidence that the files reached the published image.
+          # are non-empty (#1862). Content sanity lives in docker/license-notice.test.ts
+          # (pnpm verify); the docker-build gate and this check are presence-only —
+          # runtime deployment evidence that the files reached the published image.
           if docker exec smoke-test test -s /app/THIRD_PARTY_NOTICES.md \
             && docker exec smoke-test test -s /app/LICENSE; then
             NOTICES_SHIPPED=yes
