@@ -10,6 +10,8 @@ import type { MatchSource } from './tag-search-planner.js';
 import type { BookService } from './book.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
+import { withinDurationTolerance } from '../../shared/duration-tolerance.js';
+import { formatDurationSeconds } from '../../shared/format-duration.js';
 
 /** User-facing reason surfaced on a post-match recording-review row (#1711). */
 export const RECORDING_REVIEW_REASON =
@@ -88,17 +90,6 @@ export async function applyLibraryDuplicate(
   return result;
 }
 
-/**
- * Absolute duration-match tolerance in SECONDS (#1850). A same-edition scanned
- * runtime and the provider's `runtimeLengthMin × 60` differ by a *fixed-size*
- * amount — the "This is Audible" intro + end credits (~40s) plus the provider's
- * whole-minute runtime granularity (±30s) — that does NOT scale with book length
- * (212 ASIN-verified same-edition pairs, 2026-07-07: max Δ 69s at any length,
- * correlation with length ≈ 0.096). 90s = the 69s observed ceiling + ~21s
- * headroom, and passes 100% of that set. UAT-tunable: raise it if live UAT shows
- * too many false Reviews rather than reintroducing a relative/score tier.
- */
-const DURATION_TOLERANCE_SECONDS = 90;
 const CAPPED_ATTEMPT_REASON = 'Low confidence match. Please verify.';
 
 /**
@@ -126,26 +117,13 @@ export interface DurationConfidenceResult {
 }
 
 /**
- * Format a runtime as whole hours + minutes ("9h 28m"). Minute resolution is
- * load-bearing: the mismatch band is 90 seconds (#1850), and the old one-decimal
- * hours display rendered both sides of a real mismatch identically ("scanned
- * 9.5hrs vs expected 9.5hrs" — 0.05h ≈ 3min of rounding vs a 1.5min band). Two
- * values more than 90s apart can never round to the same whole minute, so this
- * display always shows a visible difference for every mismatch it accompanies.
- */
-function formatDuration(seconds: number): string {
-  const totalMinutes = Math.round(seconds / 60);
-  return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
-}
-
-/**
  * Single source of truth for "does the scanned runtime independently corroborate
  * this candidate?". Returns true only when both the scanned duration and the
  * candidate's metadata duration are present and positive AND the absolute gap is
- * within `DURATION_TOLERANCE_SECONDS` (#1850). The two runtimes carry different
- * units — `scannedSeconds` is the unrounded scanner value in SECONDS,
- * `meta.duration` is the provider `runtimeLengthMin` in MINUTES — so the minutes
- * side is multiplied by 60 before the comparison. There is no relative %/score
+ * within the shared `withinDurationTolerance` band (#1850/#1854). The two runtimes
+ * carry different units — `scannedSeconds` is the unrounded scanner value in
+ * SECONDS, `meta.duration` is the provider `runtimeLengthMin` in MINUTES — so the
+ * minutes side is multiplied by 60 before the comparison. There is no relative %/score
  * tier: the result is identical regardless of title/author score, because a
  * duration gap answers the orthogonal "is this the complete edition I expect?"
  * question, on which high title confidence makes a gap MORE diagnostic, not less.
@@ -162,7 +140,7 @@ export function isDurationVerified(
 ): boolean {
   if (!scannedSeconds || scannedSeconds <= 0) return false;
   if (!meta.duration || meta.duration <= 0) return false;
-  return Math.abs(meta.duration * 60 - scannedSeconds) <= DURATION_TOLERANCE_SECONDS;
+  return withinDurationTolerance(meta.duration * 60, scannedSeconds);
 }
 
 /**
@@ -185,7 +163,7 @@ export function resolveConfidenceFromDuration(
     if (isDurationVerified(topResult.meta, scannedSeconds)) return { confidence: 'high' };
     return {
       confidence: 'medium',
-      reason: `Duration mismatch — scanned ${formatDuration(scannedSeconds)} vs expected ${formatDuration(topResult.meta.duration * 60)}`,
+      reason: `Duration mismatch — scanned ${formatDurationSeconds(scannedSeconds)} vs expected ${formatDurationSeconds(topResult.meta.duration * 60)}`,
     };
   }
   return { confidence: 'medium', reason: 'Best match missing duration — cannot verify' };
@@ -212,7 +190,7 @@ export function resolveSingleResultConfidence(
   if (bothPresent && !isDurationVerified(meta, scannedSeconds)) {
     return {
       confidence: 'medium',
-      reason: `Duration mismatch — scanned ${formatDuration(scannedSeconds)} vs expected ${formatDuration(meta.duration! * 60)}`,
+      reason: `Duration mismatch — scanned ${formatDurationSeconds(scannedSeconds)} vs expected ${formatDurationSeconds(meta.duration! * 60)}`,
     };
   }
   return { confidence: 'high' };

@@ -27,7 +27,10 @@ function durationRow(data: QualityGateData): Row | null {
     label: 'Duration',
     current: formatDurationSeconds(curDuration, { fallback: '—' }),
     downloaded: formatDurationSeconds(dlDuration, { fallback: '—' }),
-    flagged: data.durationDelta !== null && Math.abs(data.durationDelta) > 0.15,
+    // Flag off the server's persisted hold decision (#1854) instead of an
+    // independent 15% ratio test, so the visible warning tracks the actual 90s
+    // server hold. `durationDelta` stays as the persisted telemetry ratio.
+    flagged: data.holdReasons.includes('duration_delta'),
   };
 }
 

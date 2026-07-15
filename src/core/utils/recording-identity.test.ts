@@ -189,8 +189,8 @@ describe('resolveRecordingIdentity (#1710)', () => {
 
   it('different ASIN does NOT short-circuit — defers to narrator (Tehanu)', () => {
     const verdict = verdictOf(
-      candidate({ asin: 'B-NEW', title: 'Tehanu', authors: ['Ursula K. Le Guin'], narrators: ['Jenny Sterlin'], duration: 36000 }),
-      library({ asin: 'B-OLD', title: 'Tehanu', primaryAuthorSlug: 'ursula-k-le-guin', narrators: ['Jenny Sterlin'], duration: 36100 }),
+      candidate({ asin: 'B-NEW', title: 'Tehanu', authors: ['Ursula K. Le Guin'], narrators: ['Jenny Sterlin'], duration: 420 }),
+      library({ asin: 'B-OLD', title: 'Tehanu', primaryAuthorSlug: 'ursula-k-le-guin', narrators: ['Jenny Sterlin'], duration: 420 }),
     );
     expect(verdict).toBe('same-recording');
   });
@@ -360,8 +360,8 @@ describe('resolveRecordingIdentity (#1710)', () => {
 
     it('comma-packed candidate vs split library, close duration → same-recording', () => {
       expect(verdictOf(
-        candidate({ narrators: ['Kate Reading, Michael Kramer'], duration: 36000 }),
-        library({ narrators: ['Kate Reading', 'Michael Kramer'], duration: 39000 }),
+        candidate({ narrators: ['Kate Reading, Michael Kramer'], duration: 600 }),
+        library({ narrators: ['Kate Reading', 'Michael Kramer'], duration: 601 }),
       )).toBe('same-recording');
     });
 
@@ -383,54 +383,62 @@ describe('resolveRecordingIdentity (#1710)', () => {
     });
   });
 
-  describe('duration corroborator over equal narrator-sets', () => {
+  describe('duration corroborator over equal narrator-sets (#1854 absolute 90s band)', () => {
     const eq = { narrators: ['Jim Dale'] };
     const eqLib = { narrators: ['Jim Dale'] };
 
+    // `RecordingCandidate.duration` / `LibraryRecording.duration` are MINUTES
+    // (provider `runtimeLengthMin` / the `books.duration` column). The resolver
+    // converts BOTH sides * 60 before the shared 90s band, so the band is 1.5
+    // minutes wide in the interface's units.
+
     it('missing duration on either side → same-recording', () => {
       expect(verdictOf(candidate(eq), library(eqLib))).toBe('same-recording');
-      expect(verdictOf(candidate({ ...eq, duration: 36000 }), library(eqLib))).toBe('same-recording');
-      expect(verdictOf(candidate(eq), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
+      expect(verdictOf(candidate({ ...eq, duration: 600 }), library(eqLib))).toBe('same-recording');
+      expect(verdictOf(candidate(eq), library({ ...eqLib, duration: 600 }))).toBe('same-recording');
     });
 
     it('zero duration → same-recording', () => {
-      expect(verdictOf(candidate({ ...eq, duration: 0 }), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
+      expect(verdictOf(candidate({ ...eq, duration: 0 }), library({ ...eqLib, duration: 600 }))).toBe('same-recording');
     });
 
-    it('close duration (within 15%) → same-recording', () => {
-      expect(verdictOf(candidate({ ...eq, duration: 36000 }), library({ ...eqLib, duration: 39000 }))).toBe('same-recording');
+    it('close duration (Δ ≤ 90s) → same-recording (Tehanu-shaped)', () => {
+      // library 600min (36000s) vs candidate 601min (36060s) → Δ60s, inside.
+      expect(verdictOf(candidate({ ...eq, duration: 601 }), library({ ...eqLib, duration: 600 }))).toBe('same-recording');
     });
 
-    it('far-apart duration (beyond 15%) → review', () => {
-      expect(verdictOf(candidate({ ...eq, duration: 18000 }), library({ ...eqLib, duration: 36000 }))).toBe('review');
+    it("Ender's-reissue-shaped (~38 min apart, bundled afterword) → review", () => {
+      // library 1140min vs candidate 1178min → Δ38min ≫ 90s.
+      expect(verdictOf(candidate({ ...eq, duration: 1178 }), library({ ...eqLib, duration: 1140 }))).toBe('review');
+    });
+
+    // UNITS REGRESSION GUARD (AC8): two editions ~2 min apart are >90s but <90 min.
+    // With the mandatory internal * 60 conversion this is review; if the conversion
+    // were dropped it would land inside a 90-*minute* band (|602-600| = 2 ≤ 90) and
+    // wrongly return same-recording. This case is the durable guard against that.
+    it('units regression: ~2 min apart (>90s, <90 min) → review, NOT same-recording', () => {
+      // library 600min (36000s) vs candidate 602min (36120s) → Δ120s > 90s.
+      expect(verdictOf(candidate({ ...eq, duration: 602 }), library({ ...eqLib, duration: 600 }))).toBe('review');
     });
 
     it('duration never yields different-recording for equal narrators', () => {
-      for (const d of [0, 1, 18000, 36000, 100000]) {
-        const verdict = verdictOf(candidate({ ...eq, duration: d }), library({ ...eqLib, duration: 36000 }));
+      for (const d of [0, 1, 300, 600, 1200]) {
+        const verdict = verdictOf(candidate({ ...eq, duration: d }), library({ ...eqLib, duration: 600 }));
         expect(verdict).not.toBe('different-recording');
       }
     });
 
-    // (#1729 gap d) The corroborator uses `distance <= DURATION_TOLERANCE` (0.15) —
-    // INCLUSIVE at the edge. Existing cases only cover well-inside (8.3%) and
-    // far-outside (50%); pin the exact 0.15 boundary and one tick beyond, on both
-    // the shorter-candidate and longer-candidate sides of the band. Library 36000,
-    // band edge Δ = 36000 * 0.15 = 5400 → 30600 (short) / 41400 (long).
-    it('exact 15% boundary on the shorter-candidate side → same-recording (inclusive)', () => {
-      expect(verdictOf(candidate({ ...eq, duration: 30600 }), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
+    // Inclusive-at-90 boundary parity (AC5): Δ exactly 90s is inside, 91s outside —
+    // identically to quality-gate and match-job. Fractional minutes land the * 60
+    // product on the exact second boundary (library 600min = 36000s).
+    it('exact 90s boundary → same-recording (inclusive)', () => {
+      // candidate 601.5min = 36090s → Δ90s.
+      expect(verdictOf(candidate({ ...eq, duration: 36090 / 60 }), library({ ...eqLib, duration: 600 }))).toBe('same-recording');
     });
 
-    it('one tick beyond 15% on the shorter-candidate side → review', () => {
-      expect(verdictOf(candidate({ ...eq, duration: 30599 }), library({ ...eqLib, duration: 36000 }))).toBe('review');
-    });
-
-    it('exact 15% boundary on the longer-candidate side → same-recording (inclusive)', () => {
-      expect(verdictOf(candidate({ ...eq, duration: 41400 }), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
-    });
-
-    it('one tick beyond 15% on the longer-candidate side → review', () => {
-      expect(verdictOf(candidate({ ...eq, duration: 41401 }), library({ ...eqLib, duration: 36000 }))).toBe('review');
+    it('one tick beyond 90s → review', () => {
+      // candidate 36091s → Δ91s.
+      expect(verdictOf(candidate({ ...eq, duration: 36091 / 60 }), library({ ...eqLib, duration: 600 }))).toBe('review');
     });
   });
 
@@ -493,10 +501,11 @@ describe('resolveRecordingIdentity (#1710)', () => {
     });
 
     it('duration stays authoritative — corroborating duration ignores a production-type mismatch', () => {
-      // Both durations within band → same-recording even though forms differ.
+      // Both durations within the 90s band (600min vs 601min = Δ60s) → same-recording
+      // even though forms differ.
       expect(resolveRecordingIdentity(
-        candidate({ ...eq, duration: 36000, productionType: 'unabridged' }),
-        library({ ...eqLib, duration: 39000, productionType: 'abridged' }),
+        candidate({ ...eq, duration: 600, productionType: 'unabridged' }),
+        library({ ...eqLib, duration: 601, productionType: 'abridged' }),
       )).toEqual({ verdict: 'same-recording' });
     });
   });
@@ -504,9 +513,10 @@ describe('resolveRecordingIdentity (#1710)', () => {
   // (#1728) Reason-flow contract: every `review` path carries its machine reason.
   describe('recordingReviewReason is populated for each review path', () => {
     it('duration beyond band → duration-mismatch', () => {
+      // 600min vs 700min = Δ100min ≫ 90s.
       expect(resolveRecordingIdentity(
-        candidate({ narrators: ['Jim Dale'], duration: 18000 }),
-        library({ narrators: ['Jim Dale'], duration: 36000 }),
+        candidate({ narrators: ['Jim Dale'], duration: 600 }),
+        library({ narrators: ['Jim Dale'], duration: 700 }),
       )).toEqual({ verdict: 'review', recordingReviewReason: 'duration-mismatch' });
     });
 
