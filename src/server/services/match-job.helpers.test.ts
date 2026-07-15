@@ -870,9 +870,11 @@ describe('resolveSingleResultConfidence', () => {
     // provider 1789min → 107340s; scanned 107440s → Δ100s beyond 90s. Under the old
     // one-decimal hours display BOTH sides rendered "29.8hrs" — a flagged mismatch
     // whose message showed no difference. Minute resolution must keep them distinct.
+    // Shared floor formatter (#1854): 107440s floors to 29h 50m (not the old
+    // round-based 29h 51m); still visibly distinct from expected 29h 49m.
     const result = resolveSingleResultConfidence(makeBook({ duration: 1789 }), 107440);
     expect(result.confidence).toBe('medium');
-    expect(result.reason).toBe('Duration mismatch — scanned 29h 51m vs expected 29h 49m');
+    expect(result.reason).toBe('Duration mismatch — scanned 29h 50m vs expected 29h 49m');
   });
 });
 

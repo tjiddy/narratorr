@@ -76,9 +76,10 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
   });
 
   it('Tehanu under a different ASIN, same narrator → same-recording (owned)', async () => {
-    const id = await seed({ title: 'Tehanu', author: 'Ursula K. Le Guin', narrators: ['Jenny Sterlin'], asin: 'B0OLDEDITION', duration: 36000 });
+    // `duration` is MINUTES on both sides (#1854): repackaged same recording, Δ0.
+    const id = await seed({ title: 'Tehanu', author: 'Ursula K. Le Guin', narrators: ['Jenny Sterlin'], asin: 'B0OLDEDITION', duration: 420 });
     const res = await service.findDuplicate({
-      title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], narrators: ['Jenny Sterlin'], asin: 'B0NEWEDITION', duration: 36100,
+      title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], narrators: ['Jenny Sterlin'], asin: 'B0NEWEDITION', duration: 420,
     });
     expect(res.verdict).toBe('same-recording');
     expect(res.book?.id).toBe(id);
@@ -145,22 +146,24 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       expect(res.hasIncumbent).toBe(true);
     });
 
-    it('exact 15% duration boundary over equal narrators → same-recording (inclusive)', async () => {
-      // Library 36000, candidate 30600 → distance == 0.15, inclusive edge.
-      const id = await seed({ title: 'Boundary Book', author: 'Dur Author', narrators: ['Jim Dale'], duration: 36000 });
+    it('inside the 90s duration band over equal narrators → same-recording (#1854)', async () => {
+      // `duration` is MINUTES: library 60min (3600s) vs candidate 61min (3660s) →
+      // Δ60s, inside the absolute 90s band, through the real toLibraryRecording adapter.
+      const id = await seed({ title: 'Boundary Book', author: 'Dur Author', narrators: ['Jim Dale'], duration: 60 });
       const res = await service.findDuplicate({
-        title: 'Boundary Book', authors: [{ name: 'Dur Author' }], narrators: ['Jim Dale'], duration: 30600,
+        title: 'Boundary Book', authors: [{ name: 'Dur Author' }], narrators: ['Jim Dale'], duration: 61,
       });
       expect(res.verdict).toBe('same-recording');
       expect(res.book?.id).toBe(id);
     });
 
-    it('one tick beyond the 15% duration boundary over equal narrators → review', async () => {
-      // Library 36000, candidate 30599 → distance > 0.15, downgrades an equal-narrator
-      // match to review over real hydrated rows.
-      const id = await seed({ title: 'Beyond Boundary', author: 'Dur Author', narrators: ['Jim Dale'], duration: 36000 });
+    it('outside the 90s duration band over equal narrators → review (#1854)', async () => {
+      // library 60min (3600s) vs candidate 62min (3720s) → Δ120s > 90s, downgrades an
+      // equal-narrator match to review over real hydrated rows. The adapter's minutes
+      // column feeds the resolver, which converts * 60 before the band.
+      const id = await seed({ title: 'Beyond Boundary', author: 'Dur Author', narrators: ['Jim Dale'], duration: 60 });
       const res = await service.findDuplicate({
-        title: 'Beyond Boundary', authors: [{ name: 'Dur Author' }], narrators: ['Jim Dale'], duration: 30599,
+        title: 'Beyond Boundary', authors: [{ name: 'Dur Author' }], narrators: ['Jim Dale'], duration: 62,
       });
       expect(res.verdict).toBe('review');
       expect(res.book?.id).toBe(id);
