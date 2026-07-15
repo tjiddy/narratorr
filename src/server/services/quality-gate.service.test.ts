@@ -542,50 +542,58 @@ describe('QualityGateService', () => {
     });
   });
 
-  describe('processDownload — duration delta', () => {
-    it('does not hold at exactly +15% duration delta', async () => {
+  // #1854: the hold decision moved from a ±15% relative band to the shared absolute
+  // 90s band. baseBook.audioDuration = 36000s, so the existing durationSeconds is
+  // 36000; the boundary is Δ90s inclusive. The `durationDelta` ratio is still
+  // computed and persisted (unchanged shape) — only the HOLD decision changed.
+  describe('processDownload — duration delta (absolute 90s band)', () => {
+    it('does not hold at exactly +90s duration delta (inclusive boundary)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
-      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, totalDuration: 36000 * 1.15 }));
+      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, totalDuration: 36090 }));
+
+      expect(result.reason.holdReasons).not.toContain('duration_delta');
+      // Ratio still populated with its unchanged shape.
+      expect(result.reason.durationDelta).toBeCloseTo(90 / 36000, 6);
+    });
+
+    it('holds for review at +91s duration delta (one tick beyond)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, totalDuration: 36091 }));
+
+      expect(result.reason.holdReasons).toContain('duration_delta');
+      expect(result.reason.durationDelta).toBeCloseTo(91 / 36000, 6);
+    });
+
+    it('does not hold at exactly -90s duration delta (inclusive boundary)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, totalDuration: 35910 }));
 
       expect(result.reason.holdReasons).not.toContain('duration_delta');
     });
 
-    it('holds for review at +15.01% duration delta', async () => {
+    it('holds for review at -91s duration delta (one tick beyond)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
-      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, totalDuration: 36000 * 1.1501 }));
+      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, totalDuration: 35909 }));
 
       expect(result.reason.holdReasons).toContain('duration_delta');
     });
 
-    it('does not hold at exactly -15% duration delta', async () => {
-      const { service, db } = createService();
-      db.update.mockReturnValue(mockDbChain([]));
-
-      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, totalDuration: 36000 * 0.85 }));
-
-      expect(result.reason.holdReasons).not.toContain('duration_delta');
-    });
-
-    it('holds for review at -15.01% duration delta', async () => {
-      const { service, db } = createService();
-      db.update.mockReturnValue(mockDbChain([]));
-
-      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, totalDuration: 36000 * 0.8499 }));
-
-      expect(result.reason.holdReasons).toContain('duration_delta');
-    });
-
-    it('does not hold at 0% duration delta', async () => {
+    it('does not hold at 0s duration delta', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
       const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, totalDuration: 36000 }));
 
       expect(result.reason.holdReasons).not.toContain('duration_delta');
+      expect(result.reason.durationDelta).toBe(0);
     });
   });
 

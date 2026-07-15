@@ -163,8 +163,8 @@ describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
 
     it('asserts the third-party notice + LICENSE shipped non-empty in the image (#1862)', () => {
       const wf = load();
-      // Runtime deployment evidence — the substantive gate is at docker build, this
-      // confirms the files reached the published image.
+      // Runtime deployment evidence — content sanity lives in license-notice.test.ts
+      // (pnpm verify); build gate + this check are presence-only.
       expect(wf).toContain('test -s /app/THIRD_PARTY_NOTICES.md');
       expect(wf).toContain('test -s /app/LICENSE');
       expect(wf).toContain('third-party notice or LICENSE missing/empty in published image');

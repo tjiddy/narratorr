@@ -837,7 +837,7 @@ describe('MatchJobService', () => {
       const result = service.getJob(id)!.results[0];
       // medium → the Review lane (mergeMatchIntoRow deselects a non-high row).
       expect(result!.confidence).toBe('medium');
-      expect(result!.reason).toBe('Duration mismatch — scanned 9.3hrs vs expected 13.4hrs');
+      expect(result!.reason).toBe('Duration mismatch — scanned 9h 16m vs expected 13h 27m');
     });
 
     it('single result within runtime tolerance → high (no regression to correct matches)', async () => {
@@ -1791,9 +1791,9 @@ describe('MatchJobService', () => {
         expect(result!.confidence).toBe('medium');
         expect(result!.reason).toBeDefined();
         expect(result!.reason).toContain('Duration mismatch');
-        // 600 min = 10.0 hrs scanned; 650 min = 10.8 hrs expected
-        expect(result!.reason).toContain('10.0');
-        expect(result!.reason).toContain('10.8');
+        // 600 min scanned; 650 min expected
+        expect(result!.reason).toContain('10h 0m');
+        expect(result!.reason).toContain('10h 50m');
       });
 
       it('duration beyond the 90s band (high title score, no relaxation) → reason includes "Duration mismatch" with both values', async () => {
@@ -1817,9 +1817,9 @@ describe('MatchJobService', () => {
         expect(result!.confidence).toBe('medium');
         expect(result!.reason).toBeDefined();
         expect(result!.reason).toContain('Duration mismatch');
-        // 600 min = 10.0 hrs scanned; 696 min = 11.6 hrs expected
-        expect(result!.reason).toContain('10.0');
-        expect(result!.reason).toContain('11.6');
+        // 600 min scanned; 696 min expected
+        expect(result!.reason).toContain('10h 0m');
+        expect(result!.reason).toContain('11h 36m');
       });
 
       it('multiple results with no duration data (scanned duration null) → reason is "Multiple results — no duration data to disambiguate"', async () => {
@@ -2042,7 +2042,7 @@ describe('MatchJobService', () => {
     });
 
     describe('duration conversion in reason string', () => {
-      it('converts minutes to hours correctly in reason string (e.g., 2229 min → 37.2 hrs)', async () => {
+      it('converts minutes to h:mm correctly in reason string (e.g., 2229 min → 37h 9m)', async () => {
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
           totalDuration: 2229 * 60, // 2229 min in seconds
           files: [],
@@ -2061,8 +2061,8 @@ describe('MatchJobService', () => {
 
         const result = service.getJob(id)!.results[0];
         expect(result!.confidence).toBe('medium');
-        expect(result!.reason).toContain('37.1');
-        expect(result!.reason).toContain('45.5');
+        expect(result!.reason).toContain('37h 9m');
+        expect(result!.reason).toContain('45h 30m');
       });
     });
   });
@@ -3315,7 +3315,7 @@ describe('MatchJobService', () => {
 
           const result = service.getJob(id)!.results[0];
           expect(result!.confidence).toBe('medium');
-          expect(result!.reason).toBe('Duration mismatch — scanned 9.3hrs vs expected 13.4hrs');
+          expect(result!.reason).toBe('Duration mismatch — scanned 9h 16m vs expected 13h 27m');
         });
 
         it('#1821 — single-result via ASIN kill-shot (high-cap) + NO scanned duration → high (absent data does not demote)', async () => {
@@ -3495,7 +3495,7 @@ describe('MatchJobService', () => {
 
           const result = service.getJob(id)!.results[0];
           expect(result!.confidence).toBe('medium');
-          expect(result!.reason).toBe('Duration mismatch — scanned 10.0hrs vs expected 15.0hrs');
+          expect(result!.reason).toBe('Duration mismatch — scanned 10h 0m vs expected 15h 0m');
         });
 
         it('multi-result + strip cap + duration MISMATCH → medium + duration-mismatch reason', async () => {

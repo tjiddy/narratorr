@@ -68,35 +68,17 @@ COPY --from=builder /app/drizzle ./drizzle
 COPY pnpm-lock.yaml package.json ./
 
 # Ship the third-party notice and the project license alongside the bundled ffmpeg
-# binary + node_modules, so the GPL/LGPL + permissive-attribution obligations (and
-# Narratorr's own GPL-3.0-only LICENSE) travel to every image puller (#1862).
+# binary + node_modules, so the FFmpeg GPL/LGPL notice (and Narratorr's own
+# GPL-3.0-only LICENSE) travel to every image puller (#1862, simplified 2026-07-15:
+# single FFmpeg notice + pointers; the per-component enumeration was retired).
 COPY THIRD_PARTY_NOTICES.md LICENSE ./
 
-# License-compliance build gate (#1862): fail `docker build` — and therefore block the
-# atomic build-push — unless the shipped notice + LICENSE are present and non-empty,
-# the notice pins the *actually installed* ffmpeg version-release (catches any unpinned
-# Alpine 3.23 ffmpeg bump), mentions every covered component and every distinct license
-# family + the FFmpeg attribution + the AOM/rav1e patent grant, and contains NO SPDX
-# placeholder templates (each permissive component must carry its real notice). Per-arch.
+# Presence gate: the notice + LICENSE must ship non-empty in every image. Content
+# sanity (FFmpeg attribution, license texts, no stale version pins) is enforced by
+# docker/license-notice.test.ts in `pnpm verify` — not at image build time.
 RUN set -eu; \
     test -s /app/THIRD_PARTY_NOTICES.md; \
-    test -s /app/LICENSE; \
-    V="$(apk info ffmpeg 2>/dev/null | head -n1 | sed -n 's/^ffmpeg-\(.*\) description:.*/\1/p')"; \
-    test -n "$V"; \
-    grep -q "$V" /app/THIRD_PARTY_NOTICES.md || { echo "notice does not pin installed ffmpeg version-release: $V" >&2; exit 1; }; \
-    for c in ffmpeg x264 x265 lame xvidcore aom dav1d libvpx libwebp libvorbis libtheora opus svt-av1 rav1e libjxl libva libvpl shaderc \
-             libass libbluray libbz2 fontconfig freetype fribidi harfbuzz lilv libopenmpt libplacebo librist soxr libsrt libssh vidstab \
-             libxml2 zimg libzmq libdrm libvdpau alsa-lib libpulse v4l-utils libx11 libxcb; do \
-      grep -q "$c" /app/THIRD_PARTY_NOTICES.md || { echo "notice missing covered component: $c" >&2; exit 1; }; \
-    done; \
-    for h in 'GNU GENERAL PUBLIC LICENSE' 'GNU LESSER GENERAL PUBLIC LICENSE' 'GNU LIBRARY GENERAL PUBLIC LICENSE' \
-             'Mozilla Public License' 'Apache License' 'BSD-2-Clause' 'BSD-3-Clause' 'BSD-3-Clause-Clear' \
-             'MIT' 'ISC' 'X11' 'bzip2' 'WTFPL' 'Alliance for Open Media Patent License' 'FFmpeg'; do \
-      grep -q "$h" /app/THIRD_PARTY_NOTICES.md || { echo "notice missing license family/attribution: $h" >&2; exit 1; }; \
-    done; \
-    if grep -qE '<year>|<owner>|<copyright holders>|\[Owner Organization\]' /app/THIRD_PARTY_NOTICES.md; then \
-      echo "notice contains SPDX placeholder template(s) instead of real component notices" >&2; exit 1; \
-    fi
+    test -s /app/LICENSE
 
 # Copy s6-overlay service definition
 COPY docker/root/ /

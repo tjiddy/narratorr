@@ -1,7 +1,7 @@
 import { resolveBookQualityInputs } from '../../core/utils/quality.js';
 import { tokenizeNarrators, normalizeNarrator } from '../../core/utils/similarity.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
-import { DURATION_TOLERANCE } from './quality-gate.types.js';
+import { withinDurationTolerance } from '../../shared/duration-tolerance.js';
 import type { BookRow } from './types.js';
 
 type BookWithNarrators = BookRow & { narrators?: Array<{ name: string }> };
@@ -82,9 +82,12 @@ export function buildQualityAssessment(
   let durationDelta: number | null = null;
   if (book && book.path !== null && existingInputs) {
     if (existingInputs.durationSeconds && existingInputs.durationSeconds > 0 && newDurationSeconds > 0) {
+      // The ratio is still computed and persisted for telemetry (unchanged shape),
+      // but the HOLD decision moved to the shared absolute 90s band (#1854): both
+      // operands are already SECONDS, so no conversion. Δ ≤ 90s → no hold; > 90s →
+      // held (inclusive at 90, matching every other duration-band call site).
       durationDelta = (newDurationSeconds - existingInputs.durationSeconds) / existingInputs.durationSeconds;
-      // Hold if delta exceeds ±15% (boundary exclusive: exactly ±15% is OK)
-      if (Math.abs(durationDelta) > DURATION_TOLERANCE) {
+      if (!withinDurationTolerance(newDurationSeconds, existingInputs.durationSeconds)) {
         holdReasons.push('duration_delta');
       }
     }

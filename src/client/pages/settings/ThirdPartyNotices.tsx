@@ -7,11 +7,11 @@ import { SettingsSection } from './SettingsSection';
 /**
  * System-tab licenses section (#1862). Renders the SAME `THIRD_PARTY_NOTICES.md` that ships
  * in the runtime image (fetched via `GET /api/system/notices`), so there is one source of
- * truth for the ffmpeg GPL/LGPL + permissive attributions and their full license texts.
+ * truth for the FFmpeg GPL/LGPL attribution and license texts (simplified 2026-07-15:
+ * single FFmpeg notice + pointers, no per-component enumeration).
  *
  * The notice is trusted, static, first-party content, so it renders as a whitespace-preserving
- * <pre> block — no HTML interpretation, no sanitization question. Styled to match the System
- * tab's CURRENT SettingsSection layout (the row-table migration reaches this tab later).
+ * <pre> block — no HTML interpretation, no sanitization question.
  */
 export function ThirdPartyNotices() {
   const { data, isLoading, isError } = useQuery({
@@ -23,7 +23,7 @@ export function ThirdPartyNotices() {
     <SettingsSection
       icon={<ShieldIcon className="w-5 h-5 text-primary" />}
       title="Licenses & Third-Party Notices"
-      description="Attribution and license texts for FFmpeg and the codec libraries bundled in this image."
+      description="Attribution and license texts for the FFmpeg binary bundled in this image."
     >
       {isLoading && (
         <div className="flex items-center gap-2 text-muted-foreground text-sm">

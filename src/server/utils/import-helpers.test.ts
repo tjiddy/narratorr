@@ -9,12 +9,15 @@ vi.mock('node:fs/promises', () => ({
 }));
 
 import { stat, readdir, mkdir, cp } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Stats } from 'node:fs';
 
 import {
   extractYear,
   buildTargetPath,
   getPathSize,
+  getAudioPathSize,
+  getVisiblePathSize,
   containsAudioFiles,
   copyAudioFiles,
   copyDiscGroup,
@@ -321,6 +324,308 @@ describe('getPathSize', () => {
 
     const size = await getPathSize('/root');
     expect(size).toBe(500);
+  });
+});
+
+/**
+ * #1856 — the three directory sizers (`getPathSize` / `getAudioPathSize` / `getVisiblePathSize`)
+ * were consolidated onto one internal parameterized walker. These cases pin every row of the
+ * behavior matrix the consolidation must preserve byte-for-byte: the hidden/audio/direct-file/
+ * identity-root policy axes, the root/child symlink asymmetry, the non-file-root fall-through, and
+ * the fail-loud (never catch-and-return-zero) error contract. All exercise the PUBLIC wrappers only
+ * and mock at the `node:fs/promises` OS boundary (per `esm-same-module-vi-mock-bypass`).
+ */
+describe('directory sizers — consolidated walker policy matrix (#1856)', () => {
+  const ROOT = '/root';
+
+  /**
+   * Path-driven fs mock. `dirs` maps a directory path → its `readdir` Dirent[]; `files` maps a file
+   * path → its byte size. A path present in `files` stats as a file; one present in `dirs` stats as
+   * a directory and `readdir`s to its entries. Any other path rejects, so a forbidden `stat`/`readdir`
+   * (e.g. on an entry that should have been filtered before I/O) fails the test loudly.
+   */
+  function mockFs(
+    dirs: Record<string, ReturnType<typeof makeDirent>[]>,
+    files: Record<string, number>,
+  ): void {
+    vi.mocked(stat).mockImplementation(async (p) => {
+      const key = String(p);
+      if (key in files) return { isFile: () => true, isDirectory: () => false, size: files[key] } as Stats;
+      if (key in dirs) return { isFile: () => false, isDirectory: () => true } as unknown as Stats;
+      throw new Error(`unexpected stat: ${key}`);
+    });
+    vi.mocked(readdir).mockImplementation(async (p) => {
+      const key = String(p);
+      if (key in dirs) return dirs[key] as never;
+      throw new Error(`unexpected readdir: ${key}`);
+    });
+  }
+
+  it('dir with a.mp3 (100) + uppercase TRACK.M4B (10): 110 / 110 / 110', async () => {
+    mockFs(
+      { [ROOT]: [makeDirent('a.mp3', true, false), makeDirent('TRACK.M4B', true, false)] },
+      { [join(ROOT, 'a.mp3')]: 100, [join(ROOT, 'TRACK.M4B')]: 10 },
+    );
+    expect(await getPathSize(ROOT)).toBe(110);
+    expect(await getAudioPathSize(ROOT)).toBe(110); // .M4B lowercases into AUDIO_EXTENSIONS
+    expect(await getVisiblePathSize(ROOT)).toBe(110);
+  });
+
+  it('dir with only a visible non-audio cover.jpg (50): 50 / 0 / 50', async () => {
+    mockFs({ [ROOT]: [makeDirent('cover.jpg', true, false)] }, { [join(ROOT, 'cover.jpg')]: 50 });
+    expect(await getPathSize(ROOT)).toBe(50);
+    expect(await getAudioPathSize(ROOT)).toBe(0); // non-audio rejected by the extension predicate
+    expect(await getVisiblePathSize(ROOT)).toBe(50);
+  });
+
+  it('dir with visible a.mp3 (100) + dot-file .tmp.mp3 (999): 1099 / 100 / 100', async () => {
+    mockFs(
+      { [ROOT]: [makeDirent('a.mp3', true, false), makeDirent('.tmp.mp3', true, false)] },
+      { [join(ROOT, 'a.mp3')]: 100, [join(ROOT, '.tmp.mp3')]: 999 },
+    );
+    expect(await getPathSize(ROOT)).toBe(1099); // counts the hidden file
+    expect(await getAudioPathSize(ROOT)).toBe(100);
+    expect(await getVisiblePathSize(ROOT)).toBe(100);
+  });
+
+  it('dir with visible a.mp3 (100) + dot-dir .hidden/ (5000): includes / 100 / 100', async () => {
+    mockFs(
+      {
+        [ROOT]: [makeDirent('a.mp3', true, false), makeDirent('.hidden', false, true)],
+        [join(ROOT, '.hidden')]: [makeDirent('big.m4b', true, false)],
+      },
+      { [join(ROOT, 'a.mp3')]: 100, [join(ROOT, '.hidden', 'big.m4b')]: 5000 },
+    );
+    expect(await getPathSize(ROOT)).toBe(5100); // descends the hidden subtree
+    expect(await getAudioPathSize(ROOT)).toBe(100);
+    expect(await getVisiblePathSize(ROOT)).toBe(100);
+  });
+
+  it('empty directory: 0 / 0 / 0 (base case, F8)', async () => {
+    mockFs({ [ROOT]: [] }, {});
+    expect(await getPathSize(ROOT)).toBe(0);
+    expect(await getAudioPathSize(ROOT)).toBe(0);
+    expect(await getVisiblePathSize(ROOT)).toBe(0);
+  });
+
+  it('direct file root a.mp3 (100): 100 / 100 / 100', async () => {
+    const p = '/x/a.mp3';
+    mockFs({}, { [p]: 100 });
+    expect(await getPathSize(p)).toBe(100);
+    expect(await getAudioPathSize(p)).toBe(100);
+    expect(await getVisiblePathSize(p)).toBe(100);
+  });
+
+  it('direct file root cover.jpg (50): 50 / 0 / 50', async () => {
+    const p = '/x/cover.jpg';
+    mockFs({}, { [p]: 50 });
+    expect(await getPathSize(p)).toBe(50);
+    expect(await getAudioPathSize(p)).toBe(0); // non-audio direct file → 0
+    expect(await getVisiblePathSize(p)).toBe(50);
+  });
+
+  // F2 — the direct-file-root audio predicate has its OWN toLowerCase() (walkSize root branch),
+  // separate from the child predicate. A lowercase-only root fixture would leave that call untested,
+  // so `getAudioPathSize('/x/BOOK.M4B')` regressing to 0 would pass. This pins the root case-fold.
+  it('direct file root uppercase BOOK.M4B (100): 100 / 100 / 100 (case-insensitive root predicate, F2)', async () => {
+    const p = '/x/BOOK.M4B';
+    mockFs({}, { [p]: 100 });
+    expect(await getPathSize(p)).toBe(100);
+    expect(await getAudioPathSize(p)).toBe(100); // root predicate lowercases the extension → .m4b matches
+    expect(await getVisiblePathSize(p)).toBe(100);
+  });
+
+  it('direct hidden file root .a.mp3 (100): 100 / 0 / 100 (F32)', async () => {
+    const p = '/x/.a.mp3';
+    mockFs({}, { [p]: 100 });
+    expect(await getPathSize(p)).toBe(100); // hidden root file still sized by the all-entry wrapper
+    expect(await getAudioPathSize(p)).toBe(0); // hidden basename → 0 (F32)
+    expect(await getVisiblePathSize(p)).toBe(100);
+  });
+
+  it('direct hidden file root .cover.jpg (50): 50 / 0 / 50', async () => {
+    const p = '/x/.cover.jpg';
+    mockFs({}, { [p]: 50 });
+    expect(await getPathSize(p)).toBe(50);
+    expect(await getAudioPathSize(p)).toBe(0);
+    expect(await getVisiblePathSize(p)).toBe(50);
+  });
+
+  it('hidden directory root .merge-tmp/ with visible children: descended (F38)', async () => {
+    const staging = '/x/.merge-tmp';
+    mockFs(
+      { [staging]: [makeDirent('t.mp3', true, false), makeDirent('c.jpg', true, false)] },
+      { [join(staging, 't.mp3')]: 42, [join(staging, 'c.jpg')]: 15 },
+    );
+    expect(await getPathSize(staging)).toBe(57); // both children
+    expect(await getAudioPathSize(staging)).toBe(42); // audio child only
+    expect(await getVisiblePathSize(staging)).toBe(57); // visible children
+  });
+
+  // F1 — the recursive descent (walkSize's `else if isDirectory` branch) is the ONLY place both
+  // `includeHidden` and `audioOnly` are forwarded into a nested visible directory. Every other
+  // fixture puts the hidden/non-audio entries at the ROOT, so hard-coding the recursive call to the
+  // all-files preset would still pass them. This case buries audio, non-audio, and hidden entries a
+  // level down under a VISIBLE subdir and asserts distinct per-wrapper totals — the only way all
+  // three match is if both flags propagate through the recursion.
+  it('recursive descent forwards both policies into a nested visible subdir (F1)', async () => {
+    const sub = join(ROOT, 'sub');
+    const nested = join(sub, '.nested');
+    mockFs(
+      {
+        [ROOT]: [makeDirent('top.mp3', true, false), makeDirent('sub', false, true)],
+        [sub]: [
+          makeDirent('deep.mp3', true, false),
+          makeDirent('notes.txt', true, false),
+          makeDirent('.hidden.mp3', true, false),
+          makeDirent('.nested', false, true),
+        ],
+        [nested]: [makeDirent('buried.mp3', true, false)],
+      },
+      {
+        [join(ROOT, 'top.mp3')]: 100,
+        [join(sub, 'deep.mp3')]: 200,
+        [join(sub, 'notes.txt')]: 30,
+        [join(sub, '.hidden.mp3')]: 999,
+        [join(nested, 'buried.mp3')]: 5000,
+      },
+    );
+    // all-entries: top + deep + notes + .hidden.mp3 + .nested/buried = 100+200+30+999+5000
+    expect(await getPathSize(ROOT)).toBe(6329);
+    // audio + skip-hidden: top + deep only (notes non-audio, .hidden.mp3 hidden, .nested skipped)
+    expect(await getAudioPathSize(ROOT)).toBe(300);
+    // all-visible: top + deep + notes (.hidden.mp3 hidden, .nested skipped)
+    expect(await getVisiblePathSize(ROOT)).toBe(330);
+  });
+
+  // Section 3a — the hidden skip runs BEFORE any I/O on the child (the F40 failure mode): a hidden
+  // child/subtree that would reject if stat'd/readdir'd must never be touched.
+  it('skips hidden children before stat/readdir — audio & visible wrappers (F40)', async () => {
+    const realFile = join(ROOT, 'real.mp3');
+    const hiddenFile = join(ROOT, '.tmp.mp3');
+    const hiddenDir = join(ROOT, '.hidden');
+
+    for (const fn of [getAudioPathSize, getVisiblePathSize]) {
+      vi.clearAllMocks();
+      vi.mocked(stat).mockImplementation(async (p) => {
+        const key = String(p);
+        if (key === ROOT) return { isFile: () => false, isDirectory: () => true } as unknown as Stats;
+        if (key === realFile) return { isFile: () => true, size: 100 } as Stats;
+        throw new Error(`ENOENT stat ${key}`); // any hidden child path rejects if touched
+      });
+      vi.mocked(readdir).mockImplementation(async (p) => {
+        if (String(p) === ROOT) {
+          return [
+            makeDirent('real.mp3', true, false),
+            makeDirent('.tmp.mp3', true, false),
+            makeDirent('.hidden', false, true),
+          ] as never;
+        }
+        throw new Error(`ENOENT readdir ${String(p)}`);
+      });
+
+      expect(await fn(ROOT)).toBe(100); // visible audio control only
+      // First-arg inspection (options-aware): neither hidden path was ever passed to stat/readdir.
+      expect(vi.mocked(stat).mock.calls.every((c) => c[0] !== hiddenFile && c[0] !== hiddenDir)).toBe(true);
+      expect(vi.mocked(readdir).mock.calls.every((c) => c[0] !== hiddenDir)).toBe(true);
+    }
+  });
+
+  // Section 3b — getAudioPathSize applies the extension predicate to the Dirent name BEFORE stat, so
+  // a visible non-audio sibling is never stat'd (can't raise ENOENT/EACCES on a vanishing cover).
+  it('getAudioPathSize never stats a visible non-audio child', async () => {
+    const realFile = join(ROOT, 'real.mp3');
+    const coverFile = join(ROOT, 'cover.jpg');
+    vi.mocked(stat).mockImplementation(async (p) => {
+      const key = String(p);
+      if (key === ROOT) return { isFile: () => false, isDirectory: () => true } as unknown as Stats;
+      if (key === realFile) return { isFile: () => true, size: 100 } as Stats;
+      throw new Error(`ENOENT stat ${key}`); // cover.jpg must never be stat'd
+    });
+    vi.mocked(readdir).mockResolvedValue([
+      makeDirent('real.mp3', true, false),
+      makeDirent('cover.jpg', true, false),
+    ] as never);
+
+    expect(await getAudioPathSize(ROOT)).toBe(100);
+    expect(vi.mocked(stat).mock.calls.every((c) => c[0] !== coverFile)).toBe(true);
+  });
+
+  // Section 4 — child classification is by Dirent only. A non-regular child (isFile() === false AND
+  // isDirectory() === false: symlink/FIFO/socket/device) is ignored with no further I/O, for ALL
+  // three presets. Guards against a "stat every child" consolidation that would count linked bytes.
+  it('ignores a non-regular child Dirent without stat/readdir — all three presets (F5)', async () => {
+    const realFile = join(ROOT, 'real.mp3');
+    const weird = join(ROOT, 'weird');
+    for (const fn of [getPathSize, getAudioPathSize, getVisiblePathSize]) {
+      vi.clearAllMocks();
+      vi.mocked(stat).mockImplementation(async (p) => {
+        const key = String(p);
+        if (key === ROOT) return { isFile: () => false, isDirectory: () => true } as unknown as Stats;
+        if (key === realFile) return { isFile: () => true, size: 100 } as Stats;
+        throw new Error(`must not touch ${key}`); // the non-regular child must never be stat'd
+      });
+      vi.mocked(readdir).mockImplementation(async (p) => {
+        if (String(p) === ROOT) {
+          return [makeDirent('real.mp3', true, false), makeDirent('weird', false, false)] as never;
+        }
+        throw new Error(`must not readdir ${String(p)}`);
+      });
+
+      expect(await fn(ROOT)).toBe(100); // visible audio control, counted by every preset
+      expect(vi.mocked(stat).mock.calls.every((c) => c[0] !== weird)).toBe(true);
+      expect(vi.mocked(readdir).mock.calls.every((c) => c[0] !== weird)).toBe(true);
+    }
+  });
+
+  // Section 5 — a non-file, non-directory root (FIFO/socket/device) falls through to readdir(path)
+  // with NO isDirectory() short-circuit that returns 0; the readdir error propagates. Sentinel identity.
+  it('non-file root falls through to readdir and propagates its error — all three presets (F10)', async () => {
+    const sentinel = new Error('ENOTDIR sentinel');
+    for (const fn of [getPathSize, getAudioPathSize, getVisiblePathSize]) {
+      vi.clearAllMocks();
+      vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => false } as unknown as Stats);
+      vi.mocked(readdir).mockRejectedValue(sentinel);
+      await expect(fn(ROOT)).rejects.toBe(sentinel);
+      expect(vi.mocked(readdir).mock.calls.some((c) => c[0] === ROOT)).toBe(true);
+    }
+  });
+
+  // Section 6 — visited-path failures are never swallowed into a partial/zero total. Sentinel identity
+  // is itself the proof the getAudioStats catch-and-return-zero contract was not adopted.
+  it('root stat rejection propagates unchanged — all three presets', async () => {
+    const sentinel = new Error('root stat sentinel');
+    for (const fn of [getPathSize, getAudioPathSize, getVisiblePathSize]) {
+      vi.clearAllMocks();
+      vi.mocked(stat).mockRejectedValue(sentinel);
+      await expect(fn(ROOT)).rejects.toBe(sentinel);
+    }
+  });
+
+  it('root readdir rejection (directory root) propagates unchanged — all three presets', async () => {
+    const sentinel = new Error('root readdir sentinel');
+    for (const fn of [getPathSize, getAudioPathSize, getVisiblePathSize]) {
+      vi.clearAllMocks();
+      vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true } as unknown as Stats);
+      vi.mocked(readdir).mockRejectedValue(sentinel);
+      await expect(fn(ROOT)).rejects.toBe(sentinel);
+    }
+  });
+
+  it('admitted child stat rejection propagates unchanged — all three presets', async () => {
+    const sentinel = new Error('child stat sentinel');
+    const realFile = join(ROOT, 'real.mp3'); // audio so getAudioPathSize also admits (and stats) it
+    for (const fn of [getPathSize, getAudioPathSize, getVisiblePathSize]) {
+      vi.clearAllMocks();
+      vi.mocked(stat).mockImplementation(async (p) => {
+        const key = String(p);
+        if (key === ROOT) return { isFile: () => false, isDirectory: () => true } as unknown as Stats;
+        if (key === realFile) throw sentinel;
+        throw new Error(`unexpected stat ${key}`);
+      });
+      vi.mocked(readdir).mockResolvedValue([makeDirent('real.mp3', true, false)] as never);
+      await expect(fn(ROOT)).rejects.toBe(sentinel);
+    }
   });
 });
 
