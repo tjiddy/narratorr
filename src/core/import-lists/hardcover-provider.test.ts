@@ -630,6 +630,42 @@ describe('HardcoverProvider', () => {
 
     const PAGE_SIZE = 100;
 
+    // F3 — the provider-level invalid/missing-URL failure (`requireParsedUrl`) is a
+    // trust boundary shared by fetchItems() and test(); assert its consequence
+    // directly (parser/schema tests don't cover the provider throw) and prove no
+    // network request is issued.
+    describe('invalid / missing List URL (F3)', () => {
+      const guardNoNetwork = () => {
+        let hits = 0;
+        server.use(http.post(GQL_URL, () => { hits += 1; return HttpResponse.json(listResponse([])); }));
+        return () => hits;
+      };
+
+      it('fetchItems() rejects with ImportListError and issues no request for an invalid URL', async () => {
+        const hits = guardNoNetwork();
+        const err = await makeProvider({ listUrl: 'https://example.com/not-hardcover' }).fetchItems().catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ImportListError);
+        expect((err as ImportListError).message).toBe('Not a Hardcover list URL');
+        expect(hits()).toBe(0);
+      });
+
+      it('fetchItems() rejects with ImportListError and issues no request for a missing URL', async () => {
+        const hits = guardNoNetwork();
+        const err = await new HardcoverProvider({ apiKey: 'test-key', listType: 'custom' }).fetchItems().catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ImportListError);
+        expect((err as ImportListError).message).toBe('Not a Hardcover list URL');
+        expect(hits()).toBe(0);
+      });
+
+      it('test() returns a failed result and issues no request for an invalid URL', async () => {
+        const hits = guardNoNetwork();
+        const result = await makeProvider({ listUrl: 'not-a-url' }).test();
+        expect(result.success).toBe(false);
+        expect(result.message).toContain('Not a Hardcover list URL');
+        expect(hits()).toBe(0);
+      });
+    });
+
     describe('query shape & variables (AC1, AC6)', () => {
       it('sends citext/String variables, the public gate, and the array-form order_by', async () => {
         let body: GqlBody | null = null;

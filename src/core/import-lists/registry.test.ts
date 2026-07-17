@@ -78,8 +78,9 @@ describe('Import List IMPORT_LIST_ADAPTER_FACTORIES', () => {
       IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'trending', shelfId: undefined });
       // Producer-omit pattern: undefined shelfId is dropped from the
       // constructor payload, not passed through as explicit undefined
-      // (eopt invariant per #939 AC4).
-      const ctorArg = vi.mocked(HardcoverProvider).mock.calls[0]![0];
+      // (eopt invariant per #939 AC4). Read the LAST call — this file does not
+      // clear mocks between tests, so `.calls[0]` would inspect an earlier test's call.
+      const ctorArg = vi.mocked(HardcoverProvider).mock.calls.at(-1)![0];
       expect(ctorArg).not.toHaveProperty('shelfId');
     });
 
@@ -109,7 +110,9 @@ describe('Import List IMPORT_LIST_ADAPTER_FACTORIES', () => {
 
     it('hardcover factory omits listUrl/importMax for a non-custom list', () => {
       IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'trending' });
-      const ctorArg = vi.mocked(HardcoverProvider).mock.calls[0]![0];
+      // Read the LAST call — this file does not clear mocks between tests, so
+      // `.calls[0]` would inspect an earlier test's call and pass vacuously (F4).
+      const ctorArg = vi.mocked(HardcoverProvider).mock.calls.at(-1)![0];
       expect(ctorArg).not.toHaveProperty('listUrl');
       expect(ctorArg).not.toHaveProperty('importMax');
     });

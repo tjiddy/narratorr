@@ -6,10 +6,11 @@ import { getErrorMessage } from '../../shared/error-message.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { IMPORT_LIST_TIMEOUT_MS } from '../utils/constants.js';
 import { parseHardcoverListUrl } from '../../shared/hardcover-list-url.js';
+import type { HardcoverListType } from '../../shared/hardcover-list-types.js';
 
 export interface HardcoverConfig {
   apiKey: string;
-  listType: 'trending' | 'shelf' | 'custom';
+  listType: HardcoverListType;
   shelfId?: number;
   listUrl?: string;
   importMax?: 50 | 100 | 'all';
@@ -237,7 +238,7 @@ export class HardcoverProvider implements ImportListProvider {
   readonly name = 'Hardcover';
 
   private apiKey: string;
-  private listType: 'trending' | 'shelf' | 'custom';
+  private listType: HardcoverListType;
   private shelfId?: number;
   private listUrl?: string;
   private importMax?: 50 | 100 | 'all';

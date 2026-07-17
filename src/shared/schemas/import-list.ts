@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES, type ImportListType } from '../import-list-registry';
 import { parseHardcoverListUrl } from '../hardcover-list-url.js';
+import { HARDCOVER_LIST_TYPES, type HardcoverListType } from '../hardcover-list-types.js';
 
 // ============================================================================
 // Import List schemas
@@ -25,7 +26,7 @@ const hardcoverImportMaxSchema = z.union([z.literal(50), z.literal(100), z.liter
 // omitted value is treated exactly as `trending` (factory default `registry.ts`).
 export type HardcoverSettings = {
   apiKey: string;
-  listType?: 'trending' | 'shelf' | 'custom';
+  listType?: HardcoverListType;
   shelfId?: number;
   listUrl?: string;
   importMax?: 50 | 100 | 'all';
@@ -33,7 +34,7 @@ export type HardcoverSettings = {
 
 export const hardcoverSettingsSchema = z.object({
   apiKey: z.string().trim().min(1),
-  listType: z.enum(['trending', 'shelf', 'custom']).optional(),
+  listType: z.enum(HARDCOVER_LIST_TYPES).optional(),
   shelfId: z.coerce.number().int().positive().optional(),
   // Free user text (#1879 AC2) — `.trim().min(1)` rejects spaces-only before URL parsing.
   listUrl: z.string().trim().min(1).optional(),
@@ -142,7 +143,7 @@ export const createImportListFormSchema = z.object({
     list: z.string().optional(),
     // Hardcover
     shelfId: z.number().int().positive().optional(),
-    listType: z.enum(['trending', 'shelf', 'custom']).optional(),
+    listType: z.enum(HARDCOVER_LIST_TYPES).optional(),
     listUrl: z.string().optional(),
     importMax: hardcoverImportMaxSchema.optional(),
   }),
