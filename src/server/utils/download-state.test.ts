@@ -99,7 +99,7 @@ describe('display-status query conditions', () => {
   });
 });
 
-// #1857 F16 — the QG-eligibility rule ("completed display + non-null externalId")
+// #1857 F16 — the QG-eligibility rule ("completed display + non-empty externalId")
 // is a safety-critical decision shared by the QG batch query and the replace
 // blocker classification. This named consistency test pins the in-memory twin so
 // it cannot drift from the intended set the SQL condition selects.
@@ -107,7 +107,7 @@ describe('isQualityGateEligibleRow (QG-eligibility twin, #1857 F16)', () => {
   const row = (clientStatus: ClientStatus, pipelineStage: PipelineStage, externalId: string | null) =>
     ({ clientStatus, pipelineStage, externalId });
 
-  it('is eligible ONLY for a tracked (externalId != null) completed-display row', () => {
+  it('is eligible ONLY for a tracked (non-empty externalId) completed-display row', () => {
     expect(isQualityGateEligibleRow(row('completed', 'idle', 'ext-1'))).toBe(true);
   });
 

@@ -1736,6 +1736,40 @@ describe('MatchJobService', () => {
     });
   });
 
+  // #1882 — folder/Pass-2 duration-agreement tiebreaker end-to-end: the scanned
+  // seconds must reach `rankResults(detailed, context, audioResult?.totalDuration)`
+  // and select the sibling edition whose runtime agrees. This fails if the
+  // production call omits the scanned seconds (the direct rankResults test can't
+  // catch a caller that never supplies them).
+  describe('duration tiebreaker (folder pass, #1882)', () => {
+    it('Dogs of War — selects the 9h58m sibling and verifies high on a same-title edition tie', async () => {
+      // Scanned 35,936s. 598min (9h58m) = 35,880s, Δ56s ≤ 240 → verified;
+      // 568min (9h28m) = 34,080s, Δ1,856s → not verified. Provider ordered the
+      // wrong 9h28m sibling first.
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 35_936, files: [] });
+      const candidate: MatchCandidate = {
+        path: '/audiobooks/Dogs of War',
+        title: 'Dogs of War',
+        author: 'Adrian Tchaikovsky',
+      };
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeBookMetadata({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], providerId: 'p1' }),
+        makeBookMetadata({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], providerId: 'p2' }),
+      ]);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'B0FFH568', duration: 568 })
+        .mockResolvedValueOnce({ asin: 'B0BT2T598', duration: 598 });
+
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result!.bestMatch!.asin).toBe('B0BT2T598');
+      expect(result!.bestMatch!.duration).toBe(598);
+      expect(result!.confidence).toBe('high');
+    });
+  });
+
   describe('structured search params', () => {
     it('sends structured title and author via options when parsed data available', async () => {
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -2493,6 +2527,32 @@ describe('MatchJobService', () => {
         const result = service.getJob(id)!.results[0];
         expect(result!.bestMatch?.asin).toBe('B1');
         expect(pickPrimarySeries(result!.bestMatch!)?.position).toBe(1);
+      });
+
+      // #1882 — the scanned seconds must survive the `runTagSearch → tryAttempt`
+      // hop and reach rankResultsCleaned on the REAL tag path, so a same-title
+      // edition tie resolves to the runtime-agreeing sibling. This is the tag
+      // twin of the folder regression above — the direct rankResultsCleaned test
+      // bypasses the threading these two hops perform.
+      it('threads totalDuration through runTagSearch → tryAttempt so the edition tiebreaker picks the 9h58m sibling', async () => {
+        // Scanned 35,936s → 598min sibling verifies; 568min does not. Provider
+        // ordered the wrong 9h28m sibling first. Both carry a full asin so
+        // fetchDetails passes them through with their duration.
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Dogs of War', 'Adrian Tchaikovsky', 35_936),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], asin: 'B0FFH568', duration: 568 }),
+          makeBookMetadata({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], asin: 'B0BT2T598', duration: 598 }),
+        ]);
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.bestMatch?.asin).toBe('B0BT2T598');
+        expect(result!.bestMatch?.duration).toBe(598);
+        expect(result!.confidence).toBe('high');
       });
 
       it('does NOT fall through to Pass 2 when tag-derived match is accepted', async () => {

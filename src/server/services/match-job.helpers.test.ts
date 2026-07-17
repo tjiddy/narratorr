@@ -26,6 +26,7 @@ import {
   rankResultsCleaned,
   rankResults,
   positionTiebreak,
+  durationTiebreak,
   resolveConfidenceFromDuration,
   resolveSingleResultConfidence,
   parsePublishedYear,
@@ -709,6 +710,192 @@ describe('rankResultsCleaned position tiebreaker', () => {
     const ranked = rankResultsCleaned([noPos, alsoNoPos], { title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 });
     expect(ranked[0]!.meta.publishedDate).toBe('2008');
     expect(ranked[1]!.meta.publishedDate).toBe('2006');
+  });
+});
+
+// ============================================================================
+// durationTiebreak — shared edition comparator (#1882)
+// ============================================================================
+
+describe('durationTiebreak', () => {
+  // Provider `duration` is MINUTES; scanned seconds is SECONDS. Dogs of War:
+  // 598min (9h58m) = 35,880s, Δ56s ≤ 240 → verified; 568min (9h28m) = 34,080s,
+  // Δ1,856s → not verified. Scanned = 35,936s.
+  const SCANNED = 35_936;
+  const agree = makeBook({ duration: 598 });
+  const disagree = makeBook({ duration: 568 });
+  const missing = makeBook({ duration: undefined });
+  const zero = makeBook({ duration: 0 });
+
+  it('invalid scannedSeconds (undefined) → 0 for any two candidates', () => {
+    expect(durationTiebreak(agree, disagree, undefined)).toBe(0);
+  });
+
+  it('invalid scannedSeconds (0) → 0', () => {
+    expect(durationTiebreak(agree, disagree, 0)).toBe(0);
+  });
+
+  it('invalid scannedSeconds (negative) → 0', () => {
+    expect(durationTiebreak(agree, disagree, -100)).toBe(0);
+  });
+
+  it('valid scan: the agreeing candidate sorts first (negative → a first, positive swapped)', () => {
+    expect(durationTiebreak(agree, disagree, SCANNED)).toBeLessThan(0);
+    expect(durationTiebreak(disagree, agree, SCANNED)).toBeGreaterThan(0);
+  });
+
+  it('verified beats a missing-duration candidate (missing folds into non-verified, case 2)', () => {
+    expect(durationTiebreak(agree, missing, SCANNED)).toBeLessThan(0);
+    expect(durationTiebreak(missing, agree, SCANNED)).toBeGreaterThan(0);
+  });
+
+  it('verified beats a zero-duration candidate', () => {
+    expect(durationTiebreak(agree, zero, SCANNED)).toBeLessThan(0);
+  });
+
+  it('both candidates agree → 0 (stable, case 3)', () => {
+    const alsoAgree = makeBook({ duration: 599 }); // 35,940s, Δ4s ≤ 240 → verified
+    expect(durationTiebreak(agree, alsoAgree, SCANNED)).toBe(0);
+  });
+
+  it('both candidates disagree → 0', () => {
+    const alsoDisagree = makeBook({ duration: 777 }); // 46,620s → not verified
+    expect(durationTiebreak(disagree, alsoDisagree, SCANNED)).toBe(0);
+  });
+
+  it('two non-verified candidates (one missing, one present-but-off) → 0 (case 4, absence never demotes)', () => {
+    expect(durationTiebreak(missing, disagree, SCANNED)).toBe(0);
+    expect(durationTiebreak(disagree, missing, SCANNED)).toBe(0);
+  });
+
+  it('introduces no new duration primitive: delegates entirely to isDurationVerified', () => {
+    // A candidate exactly on the 240s band edge verifies via withinDurationTolerance
+    // (inclusive) with no re-derived conversion in the tiebreak itself.
+    const edge = makeBook({ duration: 600 }); // 36,000s vs 36,240s scanned → Δ240 ≤ 240 → verified
+    const off = makeBook({ duration: 600 });
+    expect(durationTiebreak(edge, makeBook({ duration: undefined }), 36_240)).toBeLessThan(0);
+    expect(durationTiebreak(edge, off, 36_240)).toBe(0);
+  });
+});
+
+// ============================================================================
+// Duration-agreement tiebreaker in the rankers (#1882) — Dogs of War
+// ============================================================================
+
+describe('rankResults duration tiebreaker', () => {
+  // Same title/author/narrators, different runtimes: text score is tied, so
+  // duration must decide. Scanned 35,936s → 598min edition verifies.
+  const edition568 = makeBook({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], duration: 568 });
+  const edition598 = makeBook({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], duration: 598 });
+  const SCANNED = 35_936;
+
+  it('promotes the duration-agreeing (9h58m) sibling when text scores are tied', () => {
+    // Provider returned the wrong 9h28m sibling first.
+    const candidate: MatchCandidate = { path: '/audiobooks/Dogs of War', title: 'Dogs of War', author: 'Adrian Tchaikovsky' };
+    const ranked = rankResults([edition568, edition598], candidate, SCANNED);
+    expect(ranked[0]!.meta.duration).toBe(598);
+  });
+
+  it('does NOT flip a clearly better text-score winner (duration is only a tiebreaker)', () => {
+    // The 568 edition has the RIGHT title, the 598 edition a clearly worse one.
+    const strongText = makeBook({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], duration: 568 });
+    const weakText = makeBook({ title: 'Cats of Peace', authors: [{ name: 'Adrian Tchaikovsky' }], duration: 598 });
+    const candidate: MatchCandidate = { path: '/audiobooks/Dogs of War', title: 'Dogs of War', author: 'Adrian Tchaikovsky' };
+    const ranked = rankResults([strongText, weakText], candidate, SCANNED);
+    // Duration agrees with the weak-text candidate, but the score gap exceeds
+    // the 0.001 epsilon → the stronger text match stays first.
+    expect(ranked[0]!.meta.title).toBe('Dogs of War');
+  });
+
+  it('no scanned duration → order unchanged (comparator no-ops)', () => {
+    const candidate: MatchCandidate = { path: '/audiobooks/Dogs of War', title: 'Dogs of War', author: 'Adrian Tchaikovsky' };
+    const ranked = rankResults([edition568, edition598], candidate);
+    expect(ranked[0]!.meta.duration).toBe(568);
+  });
+
+  it('no candidate durations → order unchanged', () => {
+    const a = makeBook({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }] });
+    const b = makeBook({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }] });
+    const candidate: MatchCandidate = { path: '/audiobooks/Dogs of War', title: 'Dogs of War', author: 'Adrian Tchaikovsky' };
+    const ranked = rankResults([a, b], candidate, SCANNED);
+    expect(ranked[0]!.meta).toBe(a);
+  });
+
+  it('neither candidate agrees → order unchanged', () => {
+    const a = makeBook({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], duration: 100 });
+    const b = makeBook({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], duration: 200 });
+    const candidate: MatchCandidate = { path: '/audiobooks/Dogs of War', title: 'Dogs of War', author: 'Adrian Tchaikovsky' };
+    const ranked = rankResults([a, b], candidate, SCANNED);
+    expect(ranked[0]!.meta).toBe(a);
+  });
+
+  it('both candidates agree → stable (input order preserved)', () => {
+    const a = makeBook({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], duration: 598 });
+    const b = makeBook({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], duration: 599 });
+    const candidate: MatchCandidate = { path: '/audiobooks/Dogs of War', title: 'Dogs of War', author: 'Adrian Tchaikovsky' };
+    const ranked = rankResults([a, b], candidate, SCANNED);
+    expect(ranked[0]!.meta).toBe(a);
+  });
+
+  it('position tiebreaker runs BEFORE duration: position-matching candidate wins even if the other agrees on duration', () => {
+    // #1 has a disagreeing duration; #2 agrees. Position wanted=1 must still win.
+    const p1Disagree = makeBook({ title: 'Series', authors: [{ name: 'A' }], series: [{ name: 'Series', position: 1 }], duration: 568 });
+    const p2Agree = makeBook({ title: 'Series', authors: [{ name: 'A' }], series: [{ name: 'Series', position: 2 }], duration: 598 });
+    const candidate: MatchCandidate = { path: '/audiobooks/Series', title: 'Series', author: 'A', seriesPosition: 1 };
+    const ranked = rankResults([p2Agree, p1Disagree], candidate, SCANNED);
+    expect(pickPos(ranked[0]!.meta)).toBe(1);
+  });
+
+  it('position tie → duration decides, ahead of the year tiebreaker', () => {
+    // Both position 1; the year-wrong candidate agrees on duration → duration wins.
+    const yearWrongAgrees = makeBook({ title: 'S', authors: [{ name: 'A' }], series: [{ name: 'S', position: 1 }], publishedDate: '2008', duration: 598 });
+    const yearRightDisagrees = makeBook({ title: 'S', authors: [{ name: 'A' }], series: [{ name: 'S', position: 1 }], publishedDate: '2006', duration: 568 });
+    const candidate: MatchCandidate = { path: '/audiobooks/S (2006)', title: 'S', author: 'A', seriesPosition: 1 };
+    const ranked = rankResults([yearRightDisagrees, yearWrongAgrees], candidate, SCANNED);
+    expect(ranked[0]!.meta.duration).toBe(598);
+  });
+});
+
+describe('rankResultsCleaned duration tiebreaker', () => {
+  const edition568 = makeBook({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], duration: 568 });
+  const edition598 = makeBook({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], duration: 598 });
+  const SCANNED = 35_936;
+  const tagQuery = { title: 'Dogs of War', author: 'Adrian Tchaikovsky' };
+
+  it('promotes the duration-agreeing (9h58m) sibling when text scores are tied', () => {
+    const ranked = rankResultsCleaned([edition568, edition598], tagQuery, SCANNED);
+    expect(ranked[0]!.meta.duration).toBe(598);
+  });
+
+  it('does NOT flip a clearly better text-score winner', () => {
+    const strongText = makeBook({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], duration: 568 });
+    const weakText = makeBook({ title: 'Cats of Peace', authors: [{ name: 'Adrian Tchaikovsky' }], duration: 598 });
+    const ranked = rankResultsCleaned([strongText, weakText], tagQuery, SCANNED);
+    expect(ranked[0]!.meta.title).toBe('Dogs of War');
+  });
+
+  it('scannedSeconds omitted → order unchanged (backward-compatible callers)', () => {
+    const ranked = rankResultsCleaned([edition568, edition598], tagQuery);
+    expect(ranked[0]!.meta.duration).toBe(568);
+  });
+
+  it('zero scanned duration (tag path no-signal) → order unchanged', () => {
+    const ranked = rankResultsCleaned([edition568, edition598], tagQuery, 0);
+    expect(ranked[0]!.meta.duration).toBe(568);
+  });
+
+  it('position tiebreaker runs BEFORE duration', () => {
+    const p1Disagree = makeBook({ title: 'Series', authors: [{ name: 'A' }], series: [{ name: 'Series', position: 1 }], duration: 568 });
+    const p2Agree = makeBook({ title: 'Series', authors: [{ name: 'A' }], series: [{ name: 'Series', position: 2 }], duration: 598 });
+    const ranked = rankResultsCleaned([p2Agree, p1Disagree], { title: 'Series', author: 'A', seriesPosition: 1 }, SCANNED);
+    expect(pickPos(ranked[0]!.meta)).toBe(1);
+  });
+
+  it('position tie → duration decides, ahead of the year tiebreaker', () => {
+    const yearWrongAgrees = makeBook({ title: 'S', authors: [{ name: 'A' }], series: [{ name: 'S', position: 1 }], publishedDate: '2008', duration: 598 });
+    const yearRightDisagrees = makeBook({ title: 'S', authors: [{ name: 'A' }], series: [{ name: 'S', position: 1 }], publishedDate: '2006', duration: 568 });
+    const ranked = rankResultsCleaned([yearRightDisagrees, yearWrongAgrees], { title: 'S', author: 'A', year: '2006', seriesPosition: 1 }, SCANNED);
+    expect(ranked[0]!.meta.duration).toBe(598);
   });
 });
 

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES, type ImportListType } from '../import-list-registry';
+import { parseHardcoverListUrl } from '../hardcover-list-url.js';
+import { HARDCOVER_LIST_TYPES, HARDCOVER_IMPORT_MAX_VALUES, type HardcoverListType, type HardcoverImportMax } from '../hardcover-list-types.js';
 
 // ============================================================================
 // Import List schemas
@@ -14,20 +16,58 @@ export const nytSettingsSchema = z.object({
   list: z.string().trim().optional(),
 }).strict();
 
+// #1879 — strict Import Max (custom lists), built from the shared canonical set
+// so schema + types cannot drift (#1879 F6). A multi-literal, NOT a coercion:
+// `75`/`0`/`'50'` are rejected outright.
+const hardcoverImportMaxSchema = z.literal(HARDCOVER_IMPORT_MAX_VALUES);
+
+// Type-scoped parsed Hardcover settings. Every branch keeps `apiKey` plus only
+// the effective list type's own keys; the `.transform` below strips any stale
+// foreign key the input carried (#1879 AC10). `listType` stays optional — an
+// omitted value is treated exactly as `trending` (factory default `registry.ts`).
+export type HardcoverSettings = {
+  apiKey: string;
+  listType?: HardcoverListType;
+  shelfId?: number;
+  listUrl?: string;
+  importMax?: HardcoverImportMax;
+};
+
 export const hardcoverSettingsSchema = z.object({
   apiKey: z.string().trim().min(1),
-  listType: z.enum(['trending', 'shelf']).optional(),
+  listType: z.enum(HARDCOVER_LIST_TYPES).optional(),
   shelfId: z.coerce.number().int().positive().optional(),
+  // Free user text (#1879 AC2) — `.trim().min(1)` rejects spaces-only before URL parsing.
+  listUrl: z.string().trim().min(1).optional(),
+  importMax: hardcoverImportMaxSchema.optional(),
 }).strict().superRefine((data, ctx) => {
   if (data.listType === 'shelf' && data.shelfId === undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['shelfId'], message: 'Shelf ID is required when list type is "shelf"' });
   }
+  if (data.listType === 'custom') {
+    if (data.listUrl === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['listUrl'], message: 'List URL is required when list type is "custom"' });
+    } else if (parseHardcoverListUrl(data.listUrl) === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['listUrl'], message: 'Not a Hardcover list URL' });
+    }
+  }
+}).transform((data): HardcoverSettings => {
+  // Runs only on a clean parse (Zod skips the transform when superRefine added
+  // an issue), so the `!` assertions below are guaranteed present. Output is
+  // type-scoped: only the effective list type's own keys survive.
+  if (data.listType === 'custom') {
+    return { apiKey: data.apiKey, listType: 'custom', listUrl: data.listUrl!, importMax: data.importMax ?? 50 };
+  }
+  if (data.listType === 'shelf') {
+    return { apiKey: data.apiKey, listType: 'shelf', ...(data.shelfId !== undefined && { shelfId: data.shelfId }) };
+  }
+  // trending OR omitted listType — strip shelfId/listUrl/importMax.
+  return { apiKey: data.apiKey, ...(data.listType !== undefined && { listType: data.listType }) };
 });
 
 // ── Settings types and dispatch map ─────────────────────────────────────────
 
 export type NytSettings = z.infer<typeof nytSettingsSchema>;
-export type HardcoverSettings = z.infer<typeof hardcoverSettingsSchema>;
 
 export type ImportListSettingsMap = {
   nyt: NytSettings;
@@ -104,7 +144,9 @@ export const createImportListFormSchema = z.object({
     list: z.string().optional(),
     // Hardcover
     shelfId: z.number().int().positive().optional(),
-    listType: z.enum(['trending', 'shelf']).optional(),
+    listType: z.enum(HARDCOVER_LIST_TYPES).optional(),
+    listUrl: z.string().optional(),
+    importMax: hardcoverImportMaxSchema.optional(),
   }),
 }).superRefine((data, ctx) => {
   const meta = IMPORT_LIST_REGISTRY[data.type];

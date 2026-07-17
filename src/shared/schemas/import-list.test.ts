@@ -222,6 +222,104 @@ describe('hardcoverSettingsSchema — numeric shelfId (#732)', () => {
   });
 });
 
+// #1879 — Hardcover custom list (listType 'custom' + listUrl + importMax)
+describe('hardcoverSettingsSchema — custom list (#1879)', () => {
+  const CUSTOM_URL = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
+
+  describe('custom validation & importMax default (AC10)', () => {
+    it('rejects custom without listUrl', () => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'custom' });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ['listUrl'] }));
+      }
+    });
+
+    it('rejects an unparseable listUrl for custom', () => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'custom', listUrl: 'https://example.com/nope' });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ['listUrl'], message: 'Not a Hardcover list URL' }));
+      }
+    });
+
+    it('rejects a whitespace-only listUrl (zod-trim-min-one)', () => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'custom', listUrl: '   ' });
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts a valid custom listUrl and defaults importMax to 50 when omitted', () => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'custom', listUrl: CUSTOM_URL });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual({ apiKey: 'k', listType: 'custom', listUrl: CUSTOM_URL, importMax: 50 });
+      }
+    });
+
+    it("accepts importMax: 'all'", () => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'custom', listUrl: CUSTOM_URL, importMax: 'all' });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.importMax).toBe('all');
+    });
+  });
+
+  describe('importMax strict union — no coercion (F39)', () => {
+    it.each([50, 100])('accepts numeric %s', (value) => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'custom', listUrl: CUSTOM_URL, importMax: value });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.importMax).toBe(value);
+    });
+
+    it.each([75, 0, '50'])('rejects %s', (value) => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'custom', listUrl: CUSTOM_URL, importMax: value });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('type-scoped strip (F26, F35)', () => {
+    it('strips stale listUrl/importMax from a trending payload', () => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'trending', listUrl: CUSTOM_URL, importMax: 100, shelfId: 5 });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).toEqual({ apiKey: 'k', listType: 'trending' });
+    });
+
+    it('strips stale listUrl/importMax from a shelf payload but preserves shelfId', () => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'shelf', shelfId: 7, listUrl: CUSTOM_URL, importMax: 100 });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).toEqual({ apiKey: 'k', listType: 'shelf', shelfId: 7 });
+    });
+
+    it('strips a stale shelfId from a custom payload', () => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'custom', listUrl: CUSTOM_URL, shelfId: 7 });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual({ apiKey: 'k', listType: 'custom', listUrl: CUSTOM_URL, importMax: 50 });
+        expect(result.data).not.toHaveProperty('shelfId');
+      }
+    });
+
+    it('does not leak the custom importMax default into a plain trending parse', () => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'trending' });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).not.toHaveProperty('importMax');
+    });
+  });
+
+  describe('omitted-listType compatibility (F37)', () => {
+    it('an apiKey-only payload still parses (as trending-scoped, no listType key)', () => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k' });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).toEqual({ apiKey: 'k' });
+    });
+
+    it('an omitted-listType payload with stale shelfId/listUrl/importMax parses with all three stripped', () => {
+      const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', shelfId: 5, listUrl: CUSTOM_URL, importMax: 'all' });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).toEqual({ apiKey: 'k' });
+    });
+  });
+});
+
 describe('updateImportListSchema — type required when settings present', () => {
   it('accepts update with settings + type', () => {
     const result = updateImportListSchema.safeParse({

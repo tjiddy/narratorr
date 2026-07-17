@@ -1,5 +1,6 @@
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { compactInputClass as inputClass } from '@/components/settings/formStyles';
+import { parseHardcoverListUrl } from '../../../shared/hardcover-list-url.js';
 
 interface SettingsProps {
   settings: Record<string, unknown>;
@@ -37,6 +38,26 @@ function NytSettings({ settings, onChange }: SettingsProps) {
 
 function HardcoverSettings({ settings, onChange }: SettingsProps) {
   const listType = (settings.listType as string) ?? 'trending';
+  const listUrl = (settings.listUrl as string) ?? '';
+  const importMax = settings.importMax === 'all' ? 'all' : String((settings.importMax as number | undefined) ?? 50);
+
+  // Advisory local feedback only (the server schema + test() are authoritative,
+  // #1879 AC13): a non-empty listUrl that fails to parse renders inline; empty
+  // and parseable values clear it.
+  const urlError = listUrl.trim() !== '' && parseHardcoverListUrl(listUrl) === null
+    ? 'Not a Hardcover list URL'
+    : null;
+
+  // Dedicated list-type change handler (AC12): preserve apiKey + only the target
+  // type's own keys, deleting every foreign key — listUrl/importMax when leaving
+  // custom, shelfId when entering custom or trending. Replaces the bare
+  // `onChange({ ...settings, listType })` so no stale foreign key survives.
+  function handleListTypeChange(next: string) {
+    const scoped: Record<string, unknown> = { ...settings, listType: next };
+    if (next !== 'custom') { delete scoped.listUrl; delete scoped.importMax; }
+    if (next !== 'shelf') { delete scoped.shelfId; }
+    onChange(scoped);
+  }
 
   return (
     <>
@@ -56,10 +77,11 @@ function HardcoverSettings({ settings, onChange }: SettingsProps) {
         <SelectWithChevron
           id="hc-listType"
           value={listType}
-          onChange={(e) => onChange({ ...settings, listType: e.target.value })}
+          onChange={(e) => handleListTypeChange(e.target.value)}
         >
           <option value="trending">Trending</option>
           <option value="shelf">Shelf</option>
+          <option value="custom">Custom List (by URL)</option>
         </SelectWithChevron>
       </div>
       {listType === 'shelf' && (
@@ -82,6 +104,37 @@ function HardcoverSettings({ settings, onChange }: SettingsProps) {
             placeholder="Your Hardcover shelf ID"
           />
         </div>
+      )}
+      {listType === 'custom' && (
+        <>
+          <div>
+            <label htmlFor="hc-listUrl" className="block text-sm font-medium mb-1">List URL</label>
+            <input
+              id="hc-listUrl"
+              type="text"
+              value={listUrl}
+              onChange={(e) => onChange({ ...settings, listUrl: e.target.value })}
+              className={inputClass}
+              placeholder="https://hardcover.app/@username/lists/list-slug"
+            />
+            {urlError && <p className="mt-1 text-sm text-destructive">{urlError}</p>}
+          </div>
+          <div>
+            <label htmlFor="hc-importMax" className="block text-sm font-medium mb-1">Import Max</label>
+            <SelectWithChevron
+              id="hc-importMax"
+              value={importMax}
+              onChange={(e) => {
+                const v = e.target.value;
+                onChange({ ...settings, importMax: v === 'all' ? 'all' : Number(v) });
+              }}
+            >
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="all">All</option>
+            </SelectWithChevron>
+          </div>
+        </>
       )}
     </>
   );

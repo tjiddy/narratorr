@@ -572,4 +572,98 @@ describe('ImportListCard', () => {
       expect(payloadSettings).toHaveProperty('list', 'audio-fiction');
     });
   });
+
+  // #1879 — Hardcover list-type change handler leak matrix through the real card.
+  // Complements the ImportListProviderSettings suite (AC12): the list-type dropdown
+  // scrubs foreign keys, proven here against the onFormTest payload.
+  describe('#1879 — Hardcover list-type change scrubs foreign keys', () => {
+    const CUSTOM_URL = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
+
+    it('custom → trending drops listUrl/importMax from the Test payload', async () => {
+      const user = userEvent.setup();
+      const onFormTest = vi.fn();
+      renderWithProviders(<ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />);
+
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
+      await user.selectOptions(screen.getByLabelText('List Type'), 'custom');
+      await user.type(await screen.findByLabelText('List URL'), CUSTOM_URL);
+      await user.selectOptions(screen.getByLabelText('Import Max'), '100');
+
+      // Switch List Type back to trending — handler drops listUrl/importMax.
+      await user.selectOptions(screen.getByLabelText('List Type'), 'trending');
+      await user.click(screen.getByRole('button', { name: 'Test Connection' }));
+
+      const payloadSettings = onFormTest.mock.calls.at(-1)![0].settings as Record<string, unknown>;
+      expect(payloadSettings).not.toHaveProperty('listUrl');
+      expect(payloadSettings).not.toHaveProperty('importMax');
+      expect(payloadSettings).toMatchObject({ listType: 'trending' });
+    });
+
+    it('shelf → custom drops shelfId from the Test payload', async () => {
+      const user = userEvent.setup();
+      const onFormTest = vi.fn();
+      renderWithProviders(<ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />);
+
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
+      await user.selectOptions(screen.getByLabelText('List Type'), 'shelf');
+      await user.type(await screen.findByLabelText('Shelf ID'), '42');
+
+      // Switch List Type to custom — handler drops shelfId.
+      await user.selectOptions(screen.getByLabelText('List Type'), 'custom');
+      await user.click(screen.getByRole('button', { name: 'Test Connection' }));
+
+      const payloadSettings = onFormTest.mock.calls.at(-1)![0].settings as Record<string, unknown>;
+      expect(payloadSettings).not.toHaveProperty('shelfId');
+      expect(payloadSettings).toMatchObject({ listType: 'custom' });
+    });
+
+    // F7 — AC12 requires custom→shelf in the real-card payload matrix. Populate the
+    // minted listUrl/importMax first so the assertion reds a shelf-branch scrub that
+    // forgot to drop them (not merely empty defaults).
+    it('custom → shelf drops the minted listUrl/importMax from the Test payload', async () => {
+      const user = userEvent.setup();
+      const onFormTest = vi.fn();
+      renderWithProviders(<ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />);
+
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
+      await user.selectOptions(screen.getByLabelText('List Type'), 'custom');
+      await user.type(await screen.findByLabelText('List URL'), CUSTOM_URL);
+      await user.selectOptions(screen.getByLabelText('Import Max'), '100');
+
+      // Switch List Type to shelf — handler drops the custom-only keys.
+      await user.selectOptions(screen.getByLabelText('List Type'), 'shelf');
+      await screen.findByLabelText('Shelf ID');
+      await user.click(screen.getByRole('button', { name: 'Test Connection' }));
+
+      const payloadSettings = onFormTest.mock.calls.at(-1)![0].settings as Record<string, unknown>;
+      expect(payloadSettings).not.toHaveProperty('listUrl');
+      expect(payloadSettings).not.toHaveProperty('importMax');
+      expect(payloadSettings).toMatchObject({ listType: 'shelf' });
+    });
+
+    // F7 — populated-custom → provider switch. The existing #908 provider-switch tests
+    // only mint/assert shelfId; this proves handleTypeChange's registry reset also drops
+    // the dynamically minted listUrl/importMax when leaving the hardcover provider entirely.
+    it('provider switch away from a populated custom list drops listUrl/importMax (and listType)', async () => {
+      const user = userEvent.setup();
+      const onFormTest = vi.fn();
+      renderWithProviders(<ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />);
+
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
+      await user.selectOptions(screen.getByLabelText('List Type'), 'custom');
+      await user.type(await screen.findByLabelText('List URL'), CUSTOM_URL);
+      await user.selectOptions(screen.getByLabelText('Import Max'), 'all');
+
+      // Switch Provider Type to nyt — handleTypeChange resets settings to nyt defaults.
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
+      await screen.findByLabelText('Bestseller List');
+      await user.click(screen.getByRole('button', { name: 'Test Connection' }));
+
+      const payloadSettings = onFormTest.mock.calls.at(-1)![0].settings as Record<string, unknown>;
+      expect(payloadSettings).not.toHaveProperty('listUrl');
+      expect(payloadSettings).not.toHaveProperty('importMax');
+      expect(payloadSettings).not.toHaveProperty('listType');
+      expect(payloadSettings).toMatchObject({ list: 'audio-fiction' });
+    });
+  });
 });
