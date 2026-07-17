@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
-import { HardcoverProvider } from './hardcover-provider.js';
+import { HardcoverProvider, type HardcoverConfig } from './hardcover-provider.js';
 import { ImportListError } from './errors.js';
 
 const GQL_URL = 'https://api.hardcover.app/v1/graphql';
@@ -581,6 +581,440 @@ describe('HardcoverProvider', () => {
       const result = await provider.test();
       expect(result.success).toBe(false);
       expect(result.message).toMatch(/validation failed/i);
+    });
+  });
+
+  // ── #1879 — custom list by URL ──────────────────────────────────────────────
+  describe('fetchItems — custom list (#1879)', () => {
+    const CUSTOM_URL = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
+
+    const makeProvider = (overrides: Partial<HardcoverConfig> = {}) =>
+      new HardcoverProvider({ apiKey: 'test-key', listType: 'custom', listUrl: CUSTOM_URL, ...overrides });
+
+    const isCustomQuery = (query: string): boolean => query.includes('lists(');
+
+    const row = (id: number, book: unknown = { id, title: `Book ${id}`, contributions: [] }) =>
+      ({ id, position: id, book });
+
+    const rowsRange = (start: number, end: number) =>
+      Array.from({ length: end - start }, (_, i) => row(start + i));
+
+    const listResponse = (rows: unknown, booksCount: number | null = null, extra: Record<string, unknown> = {}) =>
+      ({ data: { lists: [{ id: 1, name: 'L', ranked: true, books_count: booksCount, list_books: rows, ...extra }] } });
+
+    // Serves paged windows from a virtual list of `total` rows, honouring the
+    // request `offset`/`limit`. `booksCount` defaults to `total`.
+    function pagedHandler(opts: { total: number; booksCount?: number | null; onRequest?: (vars: Record<string, unknown>) => void }) {
+      return http.post(GQL_URL, async ({ request }) => {
+        const body = await request.json() as GqlBody;
+        const vars = body.variables ?? {};
+        opts.onRequest?.(vars);
+        const offset = Number(vars.offset ?? 0);
+        const limit = Number(vars.limit ?? PAGE_SIZE);
+        const rows = rowsRange(offset, Math.min(offset + limit, opts.total));
+        return HttpResponse.json(listResponse(rows, opts.booksCount === undefined ? opts.total : opts.booksCount));
+      });
+    }
+
+    // Serves pre-scripted full responses in order, one per request.
+    function scriptedHandler(pages: unknown[], onRequest?: (vars: Record<string, unknown>, index: number) => void) {
+      let i = 0;
+      return http.post(GQL_URL, async ({ request }) => {
+        const body = await request.json() as GqlBody;
+        onRequest?.(body.variables ?? {}, i);
+        const page = pages[Math.min(i, pages.length - 1)] as Record<string, unknown>;
+        i += 1;
+        return HttpResponse.json(page);
+      });
+    }
+
+    const PAGE_SIZE = 100;
+
+    // F3 — the provider-level invalid/missing-URL failure (`requireParsedUrl`) is a
+    // trust boundary shared by fetchItems() and test(); assert its consequence
+    // directly (parser/schema tests don't cover the provider throw) and prove no
+    // network request is issued.
+    describe('invalid / missing List URL (F3)', () => {
+      const guardNoNetwork = () => {
+        let hits = 0;
+        server.use(http.post(GQL_URL, () => { hits += 1; return HttpResponse.json(listResponse([])); }));
+        return () => hits;
+      };
+
+      it('fetchItems() rejects with ImportListError and issues no request for an invalid URL', async () => {
+        const hits = guardNoNetwork();
+        const err = await makeProvider({ listUrl: 'https://example.com/not-hardcover' }).fetchItems().catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ImportListError);
+        expect((err as ImportListError).message).toBe('Not a Hardcover list URL');
+        expect(hits()).toBe(0);
+      });
+
+      it('fetchItems() rejects with ImportListError and issues no request for a missing URL', async () => {
+        const hits = guardNoNetwork();
+        const err = await new HardcoverProvider({ apiKey: 'test-key', listType: 'custom' }).fetchItems().catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ImportListError);
+        expect((err as ImportListError).message).toBe('Not a Hardcover list URL');
+        expect(hits()).toBe(0);
+      });
+
+      it('test() returns a failed result and issues no request for an invalid URL', async () => {
+        const hits = guardNoNetwork();
+        const result = await makeProvider({ listUrl: 'not-a-url' }).test();
+        expect(result.success).toBe(false);
+        expect(result.message).toContain('Not a Hardcover list URL');
+        expect(hits()).toBe(0);
+      });
+    });
+
+    describe('query shape & variables (AC1, AC6)', () => {
+      it('sends citext/String variables, the public gate, and the array-form order_by', async () => {
+        let body: GqlBody | null = null;
+        server.use(http.post(GQL_URL, async ({ request }) => {
+          body = await request.json() as GqlBody;
+          return HttpResponse.json(listResponse([]));
+        }));
+
+        await makeProvider({ importMax: 50 }).fetchItems();
+
+        expect(body).not.toBeNull();
+        expect(isCustomQuery(body!.query)).toBe(true);
+        expect(body!.query).toContain('$username: citext!');
+        expect(body!.query).toContain('$slug: String!');
+        expect(body!.query).toContain('$offset: Int!');
+        expect(body!.query).toContain('public: { _eq: true }');
+        expect(body!.query).toContain('order_by: [{ position: asc_nulls_last }, { id: asc }]');
+        // Parsed from the URL, sent as variables (never interpolated).
+        expect(body!.variables).toMatchObject({ username: 'LisaRae', slug: '2025-year-in-books', limit: 50, offset: 0 });
+      });
+
+      it('reuses the shared BookFields fragment / mapBook (audio-edition asin + cover) (AC3)', async () => {
+        let body: GqlBody | null = null;
+        server.use(http.post(GQL_URL, async ({ request }) => {
+          body = await request.json() as GqlBody;
+          return HttpResponse.json(listResponse([row(7, {
+            id: 7,
+            title: 'Project Hail Mary',
+            description: 'Space.',
+            image: { url: 'https://hc.app/print.jpg' },
+            contributions: [{ author: { name: 'Andy Weir' } }],
+            default_audio_edition: { asin: 'B08G9XR74C', isbn_13: '9780593135228', image: { url: 'https://hc.app/audio.jpg' } },
+            editions: [{ asin: 'PRINT_ASIN' }],
+          })]));
+        }));
+
+        const items = await makeProvider({ importMax: 50 }).fetchItems();
+
+        expect(body!.query).toContain('...BookFields');
+        expect(body!.query).toContain('default_audio_edition { asin isbn_13 isbn_10 image { url } }');
+        expect(items).toEqual([{
+          title: 'Project Hail Mary',
+          author: 'Andy Weir',
+          asin: 'B08G9XR74C',
+          isbn: '9780593135228',
+          coverUrl: 'https://hc.app/audio.jpg',
+          description: 'Space.',
+        }]);
+      });
+    });
+
+    describe('Import Max — fixed limits (AC4)', () => {
+      it('importMax=50 issues a single query with limit 50, offset 0', async () => {
+        let count = 0;
+        const vars: Record<string, unknown>[] = [];
+        server.use(http.post(GQL_URL, async ({ request }) => {
+          count += 1;
+          const body = await request.json() as GqlBody;
+          vars.push(body.variables ?? {});
+          return HttpResponse.json(listResponse(rowsRange(0, 50)));
+        }));
+
+        const items = await makeProvider({ importMax: 50 }).fetchItems();
+        expect(count).toBe(1);
+        expect(vars[0]).toMatchObject({ limit: 50, offset: 0 });
+        expect(items).toHaveLength(50);
+      });
+
+      it('importMax=100 issues a single query with limit 100', async () => {
+        let capturedLimit: unknown;
+        server.use(http.post(GQL_URL, async ({ request }) => {
+          const body = await request.json() as GqlBody;
+          capturedLimit = body.variables?.limit;
+          return HttpResponse.json(listResponse(rowsRange(0, 100)));
+        }));
+
+        const items = await makeProvider({ importMax: 100 }).fetchItems();
+        expect(capturedLimit).toBe(100);
+        expect(items).toHaveLength(100);
+      });
+
+      it('defaults to limit 50 when importMax is omitted', async () => {
+        let capturedLimit: unknown;
+        server.use(http.post(GQL_URL, async ({ request }) => {
+          const body = await request.json() as GqlBody;
+          capturedLimit = body.variables?.limit;
+          return HttpResponse.json(listResponse(rowsRange(0, 10)));
+        }));
+
+        await makeProvider().fetchItems();
+        expect(capturedLimit).toBe(50);
+      });
+    });
+
+    describe("Import Max — 'all' pagination (AC5, AC6)", () => {
+      it('pages until a short page, concatenating rows with correct offsets', async () => {
+        const offsets: unknown[] = [];
+        server.use(pagedHandler({ total: 130, onRequest: (v) => offsets.push(v.offset) }));
+
+        const items = await makeProvider({ importMax: 'all' }).fetchItems();
+        expect(offsets).toEqual([0, 100]);
+        expect(items).toHaveLength(130);
+        expect(items[0]!.title).toBe('Book 0');
+        expect(items[129]!.title).toBe('Book 129');
+      });
+
+      it('terminates on the empty page after an exact multiple of 100 (no throw)', async () => {
+        let count = 0;
+        server.use(pagedHandler({ total: 100, onRequest: () => { count += 1; } }));
+
+        const items = await makeProvider({ importMax: 'all' }).fetchItems();
+        expect(count).toBe(2); // full page (0) then empty page (100)
+        expect(items).toHaveLength(100);
+      });
+
+      it('first request always fires; budget derives from the first response books_count (F30)', async () => {
+        let count = 0;
+        server.use(pagedHandler({ total: 130, booksCount: 130, onRequest: () => { count += 1; } }));
+        const items = await makeProvider({ importMax: 'all' }).fetchItems();
+        expect(count).toBe(2);
+        expect(items).toHaveLength(130);
+      });
+
+      it('null books_count falls back to MAX_LIST_PAGES without breaking the loop (F30)', async () => {
+        let count = 0;
+        server.use(pagedHandler({ total: 130, booksCount: null, onRequest: () => { count += 1; } }));
+        const items = await makeProvider({ importMax: 'all' }).fetchItems();
+        expect(count).toBe(2);
+        expect(items).toHaveLength(130);
+      });
+
+      it('4999 rows: 49 full pages + a 99-row short page → returns 4999, no throw (F36a)', async () => {
+        let count = 0;
+        server.use(pagedHandler({ total: 4999, onRequest: () => { count += 1; } }));
+        const items = await makeProvider({ importMax: 'all' }).fetchItems();
+        expect(count).toBe(50);
+        expect(items).toHaveLength(4999);
+      });
+
+      it('exactly 5000 rows: 50 full pages + an empty terminal page → returns 5000, no throw (F36b)', async () => {
+        let count = 0;
+        server.use(pagedHandler({ total: 5000, onRequest: () => { count += 1; } }));
+        const items = await makeProvider({ importMax: 'all' }).fetchItems();
+        expect(count).toBe(51);
+        expect(items).toHaveLength(5000);
+      });
+
+      it('a 51st FULL page (> 5000 full rows) → deterministic ImportListError, no partial result (F36c)', async () => {
+        let count = 0;
+        server.use(pagedHandler({ total: 5100, booksCount: 5100, onRequest: () => { count += 1; } }));
+        await expect(makeProvider({ importMax: 'all' }).fetchItems()).rejects.toBeInstanceOf(ImportListError);
+        expect(count).toBe(51); // 50 full pages accepted, throws on the 51st full page
+      });
+
+      it('a large/corrupt books_count is still clamped at MAX_LIST_PAGES full pages (F34)', async () => {
+        let count = 0;
+        server.use(pagedHandler({ total: 5100, booksCount: 999999, onRequest: () => { count += 1; } }));
+        await expect(makeProvider({ importMax: 'all' }).fetchItems()).rejects.toThrow(ImportListError);
+        expect(count).toBe(51);
+      });
+
+      it('books_count-derived budget throws on the first full page beyond it (F28)', async () => {
+        let count = 0;
+        // books_count 250 → ceil(250/100)=3 full-page budget; server keeps serving full pages.
+        server.use(pagedHandler({ total: 500, booksCount: 250, onRequest: () => { count += 1; } }));
+        await expect(makeProvider({ importMax: 'all' }).fetchItems()).rejects.toThrow(ImportListError);
+        expect(count).toBe(4); // 3 full pages accepted, throws on the 4th
+      });
+
+      it('advances past a full page with an unmappable row; the row still consumes its id slot (F14)', async () => {
+        const page1 = rowsRange(0, 100);
+        page1[50] = row(50, { id: 50, title: null, contributions: [] }); // titleless → dropped
+        server.use(scriptedHandler([
+          listResponse(page1),
+          listResponse(rowsRange(100, 120)), // short second page of new rows
+        ]));
+
+        const items = await makeProvider({ importMax: 'all' }).fetchItems();
+        // 99 mappable from page 1 (row 50 dropped) + 20 from page 2.
+        expect(items).toHaveLength(119);
+        expect(items.some((i) => i.title === 'Book 50')).toBe(false);
+      });
+
+      it('an exact-repeat full page (zero new ids) → deterministic ImportListError (F31)', async () => {
+        let count = 0;
+        const page = rowsRange(0, 100);
+        server.use(scriptedHandler([listResponse(page), listResponse(page)], () => { count += 1; }));
+        await expect(makeProvider({ importMax: 'all' }).fetchItems()).rejects.toThrow(/repeated page/i);
+        expect(count).toBe(2);
+      });
+
+      // F5 — deletion-sensitive proof that a row's RAW id enters `seen` BEFORE (and
+      // independently of) book mapping. The repeated page's ONLY unmappable row is the
+      // titleless one at id 50; every other row is mappable and would enter `seen`
+      // regardless. If `seen.add(id)` were moved after successful mapping, id 50 would be
+      // "new" on page 2, the zero-new-id guard would NOT fire, and pagination would run
+      // past the second request (eventually a runaway, not a repeated-page error). Pinning
+      // exactly two requests + the repeated-page error kills that mutation.
+      it('an exact-repeat full page whose only unmappable row is titleless still triggers the repeated-page guard after the 2nd request (F5)', async () => {
+        let count = 0;
+        const page = rowsRange(0, 100);
+        page[50] = row(50, { id: 50, title: null, contributions: [] }); // titleless → dropped from output, id must still be consumed
+        server.use(scriptedHandler([listResponse(page), listResponse(page)], () => { count += 1; }));
+        await expect(makeProvider({ importMax: 'all' }).fetchItems()).rejects.toThrow(/repeated page/i);
+        expect(count).toBe(2);
+      });
+
+      // F5 companion — overlap (not exact repeat): page 2 re-sends the titleless row 50
+      // plus genuinely new ids. The titleless row is never emitted, and because its raw id
+      // was already consumed on page 1 it is not re-counted; pagination continues to the
+      // short page rather than erroring.
+      it('an overlapping page re-sending an already-seen titleless row does not re-emit or error (F5)', async () => {
+        const page1 = rowsRange(0, 100);
+        page1[50] = row(50, { id: 50, title: null, contributions: [] });
+        const page2 = [page1[50], ...rowsRange(100, 199)]; // full page: titleless id 50 (seen) + 99 new ids
+        server.use(scriptedHandler([
+          listResponse(page1),
+          listResponse(page2),
+          listResponse(rowsRange(199, 210)), // short terminal page
+        ]));
+
+        const items = await makeProvider({ importMax: 'all' }).fetchItems();
+        expect(items.some((i) => i.title === 'Book 50')).toBe(false);
+        // 99 mappable from page 1 + 99 new from page 2 + 11 from the short page.
+        expect(items).toHaveLength(209);
+      });
+
+      it('partially overlapping full pages are de-duplicated by raw id and continue (F19)', async () => {
+        server.use(scriptedHandler([
+          listResponse(rowsRange(0, 100)),    // ids 0..99
+          listResponse(rowsRange(50, 150)),   // overlap 50..99, new 100..149
+          listResponse(rowsRange(150, 170)),  // short
+        ]));
+
+        const items = await makeProvider({ importMax: 'all' }).fetchItems();
+        expect(items).toHaveLength(170);
+        expect(items[0]!.title).toBe('Book 0');
+        expect(items[169]!.title).toBe('Book 169');
+      });
+    });
+
+    describe('list resolution & null/missing dispositions (AC7, AC8)', () => {
+      const fetchErr = async (response: Record<string, unknown>) => {
+        server.use(http.post(GQL_URL, () => HttpResponse.json(response)));
+        return makeProvider({ importMax: 50 }).fetchItems().catch((e: unknown) => e);
+      };
+
+      it('lists: [] → "List not found or private" (NOT [])', async () => {
+        const err = await fetchErr({ data: { lists: [] } });
+        expect(err).toBeInstanceOf(ImportListError);
+        expect((err as ImportListError).message).toBe('List not found or private');
+      });
+
+      it('resolved-empty list_books: [] → returns [] (distinct from not-found)', async () => {
+        server.use(http.post(GQL_URL, () => HttpResponse.json(listResponse([]))));
+        await expect(makeProvider({ importMax: 50 }).fetchItems()).resolves.toEqual([]);
+      });
+
+      it('lists: null and omitted lists → unexpected-response error', async () => {
+        expect(await fetchErr({ data: { lists: null } })).toBeInstanceOf(ImportListError);
+        expect(await fetchErr({ data: {} })).toBeInstanceOf(ImportListError);
+      });
+
+      it('nested list_books null / omitted → unexpected-response error', async () => {
+        expect(await fetchErr({ data: { lists: [{ id: 1, list_books: null }] } })).toBeInstanceOf(ImportListError);
+        expect(await fetchErr({ data: { lists: [{ id: 1 }] } })).toBeInstanceOf(ImportListError);
+      });
+
+      it('row id null / omitted → unexpected-response error', async () => {
+        expect(await fetchErr(listResponse([{ id: null, position: 1, book: { title: 'X' } }]))).toBeInstanceOf(ImportListError);
+        expect(await fetchErr(listResponse([{ position: 1, book: { title: 'X' } }]))).toBeInstanceOf(ImportListError);
+      });
+
+      it('null/missing/titleless book rows are dropped (not errors); the mappable remainder returns (F32)', async () => {
+        server.use(http.post(GQL_URL, () => HttpResponse.json(listResponse([
+          row(1, null),
+          row(2),                                   // mappable
+          { id: 3, position: 3 },                   // omitted book
+          row(4, { id: 4, title: null, contributions: [] }), // titleless
+        ]))));
+
+        const items = await makeProvider({ importMax: 50 }).fetchItems();
+        expect(items).toHaveLength(1);
+        expect(items[0]!.title).toBe('Book 2');
+      });
+
+      it('surfaces a GraphQL errors[] message', async () => {
+        server.use(http.post(GQL_URL, () => HttpResponse.json({ errors: [{ message: 'Rate limited' }] })));
+        await expect(makeProvider({ importMax: 50 }).fetchItems()).rejects.toThrow('Hardcover GraphQL error: Rate limited');
+      });
+
+      it('a malformed later page throws with NO partial result (F38)', async () => {
+        for (const badPage2 of [
+          { data: { lists: [] } },
+          { data: { lists: null } },
+          { data: { lists: [{ id: 1, list_books: null }] } },
+          listResponse([{ id: null, position: 1, book: { title: 'X' } }]),
+        ]) {
+          server.use(scriptedHandler([listResponse(rowsRange(0, 100)), badPage2]));
+          await expect(makeProvider({ importMax: 'all' }).fetchItems()).rejects.toBeInstanceOf(ImportListError);
+        }
+      });
+    });
+
+    describe('test() probe (AC9)', () => {
+      it('sends the complete { username, slug, limit: 1, offset: 0 } variable set (F33)', async () => {
+        let body: GqlBody | null = null;
+        server.use(http.post(GQL_URL, async ({ request }) => {
+          body = await request.json() as GqlBody;
+          return HttpResponse.json(listResponse(rowsRange(0, 1)));
+        }));
+
+        const result = await makeProvider({ importMax: 50 }).test();
+        expect(result).toEqual({ success: true });
+        expect(body!.variables).toEqual({ username: 'LisaRae', slug: '2025-year-in-books', limit: 1, offset: 0 });
+      });
+
+      it('succeeds for a resolved list, resolved-empty, and null-book-only rows', async () => {
+        for (const rows of [rowsRange(0, 1), [], [row(9, null)]]) {
+          server.use(http.post(GQL_URL, () => HttpResponse.json(listResponse(rows))));
+          await expect(makeProvider({ importMax: 50 }).test()).resolves.toEqual({ success: true });
+        }
+      });
+
+      it('lists: [] → not-found/private failure', async () => {
+        server.use(http.post(GQL_URL, () => HttpResponse.json({ data: { lists: [] } })));
+        const result = await makeProvider({ importMax: 50 }).test();
+        expect(result).toEqual({ success: false, message: 'List not found or private' });
+      });
+
+      it('null/missing lists, list_books, or row id → unexpected-response failure', async () => {
+        for (const response of [
+          { data: { lists: null } },
+          { data: { lists: [{ id: 1, list_books: null }] } },
+          listResponse([{ id: null, position: 1, book: { title: 'X' } }]),
+        ]) {
+          server.use(http.post(GQL_URL, () => HttpResponse.json(response as Record<string, unknown>)));
+          const result = await makeProvider({ importMax: 50 }).test();
+          expect(result.success).toBe(false);
+        }
+      });
+
+      it('401/403 → "Invalid API key"', async () => {
+        for (const status of [401, 403]) {
+          server.use(http.post(GQL_URL, () => new HttpResponse(null, { status })));
+          const result = await makeProvider({ importMax: 50 }).test();
+          expect(result).toEqual({ success: false, message: 'Invalid API key' });
+        }
+      });
     });
   });
 });

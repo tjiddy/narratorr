@@ -13,6 +13,8 @@ const TYPED_FACTORIES: { [K in ImportListType]: (settings: ImportListSettingsMap
     apiKey: s.apiKey,
     listType: s.listType || 'trending',
     ...(s.shelfId !== undefined && { shelfId: s.shelfId }),
+    ...(s.listUrl !== undefined && { listUrl: s.listUrl }),
+    ...(s.importMax !== undefined && { importMax: s.importMax }),
   }),
 };
 

@@ -165,4 +165,103 @@ describe('ProviderSettings', () => {
       expect('shelfId' in lastCall).toBe(false);
     });
   });
+
+  // ── #1879 — custom list by URL ──────────────────────────────────────────────
+  describe('HardcoverSettings — custom list (#1879)', () => {
+    const CUSTOM_URL = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
+
+    it('reveals List URL + Import Max only for the custom list type (AC11)', async () => {
+      const user = userEvent.setup();
+      render(<StatefulProvider type="hardcover" initial={{ apiKey: 'k' }} />);
+
+      // Trending default — neither field present.
+      expect(screen.queryByLabelText('List URL')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Import Max')).not.toBeInTheDocument();
+
+      await user.selectOptions(screen.getByLabelText('List Type'), 'custom');
+
+      expect(screen.getByLabelText('List URL')).toBeInTheDocument();
+      // Import Max is a select (50 / 100 / All), not a number input.
+      const importMax = screen.getByLabelText('Import Max') as HTMLSelectElement;
+      expect(importMax.tagName).toBe('SELECT');
+      expect(Array.from(importMax.options).map((o) => o.value)).toEqual(['50', '100', 'all']);
+    });
+
+    it('Import Max emits numbers for 50/100 and the string "all" (F11)', async () => {
+      const spy = vi.fn();
+      const user = userEvent.setup();
+      render(<StatefulProvider type="hardcover" initial={{ apiKey: 'k', listType: 'custom', listUrl: CUSTOM_URL }} onChangeSpy={spy} />);
+
+      await user.selectOptions(screen.getByLabelText('Import Max'), '100');
+      let last = spy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(last.importMax).toBe(100);
+      expect(typeof last.importMax).toBe('number');
+
+      await user.selectOptions(screen.getByLabelText('Import Max'), 'all');
+      last = spy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(last.importMax).toBe('all');
+
+      await user.selectOptions(screen.getByLabelText('Import Max'), '50');
+      last = spy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(last.importMax).toBe(50);
+      expect(typeof last.importMax).toBe('number');
+    });
+
+    it('renders an inline error for an invalid List URL and clears it when corrected (AC13, F23)', async () => {
+      const user = userEvent.setup();
+      render(<StatefulProvider type="hardcover" initial={{ apiKey: 'k', listType: 'custom' }} />);
+
+      const input = screen.getByLabelText('List URL');
+      await user.type(input, 'https://example.com/not-hardcover');
+      expect(await screen.findByText('Not a Hardcover list URL')).toBeInTheDocument();
+
+      await user.clear(input);
+      await user.type(input, CUSTOM_URL);
+      expect(screen.queryByText('Not a Hardcover list URL')).not.toBeInTheDocument();
+    });
+
+    it('empty List URL shows no inline error', () => {
+      render(<ProviderSettings type="hardcover" settings={{ apiKey: 'k', listType: 'custom' }} onChange={vi.fn()} />);
+      expect(screen.queryByText('Not a Hardcover list URL')).not.toBeInTheDocument();
+    });
+
+    // Leak matrix via the dedicated list-type change handler (AC12, F15, F20, F35).
+    describe('type-scoped list-type change handler — no foreign-key leak', () => {
+      it('custom → trending drops listUrl and importMax', async () => {
+        const spy = vi.fn();
+        const user = userEvent.setup();
+        render(<StatefulProvider type="hardcover" initial={{ apiKey: 'k', listType: 'custom', listUrl: CUSTOM_URL, importMax: 100 }} onChangeSpy={spy} />);
+
+        await user.selectOptions(screen.getByLabelText('List Type'), 'trending');
+
+        const last = spy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        expect(last).toEqual({ apiKey: 'k', listType: 'trending' });
+      });
+
+      it('custom → shelf drops listUrl/importMax (shelfId added separately)', async () => {
+        const spy = vi.fn();
+        const user = userEvent.setup();
+        render(<StatefulProvider type="hardcover" initial={{ apiKey: 'k', listType: 'custom', listUrl: CUSTOM_URL, importMax: 'all' }} onChangeSpy={spy} />);
+
+        await user.selectOptions(screen.getByLabelText('List Type'), 'shelf');
+
+        const last = spy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        expect(last).not.toHaveProperty('listUrl');
+        expect(last).not.toHaveProperty('importMax');
+        expect(last).toMatchObject({ apiKey: 'k', listType: 'shelf' });
+      });
+
+      it('shelf → custom drops shelfId', async () => {
+        const spy = vi.fn();
+        const user = userEvent.setup();
+        render(<StatefulProvider type="hardcover" initial={{ apiKey: 'k', listType: 'shelf', shelfId: 42 }} onChangeSpy={spy} />);
+
+        await user.selectOptions(screen.getByLabelText('List Type'), 'custom');
+
+        const last = spy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        expect(last).not.toHaveProperty('shelfId');
+        expect(last).toMatchObject({ apiKey: 'k', listType: 'custom' });
+      });
+    });
+  });
 });
