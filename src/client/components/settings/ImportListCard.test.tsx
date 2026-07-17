@@ -572,4 +572,49 @@ describe('ImportListCard', () => {
       expect(payloadSettings).toHaveProperty('list', 'audio-fiction');
     });
   });
+
+  // #1879 — Hardcover list-type change handler leak matrix through the real card.
+  // Complements the ImportListProviderSettings suite (AC12): the list-type dropdown
+  // scrubs foreign keys, proven here against the onFormTest payload.
+  describe('#1879 — Hardcover list-type change scrubs foreign keys', () => {
+    const CUSTOM_URL = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
+
+    it('custom → trending drops listUrl/importMax from the Test payload', async () => {
+      const user = userEvent.setup();
+      const onFormTest = vi.fn();
+      renderWithProviders(<ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />);
+
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
+      await user.selectOptions(screen.getByLabelText('List Type'), 'custom');
+      await user.type(await screen.findByLabelText('List URL'), CUSTOM_URL);
+      await user.selectOptions(screen.getByLabelText('Import Max'), '100');
+
+      // Switch List Type back to trending — handler drops listUrl/importMax.
+      await user.selectOptions(screen.getByLabelText('List Type'), 'trending');
+      await user.click(screen.getByRole('button', { name: 'Test Connection' }));
+
+      const payloadSettings = onFormTest.mock.calls.at(-1)![0].settings as Record<string, unknown>;
+      expect(payloadSettings).not.toHaveProperty('listUrl');
+      expect(payloadSettings).not.toHaveProperty('importMax');
+      expect(payloadSettings).toMatchObject({ listType: 'trending' });
+    });
+
+    it('shelf → custom drops shelfId from the Test payload', async () => {
+      const user = userEvent.setup();
+      const onFormTest = vi.fn();
+      renderWithProviders(<ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />);
+
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
+      await user.selectOptions(screen.getByLabelText('List Type'), 'shelf');
+      await user.type(await screen.findByLabelText('Shelf ID'), '42');
+
+      // Switch List Type to custom — handler drops shelfId.
+      await user.selectOptions(screen.getByLabelText('List Type'), 'custom');
+      await user.click(screen.getByRole('button', { name: 'Test Connection' }));
+
+      const payloadSettings = onFormTest.mock.calls.at(-1)![0].settings as Record<string, unknown>;
+      expect(payloadSettings).not.toHaveProperty('shelfId');
+      expect(payloadSettings).toMatchObject({ listType: 'custom' });
+    });
+  });
 });

@@ -89,5 +89,29 @@ describe('Import List IMPORT_LIST_ADAPTER_FACTORIES', () => {
         expect.objectContaining({ shelfId: 42 }),
       );
     });
+
+    // #1879 — custom-list field forwarding (AC1, F2)
+    it('hardcover factory forwards listUrl + numeric importMax for a custom list', () => {
+      const url = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
+      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'custom', listUrl: url, importMax: 100 });
+      expect(HardcoverProvider).toHaveBeenCalledWith(
+        expect.objectContaining({ apiKey: 'key', listType: 'custom', listUrl: url, importMax: 100 }),
+      );
+    });
+
+    it("hardcover factory forwards importMax: 'all'", () => {
+      const url = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
+      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'custom', listUrl: url, importMax: 'all' });
+      expect(HardcoverProvider).toHaveBeenCalledWith(
+        expect.objectContaining({ importMax: 'all' }),
+      );
+    });
+
+    it('hardcover factory omits listUrl/importMax for a non-custom list', () => {
+      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'trending' });
+      const ctorArg = vi.mocked(HardcoverProvider).mock.calls[0]![0];
+      expect(ctorArg).not.toHaveProperty('listUrl');
+      expect(ctorArg).not.toHaveProperty('importMax');
+    });
   });
 });
