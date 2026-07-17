@@ -6,14 +6,14 @@ import { getErrorMessage } from '../../shared/error-message.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { IMPORT_LIST_TIMEOUT_MS } from '../utils/constants.js';
 import { parseHardcoverListUrl } from '../../shared/hardcover-list-url.js';
-import type { HardcoverListType } from '../../shared/hardcover-list-types.js';
+import type { HardcoverListType, HardcoverImportMax } from '../../shared/hardcover-list-types.js';
 
 export interface HardcoverConfig {
   apiKey: string;
   listType: HardcoverListType;
   shelfId?: number;
   listUrl?: string;
-  importMax?: 50 | 100 | 'all';
+  importMax?: HardcoverImportMax;
 }
 
 const GRAPHQL_URL = 'https://api.hardcover.app/v1/graphql';
@@ -241,7 +241,7 @@ export class HardcoverProvider implements ImportListProvider {
   private listType: HardcoverListType;
   private shelfId?: number;
   private listUrl?: string;
-  private importMax?: 50 | 100 | 'all';
+  private importMax?: HardcoverImportMax;
 
   constructor(config: HardcoverConfig) {
     this.apiKey = config.apiKey;

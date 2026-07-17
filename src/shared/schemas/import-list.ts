@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES, type ImportListType } from '../import-list-registry';
 import { parseHardcoverListUrl } from '../hardcover-list-url.js';
-import { HARDCOVER_LIST_TYPES, type HardcoverListType } from '../hardcover-list-types.js';
+import { HARDCOVER_LIST_TYPES, HARDCOVER_IMPORT_MAX_VALUES, type HardcoverListType, type HardcoverImportMax } from '../hardcover-list-types.js';
 
 // ============================================================================
 // Import List schemas
@@ -16,9 +16,10 @@ export const nytSettingsSchema = z.object({
   list: z.string().trim().optional(),
 }).strict();
 
-// #1879 — strict `50 | 100 | 'all'` Import Max (custom lists). A raw union of
-// literals, NOT a coercion: `75`/`0`/`'50'` are rejected outright.
-const hardcoverImportMaxSchema = z.union([z.literal(50), z.literal(100), z.literal('all')]);
+// #1879 — strict Import Max (custom lists), built from the shared canonical set
+// so schema + types cannot drift (#1879 F6). A multi-literal, NOT a coercion:
+// `75`/`0`/`'50'` are rejected outright.
+const hardcoverImportMaxSchema = z.literal(HARDCOVER_IMPORT_MAX_VALUES);
 
 // Type-scoped parsed Hardcover settings. Every branch keeps `apiKey` plus only
 // the effective list type's own keys; the `.transform` below strips any stale
@@ -29,7 +30,7 @@ export type HardcoverSettings = {
   listType?: HardcoverListType;
   shelfId?: number;
   listUrl?: string;
-  importMax?: 50 | 100 | 'all';
+  importMax?: HardcoverImportMax;
 };
 
 export const hardcoverSettingsSchema = z.object({

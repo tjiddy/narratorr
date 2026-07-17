@@ -857,6 +857,42 @@ describe('HardcoverProvider', () => {
         expect(count).toBe(2);
       });
 
+      // F5 — deletion-sensitive proof that a row's RAW id enters `seen` BEFORE (and
+      // independently of) book mapping. The repeated page's ONLY unmappable row is the
+      // titleless one at id 50; every other row is mappable and would enter `seen`
+      // regardless. If `seen.add(id)` were moved after successful mapping, id 50 would be
+      // "new" on page 2, the zero-new-id guard would NOT fire, and pagination would run
+      // past the second request (eventually a runaway, not a repeated-page error). Pinning
+      // exactly two requests + the repeated-page error kills that mutation.
+      it('an exact-repeat full page whose only unmappable row is titleless still triggers the repeated-page guard after the 2nd request (F5)', async () => {
+        let count = 0;
+        const page = rowsRange(0, 100);
+        page[50] = row(50, { id: 50, title: null, contributions: [] }); // titleless → dropped from output, id must still be consumed
+        server.use(scriptedHandler([listResponse(page), listResponse(page)], () => { count += 1; }));
+        await expect(makeProvider({ importMax: 'all' }).fetchItems()).rejects.toThrow(/repeated page/i);
+        expect(count).toBe(2);
+      });
+
+      // F5 companion — overlap (not exact repeat): page 2 re-sends the titleless row 50
+      // plus genuinely new ids. The titleless row is never emitted, and because its raw id
+      // was already consumed on page 1 it is not re-counted; pagination continues to the
+      // short page rather than erroring.
+      it('an overlapping page re-sending an already-seen titleless row does not re-emit or error (F5)', async () => {
+        const page1 = rowsRange(0, 100);
+        page1[50] = row(50, { id: 50, title: null, contributions: [] });
+        const page2 = [page1[50], ...rowsRange(100, 199)]; // full page: titleless id 50 (seen) + 99 new ids
+        server.use(scriptedHandler([
+          listResponse(page1),
+          listResponse(page2),
+          listResponse(rowsRange(199, 210)), // short terminal page
+        ]));
+
+        const items = await makeProvider({ importMax: 'all' }).fetchItems();
+        expect(items.some((i) => i.title === 'Book 50')).toBe(false);
+        // 99 mappable from page 1 + 99 new from page 2 + 11 from the short page.
+        expect(items).toHaveLength(209);
+      });
+
       it('partially overlapping full pages are de-duplicated by raw id and continue (F19)', async () => {
         server.use(scriptedHandler([
           listResponse(rowsRange(0, 100)),    // ids 0..99
