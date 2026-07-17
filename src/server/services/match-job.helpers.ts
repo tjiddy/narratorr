@@ -144,8 +144,11 @@ export function isDurationVerified(
 }
 
 /**
- * Determines confidence from duration data without overriding the similarity-ranked winner.
- * The bestMatch stays as the top similarity-ranked result; duration only affects confidence level.
+ * Determines confidence from duration data; it does NOT itself pick or reorder
+ * the winner. The bestMatch is whatever the ranker returned as `scored[0]` —
+ * primarily the top text-scored result, with duration only ever breaking a
+ * score tie between sibling editions upstream (#1882, `durationTiebreak`); this
+ * verdict then reads `high`/`medium` off that chosen top candidate.
  * The high-vs-medium decision is delegated to `isDurationVerified` so the single
  * absolute band lives in exactly one place (#1266/#1850). `scannedSeconds` is the
  * unrounded scanner runtime in SECONDS; the mismatch reason renders it from
@@ -374,6 +377,39 @@ export function positionTiebreak(a: BookMetadata, b: BookMetadata, wanted: numbe
 }
 
 /**
+ * Shared duration-agreement tiebreaker (#1882), consumed by BOTH `rankResults`
+ * (folder pass) and `rankResultsCleaned` (tag pass). On a score tie between
+ * sibling editions of one book (identical title/author/narrators, different
+ * runtimes — e.g. the four Audible editions of "Dogs of War"), prefer the
+ * candidate whose provider runtime agrees with the scanned duration.
+ *
+ * It is a TIEBREAKER, never a ranker: it runs only inside the existing
+ * `< 0.001` score-tie branch, AFTER `positionTiebreak` (position disambiguates
+ * different BOOKS in a series; duration disambiguates EDITIONS of one book) and
+ * BEFORE the year tiebreaker.
+ *
+ * The whole duration/units decision is delegated to `isDurationVerified` →
+ * `withinDurationTolerance` — no new predicate, no new tolerance constant, no
+ * re-derived minutes→seconds conversion (the DRY mandate that keeps the tiebreak
+ * judging with the same ruler as the post-match verdict, so pick and verdict
+ * cannot disagree). Four-state contract, all falling out of the two booleans:
+ *  - Invalid `scannedSeconds` (undefined/0/negative) → `isDurationVerified` is
+ *    false on both sides → `0` (whole comparator no-ops; absent scan cannot
+ *    decide, the #1850 "absent must not demote" doctrine).
+ *  - Valid scan: a VERIFIED candidate beats a NON-VERIFIED one. "Non-verified"
+ *    folds together missing/zero AND present-but-off candidate duration —
+ *    `isDurationVerified` returns false for all of them.
+ *  - verified vs verified → `0` (both agree, nothing to decide).
+ *  - non-verified vs non-verified → `0` (absence/disagreement never demotes one
+ *    non-match below another).
+ */
+export function durationTiebreak(a: BookMetadata, b: BookMetadata, scannedSeconds: number | undefined): number {
+  const aMatch = isDurationVerified(a, scannedSeconds) ? 1 : 0;
+  const bMatch = isDurationVerified(b, scannedSeconds) ? 1 : 0;
+  return bMatch - aMatch;
+}
+
+/**
  * Tag-pass scoring: composes the result-side title from `result.title` +
  * the canonical primary-series ref via `tagTitleScore`, removing the
  * cleanName-derived symmetry assumption from #984. Author side is preserved exactly from #995 —
@@ -384,15 +420,20 @@ export function positionTiebreak(a: BookMetadata, b: BookMetadata, wanted: numbe
  * `src/core/utils/similarity.ts:62-84`; we re-derive the combined score
  * inline because we no longer call `scoreResult` for the title side.
  *
- * Tiebreakers (score tie within 0.001): the shared `positionTiebreak` (#1849)
- * runs first — series position is the stronger series-disambiguation signal —
- * then the year tiebreaker (#995): candidates whose publishedDate year matches
- * tagYear rank first. Both are tag-derived only; folder year is NOT consulted
- * here (Pass 2's signal stays out of Pass 1).
+ * Tiebreakers (score tie within 0.001), in precedence order: the shared
+ * `positionTiebreak` (#1849) runs first — series position is the stronger
+ * series-disambiguation signal — then `durationTiebreak` (#1882) prefers the
+ * sibling edition whose runtime agrees with the scanned duration, then the year
+ * tiebreaker (#995): candidates whose publishedDate year matches tagYear rank
+ * first. Position/year are tag-derived only; folder year is NOT consulted here
+ * (Pass 2's signal stays out of Pass 1). `scannedSeconds` is the unrounded
+ * scanner runtime in SECONDS; it is optional so direct/backward-compatible
+ * callers (unit tests) may omit it — the comparator no-ops on an absent scan.
  */
 export function rankResultsCleaned(
   detailed: BookMetadata[],
   tagQuery: TagQuery,
+  scannedSeconds?: number,
 ): { meta: BookMetadata; score: number }[] {
   const normalizedAuthor = normalizeNarrator(tagQuery.author);
   const scored = detailed.map(meta => {
@@ -418,6 +459,10 @@ export function rankResultsCleaned(
       // position is absent it no-ops and year decides exactly as before.
       const posCmp = positionTiebreak(a.meta, b.meta, tagQuery.seriesPosition);
       if (posCmp !== 0) return posCmp;
+      // Edition disambiguation (#1882): after position, prefer the sibling whose
+      // runtime agrees with the scan; no-ops on an absent/zero scan.
+      const durCmp = durationTiebreak(a.meta, b.meta, scannedSeconds);
+      if (durCmp !== 0) return durCmp;
       if (tagYear) {
         const aYear = parsePublishedYear(a.meta.publishedDate);
         const bYear = parsePublishedYear(b.meta.publishedDate);
@@ -431,10 +476,17 @@ export function rankResultsCleaned(
   return scored;
 }
 
-/** Scores and ranks results by title+author similarity with year tiebreaker. */
+/**
+ * Scores and ranks results by title+author similarity. On a score tie the
+ * precedence is `positionTiebreak` (#1849) → `durationTiebreak` (#1882) →
+ * folder-year. `scannedSeconds` is the unrounded scanner runtime in SECONDS and
+ * is optional: the folder scan can be absent, so an undefined value no-ops the
+ * duration comparator (direct unit-test callers may omit it too).
+ */
 export function rankResults(
   detailed: BookMetadata[],
   book: MatchCandidate,
+  scannedSeconds?: number,
 ): { meta: BookMetadata; score: number }[] {
   const context = { title: book.title, ...(book.author !== undefined && { author: book.author }) };
   const scored = detailed.map(meta => ({
@@ -452,6 +504,10 @@ export function rankResults(
       // no-ops when the wanted position is absent so year decides as before.
       const posCmp = positionTiebreak(a.meta, b.meta, book.seriesPosition);
       if (posCmp !== 0) return posCmp;
+      // Edition disambiguation (#1882): after position, prefer the sibling whose
+      // runtime agrees with the scan; no-ops on an absent/zero scan.
+      const durCmp = durationTiebreak(a.meta, b.meta, scannedSeconds);
+      if (durCmp !== 0) return durCmp;
       if (folderYear) {
         const aYear = parsePublishedYear(a.meta.publishedDate);
         const bYear = parsePublishedYear(b.meta.publishedDate);

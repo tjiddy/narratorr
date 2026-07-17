@@ -254,8 +254,10 @@ class MatchJob {
         // Fetch full detail for all results to get ASIN/duration
         const detailed = await this.fetchDetails(trace.results);
 
-        // Score, re-rank, and apply year tiebreaker
-        const scored = rankResults(detailed, context);
+        // Score, re-rank, and apply the position → duration → year tiebreakers.
+        // The scanned seconds (#1882) disambiguate sibling editions on a score
+        // tie; the folder scan can be absent, so this is genuinely optional.
+        const scored = rankResults(detailed, context, audioResult?.totalDuration);
         const topScored = scored[0];
         if (!topScored) {
           // §6.1 — fetchDetails breaks on cancellation, so detailed (and thus
@@ -296,7 +298,9 @@ class MatchJob {
           resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...resolveSingleResultConfidence(topScored.meta, audioResult?.totalDuration) };
           capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: isDurationVerified(topScored.meta, audioResult?.totalDuration) };
         } else {
-          // Multiple results — use duration to determine confidence (not to override winner).
+          // Multiple results — the winner was already chosen by `rankResults`
+          // (text score, with duration only breaking a score tie, #1882); this
+          // step reads confidence off that top candidate's runtime agreement.
           // Unrounded seconds (#1850); `duration` (minutes) below is logging only.
           const { confidence, reason } = resolveConfidenceFromDuration(scored, audioResult?.totalDuration);
           this.log.debug(
@@ -404,7 +408,10 @@ class MatchJob {
 
     const attempts = planTagSearchAttempts(audioResult, tagQuery);
     for (const attempt of attempts) {
-      const outcome = await this.tryAttempt(book, tagQuery, attempt);
+      // Thread the scanned seconds (#1882) so the edition tiebreaker reaches
+      // `rankResultsCleaned`. The tag path always owns a non-null scan, so this
+      // is `0` (no signal → no-op) rather than absent when the scan found none.
+      const outcome = await this.tryAttempt(book, tagQuery, attempt, audioResult.totalDuration);
       if (outcome) return outcome;
     }
     this.log.debug(
@@ -443,6 +450,7 @@ class MatchJob {
     book: MatchCandidate,
     tagQuery: TagQuery,
     attempt: TagSearchAttempt,
+    scannedSeconds: number,
   ): Promise<TagSearchOutcome | null> {
     let candidates: BookMetadata[];
     try {
@@ -470,7 +478,8 @@ class MatchJob {
     // TagQuery from `attempt`, so without this the position never reaches
     // `rankResultsCleaned` on the real tag path. `!== undefined` so position 0 survives.
     const attemptQuery: TagQuery = { title: attempt.title, author: attempt.author, ...(tagQuery.year ? { year: tagQuery.year } : {}), ...(tagQuery.seriesPosition !== undefined && { seriesPosition: tagQuery.seriesPosition }) };
-    const scored = rankResultsCleaned(detailed, attemptQuery);
+    // Thread scanned seconds (#1882) so the edition tiebreaker sees the runtime.
+    const scored = rankResultsCleaned(detailed, attemptQuery, scannedSeconds);
     const top = scored[0];
     if (!top) return null;
 
