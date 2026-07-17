@@ -47,7 +47,7 @@ describe('isPipelineBlocker (#1857 F59)', () => {
     expect(isPipelineBlocker(dl({ clientStatus: 'completed', pipelineStage }))).toBe(true);
   });
 
-  it('blocks a tracked completed row (externalId != null) — QG-eligible', () => {
+  it('blocks a tracked completed row (non-empty externalId) — QG-eligible', () => {
     expect(isPipelineBlocker(dl({ clientStatus: 'completed', pipelineStage: 'idle', externalId: 'ext-1' }))).toBe(true);
   });
 
