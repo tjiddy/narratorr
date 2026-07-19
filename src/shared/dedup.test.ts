@@ -161,6 +161,37 @@ describe('titlesMatchForDedup', () => {
     bothWays(buildTitleShape('Shattered Sea'), buildTitleShape('Shattered Sea, Book 1'), true);
     bothWays(buildTitleShape('The Farthest Shore'), buildTitleShape('The Farthest Shore (The Earthsea Cycle Book 3)'), true);
   });
+
+  // #1896 — CANARY: volume-marker dedup collision (the analogue of #1891's colon
+  // inversion). `normalizeTitleCore` strips a trailing `Book N` / `Vol N` marker
+  // (TAG_TITLE_SERIES_MARKER_REGEX), so distinct volumes of one series both collapse to
+  // the bare series name and MATCH. This behavior is KNOWN, PINNED, and DELIBERATELY
+  // UNCHANGED: no live same-author `<Series> <marker> 1` vs `<marker> 2` false-positive
+  // specimen has been observed, and the standing normalization-semantics decision forbids
+  // changing the strip without one. If a future normalization change makes `Book 1` and
+  // `Book 2` distinct, these assertions flip — pair any such change with a live specimen
+  // and this issue (see #1896).
+  //
+  // The full shape is pinned to show the mechanism: both titles reduce to `saga`. The
+  // early return is on the `fullNormalized`-equality arm (dedup.ts:118), but because these
+  // no-colon shapes set `colonBase === fullNormalized` and `hadSubtitle === false`, the
+  // `colonBase` fallback (dedup.ts:119) is ALSO satisfied — the match is not observably
+  // "via one arm", so we assert shapes + symmetric result only, never branch exclusivity.
+  it('CANARY #1896: same-series `Book 1`/`Book 2` collapse to the bare series and match', () => {
+    const collapsed = { fullNormalized: 'saga', colonBase: 'saga', hadSubtitle: false };
+    expect(buildTitleShape('Saga Book 1')).toEqual(collapsed);
+    expect(buildTitleShape('Saga Book 2')).toEqual(collapsed);
+    bothWays(buildTitleShape('Saga Book 1'), buildTitleShape('Saga Book 2'), true);
+  });
+
+  // #1896 — CANARY: cover the comma- and space-prefixed marker forms so a future regex
+  // narrowing to only one form (or dropping `Vol`) trips the canary rather than silently
+  // changing behavior. Each still collapses to the bare series `saga`.
+  it('CANARY #1896: comma/space marker forms (`Saga, Book 1`, `Saga Vol 1`) also collapse', () => {
+    const full = (t: string) => buildTitleShape(t).fullNormalized;
+    expect(full('Saga, Book 1')).toBe('saga');
+    expect(full('Saga Vol 1')).toBe('saga');
+  });
 });
 
 describe('matchesLibraryIdentity', () => {
@@ -253,5 +284,22 @@ describe('matchesLibraryIdentity', () => {
     for (const title of ['Dune (Edition: Deluxe)', 'Dune (Edition: Deluxe), Book 1']) {
       expect(matchesLibraryIdentity({ title, asin: null, authorName: 'Frank Herbert' }, dune)).toBe(true);
     }
+  });
+
+  // #1896 — CANARY: the volume-marker collision at the identity level. `Saga Book 1` and
+  // `Saga Book 2` collapse to `saga` (see the titlesMatchForDedup canary above), so a
+  // SAME-AUTHOR pair matches via identity arm (2). KNOWN, PINNED, DELIBERATELY UNCHANGED
+  // pending a live specimen (standing normalization-semantics decision). The blast radius
+  // is bounded by the position-0 author-slug gate: a CROSS-AUTHOR pair does NOT match, so
+  // the collapse can never merge two different authors' books.
+  it('CANARY #1896: same-author `Book 1`/`Book 2` match; cross-author does NOT (author-slug gate)', () => {
+    expect(matchesLibraryIdentity(
+      { title: 'Saga Book 2', authorName: 'A B' },
+      { title: 'Saga Book 1', authorName: 'A B' },
+    )).toBe(true);
+    expect(matchesLibraryIdentity(
+      { title: 'Saga Book 2', authorName: 'C D' },
+      { title: 'Saga Book 1', authorName: 'A B' },
+    )).toBe(false);
   });
 });
