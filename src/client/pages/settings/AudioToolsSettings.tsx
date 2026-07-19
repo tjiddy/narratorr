@@ -80,6 +80,9 @@ function FfmpegStatusRow() {
   );
 }
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CARD_LABEL = 'Merge & Convert';
+
 export function AudioToolsSettings() {
   const { form, mutation, onSubmit } = useSettingsForm<AudioToolsFormData>({
     schema: audioToolsSchema,
@@ -87,6 +90,7 @@ export function AudioToolsSettings() {
     select: toFormData,
     toPayload,
     successMessage: 'Audio tools settings saved',
+    label: CARD_LABEL,
   });
   const { register, handleSubmit, watch, formState: { errors, isDirty } } = form;
   const keepOriginalBitrate = watch('keepOriginalBitrate');
@@ -94,7 +98,7 @@ export function AudioToolsSettings() {
   return (
     <SettingsSection
       icon={<HeadphonesIcon className="w-5 h-5 text-primary" />}
-      title="Merge & Convert"
+      title={CARD_LABEL}
       description="Applies wherever audio is merged or converted — the Merge and Bulk Convert buttons, and auto-merge downloads."
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">

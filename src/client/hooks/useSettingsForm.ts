@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
+import { useTrackedForm } from '@/hooks/dirty-forms.js';
 import type { AppSettings, UpdateSettingsInput } from '../../shared/schemas.js';
 
 export interface UseSettingsFormConfig<T extends Record<string, unknown>> {
@@ -17,6 +18,12 @@ export interface UseSettingsFormConfig<T extends Record<string, unknown>> {
   select: (settings: AppSettings) => T;
   toPayload: (data: T) => Partial<UpdateSettingsInput>;
   successMessage: string;
+  /**
+   * Human-readable card name shown by the unsaved-changes guard. Keep it in sync
+   * with the sibling `<SettingsSection title>` by sharing one per-card constant —
+   * the success message is not a reliable card name (some cards share one).
+   */
+  label: string;
 }
 
 export interface UseSettingsFormReturn<T extends Record<string, unknown>> {
@@ -31,6 +38,7 @@ export function useSettingsForm<T extends Record<string, unknown>>({
   select,
   toPayload,
   successMessage,
+  label,
 }: UseSettingsFormConfig<T>): UseSettingsFormReturn<T> {
   const queryClient = useQueryClient();
   const selectRef = useRef(select);
@@ -75,6 +83,10 @@ export function useSettingsForm<T extends Record<string, unknown>>({
       toast.error(getErrorMessage(err));
     },
   });
+
+  // Register with the dirty-form guard so navigating away with unsaved edits (or
+  // a save in flight) is intercepted. Covers every useSettingsForm card at once.
+  useTrackedForm({ isDirty, isPending: mutation.isPending, label });
 
   const onSubmit = (data: T) => {
     mutation.mutate(data);

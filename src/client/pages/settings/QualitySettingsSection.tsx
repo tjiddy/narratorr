@@ -10,6 +10,9 @@ const qualityGateFormSchema = qualityFormSchema.pick({ grabFloor: true, minSeede
 
 type QualityGateFormData = z.infer<typeof qualityGateFormSchema>;
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CARD_LABEL = 'Quality';
+
 export function QualitySettingsSection() {
   const { form, mutation, onSubmit } = useSettingsForm<QualityGateFormData>({
     schema: qualityGateFormSchema,
@@ -27,6 +30,7 @@ export function QualitySettingsSection() {
     }),
     toPayload: (d) => ({ quality: d }),
     successMessage: 'Quality settings saved',
+    label: CARD_LABEL,
   });
 
   const { register, handleSubmit, formState: { errors, isDirty } } = form;
@@ -34,7 +38,7 @@ export function QualitySettingsSection() {
   return (
     <SettingsSection
       icon={<ZapIcon className="w-5 h-5 text-primary" />}
-      title="Quality"
+      title={CARD_LABEL}
       description="Minimum bar to grab"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">

@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useQuery } from '@tanstack/react-query';
+import { useLocation } from 'react-router-dom';
 import { renderWithProviders } from '../../__tests__/helpers';
+import { UnsavedChangesGuard } from '@/components/UnsavedChangesGuard';
+import { useTrackedForm, _resetForTesting } from '@/hooks/dirty-forms';
 import { HealthDashboard } from './HealthDashboard';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -18,22 +21,12 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-const navigateMock = vi.fn();
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual('react-router-dom');
-  return {
-    ...actual,
-    useNavigate: () => navigateMock,
-  };
-});
-
 import { api } from '@/lib/api';
 import type { Mock } from 'vitest';
 
 describe('HealthDashboard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    navigateMock.mockReset();
   });
 
   it('renders health cards with correct state indicators', async () => {
@@ -118,9 +111,8 @@ describe('HealthDashboard', () => {
     });
   });
 
-  describe('#1065 — clickable cards via target', () => {
-    it('renders an indexer card as a button and navigates to /settings/indexers?edit=<id> on click', async () => {
-      const user = userEvent.setup();
+  describe('#1065 — clickable cards via target (now Link-based, #1888)', () => {
+    it('renders an indexer card as a link to /settings/indexers?edit=<id>', async () => {
       (api.getHealthStatus as Mock).mockResolvedValue([
         {
           checkName: 'indexer:MAM',
@@ -132,14 +124,11 @@ describe('HealthDashboard', () => {
 
       renderWithProviders(<HealthDashboard />);
 
-      const card = await screen.findByRole('button', { name: /indexer:MAM/i });
-      await user.click(card);
-
-      expect(navigateMock).toHaveBeenCalledWith('/settings/indexers?edit=42');
+      const card = await screen.findByRole('link', { name: /indexer:MAM/i });
+      expect(card).toHaveAttribute('href', '/settings/indexers?edit=42');
     });
 
-    it('navigates to /settings/download-clients?edit=<id> for download-client target', async () => {
-      const user = userEvent.setup();
+    it('links to /settings/download-clients?edit=<id> for download-client target', async () => {
       (api.getHealthStatus as Mock).mockResolvedValue([
         {
           checkName: 'download-client:qBit',
@@ -150,14 +139,11 @@ describe('HealthDashboard', () => {
 
       renderWithProviders(<HealthDashboard />);
 
-      const card = await screen.findByRole('button', { name: /download-client:qBit/i });
-      await user.click(card);
-
-      expect(navigateMock).toHaveBeenCalledWith('/settings/download-clients?edit=7');
+      const card = await screen.findByRole('link', { name: /download-client:qBit/i });
+      expect(card).toHaveAttribute('href', '/settings/download-clients?edit=7');
     });
 
-    it('navigates to /settings/post-processing for ffmpeg settings target', async () => {
-      const user = userEvent.setup();
+    it('links to /settings/post-processing for ffmpeg settings target', async () => {
       (api.getHealthStatus as Mock).mockResolvedValue([
         {
           checkName: 'ffmpeg',
@@ -168,14 +154,11 @@ describe('HealthDashboard', () => {
 
       renderWithProviders(<HealthDashboard />);
 
-      const card = await screen.findByRole('button', { name: /ffmpeg/i });
-      await user.click(card);
-
-      expect(navigateMock).toHaveBeenCalledWith('/settings/post-processing');
+      const card = await screen.findByRole('link', { name: /ffmpeg/i });
+      expect(card).toHaveAttribute('href', '/settings/post-processing');
     });
 
-    it('navigates to /settings (index) for library-root route target — not /settings/general', async () => {
-      const user = userEvent.setup();
+    it('links to /settings (index) for library-root route target — not /settings/general', async () => {
       (api.getHealthStatus as Mock).mockResolvedValue([
         {
           checkName: 'library-root',
@@ -186,14 +169,11 @@ describe('HealthDashboard', () => {
 
       renderWithProviders(<HealthDashboard />);
 
-      const card = await screen.findByRole('button', { name: /library-root/i });
-      await user.click(card);
-
-      expect(navigateMock).toHaveBeenCalledWith('/settings');
+      const card = await screen.findByRole('link', { name: /library-root/i });
+      expect(card).toHaveAttribute('href', '/settings');
     });
 
-    it('navigates to /activity for stuck-downloads route target', async () => {
-      const user = userEvent.setup();
+    it('links to /activity for stuck-downloads route target', async () => {
       (api.getHealthStatus as Mock).mockResolvedValue([
         {
           checkName: 'stuck-downloads',
@@ -204,13 +184,22 @@ describe('HealthDashboard', () => {
 
       renderWithProviders(<HealthDashboard />);
 
-      const card = await screen.findByRole('button', { name: /stuck-downloads/i });
-      await user.click(card);
-
-      expect(navigateMock).toHaveBeenCalledWith('/activity');
+      const card = await screen.findByRole('link', { name: /stuck-downloads/i });
+      expect(card).toHaveAttribute('href', '/activity');
     });
 
-    it('cards without target render as non-button elements with no navigation', async () => {
+    it('resolves the card link under a subpath basename', async () => {
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        { checkName: 'indexer:MAM', state: 'error', target: { kind: 'indexer', id: 42 } },
+      ]);
+
+      renderWithProviders(<HealthDashboard />, { basename: '/narratorr', route: '/settings/system' });
+
+      const card = await screen.findByRole('link', { name: /indexer:MAM/i });
+      expect(card).toHaveAttribute('href', '/narratorr/settings/indexers?edit=42');
+    });
+
+    it('cards without target render as non-link elements', async () => {
       (api.getHealthStatus as Mock).mockResolvedValue([
         { checkName: 'untargeted-check', state: 'healthy' },
       ]);
@@ -221,12 +210,10 @@ describe('HealthDashboard', () => {
         expect(screen.getByText('untargeted-check')).toBeInTheDocument();
       });
 
-      // No button with that name exists
-      expect(screen.queryByRole('button', { name: /untargeted-check/i })).toBeNull();
+      expect(screen.queryByRole('link', { name: /untargeted-check/i })).toBeNull();
     });
 
-    it('keyboard activation (Enter) on actionable card triggers navigation', async () => {
-      const user = userEvent.setup();
+    it('an actionable card is keyboard-focusable (native link activation)', async () => {
       (api.getHealthStatus as Mock).mockResolvedValue([
         {
           checkName: 'indexer:NZB',
@@ -237,15 +224,53 @@ describe('HealthDashboard', () => {
 
       renderWithProviders(<HealthDashboard />);
 
-      const card = await screen.findByRole('button', { name: /indexer:NZB/i });
+      const card = await screen.findByRole('link', { name: /indexer:NZB/i });
       card.focus();
-      await user.keyboard('{Enter}');
-
-      expect(navigateMock).toHaveBeenCalledWith('/settings/indexers?edit=1');
+      expect(document.activeElement).toBe(card);
+      expect(card).toHaveAttribute('href', '/settings/indexers?edit=1');
     });
 
-    it('two indexer cards with the same checkName but different ids both render and navigate independently', async () => {
+    it('keyboard-activating a health card under the guard opens the modal and replays to the exact ?edit= target (F13)', async () => {
       const user = userEvent.setup();
+      _resetForTesting();
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        { checkName: 'indexer:MAM', state: 'error', target: { kind: 'indexer', id: 42 } },
+      ]);
+
+      function DirtyCard() {
+        useTrackedForm({ isDirty: true, isPending: false, label: 'Merge & Convert' });
+        return null;
+      }
+      function LocationProbe() {
+        const location = useLocation();
+        return <div data-testid="loc">{location.pathname + location.search}</div>;
+      }
+
+      renderWithProviders(
+        <>
+          <UnsavedChangesGuard />
+          <DirtyCard />
+          <LocationProbe />
+          <HealthDashboard />
+        </>,
+        { route: '/settings/system' },
+      );
+
+      const card = await screen.findByRole('link', { name: /indexer:MAM/i });
+      card.focus();
+      // Keyboard activation (Enter) fires a click the guard intercepts while dirty.
+      await user.keyboard('{Enter}');
+
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByTestId('loc').textContent).toBe('/settings/system');
+
+      // Discard replays the captured card click through the Router pipeline,
+      // preserving the exact query-carrying destination.
+      await user.click(screen.getByRole('button', { name: 'Discard changes' }));
+      expect(screen.getByTestId('loc').textContent).toBe('/settings/indexers?edit=42');
+    });
+
+    it('two indexer cards with the same checkName but different ids both render with distinct hrefs', async () => {
       (api.getHealthStatus as Mock).mockResolvedValue([
         { checkName: 'indexer:NZB', state: 'error', target: { kind: 'indexer', id: 1 } },
         { checkName: 'indexer:NZB', state: 'warning', target: { kind: 'indexer', id: 2 } },
@@ -256,14 +281,10 @@ describe('HealthDashboard', () => {
 
       renderWithProviders(<HealthDashboard />);
 
-      const buttons = await screen.findAllByRole('button', { name: /indexer:NZB/i });
-      expect(buttons).toHaveLength(2);
-
-      await user.click(buttons[0]!);
-      expect(navigateMock).toHaveBeenLastCalledWith('/settings/indexers?edit=1');
-
-      await user.click(buttons[1]!);
-      expect(navigateMock).toHaveBeenLastCalledWith('/settings/indexers?edit=2');
+      const links = await screen.findAllByRole('link', { name: /indexer:NZB/i });
+      expect(links).toHaveLength(2);
+      expect(links[0]).toHaveAttribute('href', '/settings/indexers?edit=1');
+      expect(links[1]).toHaveAttribute('href', '/settings/indexers?edit=2');
 
       const duplicateKeyWarning = errorSpy.mock.calls.some((call) =>
         call.some((arg) => typeof arg === 'string' && arg.includes('Encountered two children with the same key')),

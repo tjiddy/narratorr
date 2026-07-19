@@ -28,6 +28,12 @@ function SaveButton({ pending }: { pending: boolean }) {
   );
 }
 
+// Single source of truth for each card name: shared by the guard label and the
+// SettingsSection title. Both General cards share a successMessage, so the label
+// (not the toast text) is the reliable card name.
+const HOUSEKEEPING_CARD_LABEL = 'Housekeeping';
+const LOGGING_CARD_LABEL = 'Logging';
+
 function HousekeepingForm() {
   const { form, mutation, onSubmit } = useSettingsForm<HousekeepingFormData>({
     schema: housekeepingSchema,
@@ -35,6 +41,7 @@ function HousekeepingForm() {
     select: (s: AppSettings) => ({ housekeepingRetentionDays: s.general.housekeepingRetentionDays }),
     toPayload: (d) => ({ general: d }),
     successMessage: 'General settings saved',
+    label: HOUSEKEEPING_CARD_LABEL,
   });
 
   const { register, handleSubmit, formState: { errors, isDirty } } = form;
@@ -42,7 +49,7 @@ function HousekeepingForm() {
   return (
     <SettingsSection
       icon={<ClockIcon className="w-5 h-5 text-primary" />}
-      title="Housekeeping"
+      title={HOUSEKEEPING_CARD_LABEL}
       description="Automatic database maintenance and cleanup"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
@@ -76,6 +83,7 @@ function LoggingForm() {
     select: (s: AppSettings) => ({ logLevel: s.general.logLevel }),
     toPayload: (d) => ({ general: d }),
     successMessage: 'General settings saved',
+    label: LOGGING_CARD_LABEL,
   });
 
   const { register, handleSubmit, formState: { isDirty } } = form;
@@ -83,7 +91,7 @@ function LoggingForm() {
   return (
     <SettingsSection
       icon={<TerminalIcon className="w-5 h-5 text-primary" />}
-      title="Logging"
+      title={LOGGING_CARD_LABEL}
       description="Control server log verbosity"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">

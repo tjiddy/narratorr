@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
+import { useTrackedForm } from '@/hooks/dirty-forms.js';
 import { FolderIcon } from '@/components/icons';
 import { PathInput } from '@/components/PathInput';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -21,6 +22,9 @@ const libraryPathSchema = z.object({
 });
 
 type LibraryPathFormData = z.infer<typeof libraryPathSchema>;
+
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CARD_LABEL = 'Library';
 
 export function LibrarySettingsSection() {
   const queryClient = useQueryClient();
@@ -79,10 +83,14 @@ export function LibrarySettingsSection() {
   // eslint-disable-next-line react-hooks/incompatible-library -- watch() is the standard RHF API; Compiler skip is expected
   const pathValue = watch('path');
 
+  // Register with the unsaved-changes guard. An edited-but-unsaved path (blur-save
+  // skips empty/unchanged values) stays dirty, reproducing the exact bug this fixes.
+  useTrackedForm({ isDirty, isPending: pathSaveMutation.isPending, label: CARD_LABEL });
+
   return (
     <SettingsSection
       icon={<FolderIcon className="w-5 h-5 text-primary" />}
-      title="Library"
+      title={CARD_LABEL}
       description="Configure where audiobooks are stored"
     >
       <SettingsTable>

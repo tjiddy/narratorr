@@ -82,6 +82,9 @@ function AutoMergeDescription({ gated }: { gated: boolean }): ReactNode {
   );
 }
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const POST_PROCESSING_CARD_LABEL = 'Post Processing';
+
 function AutomationsForm() {
   const ffmpegStatus = useFfmpegStatus();
   // Optimistic while the status query LOADS — avoids a flash of "needs ffmpeg" on a
@@ -96,6 +99,7 @@ function AutomationsForm() {
     select: toAutomationsFormData,
     toPayload: toAutomationsPayload,
     successMessage: 'Post processing settings saved',
+    label: POST_PROCESSING_CARD_LABEL,
   });
 
   const { register, handleSubmit, watch, formState: { isDirty } } = form;
@@ -105,7 +109,7 @@ function AutomationsForm() {
   return (
     <SettingsSection
       icon={<ZapIcon className="w-5 h-5 text-primary" />}
-      title="Post Processing"
+      title={POST_PROCESSING_CARD_LABEL}
       description="Automations that run on their own after a download lands. None run on Library or Manual Import."
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
@@ -211,6 +215,9 @@ function EnvChip({ children }: { children: ReactNode }) {
   return <code className="px-1 py-0.5 bg-muted rounded text-xs font-mono">{children}</code>;
 }
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CUSTOM_SCRIPT_CARD_LABEL = 'Custom script';
+
 function CustomScriptForm() {
   const { form, mutation, onSubmit } = useSettingsForm<CustomScriptFormData>({
     schema: customScriptFormSchema,
@@ -218,6 +225,7 @@ function CustomScriptForm() {
     select: toCustomScriptFormData,
     toPayload: toCustomScriptPayload,
     successMessage: 'Custom script settings saved',
+    label: CUSTOM_SCRIPT_CARD_LABEL,
   });
 
   const { register, handleSubmit, formState: { errors, isDirty } } = form;
@@ -225,7 +233,7 @@ function CustomScriptForm() {
   return (
     <SettingsSection
       icon={<TerminalIcon className="w-5 h-5 text-primary" />}
-      title="Custom script"
+      title={CUSTOM_SCRIPT_CARD_LABEL}
       description="Run a script after each successful import — hand off to another tool, or run ffmpeg and other transforms on every downloaded book."
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import type { HealthCheckResult, HealthCheckTarget } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -50,7 +50,6 @@ function cardKey(check: HealthCheckResult): string {
 }
 
 function HealthCard({ check }: { check: HealthCheckResult }) {
-  const navigate = useNavigate();
   const style = stateStyles[check.state] ?? stateStyles.healthy;
   const Icon = style.icon;
   // A `link` makes the card non-clickable so its inline <a> isn't nested inside
@@ -95,14 +94,16 @@ function HealthCard({ check }: { check: HealthCheckResult }) {
     );
   }
 
+  // A Link (not a programmatic navigate) so the unsaved-changes guard can
+  // intercept it while a settings form is dirty (#1888). `to={href}` carries any
+  // query params (e.g. ?edit=…) verbatim through the Router pipeline.
   return (
-    <button
-      type="button"
-      onClick={() => navigate(href)}
+    <Link
+      to={href}
       className={`flex items-start gap-3 p-3.5 rounded-xl border transition-colors text-left w-full cursor-pointer hover:brightness-110 focus-ring ${style.bg}`}
     >
       {content}
-    </button>
+    </Link>
   );
 }
 

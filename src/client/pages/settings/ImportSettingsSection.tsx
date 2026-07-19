@@ -11,6 +11,9 @@ const importFormSchema = stripDefaults(importSettingsSchema);
 
 type ImportFormData = z.infer<typeof importFormSchema>;
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CARD_LABEL = 'Import';
+
 export function ImportSettingsSection() {
   const { form, mutation, onSubmit } = useSettingsForm<ImportFormData>({
     schema: importFormSchema,
@@ -18,6 +21,7 @@ export function ImportSettingsSection() {
     select: (s: AppSettings) => s.import as ImportFormData,
     toPayload: (d) => ({ import: d }),
     successMessage: 'Import settings saved',
+    label: CARD_LABEL,
   });
 
   const { register, handleSubmit, watch, formState: { errors, isDirty } } = form;
@@ -27,7 +31,7 @@ export function ImportSettingsSection() {
   return (
     <SettingsSection
       icon={<PackageIcon className="w-5 h-5 text-primary" />}
-      title="Import"
+      title={CARD_LABEL}
       description="Configure post-download import behavior"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">

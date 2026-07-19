@@ -105,6 +105,24 @@ describe('ConfirmModal', () => {
     expect(cancelBtn).not.toHaveClass('bg-destructive');
   });
 
+  it('renders the requested cancelVariant/confirmVariant classes (Stay primary, Discard secondary)', () => {
+    render(
+      <ConfirmModal
+        {...defaultProps}
+        confirmLabel="Discard changes"
+        cancelLabel="Stay on page"
+        cancelVariant="primary"
+        confirmVariant="secondary"
+      />,
+    );
+    const stayBtn = screen.getByText('Stay on page').closest('button')!;
+    const discardBtn = screen.getByText('Discard changes').closest('button')!;
+    // Stay is the visual primary; Discard is secondary (no destructive styling).
+    expect(stayBtn).toHaveClass('bg-primary', 'text-primary-foreground');
+    expect(discardBtn).not.toHaveClass('bg-destructive');
+    expect(discardBtn).toHaveClass('border', 'border-border');
+  });
+
   it('does not call onCancel when the backdrop is clicked (backdrop-click dismissal removed)', () => {
     const onCancel = vi.fn();
     render(<ConfirmModal {...defaultProps} onCancel={onCancel} />);
