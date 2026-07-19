@@ -557,8 +557,8 @@ describe('BookService.createResolved — tx-scoped insert primitive (DB-backed, 
       await db.transaction(async (tx) =>
         service.createResolved({ title: 'Intruder', authors: [{ name: 'B' }], asin: 'B0X' }, tx),
       );
-    } catch (e) {
-      caught = e;
+    } catch (error: unknown) {
+      caught = error;
     }
 
     expect(caught).toBeInstanceOf(Error);

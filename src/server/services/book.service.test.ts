@@ -652,20 +652,44 @@ describe('BookService', () => {
         title: 'The Way of Kings',
         authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }],
         narrators: ['Michael Kramer'],
+        subtitle: 'Book One of the Stormlight Archive',
+        description: 'An epic doorstopper.',
+        publisher: 'Macmillan Audio',
+        coverUrl: 'https://example.com/wok.jpg',
         asin: 'B003P2WO5E',
+        isbn: '9780765326355',
         seriesName: 'The Stormlight Archive',
         seriesPosition: 1,
         duration: 2700,
         publishedDate: '2010-08-31',
         genres: ['Fantasy', 'Epic Fantasy'],
+        status: 'imported',
+        productionType: 'unabridged',
       });
 
       expect(result.title).toBe('The Way of Kings');
-      // #1716 — series metadata no longer carries seriesAsin/seriesProvider, but
-      // the Series-card path is intact: scalar name/position still reach the
-      // books insert and drive the series-link upsert.
+      // F2 — the extracted `buildNewBookValues` mapping must carry EVERY migrated
+      // scalar/default (not just series fields) to the books insert; deleting any
+      // one assignment from the builder would leave this red. #1716 — series
+      // metadata no longer carries seriesAsin/seriesProvider, but scalar
+      // name/position still reach the insert and drive the series-link upsert.
       expect(bookInsertChain.values).toHaveBeenCalledWith(
-        expect.objectContaining({ seriesName: 'The Stormlight Archive', seriesPosition: 1 }),
+        expect.objectContaining({
+          title: 'The Way of Kings',
+          subtitle: 'Book One of the Stormlight Archive',
+          description: 'An epic doorstopper.',
+          publisher: 'Macmillan Audio',
+          coverUrl: 'https://example.com/wok.jpg',
+          asin: 'B003P2WO5E',
+          isbn: '9780765326355',
+          seriesName: 'The Stormlight Archive',
+          seriesPosition: 1,
+          duration: 2700,
+          publishedDate: '2010-08-31',
+          genres: ['Fantasy', 'Epic Fantasy'],
+          status: 'imported',
+          productionType: 'unabridged',
+        }),
       );
     });
 
@@ -720,11 +744,18 @@ describe('BookService', () => {
         .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: 'B_ENRICHED' }, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]));
-      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
 
       await serviceWithMeta.create({ title: 'Test', authors: [], providerId: 'hc-123' });
 
       expect(mockMetadata.getBook).toHaveBeenCalledWith('hc-123');
+      // F1 — the provider ASIN must cross the wrapper→primitive boundary and reach
+      // the insert (canonicalized). Dropping `enrichedAsin = detail.asin` or the
+      // `asin` field from the resolved payload would leave this red.
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: 'B_ENRICHED' }),
+      );
     });
 
     it('uses provided ASIN and skips enrichment', async () => {
@@ -740,17 +771,24 @@ describe('BookService', () => {
     });
 
     it('creates book when getBook returns null (no ASIN found)', async () => {
+      const infoLog = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(infoLog), inject<MetadataService>(mockMetadata));
       mockMetadata.getBook.mockResolvedValueOnce(null);
       db.select
         .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: null }, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]));
-      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
 
-      const result = await serviceWithMeta.create({ title: 'No ASIN Book', authors: [], providerId: 'hc-999' });
+      const result = await svc.create({ title: 'No ASIN Book', authors: [], providerId: 'hc-999' });
 
       expect(result.title).toBe('The Way of Kings'); // from mock
       expect(mockMetadata.getBook).toHaveBeenCalledWith('hc-999');
+      // F3 — full null-parity contract: null persisted, no enrichment-success log.
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
+      const infoMock = infoLog.info as Mock;
+      expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
     });
 
     it('creates book when getBook throws', async () => {
@@ -807,7 +845,8 @@ describe('BookService', () => {
     });
 
     it('inserts null asin when getBook resolves metadata with an EMPTY-string asin (AC4/F9)', async () => {
-      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()), inject<MetadataService>(mockMetadata));
+      const infoLog = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(infoLog), inject<MetadataService>(mockMetadata));
       mockMetadata.getBook.mockResolvedValueOnce({ title: 'Book', authors: [], asin: '' });
       db.select
         .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: null }, importListName: null }]))
@@ -819,6 +858,9 @@ describe('BookService', () => {
       await svc.create({ title: 'Empty ASIN Book', authors: [], providerId: 'hc-empty' });
 
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
+      // F3 — the empty-string boundary must not emit the enrichment-success log.
+      const infoMock = infoLog.info as Mock;
+      expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
     });
   });
 
@@ -844,6 +886,16 @@ describe('BookService', () => {
       expect(mockMetadata.getBook).not.toHaveBeenCalled();
       expect(id).toBe(42);
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: 'B003P2WO5E' }));
+    });
+
+    it('opens its OWN transaction when no tx is supplied — self-managed atomic write (AC5/F4)', async () => {
+      db.insert.mockReturnValue(mockDbChain([{ id: 7 }]));
+
+      await primitiveSvc.createResolved({ title: 'Self Managed', authors: [] });
+
+      // The omitted-tx branch must wrap the multi-table write in one transaction;
+      // replacing it with `runResolvedInsert(this.db, ...)` would drop this to 0.
+      expect(db.transaction).toHaveBeenCalledTimes(1);
     });
 
     it('rejects an invalid productionType at the write boundary and never issues the insert values (AC8)', async () => {
