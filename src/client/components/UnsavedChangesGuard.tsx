@@ -77,6 +77,15 @@ export function UnsavedChangesGuard() {
 
   const [pendingTarget, setPendingTarget] = useState<CapturedTarget | null>(null);
 
+  // Save success (or a revert to clean) while the modal is open → nothing is
+  // dirty/pending anymore; drop the captured target so the modal closes and the
+  // user stays on the page. Adjusting state during render (not in an effect) is
+  // React's blessed pattern for reacting to a changed input, and self-limits: the
+  // re-render sees pendingTarget === null and the branch no longer fires.
+  if (pendingTarget !== null && !isBlocking) {
+    setPendingTarget(null);
+  }
+
   // Two independent one-shot flags (see AC5). `bypassNextClick` governs only the
   // SPA click-interception path; `suppressNextBeforeunload` governs only the
   // native document-unload prompt. A single shared flag is unsound: the click
@@ -131,14 +140,6 @@ export function UnsavedChangesGuard() {
     window.addEventListener('beforeunload', handleBeforeunload);
     return () => window.removeEventListener('beforeunload', handleBeforeunload);
   }, []);
-
-  // Save success (or a revert to clean) while the modal is open → nothing is
-  // dirty/pending anymore; close the modal and stay on the page.
-  useEffect(() => {
-    if (pendingTarget && !isBlocking) {
-      setPendingTarget(null);
-    }
-  }, [pendingTarget, isBlocking]);
 
   function handleStay() {
     setPendingTarget(null);

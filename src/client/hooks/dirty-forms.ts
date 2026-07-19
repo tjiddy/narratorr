@@ -90,9 +90,10 @@ export function useDirtyFormsState(): DirtyFormsState {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-/** Reset store state for testing. */
+/** Reset store state for testing. Notifies any active subscribers before clearing them. */
 export function _resetForTesting(): void {
   registry.clear();
-  listeners.clear();
   cachedSnapshot = { dirtyLabels: [], anyPending: false };
+  for (const listener of listeners) listener();
+  listeners.clear();
 }
