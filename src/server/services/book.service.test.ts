@@ -3,6 +3,7 @@ import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests_
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 
 import { BookService, CoverUploadError } from './book.service.js';
+import { serializeError } from '../utils/serialize-error.js';
 import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
 import type { ProductionType } from '../../shared/schemas/book.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
@@ -763,6 +764,132 @@ describe('BookService', () => {
       const result = await serviceWithMeta.create({ title: 'Error Book', authors: [], providerId: 'hc-bad' });
 
       expect(result.title).toBe('The Way of Kings'); // still creates
+    });
+
+    it('logs the exact "ASIN enrichment failed" warn with { error, providerId } and persists null asin (AC4/F8)', async () => {
+      const warnLog = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(warnLog), inject<MetadataService>(mockMetadata));
+      const boom = new Error('API timeout');
+      mockMetadata.getBook.mockRejectedValueOnce(boom);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: null }, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await svc.create({ title: 'Error Book', authors: [], providerId: 'hc-bad' });
+
+      expect(warnLog.warn).toHaveBeenCalledWith(
+        { error: serializeError(boom), providerId: 'hc-bad' },
+        'ASIN enrichment failed',
+      );
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
+    });
+
+    it('inserts null asin when getBook resolves metadata with an ABSENT asin, and emits no enrichment-success log (AC4/F9)', async () => {
+      const infoLog = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(infoLog), inject<MetadataService>(mockMetadata));
+      mockMetadata.getBook.mockResolvedValueOnce({ title: 'Book', authors: [] }); // no `asin` key at all
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: null }, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await svc.create({ title: 'Absent ASIN Book', authors: [], providerId: 'hc-absent' });
+
+      expect(mockMetadata.getBook).toHaveBeenCalledWith('hc-absent');
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
+      const infoMock = infoLog.info as Mock;
+      expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
+    });
+
+    it('inserts null asin when getBook resolves metadata with an EMPTY-string asin (AC4/F9)', async () => {
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()), inject<MetadataService>(mockMetadata));
+      mockMetadata.getBook.mockResolvedValueOnce({ title: 'Book', authors: [], asin: '' });
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: null }, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await svc.create({ title: 'Empty ASIN Book', authors: [], providerId: 'hc-empty' });
+
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
+    });
+  });
+
+  // The tx-scoped insert primitive (#1892). Zero provider I/O, no post-commit
+  // side effects, optional outer transaction, numeric-id return.
+  describe('createResolved (tx-scoped primitive #1892)', () => {
+    let metaLog: ReturnType<typeof createMockLogger>;
+    let mockMetadata: { getBook: ReturnType<typeof vi.fn> };
+    let primitiveSvc: BookService;
+
+    beforeEach(() => {
+      metaLog = createMockLogger();
+      mockMetadata = { getBook: vi.fn().mockResolvedValue(null) };
+      primitiveSvc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(metaLog), inject<MetadataService>(mockMetadata));
+    });
+
+    it('performs zero provider I/O, returns the numeric bookId, and canonicalizes asin (AC2/AC6/AC8/F12)', async () => {
+      const insertChain = mockDbChain([{ id: 42 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      const id = await primitiveSvc.createResolved({ title: 'Direct', authors: [], asin: 'b003p2wo5e' });
+
+      expect(mockMetadata.getBook).not.toHaveBeenCalled();
+      expect(id).toBe(42);
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: 'B003P2WO5E' }));
+    });
+
+    it('rejects an invalid productionType at the write boundary and never issues the insert values (AC8)', async () => {
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await expect(
+        primitiveSvc.createResolved({ title: 'Bad', authors: [], productionType: 'nonsense' as ProductionType }),
+      ).rejects.toThrow();
+
+      expect(insertChain.values).not.toHaveBeenCalled();
+    });
+
+    it('runs every write on a supplied tx and never opens db.transaction (AC5)', async () => {
+      // Guard the tx-mock termini so the insert is BOTH awaitable AND exposes
+      // .returning() (guarded-transition-needs-returning-in-tx-mocks).
+      const txInsert = mockDbChain([{ id: 55 }]);
+      const tx = {
+        insert: vi.fn().mockReturnValue(txInsert),
+        delete: vi.fn().mockReturnValue(mockDbChain([])),
+        select: vi.fn().mockReturnValue(mockDbChain([])),
+      };
+
+      const id = await primitiveSvc.createResolved(
+        { title: 'On Tx', authors: [{ name: 'Author A' }] },
+        inject<DbOrTx>(tx),
+      );
+
+      expect(id).toBe(55);
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(db.insert).not.toHaveBeenCalled();
+      // book insert + author find-or-create + bookAuthors junction all on tx
+      expect(tx.insert).toHaveBeenCalled();
+      expect(tx.delete).toHaveBeenCalled();
+    });
+
+    it('emits no "Book added to library" log and writes no genre telemetry on the self-managed path (AC9/F13)', async () => {
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await primitiveSvc.createResolved({ title: 'Quiet', authors: [], genres: ['zzz-not-a-known-genre'] });
+
+      const infoMock = metaLog.info as Mock;
+      expect(infoMock.mock.calls.some((c) => c[1] === 'Book added to library')).toBe(false);
+      // The only insert is the book row — no unmatched_genres telemetry write.
+      expect(db.insert).toHaveBeenCalledTimes(1);
     });
   });
 
