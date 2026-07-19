@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent, renderHook } from '@testing-library/react';
+import { screen, waitFor, fireEvent, renderHook, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Link } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { useDirtyFormsState, _resetForTesting } from '@/hooks/dirty-forms';
+import { UnsavedChangesGuard } from '@/components/UnsavedChangesGuard';
 import { LibrarySettingsSection } from './LibrarySettingsSection';
 
 vi.mock('sonner', () => ({
@@ -122,6 +124,119 @@ describe('LibrarySettingsSection', () => {
       await waitFor(() => {
         expect(state.current.dirtyLabels).toEqual([]);
       });
+    });
+
+    it('reports anyPending while the blur-save is in flight (F10)', async () => {
+      const user = userEvent.setup();
+      let resolveSave: (v: unknown) => void = () => {};
+      mockApi.updateSettings.mockReturnValue(new Promise((r) => { resolveSave = r; }));
+      renderWithProviders(<LibrarySettingsSection />);
+      const state = renderHook(() => useDirtyFormsState()).result;
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+      });
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.clear(pathInput);
+      await user.type(pathInput, '/new-path');
+      fireEvent.blur(pathInput);
+
+      // Registry reports the in-flight save (removing `pathSaveMutation.isPending`
+      // from the useTrackedForm call would leave this false forever).
+      await waitFor(() => {
+        expect(state.current.anyPending).toBe(true);
+      });
+
+      await act(async () => {
+        resolveSave(mockSettings);
+      });
+      await waitFor(() => {
+        expect(state.current.anyPending).toBe(false);
+      });
+    });
+
+    it('keeps Library dirty when blur-save is skipped for an empty path (F11)', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      const state = renderHook(() => useDirtyFormsState()).result;
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+      });
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.clear(pathInput);
+      fireEvent.blur(pathInput);
+
+      // Empty path → blur-save early-returns (no API call) but the draft stays
+      // dirty, so the guard label must remain.
+      await waitFor(() => {
+        expect(mockApi.updateSettings).not.toHaveBeenCalled();
+      });
+      expect(state.current.dirtyLabels).toContain('Library');
+    });
+
+    it('keeps Library dirty when the blur-save is rejected (F11)', async () => {
+      const user = userEvent.setup();
+      mockApi.updateSettings.mockRejectedValue(new Error('save failed'));
+      renderWithProviders(<LibrarySettingsSection />);
+      const state = renderHook(() => useDirtyFormsState()).result;
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+      });
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.clear(pathInput);
+      await user.type(pathInput, '/new-path');
+      fireEvent.blur(pathInput);
+
+      // Rejected save → the toast fires but the draft is not reset, so Library
+      // stays dirty (a regression that unregistered on failure would drop it).
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalled();
+      });
+      expect(state.current.dirtyLabels).toContain('Library');
+    });
+
+    it('blur-save success while the guard modal is open closes the guard, stays, and shows the rescan prompt (F12)', async () => {
+      const user = userEvent.setup();
+      let resolveSave: (v: unknown) => void = () => {};
+      mockApi.updateSettings.mockReturnValue(new Promise((r) => { resolveSave = r; }));
+      renderWithProviders(
+        <>
+          <UnsavedChangesGuard />
+          <LibrarySettingsSection />
+          <Link to="/settings/indexers">Indexers</Link>
+        </>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+      });
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.clear(pathInput);
+      await user.type(pathInput, '/new-lib');
+
+      // Clicking the nav link blurs the input (fires the blur-save → pending) and
+      // is intercepted by the guard (still dirty). The guard modal names Library.
+      await user.click(screen.getByRole('link', { name: 'Indexers' }));
+      expect(screen.getByText(/The Library card has unsaved changes/)).toBeInTheDocument();
+
+      // The in-flight blur-save completes successfully: resetField makes the form
+      // clean → the guard modal closes and stays on the page, while Library shows
+      // its own Refresh Library prompt (neither modal clobbers the other).
+      await act(async () => {
+        resolveSave(mockSettings);
+      });
+      await waitFor(() => {
+        expect(screen.queryByText(/The Library card has unsaved changes/)).toBeNull();
+      });
+      // Stayed on the page (Library section still mounted).
+      expect(screen.getByText('Library path')).toBeInTheDocument();
+      expect(await screen.findByText('Refresh Library?')).toBeInTheDocument();
     });
   });
 

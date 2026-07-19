@@ -1,7 +1,20 @@
-import { StrictMode, useState } from 'react';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { Component, StrictMode, useState, type ReactNode } from 'react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, renderHook, screen, act } from '@testing-library/react';
 import { useTrackedForm, useDirtyFormsState, _resetForTesting } from './dirty-forms';
+
+// Minimal error boundary so a component that throws during render can be
+// rendered without failing the test — used to prove an aborted render commits
+// no registry entry.
+class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? <div>caught</div> : this.props.children;
+  }
+}
 
 function TrackedForm({
   isDirty = false,
@@ -108,6 +121,73 @@ describe('dirty-forms registry', () => {
     );
     const state = readState();
     expect(state.current.dirtyLabels).toEqual(['Quality']);
+  });
+
+  it('an aborted (throwing) render commits no phantom entry (F2)', () => {
+    function Exploder(): null {
+      // The registration is scheduled as a layout effect; because this render
+      // throws, React discards it and the effect never commits. A render-phase
+      // write would instead leak a 'Ghost' entry that nothing cleans up.
+      useTrackedForm({ isDirty: true, isPending: false, label: 'Ghost' });
+      throw new Error('render aborted');
+    }
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(
+      <Boundary>
+        <Exploder />
+      </Boundary>,
+    );
+    errorSpy.mockRestore();
+
+    const state = readState();
+    expect(state.current.dirtyLabels).not.toContain('Ghost');
+    expect(state.current.dirtyLabels).toEqual([]);
+  });
+
+  it('does not warn about update-during-render under StrictMode across a dirty flip (F2)', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    function Harness() {
+      const [dirty, setDirty] = useState(true);
+      return (
+        <>
+          <TrackedForm label="Quality" isDirty={dirty} />
+          <button type="button" onClick={() => setDirty(false)}>
+            clean
+          </button>
+        </>
+      );
+    }
+    render(
+      <StrictMode>
+        <Harness />
+      </StrictMode>,
+    );
+    act(() => {
+      screen.getByRole('button').click();
+    });
+    // Writes happen only in committed effects, so React never warns that the
+    // store notified (updated a subscriber) during another component's render.
+    const warned = errorSpy.mock.calls.some((call) =>
+      call.some(
+        (arg) =>
+          typeof arg === 'string' &&
+          /Cannot update a component .* while rendering a different component|update a component while rendering/i.test(arg),
+      ),
+    );
+    errorSpy.mockRestore();
+    expect(warned).toBe(false);
+  });
+
+  it('updates a mounted entry when its label prop changes (F3)', () => {
+    const view = render(<TrackedForm label="Old Name" isDirty />);
+    const state = readState();
+    expect(state.current.dirtyLabels).toEqual(['Old Name']);
+
+    // Rerender the SAME mounted form (stable useId) with a new label. The effect
+    // must re-run on the label change (removing `label` from its deps would keep
+    // the stale name, which the guard modal would then display).
+    view.rerender(<TrackedForm label="New Name" isDirty />);
+    expect(state.current.dirtyLabels).toEqual(['New Name']);
   });
 
   it('getSnapshot returns a stable reference between notifications', () => {

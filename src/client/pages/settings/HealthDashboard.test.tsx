@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useQuery } from '@tanstack/react-query';
+import { useLocation } from 'react-router-dom';
 import { renderWithProviders } from '../../__tests__/helpers';
+import { UnsavedChangesGuard } from '@/components/UnsavedChangesGuard';
+import { useTrackedForm, _resetForTesting } from '@/hooks/dirty-forms';
 import { HealthDashboard } from './HealthDashboard';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -225,6 +228,46 @@ describe('HealthDashboard', () => {
       card.focus();
       expect(document.activeElement).toBe(card);
       expect(card).toHaveAttribute('href', '/settings/indexers?edit=1');
+    });
+
+    it('keyboard-activating a health card under the guard opens the modal and replays to the exact ?edit= target (F13)', async () => {
+      const user = userEvent.setup();
+      _resetForTesting();
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        { checkName: 'indexer:MAM', state: 'error', target: { kind: 'indexer', id: 42 } },
+      ]);
+
+      function DirtyCard() {
+        useTrackedForm({ isDirty: true, isPending: false, label: 'Merge & Convert' });
+        return null;
+      }
+      function LocationProbe() {
+        const location = useLocation();
+        return <div data-testid="loc">{location.pathname + location.search}</div>;
+      }
+
+      renderWithProviders(
+        <>
+          <UnsavedChangesGuard />
+          <DirtyCard />
+          <LocationProbe />
+          <HealthDashboard />
+        </>,
+        { route: '/settings/system' },
+      );
+
+      const card = await screen.findByRole('link', { name: /indexer:MAM/i });
+      card.focus();
+      // Keyboard activation (Enter) fires a click the guard intercepts while dirty.
+      await user.keyboard('{Enter}');
+
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByTestId('loc').textContent).toBe('/settings/system');
+
+      // Discard replays the captured card click through the Router pipeline,
+      // preserving the exact query-carrying destination.
+      await user.click(screen.getByRole('button', { name: 'Discard changes' }));
+      expect(screen.getByTestId('loc').textContent).toBe('/settings/indexers?edit=42');
     });
 
     it('two indexer cards with the same checkName but different ids both render with distinct hrefs', async () => {
