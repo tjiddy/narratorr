@@ -9,6 +9,7 @@ import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { parseFolderStructure, extractYear, LibraryScanService } from './library-scan.service.js';
 import { books } from '../../db/schema.js';
+import { buildTitleShape } from '../../shared/dedup.js';
 
 vi.mock('./enrichment-utils.js', () => ({
   enrichBookFromAudio: vi.fn().mockResolvedValue({ enriched: true }),
@@ -2505,13 +2506,22 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(titleAuthorChain.orderBy).toHaveBeenCalledWith(books.id);
     });
 
-    it('within-scan retrieval invariant: prior "Dune (Edition: Deluxe)" then bare "Dune" → within-scan dup (F2)', async () => {
-      // Independent of the existing-library bucket (F2): the FIRST scan row registers into
-      // withinScanBucket under colonBase "dune" (the parser strips the removable
-      // parenthetical; the shape core would collapse a colon inside it regardless), so the
-      // later bare "Dune" retrieves it via the fullNormalized arm.
+    it('within-scan retrieval invariant across differing PARSED inputs, driven by the shape API not the parser (F7)', async () => {
+      // F7: the earlier "Dune (Edition: Deluxe)" fixture was vacuous — parseFolderStructure
+      // strips the parenthetical BEFORE buildTitleShape, so both rows reached the bucket as
+      // identical "Dune". Use a suffix the parser DEMONSTRABLY PRESERVES (a space-form
+      // " Book 1" series marker with no comma) but that buildTitleShape's fixpoint core
+      // collapses. The two rows therefore reach withinScanBucket with DIFFERING parsed
+      // titles ("Dune Book 1" vs "Dune") that share colonBase "dune"; the match is the
+      // shape API's doing, so reverting the marker/fixpoint shape behavior fails this test.
+      //
+      // Precondition (asserted): the parser preserves the marker so the shape API — not the
+      // parser — is what collapses it.
+      expect(parseFolderStructure(['Frank Herbert', 'Dune Book 1']).title).toBe('Dune Book 1');
+      expect(buildTitleShape('Dune Book 1').fullNormalized).toBe('dune');
+
       vi.mocked(discoverBooks).mockResolvedValue([
-        { path: '/audiobooks/Frank Herbert/DuneDeluxe', folderParts: ['Frank Herbert', 'Dune (Edition: Deluxe)'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Frank Herbert/DuneBook1', folderParts: ['Frank Herbert', 'Dune Book 1'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Frank Herbert/Dune', folderParts: ['Frank Herbert', 'Dune'], audioFileCount: 3, totalSize: 100 },
       ]);
       mockPreFetch([], []);
@@ -2520,7 +2530,28 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
-      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Frank Herbert/DuneDeluxe');
+      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Frank Herbert/DuneBook1');
+    });
+
+    it('within-scan retrieval invariant across a colon-bearing preserved suffix ("Saga, Book 1: Deluxe" → "Saga") (F7)', async () => {
+      // A mixed colon+marker title the parser preserves verbatim; buildTitleShape derives
+      // colonBase "saga" by re-normalizing the pre-colon prefix (stripping ", Book 1"). The
+      // later bare "Saga" shares that colonBase and bridges via the one-sided colonBase arm.
+      // Reverting the prefix re-normalization moves the first row to a different bucket.
+      expect(parseFolderStructure(['Author', 'Saga, Book 1: Deluxe']).title).toBe('Saga, Book 1: Deluxe');
+      expect(buildTitleShape('Saga, Book 1: Deluxe').colonBase).toBe('saga');
+
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/SagaDeluxe', folderParts: ['Author', 'Saga, Book 1: Deluxe'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Author/Saga', folderParts: ['Author', 'Saga'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/SagaDeluxe');
     });
 
     it('path match outranks a simultaneous decisive-ASIN AND title+author collision (F5)', async () => {
