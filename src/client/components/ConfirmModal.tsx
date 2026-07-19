@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { Button } from '@/components/Button';
+import { Button, type ButtonVariant } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 
 interface ConfirmModalProps {
@@ -9,6 +9,10 @@ interface ConfirmModalProps {
   confirmLabel?: string;
   cancelLabel?: string;
   confirmDisabled?: boolean;
+  /** Button variant for the cancel action. Defaults to 'secondary'. */
+  cancelVariant?: ButtonVariant;
+  /** Button variant for the confirm action. Defaults to 'destructive'. */
+  confirmVariant?: ButtonVariant;
   onConfirm: () => void;
   onCancel: () => void;
   children?: ReactNode;
@@ -40,6 +44,8 @@ export function ConfirmModal({
   confirmLabel = 'Delete',
   cancelLabel = 'Cancel',
   confirmDisabled,
+  cancelVariant = 'secondary',
+  confirmVariant = 'destructive',
   onConfirm,
   onCancel,
   children,
@@ -75,7 +81,7 @@ export function ConfirmModal({
         {/* Actions */}
         <div className="flex flex-col-reverse sm:flex-row gap-3">
           <Button
-            variant="secondary"
+            variant={cancelVariant}
             size="md"
             type="button"
             onClick={onCancel}
@@ -84,7 +90,7 @@ export function ConfirmModal({
             {cancelLabel}
           </Button>
           <Button
-            variant="destructive"
+            variant={confirmVariant}
             size="md"
             type="button"
             onClick={onConfirm}
