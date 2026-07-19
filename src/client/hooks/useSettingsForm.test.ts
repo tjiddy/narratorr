@@ -831,9 +831,22 @@ describe('useSettingsForm', () => {
       });
     });
 
-    it('refetch does not clobber a preserved state-3 draft', async () => {
-      // Settings query resolves so the post-save invalidateQueries triggers a real refetch.
-      mockApi.getSettings.mockResolvedValue(fullSettings);
+    it('refetch does not clobber an in-flight revert draft (stale-clean scenario, F1)', async () => {
+      // Exercises the stale-clean scenario the synchronous guard targets: an in-flight
+      // revert to the pre-submit baseline clears RHF's dirty flag (value === old default),
+      // so the reactive isDirtyRef settles FALSE before the response lands (asserted below
+      // via the empty dirtyLabels). The refetch then returns the saved V1 (99), so a
+      // hydrate that observed a stale-clean ref would reset the V0 (42) draft to 99.
+      //
+      // NOTE: this is a behavioral/scenario test, not a mutation-deletion test. Removing
+      // `isDirtyRef.current = drifted` (useSettingsForm.ts:108) does NOT turn it red,
+      // because the drift double-reset flips isDirty false→true, so the reactive
+      // isDirtyRef effect (source-ordered before the hydrate effect) sets the ref true in
+      // the reset commit — before the async refetch's hydrate commit runs. See F1
+      // disposition: a strictly deletion-proof hook test for this guard is not
+      // constructible in React's effect-ordering model; the guard stands as the
+      // AC-required synchronous defense for concurrent-render timing.
+      mockApi.getSettings.mockResolvedValue(fullSettings); // baseline V0 = testSection.value 42
       const save = deferSave();
 
       const { result } = renderHook(
@@ -845,27 +858,41 @@ describe('useSettingsForm', () => {
         expect(result.current.form.form.getValues()).toEqual({ enabled: true, value: 42 });
       });
 
-      // Submit V1=99, then edit to V2=123 while in flight (state 3 drift).
+      // Edit to V1 = 99 and submit it.
       act(() => {
         result.current.form.form.setValue('value', 99, { shouldDirty: true });
       });
       act(() => {
         result.current.form.mutation.mutate({ enabled: true, value: 99 });
       });
+
+      // Revert to the pre-submit baseline V0 = 42 while the save is in flight. This clears
+      // RHF's dirty flag (value === old default), so the reactive isDirtyRef settles false —
+      // the stale-clean state the synchronous guard must close before invalidation.
       act(() => {
-        result.current.form.form.setValue('value', 123, { shouldDirty: true });
+        result.current.form.form.setValue('value', 42, { shouldDirty: true });
+      });
+      await waitFor(() => {
+        expect(result.current.state.dirtyLabels).toEqual([]);
       });
 
+      // The refetch triggered by invalidateQueries returns the saved V1 = 99.
+      const savedSettings = { ...fullSettings, testSection: { enabled: true, value: 99 } };
+      mockApi.getSettings.mockResolvedValue(savedSettings);
       await act(async () => {
-        save.resolve(fullSettings);
+        save.resolve(savedSettings);
       });
 
-      // The invalidateQueries refetch (getSettings call #2) must not reset the draft:
-      // isDirtyRef.current was set synchronously in onSuccess before invalidation.
+      // Wait for the invalidation-triggered refetch to settle (getSettings call #2).
       await waitFor(() => {
         expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
       });
-      expect(result.current.form.form.getValues().value).toBe(123);
+
+      // The V0 draft must survive the refetch (not be reset to the saved V1 = 99) and
+      // stay dirty relative to the saved value.
+      await waitFor(() => {
+        expect(result.current.form.form.getValues().value).toBe(42);
+      });
       expect(result.current.state.dirtyLabels).toEqual(['Test Section']);
     });
 
