@@ -8,6 +8,7 @@ import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { parseFolderStructure, extractYear, LibraryScanService } from './library-scan.service.js';
+import { books } from '../../db/schema.js';
 
 vi.mock('./enrichment-utils.js', () => ({
   enrichBookFromAudio: vi.fn().mockResolvedValue({ enriched: true }),
@@ -15,6 +16,14 @@ vi.mock('./enrichment-utils.js', () => ({
 
 vi.mock('../../core/utils/book-discovery.js', () => ({
   discoverBooks: vi.fn().mockResolvedValue([]),
+}));
+
+// Mock the audio-scanner boundary so the REAL discoverBooks (delegated to in the F3
+// cross-boundary ordering test) does not drag music-metadata into this suite. Leaf-folder
+// classification never calls readAlbumTag, so the stub is never invoked — it only keeps
+// the transitive module load light.
+vi.mock('../../core/utils/audio-scanner.js', () => ({
+  readAlbumTag: vi.fn(),
 }));
 
 vi.mock('node:fs/promises', () => ({
@@ -34,7 +43,7 @@ vi.mock('../utils/import-helpers.js', () => ({
 
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { discoverBooks } from '../../core/utils/book-discovery.js';
-import { access } from 'node:fs/promises';
+import { access, readdir, stat } from 'node:fs/promises';
 
 // ============================================================================
 // parseFolderStructure (pure function tests)
@@ -2473,19 +2482,148 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/Series');
     });
 
-    it('existing-library multi-match resolves to the LOWEST matching books.id', async () => {
+    it('existing-library multi-match resolves to the LOWEST matching books.id, and pins the orderBy(books.id) contract (F1)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
       ]);
-      // Ordered by books.id asc (as the real query is): id 75 comes before id 80.
-      mockPreFetch([], [
+      // The lowest-id representative is produced by the query's `.orderBy(books.id)`, NOT
+      // by in-app sorting — the mock returns rows verbatim, so the value assertion alone
+      // would still pass if the production `orderBy` were deleted. Capture the
+      // title+author query chain and assert the ordering contract directly, so removing
+      // `.orderBy(books.id)` fails this test (F1).
+      const titleAuthorChain = mockDbChain([
         { id: 75, title: 'Series', slug: 'author' },
         { id: 80, title: 'Series: A', slug: 'author' },
       ]);
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(titleAuthorChain);
 
       const result = await service.scanDirectory('/audiobooks');
 
       expect(result.discoveries[0]!.existingBookId).toBe(75);
+      expect(titleAuthorChain.orderBy).toHaveBeenCalledWith(books.id);
+    });
+
+    it('within-scan retrieval invariant: prior "Dune (Edition: Deluxe)" then bare "Dune" → within-scan dup (F2)', async () => {
+      // Independent of the existing-library bucket (F2): the FIRST scan row registers into
+      // withinScanBucket under colonBase "dune" (the parser strips the removable
+      // parenthetical; the shape core would collapse a colon inside it regardless), so the
+      // later bare "Dune" retrieves it via the fullNormalized arm.
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Frank Herbert/DuneDeluxe', folderParts: ['Frank Herbert', 'Dune (Edition: Deluxe)'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Frank Herbert/Dune', folderParts: ['Frank Herbert', 'Dune'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Frank Herbert/DuneDeluxe');
+    });
+
+    it('path match outranks a simultaneous decisive-ASIN AND title+author collision (F5)', async () => {
+      // The folder matches an existing path AND carries a decisive ASIN AND a title+author
+      // hit. Path precedence must win — if the path branch moved below the extracted
+      // lower-priority branches, this would emit 'slug' or a review hint instead.
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Conflict', folderParts: ['Author', 'Conflict [B0DEC00001]'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain([{ id: 100, path: '/audiobooks/Author/Conflict' }]))
+        .mockReturnValueOnce(mockDbChain([
+          { id: 300, title: 'Conflict', slug: 'author', asin: null },
+          { id: 200, title: 'Conflict', slug: 'author', asin: 'B0DEC00001' },
+        ]));
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.isDuplicate).toBe(true);
+      expect(result.discoveries[0]!.duplicateReason).toBe('path');
+      expect(result.discoveries[0]!.existingBookId).toBe(100);
+    });
+
+    it('decisive ASIN outranks a simultaneous title+author review hint (F6)', async () => {
+      // No path match; the folder's ASIN is decisive AND its title+author also hits an
+      // incumbent. Decisive ASIN must win with the HARD `duplicateReason: 'slug'`
+      // (isDuplicate true) — if the title branch moved ahead, this would be a soft review
+      // hint (isDuplicate false, no duplicateReason).
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/AsinWins', folderParts: ['Author', 'Conflict [B0DEC00002]'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([
+          { id: 300, title: 'Conflict', slug: 'author', asin: null },
+          { id: 200, title: 'Conflict', slug: 'author', asin: 'B0DEC00002' },
+        ]));
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.isDuplicate).toBe(true);
+      expect(result.discoveries[0]!.duplicateReason).toBe('slug');
+      expect(result.discoveries[0]!.existingBookId).toBe(200);
+    });
+
+    it('sorted discovery makes duplicateFirstPath stable across readdir permutations, through the REAL discoverBooks (F3)', async () => {
+      // Cross-boundary regression: delegate the mocked discoverBooks to the ACTUAL
+      // implementation so its `results.sort(comparePosixPath)` runs in-path. A
+      // folded-key collision pair — nested `/root/a/b` and one literal folder `/root/a\b`
+      // (both parse to author "a" / title "b", so the second is a within-scan dup of the
+      // first) — is served in two readdir permutations. Because discoverBooks sorts,
+      // duplicateFirstPath is identical across both; deleting the sort makes it
+      // readdir-order dependent and fails this test.
+      const actual = await vi.importActual<typeof import('../../core/utils/book-discovery.js')>(
+        '../../core/utils/book-discovery.js',
+      );
+      const makeDirent = (name: string, isFile: boolean) => ({
+        name,
+        isFile: () => isFile,
+        isDirectory: () => !isFile,
+        isSymbolicLink: () => false,
+        isBlockDevice: () => false,
+        isCharacterDevice: () => false,
+        isFIFO: () => false,
+        isSocket: () => false,
+      });
+      const buildTree = (rootChildren: { name: string; isFile: boolean }[]) => ({
+        '/root': rootChildren,
+        '/root/a': [{ name: 'b', isFile: false }],
+        '/root/a/b': [{ name: 't.mp3', isFile: true }],
+        '/root/a\\b': [{ name: 't.mp3', isFile: true }],
+      }) as Record<string, { name: string; isFile: boolean }[]>;
+      const serveTree = (tree: Record<string, { name: string; isFile: boolean }[]>) => {
+        vi.mocked(readdir).mockImplementation(async (dir: unknown) => {
+          const entries = tree[String(dir)];
+          if (!entries) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+          return entries.map((e) => makeDirent(e.name, e.isFile)) as never;
+        });
+        vi.mocked(stat).mockImplementation(async () => ({ size: 100 }) as never);
+      };
+
+      const runScan = async (rootChildren: { name: string; isFile: boolean }[]) => {
+        serveTree(buildTree(rootChildren));
+        vi.mocked(discoverBooks).mockImplementationOnce(actual.discoverBooks as never);
+        mockDb.select
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]));
+        const result = await service.scanDirectory('/root');
+        return new Map(result.discoveries.map((d) => [d.path, d]));
+      };
+
+      const nested = { name: 'a', isFile: false };
+      const literal = { name: 'a\\b', isFile: false };
+      const permA = await runScan([nested, literal]);
+      const permB = await runScan([literal, nested]);
+
+      // '/' (0x2f) sorts before '\\' (0x5c), so `/root/a/b` is always first → the normal
+      // row; `/root/a\b` is always the within-scan dup pointing back at it — in BOTH runs.
+      for (const perm of [permA, permB]) {
+        expect(perm.get('/root/a/b')!.isDuplicate).toBe(false);
+        expect(perm.get('/root/a\\b')!.duplicateReason).toBe('within-scan');
+        expect(perm.get('/root/a\\b')!.duplicateFirstPath).toBe('/root/a/b');
+      }
     });
   });
 

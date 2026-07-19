@@ -2541,6 +2541,21 @@ describe('DiscoveryService — getSuggestions enrichment with libraryBookId (rea
     expect(result[0]!.libraryBookId).toBe(libBook.id);
   });
 
+  it('prefers the ASIN match over a competing pairwise title+author match (ASIN-first precedence, F4)', async () => {
+    // Two library rows both match the suggestion: one by ASIN (a different title), one by
+    // the pairwise title+author bucket. ASIN resolution must win — an implementation that
+    // preferred the title bucket whenever it hit would return the wrong row.
+    const author = await seedAuthor('Brandon Sanderson', 'brandon-sanderson');
+    const asinRow = await seedLibraryBook({ title: 'Totally Different', asin: 'MATCHASIN', authorId: author.id });
+    const titleRow = await seedLibraryBook({ title: 'Suggestion Title', asin: null, authorId: author.id });
+    expect(titleRow.id).toBeGreaterThan(asinRow.id);
+    await seedSuggestion({ asin: 'MATCHASIN', title: 'Suggestion Title', authorName: 'Brandon Sanderson' });
+
+    const result = await service.getSuggestions();
+    expect(result).toHaveLength(1);
+    expect(result[0]!.libraryBookId).toBe(asinRow.id);
+  });
+
   it('falls back to case-insensitive title+primary-author when ASIN does not match', async () => {
     const author = await seedAuthor('Brandon Sanderson', 'brandon-sanderson');
     const libBook = await seedLibraryBook({ title: 'The Way of Kings', asin: null, authorId: author.id });
