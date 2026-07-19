@@ -101,7 +101,7 @@ export function AudioToolsSettings() {
         <FfmpegStatusRow />
 
         <SettingsTable>
-          <SettingsRow htmlFor="outputFormat" label="Output format" description="M4B keeps chapter markers; MP3 is universally compatible.">
+          <SettingsRow htmlFor="outputFormat" label="Output format" description="M4B keeps chapter markers; MP3 is universally compatible but has no chapter support.">
             <div className="w-56">
               <SelectWithChevron id="outputFormat" {...register('outputFormat')}>
                 {outputFormatSchema.options.map((f) => (
