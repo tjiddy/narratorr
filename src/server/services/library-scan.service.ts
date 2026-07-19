@@ -5,7 +5,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, bookAuthors } from '../../db/schema.js';
 import { eq, inArray, and } from 'drizzle-orm';
 import { slugify } from '../../core/utils/parse.js';
-import { discoverBooks } from '../../core/utils/book-discovery.js';
+import { discoverBooks, type DiscoveredFolder } from '../../core/utils/book-discovery.js';
 import { transitionBookStatus } from '../utils/book-status.js';
 import type { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
@@ -21,7 +21,7 @@ import type { ConnectorService } from './connector.service.js';
 import type { ConnectorImportItem } from '../../core/connectors/index.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
-import { normalizeTitleForDedup } from '../../shared/dedup.js';
+import { buildTitleShape, titlesMatchForDedup, type TitleShape } from '../../shared/dedup.js';
 import type { DiscoveredBook, ImportResult } from '../../shared/schemas/library-scan.js';
 import { WireOnce } from './wire-helpers.js';
 
@@ -36,6 +36,26 @@ export type ImportMode = 'copy' | 'move';
  * later replaces it with the authoritative recording verdict once narrators exist.
  */
 const SCAN_RECORDING_REVIEW_HINT = 'Possible match to an existing book — checking recording';
+
+/** An existing-library row in a pairwise dedup bucket (#1891), ordered by `id` asc. */
+interface ExistingTitleEntry {
+  id: number;
+  shape: TitleShape;
+}
+
+/** A prior scanned row in a within-scan dedup bucket (#1891), in scan order. */
+interface WithinScanEntry {
+  path: string;
+  shape: TitleShape;
+}
+
+/** In-memory maps/buckets shared across one scan's folder classification (#1891). */
+interface ScanClassificationMaps {
+  existingPathMap: Map<string, number>;
+  existingAsinMap: Map<string, number>;
+  existingTitleAuthorBucket: Map<string, ExistingTitleEntry[]>;
+  withinScanBucket: Map<string, WithinScanEntry[]>;
+}
 
 export interface ImportConfirmItem {
   path: string;
@@ -221,18 +241,28 @@ export class LibraryScanService {
     );
 
     // Pre-fetch all title + author slug pairs (and ASINs) with IDs for O(1) checks.
+    // Ordered by books.id so the pairwise bucket below yields the LOWEST matching id
+    // first (deterministic existing-library representative, #1891).
     const titleAuthorRows = await this.db
       .select({ id: books.id, title: books.title, slug: authors.slug, asin: books.asin })
       .from(books)
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
-      .leftJoin(authors, eq(bookAuthors.authorId, authors.id));
-    // Key the cheap pre-match map by the SAME normalizer the post-match pass and
-    // confirm use (#1662), so the two surfaces cannot disagree on title drift.
-    const existingTitleAuthorMap = new Map<string, number>(
-      titleAuthorRows
-        .filter((r) => r.title && r.slug)
-        .map((r) => [`${normalizeTitleForDedup(r.title!)}|${r.slug}`, r.id] as [string, number]),
-    );
+      .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
+      .orderBy(books.id);
+    // Bucket existing rows by author slug + `colonBase` (#1891). The predicate is
+    // non-transitive so it cannot be a single map key — a bucket + pairwise filter is
+    // required. `colonBase` is a COMPLETE retrieval index (equal `fullNormalized` ⟹
+    // equal `colonBase`), so both predicate arms are captured, including a
+    // `fullNormalized`-only match like `"Dune (Edition: Deluxe)"` ~ `"Dune"`.
+    const existingTitleAuthorBucket = new Map<string, ExistingTitleEntry[]>();
+    for (const r of titleAuthorRows) {
+      if (!r.title || !r.slug) continue;
+      const shape = buildTitleShape(r.title);
+      const key = `${shape.colonBase}|${r.slug}`;
+      const arr = existingTitleAuthorBucket.get(key) ?? [];
+      arr.push({ id: r.id, shape });
+      existingTitleAuthorBucket.set(key, arr);
+    }
     // Decisive-ASIN map (#1711 F6): a parsed-folder ASIN equal to an incumbent's
     // non-null ASIN is `same-recording` deterministically — flag owned at scan and
     // exclude from match. Case-insensitive (ASINs are not globally normalized).
@@ -243,81 +273,34 @@ export class LibraryScanService {
     );
 
     const discoveries: DiscoveredBook[] = [];
-    const withinScanSlugMap = new Map<string, string>();
+    const withinScanBucket = new Map<string, WithinScanEntry[]>();
 
     for (const folder of folders) {
       const parsed = parseFolderStructure(folder.folderParts);
-      const reviewReason = folder.reviewReason;
+      // Precompute the title shape / bucket key once for an authored row (both title
+      // AND author present). Used by classification (existing/within-scan lookups)
+      // and by the registration step below.
+      const authored = Boolean(parsed.title && parsed.author);
+      const shape = authored ? buildTitleShape(parsed.title!) : undefined;
+      const bucketKey = shape ? `${shape.colonBase}|${slugify(parsed.author!)}` : undefined;
 
-      // Check for duplicates by path (in-memory Map lookup)
-      if (existingPathMap.has(folder.path)) {
-        this.log.debug({ path: folder.path }, 'Duplicate detected (path match)');
-        discoveries.push(buildDiscoveredBook(
-          folder.path, parsed, folder.audioFileCount, folder.totalSize,
-          { isDuplicate: true, existingBookId: existingPathMap.get(folder.path), duplicateReason: 'path', reviewReason },
-        ));
-        continue;
+      discoveries.push(this.classifyScannedFolder(folder, parsed, shape, bucketKey, {
+        existingPathMap,
+        existingAsinMap,
+        existingTitleAuthorBucket,
+        withinScanBucket,
+      }));
+
+      // Register EVERY authored parsed row into the within-scan bucket (#1891),
+      // regardless of which branch emitted it (path / decisive-ASIN / existing-title /
+      // within-scan / normal), AFTER the within-scan lookup above so a row never
+      // matches itself. Load-bearing under the non-transitive predicate: a later row
+      // can pairwise-match a row that was itself emitted as a within-scan duplicate.
+      if (shape && bucketKey) {
+        const arr = withinScanBucket.get(bucketKey) ?? [];
+        arr.push({ path: folder.path, shape });
+        withinScanBucket.set(bucketKey, arr);
       }
-
-      // Decisive ASIN at scan time (#1711 F6): a parsed-folder ASIN equal to an
-      // incumbent's non-null ASIN is the same recording deterministically → flag
-      // owned now and exclude from the match job, exactly as before.
-      if (parsed.asin && existingAsinMap.has(parsed.asin.toLowerCase())) {
-        this.log.debug({ path: folder.path, asin: parsed.asin }, 'Duplicate detected (decisive ASIN match)');
-        discoveries.push(buildDiscoveredBook(
-          folder.path, parsed, folder.audioFileCount, folder.totalSize,
-          { isDuplicate: true, existingBookId: existingAsinMap.get(parsed.asin.toLowerCase()), duplicateReason: 'slug', reviewReason },
-        ));
-        continue;
-      }
-
-      // Check for duplicates by title + author slug (in-memory Map lookup)
-      if (parsed.title && parsed.author) {
-        const authorSlug = slugify(parsed.author);
-        const key = `${normalizeTitleForDedup(parsed.title)}|${authorSlug}`;
-        if (existingTitleAuthorMap.has(key)) {
-          // Title+author-only collision, NO decisive ASIN (#1711 F6): NOT a hard
-          // duplicate. Library Import has no narrators at scan time, so the
-          // same-vs-different-recording verdict cannot be decided here — emit a
-          // normal candidate carrying a display-only review hint so it FLOWS
-          // THROUGH the match job, where `applyLibraryDuplicate` computes the real
-          // 3-way verdict (same → flag owned; review → reviewReason; different →
-          // keep-both). Owned-book protection is preserved by the post-match and
-          // confirm-time `findDuplicate`, both of which run once narrators exist.
-          this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Possible title+author match — deferring recording verdict to match job');
-          discoveries.push(buildDiscoveredBook(
-            folder.path, parsed, folder.audioFileCount, folder.totalSize,
-            { isDuplicate: false, existingBookId: existingTitleAuthorMap.get(key), reviewReason: reviewReason ?? SCAN_RECORDING_REVIEW_HINT },
-          ));
-          continue;
-        }
-
-        // Check for within-scan duplicates (same title+author seen earlier in this scan)
-        if (withinScanSlugMap.has(key)) {
-          this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (within-scan title+author match)');
-          discoveries.push(buildDiscoveredBook(
-            folder.path, parsed, folder.audioFileCount, folder.totalSize,
-            { isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: withinScanSlugMap.get(key), reviewReason },
-          ));
-          continue;
-        }
-
-        withinScanSlugMap.set(key, folder.path);
-      }
-
-      this.log.debug(
-        {
-          path: folder.path,
-          folderParse: { title: parsed.title, author: parsed.author, series: parsed.series },
-          fileCount: folder.audioFileCount,
-        },
-        'Discovered book folder',
-      );
-
-      discoveries.push(buildDiscoveredBook(
-        folder.path, parsed, folder.audioFileCount, folder.totalSize,
-        { isDuplicate: false, reviewReason },
-      ));
     }
 
     const duplicateCount = discoveries.filter((d) => d.isDuplicate).length;
@@ -330,6 +313,76 @@ export class LibraryScanService {
       discoveries,
       totalFolders: folders.length,
     };
+  }
+
+  /**
+   * Classify a single scanned folder into a `DiscoveredBook` (#1891). Ordered
+   * precedence, unchanged from the pre-#1891 inline chain: (1) path match, (2)
+   * decisive-ASIN match, (3) existing-library title+author review hint, (4)
+   * within-scan duplicate, (5) normal. The title+author branches now bucket by
+   * author+`colonBase` and pairwise-filter (the predicate is non-transitive), picking
+   * the lowest existing `books.id` (bucket is id-ordered) and the first prior scan row
+   * (bucket is scan-ordered). Registration into the within-scan bucket is the caller's
+   * job (runs for every authored row, all five branches).
+   */
+  private classifyScannedFolder(
+    folder: DiscoveredFolder,
+    parsed: ReturnType<typeof parseFolderStructure>,
+    shape: TitleShape | undefined,
+    bucketKey: string | undefined,
+    maps: ScanClassificationMaps,
+  ): DiscoveredBook {
+    const reviewReason = folder.reviewReason;
+    const base = [folder.path, parsed, folder.audioFileCount, folder.totalSize] as const;
+
+    // (1) Duplicate by path (in-memory Map lookup).
+    if (maps.existingPathMap.has(folder.path)) {
+      this.log.debug({ path: folder.path }, 'Duplicate detected (path match)');
+      return buildDiscoveredBook(...base, { isDuplicate: true, existingBookId: maps.existingPathMap.get(folder.path), duplicateReason: 'path', reviewReason });
+    }
+
+    // (2) Decisive ASIN at scan time (#1711 F6): a parsed-folder ASIN equal to an
+    // incumbent's non-null ASIN is the same recording deterministically → flag owned
+    // now and exclude from the match job, exactly as before.
+    if (parsed.asin && maps.existingAsinMap.has(parsed.asin.toLowerCase())) {
+      this.log.debug({ path: folder.path, asin: parsed.asin }, 'Duplicate detected (decisive ASIN match)');
+      return buildDiscoveredBook(...base, { isDuplicate: true, existingBookId: maps.existingAsinMap.get(parsed.asin.toLowerCase()), duplicateReason: 'slug', reviewReason });
+    }
+
+    if (shape && bucketKey) {
+      // (3) Existing-library title+author collision, NO decisive ASIN (#1711 F6): NOT
+      // a hard duplicate. Library Import has no narrators at scan time, so the
+      // same-vs-different-recording verdict cannot be decided here — emit a normal
+      // candidate carrying a display-only review hint so it FLOWS THROUGH the match
+      // job, where `applyLibraryDuplicate` computes the real 3-way verdict. Owned-book
+      // protection is preserved by the post-match and confirm-time `findDuplicate`,
+      // both of which run once narrators exist. Lowest matching `books.id` wins
+      // (bucket is id-ordered).
+      const existingMatch = (maps.existingTitleAuthorBucket.get(bucketKey) ?? []).find((e) => titlesMatchForDedup(e.shape, shape));
+      if (existingMatch) {
+        this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Possible title+author match — deferring recording verdict to match job');
+        return buildDiscoveredBook(...base, { isDuplicate: false, existingBookId: existingMatch.id, reviewReason: reviewReason ?? SCAN_RECORDING_REVIEW_HINT });
+      }
+
+      // (4) Within-scan duplicate (a prior scan row pairwise-matches). First prior row
+      // in sorted scan order wins (bucket is scan-ordered).
+      const withinMatch = (maps.withinScanBucket.get(bucketKey) ?? []).find((e) => titlesMatchForDedup(e.shape, shape));
+      if (withinMatch) {
+        this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (within-scan title+author match)');
+        return buildDiscoveredBook(...base, { isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: withinMatch.path, reviewReason });
+      }
+    }
+
+    // (5) Normal candidate.
+    this.log.debug(
+      {
+        path: folder.path,
+        folderParse: { title: parsed.title, author: parsed.author, series: parsed.series },
+        fileCount: folder.audioFileCount,
+      },
+      'Discovered book folder',
+    );
+    return buildDiscoveredBook(...base, { isDuplicate: false, reviewReason });
   }
 
   async confirmImport(items: ImportConfirmItem[], mode?: ImportMode): Promise<ImportResult> {

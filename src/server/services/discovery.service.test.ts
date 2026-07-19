@@ -2553,8 +2553,9 @@ describe('DiscoveryService — getSuggestions enrichment with libraryBookId (rea
 
   it('recognizes a colon-subtitle / edition variant of an owned title via the shared identity normalizer (#1662 F1)', async () => {
     // The owned book is the bare title; the suggestion carries a colon subtitle.
-    // The shared `normalizeTitleForDedup` strips it, so discovery enrichment agrees
-    // with isBookInLibrary / the import dedup contract instead of showing it as new.
+    // The shared `buildTitleShape`/`titlesMatchForDedup` pairwise relation bridges the
+    // bare base to its subtitled sibling (one side stripped), so discovery enrichment
+    // agrees with isBookInLibrary / the import dedup contract instead of showing it as new.
     const author = await seedAuthor('Ursula K. Le Guin', 'ursula-k-le-guin');
     const libBook = await seedLibraryBook({ title: 'Tehanu', asin: null, authorId: author.id });
     await seedSuggestion({ asin: 'NOMATCH', title: 'Tehanu: The Last Book of Earthsea', authorName: 'Ursula K. Le Guin' });
@@ -2628,5 +2629,30 @@ describe('DiscoveryService — getSuggestions enrichment with libraryBookId (rea
     const result = await service.markSuggestionAdded(row!.id);
     expect(result).not.toBeNull();
     expect(result!.suggestion.libraryBookId).toBe(libBook.id);
+  });
+
+  it('does NOT match a distinct-subtitle sibling of a same-author library book (#1891)', async () => {
+    // The suggestion and the only same-author library row are two DISTINCT franchise
+    // subtitles; the pairwise predicate refuses the bridge → libraryBookId null.
+    const author = await seedAuthor('Aaron Rosenberg', 'aaron-rosenberg');
+    await seedLibraryBook({ title: 'World of Warcraft: Tides of Darkness', asin: null, authorId: author.id });
+    await seedSuggestion({ asin: 'NOMATCH', title: 'World of Warcraft: Beyond the Dark Portal', authorName: 'Aaron Rosenberg' });
+
+    const result = await service.getSuggestions();
+    expect(result).toHaveLength(1);
+    expect(result[0]!.libraryBookId).toBeNull();
+  });
+
+  it('resolves a bare "Dune" suggestion to a "Dune (Edition: Deluxe)" library row via the colonBase bucket (#1891 retrieval invariant)', async () => {
+    // The library title carries a colon INSIDE a removable parenthetical; the fixpoint
+    // core collapses it to "dune" so both share colonBase — the bucket is not keyed on
+    // the stale colon-first artifact ("dune (edition").
+    const author = await seedAuthor('Frank Herbert', 'frank-herbert');
+    const libBook = await seedLibraryBook({ title: 'Dune (Edition: Deluxe)', asin: null, authorId: author.id });
+    await seedSuggestion({ asin: 'NOMATCH', title: 'Dune', authorName: 'Frank Herbert' });
+
+    const result = await service.getSuggestions();
+    expect(result).toHaveLength(1);
+    expect(result[0]!.libraryBookId).toBe(libBook.id);
   });
 });

@@ -262,6 +262,47 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       // Two owned recordings existed, neither matched → new recording of an owned title.
       expect(res.hasIncumbent).toBe(true);
     });
+
+    it('review representative is the LOWEST books.id among pairwise-matching review incumbents (#1891)', async () => {
+      // Two same-author incumbents both resolve `review` (candidate carries no narrator
+      // signal). The gather is sorted ascending, so the representative is deterministic.
+      const first = await seed({ title: 'Nightblood', author: 'Brandon Sanderson', narrators: ['Reader A'] });
+      const second = await seed({ title: 'Nightblood', author: 'Brandon Sanderson', narrators: ['Reader B'] });
+      expect(second).toBeGreaterThan(first);
+      const res = await service.findDuplicate({ title: 'Nightblood', authors: [{ name: 'Brandon Sanderson' }] });
+      expect(res.verdict).toBe('review');
+      expect(res.book?.id).toBe(first);
+      expect(res.recordingReviewReason).toBeDefined();
+    });
+
+    it('a later same-recording still beats an earlier review incumbent (#1891 ladder unchanged)', async () => {
+      // Lower-id incumbent → review (no ASIN; matches title/author but the candidate
+      // carries no narrator signal). Higher-id incumbent → an ASIN-equal same-recording.
+      // same-recording wins over the earlier review regardless of gather order.
+      await seed({ title: 'Skyward', author: 'Brandon Sanderson', narrators: ['Suzy Jackson'] });
+      const owned = await seed({ title: 'Skyward', author: 'Brandon Sanderson', narrators: ['Suzy Jackson'], asin: 'B0SKYWARD1' });
+      const res = await service.findDuplicate({
+        title: 'Skyward', authors: [{ name: 'Brandon Sanderson' }], asin: 'b0skyward1',
+      });
+      expect(res.verdict).toBe('same-recording');
+      expect(res.book?.id).toBe(owned);
+    });
+
+    it('WoW distinct-subtitle candidate (no ASIN) vs owned WoW novels → different-recording, book null, hasIncumbent false (#1891)', async () => {
+      // The regression this issue exists to fix: distinct franchise subtitles must NOT
+      // be gathered as incumbents, so the candidate is a genuinely NEW book — NOT flagged
+      // a possible/hard duplicate.
+      await seed({ title: 'World of Warcraft: Tides of Darkness', author: 'Aaron Rosenberg', narrators: ['Reader One'] });
+      await seed({ title: 'World of Warcraft: Rise of the Horde', author: 'Aaron Rosenberg', narrators: ['Reader Two'] });
+      const res = await service.findDuplicate({
+        title: 'World of Warcraft: Beyond the Dark Portal',
+        authors: [{ name: 'Aaron Rosenberg' }],
+        narrators: ['Reader Three'],
+      });
+      expect(res.verdict).toBe('different-recording');
+      expect(res.book).toBeNull();
+      expect(res.hasIncumbent).toBe(false);
+    });
   });
 
   // ─── Cross-home scope drift guard (#1726) ───
