@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, renderHook } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
+import { useDirtyFormsState, _resetForTesting } from '@/hooks/dirty-forms';
 import { LibrarySettingsSection } from './LibrarySettingsSection';
 
 vi.mock('sonner', () => ({
@@ -75,6 +76,53 @@ describe('LibrarySettingsSection', () => {
       expect(screen.getByText('Library path')).toBeInTheDocument();
     });
     expect(screen.queryByRole('link', { name: /scan library/i })).not.toBeInTheDocument();
+  });
+
+  describe('unsaved-changes registration (#1888)', () => {
+    beforeEach(() => {
+      _resetForTesting();
+    });
+
+    it('registers the Library label when the path is edited but not yet saved', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      const state = renderHook(() => useDirtyFormsState()).result;
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+      });
+      expect(state.current.dirtyLabels).toEqual([]);
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.clear(pathInput);
+      await user.type(pathInput, '/new-path');
+
+      // The edited-but-unsaved path is dirty (blur-save has not fired yet).
+      await waitFor(() => {
+        expect(state.current.dirtyLabels).toEqual(['Library']);
+      });
+    });
+
+    it('clears the Library label after a successful blur-save resets the field', async () => {
+      const user = userEvent.setup();
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<LibrarySettingsSection />);
+      const state = renderHook(() => useDirtyFormsState()).result;
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+      });
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.clear(pathInput);
+      await user.type(pathInput, '/new-path');
+      fireEvent.blur(pathInput);
+
+      // On save success resetField makes the form clean → label drops out.
+      await waitFor(() => {
+        expect(state.current.dirtyLabels).toEqual([]);
+      });
+    });
   });
 
   it('does not clobber dirty path edits when settings are refetched', async () => {
