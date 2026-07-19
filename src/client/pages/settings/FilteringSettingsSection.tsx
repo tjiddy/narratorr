@@ -33,6 +33,9 @@ function toPayload(data: FilteringFormData) {
   };
 }
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CARD_LABEL = 'Filtering';
+
 export function FilteringSettingsSection() {
   const { form, mutation, onSubmit } = useSettingsForm<FilteringFormData>({
     schema: filteringFormSchema,
@@ -40,6 +43,7 @@ export function FilteringSettingsSection() {
     select: toFormData,
     toPayload,
     successMessage: 'Filtering settings saved',
+    label: CARD_LABEL,
   });
 
   const { register, handleSubmit, control, setValue, formState: { errors, isDirty } } = form;
@@ -56,7 +60,7 @@ export function FilteringSettingsSection() {
   return (
     <SettingsSection
       icon={<GlobeIcon className="w-5 h-5 text-primary" />}
-      title="Filtering"
+      title={CARD_LABEL}
       description="What search results to keep"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">

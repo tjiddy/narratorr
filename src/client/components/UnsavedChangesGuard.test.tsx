@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { StrictMode } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, act, cleanup } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { UnsavedChangesGuard } from './UnsavedChangesGuard';
@@ -159,7 +159,7 @@ describe('UnsavedChangesGuard', () => {
   });
 
   describe('event eligibility matrix', () => {
-    async function clickAndExpectThrough(linkProps: Record<string, unknown>, clickOpts?: object) {
+    async function clickAndExpectThrough(linkProps: Record<string, unknown>) {
       const user = userEvent.setup();
       renderGuard(
         <>
@@ -172,7 +172,7 @@ describe('UnsavedChangesGuard', () => {
       const link = screen.getByRole('link', { name: 'Ext' });
       // Prevent jsdom "Not implemented: navigation" noise for plain anchors.
       link.addEventListener('click', (e) => e.preventDefault());
-      await user.click(link, clickOpts);
+      await user.click(link);
       // No modal → the guard let it through.
       return screen.queryByRole('dialog');
     }

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { z } from 'zod';
 import type { AppSettings } from '../../shared/schemas.js';
+import { useDirtyFormsState, _resetForTesting } from './dirty-forms.js';
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -93,6 +94,7 @@ describe('useSettingsForm', () => {
     select: (s: AppSettings) => ({ enabled: asTest(s).testSection.enabled, value: asTest(s).testSection.value }),
     toPayload: (d: TestFormData) => ({ testSection: d } as Record<string, unknown>),
     successMessage: 'Test settings saved',
+    label: 'Test Section',
   });
 
   describe('schema validation', () => {
@@ -467,6 +469,7 @@ describe('useSettingsForm', () => {
           select: (s: AppSettings) => ({ name: asTest(s).testSection.name ?? '' }),
           toPayload: (d: StringForm) => ({ testSection: d } as Record<string, unknown>),
           successMessage: 'Saved',
+          label: 'Test Section',
         }),
         { wrapper: createWrapper(queryClient) },
       );
@@ -474,6 +477,122 @@ describe('useSettingsForm', () => {
       await waitFor(() => {
         expect(result.current.form.getValues().name).toBe('');
       });
+    });
+  });
+
+  describe('dirty-form guard registration', () => {
+    beforeEach(() => {
+      _resetForTesting();
+    });
+
+    // Probe both the form and the derived registry snapshot from one render.
+    function useFormWithProbe(config: Parameters<typeof useSettingsForm>[0]) {
+      const form = useSettingsForm(config);
+      const state = useDirtyFormsState();
+      return { form, state };
+    }
+
+    it('registers the configured label when the form is dirtied and clears on save success', async () => {
+      mockApi.getSettings.mockResolvedValue(fullSettings);
+      mockApi.updateSettings.mockResolvedValue(fullSettings);
+
+      const { result } = renderHook(
+        () => useFormWithProbe({ ...hookConfig(), label: 'Merge & Convert' }),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      await waitFor(() => {
+        expect(result.current.form.form.getValues()).toEqual({ enabled: true, value: 42 });
+      });
+      // Clean form → not in the dirty list.
+      expect(result.current.state.dirtyLabels).toEqual([]);
+
+      act(() => {
+        result.current.form.form.setValue('value', 99, { shouldDirty: true });
+      });
+      expect(result.current.state.dirtyLabels).toEqual(['Merge & Convert']);
+
+      // A successful save resets the form → registration becomes clean.
+      await act(async () => {
+        result.current.form.mutation.mutate({ enabled: true, value: 99 });
+      });
+      await waitFor(() => {
+        expect(result.current.state.dirtyLabels).toEqual([]);
+      });
+    });
+
+    it('reports anyPending while a save is in flight', async () => {
+      mockApi.getSettings.mockResolvedValue(fullSettings);
+      let resolveSave: (v: unknown) => void = () => {};
+      mockApi.updateSettings.mockReturnValue(new Promise((r) => { resolveSave = r; }));
+
+      const { result } = renderHook(
+        () => useFormWithProbe({ ...hookConfig(), label: 'Network' }),
+        { wrapper: createWrapper(queryClient) },
+      );
+      await waitFor(() => {
+        expect(result.current.form.form.getValues()).toEqual({ enabled: true, value: 42 });
+      });
+
+      act(() => {
+        result.current.form.mutation.mutate({ enabled: true, value: 42 });
+      });
+      await waitFor(() => {
+        expect(result.current.state.anyPending).toBe(true);
+      });
+
+      await act(async () => {
+        resolveSave(fullSettings);
+      });
+      await waitFor(() => {
+        expect(result.current.state.anyPending).toBe(false);
+      });
+    });
+
+    it('keeps the label dirty when a save fails', async () => {
+      mockApi.getSettings.mockResolvedValue(fullSettings);
+      mockApi.updateSettings.mockRejectedValue(new Error('boom'));
+
+      const { result } = renderHook(
+        () => useFormWithProbe({ ...hookConfig(), label: 'Quality' }),
+        { wrapper: createWrapper(queryClient) },
+      );
+      await waitFor(() => {
+        expect(result.current.form.form.getValues()).toEqual({ enabled: true, value: 42 });
+      });
+
+      act(() => {
+        result.current.form.form.setValue('value', 5, { shouldDirty: true });
+      });
+      await act(async () => {
+        result.current.form.mutation.mutate({ enabled: true, value: 5 });
+      });
+      // Failed save → dirty persists.
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalled();
+      });
+      expect(result.current.state.dirtyLabels).toEqual(['Quality']);
+    });
+
+    it('registers distinct labels for two forms sharing a successMessage', () => {
+      mockApi.getSettings.mockResolvedValue(fullSettings);
+
+      function useTwoCards() {
+        const housekeeping = useSettingsForm({ ...hookConfig(), successMessage: 'General settings saved', label: 'Housekeeping' });
+        const logging = useSettingsForm({ ...hookConfig(), successMessage: 'General settings saved', label: 'Logging' });
+        return { housekeeping, logging, state: useDirtyFormsState() };
+      }
+
+      const { result } = renderHook(() => useTwoCards(), { wrapper: createWrapper(queryClient) });
+      expect(result.current.state.dirtyLabels).toEqual([]);
+
+      // Dirty both → both labels present, proving labels come from config, not the
+      // shared toast text.
+      act(() => {
+        result.current.housekeeping.form.setValue('value', 1, { shouldDirty: true });
+        result.current.logging.form.setValue('value', 2, { shouldDirty: true });
+      });
+      expect(result.current.state.dirtyLabels).toEqual(['Housekeeping', 'Logging']);
     });
   });
 });

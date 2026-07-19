@@ -44,6 +44,9 @@ function toPayload(data: MetadataFormData) {
   };
 }
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CARD_LABEL = 'Metadata';
+
 export function MetadataSettingsSection() {
   const { form, mutation, onSubmit } = useSettingsForm<MetadataFormData>({
     schema: metadataFormSchema,
@@ -51,6 +54,7 @@ export function MetadataSettingsSection() {
     select: toFormData,
     toPayload,
     successMessage: 'Metadata settings saved',
+    label: CARD_LABEL,
   });
 
   const { register, handleSubmit, control, formState: { isDirty } } = form;
@@ -78,7 +82,7 @@ export function MetadataSettingsSection() {
   return (
     <SettingsSection
       icon={<BookOpenIcon className="w-5 h-5 text-primary" />}
-      title="Metadata"
+      title={CARD_LABEL}
       description="Configure metadata providers for book details and series info."
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">

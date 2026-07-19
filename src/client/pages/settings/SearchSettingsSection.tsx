@@ -54,6 +54,9 @@ function SearchPriorityExplainer() {
   );
 }
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CARD_LABEL = 'Search';
+
 export function SearchSettingsSection() {
   const { form, mutation, onSubmit } = useSettingsForm<SearchFormData>({
     schema: searchFormSchema,
@@ -61,6 +64,7 @@ export function SearchSettingsSection() {
     select: toFormData,
     toPayload,
     successMessage: 'Search settings saved',
+    label: CARD_LABEL,
   });
 
   const { register, handleSubmit, formState: { errors, isDirty } } = form;
@@ -68,7 +72,7 @@ export function SearchSettingsSection() {
   return (
     <SettingsSection
       icon={<SearchIcon className="w-5 h-5 text-primary" />}
-      title="Search"
+      title={CARD_LABEL}
       description="Automatic searching for wanted books"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">

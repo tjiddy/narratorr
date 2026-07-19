@@ -8,6 +8,9 @@ import { SettingsSection } from './SettingsSection';
 
 type SystemFormData = z.infer<typeof systemFormSchema>;
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CARD_LABEL = 'Backup Schedule';
+
 export function BackupScheduleForm() {
   const { form, mutation, onSubmit } = useSettingsForm<SystemFormData>({
     schema: systemFormSchema,
@@ -21,6 +24,7 @@ export function BackupScheduleForm() {
     }),
     toPayload: (d) => ({ system: d }),
     successMessage: 'System settings saved',
+    label: CARD_LABEL,
   });
 
   const { register, handleSubmit, formState: { errors, isDirty } } = form;
@@ -28,7 +32,7 @@ export function BackupScheduleForm() {
   return (
     <SettingsSection
       icon={<ClockIcon className="w-5 h-5 text-primary" />}
-      title="Backup Schedule"
+      title={CARD_LABEL}
       description="Configure automatic backup frequency and retention."
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
