@@ -164,14 +164,14 @@ export function NtfyFields({ register, errors }: NotifierFieldProps) {
   return (
     <>
       <div>
-        <label htmlFor="notifierNtfyTopic" className="block text-sm font-medium mb-2">Topic</label>
-        <input id="notifierNtfyTopic" type="text" {...register('settings.ntfyTopic')} className={errorInputClass(!!errors.settings?.ntfyTopic)} placeholder="my-narratorr-alerts" />
-        {errors.settings?.ntfyTopic && <p className="text-sm text-destructive mt-1">{errors.settings.ntfyTopic.message}</p>}
-      </div>
-      <div>
         <label htmlFor="notifierNtfyServer" className="block text-sm font-medium mb-2">Server URL</label>
         <input id="notifierNtfyServer" type="text" {...register('settings.ntfyServer')} className={inputClass} placeholder="https://ntfy.sh (default)" />
         <p className="text-sm text-muted-foreground mt-1">Leave empty for ntfy.sh</p>
+      </div>
+      <div>
+        <label htmlFor="notifierNtfyTopic" className="block text-sm font-medium mb-2">Topic</label>
+        <input id="notifierNtfyTopic" type="text" {...register('settings.ntfyTopic')} className={errorInputClass(!!errors.settings?.ntfyTopic)} placeholder="my-narratorr-alerts" />
+        {errors.settings?.ntfyTopic && <p className="text-sm text-destructive mt-1">{errors.settings.ntfyTopic.message}</p>}
       </div>
       <div>
         <label htmlFor="notifierNtfyAccessToken" className="block text-sm font-medium mb-2">Access Token</label>
