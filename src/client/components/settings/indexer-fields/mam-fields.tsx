@@ -205,31 +205,6 @@ function MamIdHelper({ errors, mamStatus, detectError, detect, watch }: Pick<Ind
   return <p className="text-sm text-muted-foreground mt-1">Generate from MAM &gt; Preferences &gt; Security &gt; Create Session</p>;
 }
 
-function BaseUrlField({ register, errors }: Pick<IndexerFieldsProps, 'register' | 'errors'>) {
-  return (
-    <div className="sm:col-span-2">
-      <label htmlFor="indexerBaseUrl" className="block text-sm font-medium mb-2">
-        Base URL
-        <span className="text-muted-foreground font-normal ml-1">(optional)</span>
-      </label>
-      <input
-        id="indexerBaseUrl"
-        type="text"
-        {...register('settings.baseUrl')}
-        className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-          errors.settings?.baseUrl ? 'border-destructive' : 'border-border'
-        }`}
-        placeholder="https://www.myanonamouse.net"
-      />
-      {errors.settings?.baseUrl ? (
-        <p className="text-sm text-destructive mt-1">{errors.settings.baseUrl.message}</p>
-      ) : (
-        <p className="text-sm text-muted-foreground mt-1">Only change if using a custom MAM mirror</p>
-      )}
-    </div>
-  );
-}
-
 function WedgeFields({ register }: { register: IndexerFieldsProps['register'] }) {
   return (
     <div className="sm:col-span-2">
@@ -262,7 +237,9 @@ export function MamFields({ register, errors, watch, setValue, formTestResult, i
     <>
       <MamIdField register={register} errors={errors} watch={watch} mamStatus={mamStatus} detectError={detectError} detect={detect} />
       {isDetecting && <DetectionOverlay />}
-      <BaseUrlField register={register} errors={errors} />
+      {/* settings.baseUrl is API-only (#1886): no form input, but the schema still declares it,
+          so a persisted custom value hydrates into defaultValues, round-trips on save, and is
+          read by useMamDetection's watch('settings.baseUrl') for detection requests. */}
       <WedgeFields register={register} />
     </>
   );
