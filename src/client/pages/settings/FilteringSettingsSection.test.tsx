@@ -98,15 +98,16 @@ describe('FilteringSettingsSection', () => {
       expect(screen.getByLabelText('Reject words')).toHaveValue('German');
     });
 
+    // 45, not the packaged default 30 the factory hydrates — the form must go dirty
     const durationInput = screen.getByLabelText('Minimum duration');
     await user.tripleClick(durationInput);
-    await user.keyboard('30');
+    await user.keyboard('45');
 
     await user.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        metadata: { languages: ['english'], minDurationMinutes: 30 },
+        metadata: { languages: ['english'], minDurationMinutes: 45 },
         quality: { rejectWords: 'German', requiredWords: 'M4B' },
       });
     });
@@ -181,7 +182,7 @@ describe('FilteringSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        metadata: { languages: ['english'], minDurationMinutes: 0 },
+        metadata: { languages: ['english'], minDurationMinutes: 30 },
         quality: { rejectWords: 'Abridged', requiredWords: 'M4B' },
       });
     });

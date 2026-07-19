@@ -28,14 +28,14 @@ describe('metadataSettingsSchema', () => {
   });
 
   describe('minDurationMinutes field (#987)', () => {
-    it('defaults to 0 when omitted', () => {
+    it('defaults to 30 when omitted (#1887)', () => {
       const result = metadataSettingsSchema.parse({});
-      expect(result.minDurationMinutes).toBe(0);
+      expect(result.minDurationMinutes).toBe(30);
     });
 
-    it('accepts a positive integer (e.g. recommended threshold of 30)', () => {
-      const result = metadataSettingsSchema.parse({ minDurationMinutes: 30 });
-      expect(result.minDurationMinutes).toBe(30);
+    it('accepts a positive integer distinct from the default', () => {
+      const result = metadataSettingsSchema.parse({ minDurationMinutes: 45 });
+      expect(result.minDurationMinutes).toBe(45);
     });
 
     it('accepts 0 explicitly (filter disabled)', () => {

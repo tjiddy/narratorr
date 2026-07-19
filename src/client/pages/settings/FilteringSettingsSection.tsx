@@ -81,7 +81,7 @@ export function FilteringSettingsSection() {
             </div>
           </SettingsRow>
 
-          <SettingsRow htmlFor="minDurationMinutes" label="Minimum duration" description="Filter out promotional excerpts, TTS knockoffs, and supplementary clips. Set to 0 to disable. Recommended: 30 minutes.">
+          <SettingsRow htmlFor="minDurationMinutes" label="Minimum duration" description="Filter out promotional excerpts, TTS knockoffs, and supplementary clips. Default: 30 minutes. Set to 0 to disable.">
             <NumberField
               id="minDurationMinutes"
               {...register('minDurationMinutes', { valueAsNumber: true })}

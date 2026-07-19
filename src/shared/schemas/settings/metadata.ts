@@ -7,7 +7,7 @@ export type AudibleRegion = z.infer<typeof audibleRegionSchema>;
 export const metadataSettingsSchema = z.object({
   audibleRegion: audibleRegionSchema.default('us'),
   languages: z.array(z.enum(CANONICAL_LANGUAGES)).default(['english']),
-  minDurationMinutes: z.number().int().nonnegative().default(0),
+  minDurationMinutes: z.number().int().nonnegative().default(30),
   hardcoverApiKey: z.string().default(''),
 });
 
