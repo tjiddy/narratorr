@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent, renderHook, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { useDirtyFormsState, _resetForTesting } from '@/hooks/dirty-forms';
@@ -204,17 +204,31 @@ describe('LibrarySettingsSection', () => {
       const user = userEvent.setup();
       let resolveSave: (v: unknown) => void = () => {};
       mockApi.updateSettings.mockReturnValue(new Promise((r) => { resolveSave = r; }));
+
+      // A location probe is load-bearing here (F16): the section renders outside
+      // <Routes>, so "still mounted" cannot prove the router stayed put. If the
+      // clean-success path wrongly replayed the captured /settings/indexers Link,
+      // only the pathname would reveal it.
+      function LocationProbe() {
+        const location = useLocation();
+        return <div data-testid="loc">{location.pathname}</div>;
+      }
       renderWithProviders(
         <>
           <UnsavedChangesGuard />
+          <LocationProbe />
           <LibrarySettingsSection />
           <Link to="/settings/indexers">Indexers</Link>
         </>,
+        { route: '/settings' },
       );
 
       await waitFor(() => {
         expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
       });
+      // Exact equality (not toHaveTextContent, which substring-matches and would
+      // treat '/settings/indexers' as containing '/settings').
+      expect(screen.getByTestId('loc').textContent).toBe('/settings');
 
       const pathInput = screen.getByPlaceholderText('/audiobooks');
       await user.clear(pathInput);
@@ -224,6 +238,7 @@ describe('LibrarySettingsSection', () => {
       // is intercepted by the guard (still dirty). The guard modal names Library.
       await user.click(screen.getByRole('link', { name: 'Indexers' }));
       expect(screen.getByText(/The Library card has unsaved changes/)).toBeInTheDocument();
+      expect(screen.getByTestId('loc').textContent).toBe('/settings');
 
       // The in-flight blur-save completes successfully: resetField makes the form
       // clean → the guard modal closes and stays on the page, while Library shows
@@ -234,7 +249,10 @@ describe('LibrarySettingsSection', () => {
       await waitFor(() => {
         expect(screen.queryByText(/The Library card has unsaved changes/)).toBeNull();
       });
-      // Stayed on the page (Library section still mounted).
+      // Stayed on the exact route (a wrongful replay of the captured Link would
+      // move the pathname to /settings/indexers), with the section and Library's
+      // own Refresh Library prompt intact.
+      expect(screen.getByTestId('loc').textContent).toBe('/settings');
       expect(screen.getByText('Library path')).toBeInTheDocument();
       expect(await screen.findByText('Refresh Library?')).toBeInTheDocument();
     });
