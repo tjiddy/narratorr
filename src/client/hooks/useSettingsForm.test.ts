@@ -486,7 +486,7 @@ describe('useSettingsForm', () => {
     });
 
     // Probe both the form and the derived registry snapshot from one render.
-    function useFormWithProbe(config: Parameters<typeof useSettingsForm>[0]) {
+    function useFormWithProbe<T extends Record<string, unknown>>(config: Parameters<typeof useSettingsForm<T>>[0]) {
       const form = useSettingsForm(config);
       const state = useDirtyFormsState();
       return { form, state };
