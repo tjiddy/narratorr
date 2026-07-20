@@ -211,4 +211,43 @@ describe('import-submissions routes (#1893)', () => {
       restore();
     });
   });
+
+  // F46: the id-scoped routes must use the canonical positive-integer contract.
+  describe('numeric :id validation (canonical idParamSchema, F46)', () => {
+    const validRow = { ordinal: 0, item: { path: '/a', title: 'A', metadata: { title: 'A', authors: [{ name: 'X' }] } } };
+    it('rejects non-numeric / zero / negative ids with 400 on GET, PUT, and finalize', async () => {
+      for (const badId of ['abc', '0', '-1']) {
+        expect((await app.inject({ method: 'GET', url: `/api/import/submissions/${badId}` })).statusCode).toBe(400);
+        expect((await app.inject({ method: 'PUT', url: `/api/import/submissions/${badId}/items`, payload: { items: [validRow] } })).statusCode).toBe(400);
+        expect((await app.inject({ method: 'POST', url: `/api/import/submissions/${badId}/finalize` })).statusCode).toBe(400);
+      }
+    });
+    it('accepts a valid positive id', async () => {
+      mockFn(services, 'getById').mockResolvedValue(summary);
+      expect((await app.inject({ method: 'GET', url: '/api/import/submissions/1' })).statusCode).toBe(200);
+    });
+  });
+
+  // F47: every mutation-route catch must log a serialized error before rethrowing.
+  describe('mutation-route error diagnostics (F47)', () => {
+    const validRow = { ordinal: 0, item: { path: '/a', title: 'A', metadata: { title: 'A', authors: [{ name: 'X' }] } } };
+    const cases = [
+      { name: 'create', fn: 'createSubmission' as const, msg: 'create', op: () => app.inject({ method: 'POST', url: '/api/import/submissions', payload: { source: 'library', clientSubmissionId: UUID, payloadDigest: DIGEST, expectedCount: 2 } }) },
+      { name: 'PUT', fn: 'putItems' as const, msg: 'PUT', op: () => app.inject({ method: 'PUT', url: '/api/import/submissions/1/items', payload: { items: [validRow] } }) },
+      { name: 'finalize', fn: 'finalize' as const, msg: 'finalize', op: () => app.inject({ method: 'POST', url: '/api/import/submissions/1/finalize' }) },
+    ];
+    for (const c of cases) {
+      it(`logs a serialized error when ${c.name} fails unexpectedly, then returns 500`, async () => {
+        const { spies, restore } = installMockAppLog(app);
+        mockFn(services, c.fn).mockRejectedValue(new Error(`${c.name} boom`));
+        const res = await c.op();
+        expect(res.statusCode).toBe(500); // rethrown to the generic handler
+        expect(spies.error).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.objectContaining({ message: `${c.name} boom` }) }),
+          expect.stringContaining(c.msg),
+        );
+        restore();
+      });
+    }
+  });
 });

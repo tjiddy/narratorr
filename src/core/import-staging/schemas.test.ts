@@ -91,9 +91,9 @@ describe('stagedBookMetadataSchema bounds (F34)', () => {
     expect(parse({ title: 'x'.repeat(513) })).toBe(false);
   });
 
-  it('bounds coverUrl length and enforces url()', () => {
+  it('bounds coverUrl length at exactly 2048 and enforces url() (F44)', () => {
     expect(parse({ coverUrl: 'https://e.com/' + 'a'.repeat(2034) })).toBe(true); // exactly 2048
-    expect(parse({ coverUrl: 'https://e.com/' + 'a'.repeat(2040) })).toBe(false); // over 2048
+    expect(parse({ coverUrl: 'https://e.com/' + 'a'.repeat(2035) })).toBe(false); // 2049 — first byte over
     expect(parse({ coverUrl: 'a'.repeat(100) })).toBe(false); // not a URL
   });
 
@@ -105,8 +105,12 @@ describe('stagedBookMetadataSchema bounds (F34)', () => {
     expect(parse({ authors: [{ name: 'A', bogus: 1 }] })).toBe(false); // AuthorRef strict
     expect(parse({ series: [{ name: 'x'.repeat(512) }] })).toBe(true);
     expect(parse({ series: [{ name: 'x'.repeat(513) }] })).toBe(false);
-    expect(parse({ series: [{ name: 'S', asin: 'x'.repeat(65) }] })).toBe(false);
+    expect(parse({ series: [{ name: 'S', asin: 'x'.repeat(64) }] })).toBe(true); // series ASIN exactly at 64
+    expect(parse({ series: [{ name: 'S', asin: 'x'.repeat(65) }] })).toBe(false); // just over
     expect(parse({ series: [{ name: 'S', bogus: 1 }] })).toBe(false); // SeriesRef strict
+    // seriesPrimary reuses the same SeriesRef bound table.
+    expect(parse({ seriesPrimary: { name: 'S', asin: 'x'.repeat(64) } })).toBe(true);
+    expect(parse({ seriesPrimary: { name: 'S', asin: 'x'.repeat(65) } })).toBe(false);
     expect(parse({ seriesPrimary: { name: 'S', bogus: 1 } })).toBe(false); // nested strict
   });
 
