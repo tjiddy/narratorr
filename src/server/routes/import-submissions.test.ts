@@ -120,16 +120,55 @@ describe('import-submissions routes (#1893)', () => {
     });
   });
 
-  describe('GET /api/import/submissions/by-client/:clientSubmissionId', () => {
-    it('valid uuid → 200', async () => {
+  describe('GET /api/import/submissions/by-client/:clientSubmissionId (F14 — same query-selected DTO contract)', () => {
+    const detail = {
+      ...summary, itemsIncluded: true,
+      items: [{ disposition: 'pending', ordinal: 0, path: '/a', title: 'A' }],
+    };
+
+    it('omitted includeItems → summary (service called with false)', async () => {
       mockFn(services, 'getByClientId').mockResolvedValue(summary);
       const res = await app.inject({ method: 'GET', url: `/api/import/submissions/by-client/${UUID}` });
       expect(res.statusCode).toBe(200);
       expect(mockFn(services, 'getByClientId')).toHaveBeenCalledWith(UUID, false);
+      expect(res.json().itemsIncluded).toBe(false);
+      expect('items' in res.json()).toBe(false);
     });
+
+    it('includeItems=false → summary (service called with false)', async () => {
+      mockFn(services, 'getByClientId').mockResolvedValue(summary);
+      await app.inject({ method: 'GET', url: `/api/import/submissions/by-client/${UUID}?includeItems=false` });
+      expect(mockFn(services, 'getByClientId')).toHaveBeenCalledWith(UUID, false);
+    });
+
+    it('includeItems=true → detail (service called with true, items present)', async () => {
+      mockFn(services, 'getByClientId').mockResolvedValue(detail);
+      const res = await app.inject({ method: 'GET', url: `/api/import/submissions/by-client/${UUID}?includeItems=true` });
+      expect(res.statusCode).toBe(200);
+      expect(mockFn(services, 'getByClientId')).toHaveBeenCalledWith(UUID, true);
+      expect(res.json().itemsIncluded).toBe(true);
+      expect(res.json().items).toHaveLength(1);
+    });
+
+    it('invalid includeItems value → 400', async () => {
+      const res = await app.inject({ method: 'GET', url: `/api/import/submissions/by-client/${UUID}?includeItems=yes` });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('unknown query key → 400 (strict)', async () => {
+      const res = await app.inject({ method: 'GET', url: `/api/import/submissions/by-client/${UUID}?bogus=1` });
+      expect(res.statusCode).toBe(400);
+    });
+
     it('invalid uuid → 400', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/import/submissions/by-client/not-a-uuid' });
       expect(res.statusCode).toBe(400);
+    });
+
+    it('unknown clientSubmissionId → 404', async () => {
+      mockFn(services, 'getByClientId').mockRejectedValue(new SubmissionError('submission-not-found', 404, 'nf'));
+      const res = await app.inject({ method: 'GET', url: `/api/import/submissions/by-client/${UUID}` });
+      expect(res.statusCode).toBe(404);
     });
   });
 });

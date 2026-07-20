@@ -393,6 +393,66 @@ describe('ImportQueueWorker', () => {
       expect(result).toBe(false);
       expect(updateSpy).not.toHaveBeenCalled();
     });
+
+    // F72: the FULL lifecycle boundary — a real drain launched by start() and parked
+    // in the candidate SELECT when stop() is called. stop() must AWAIT that launched
+    // drain (proving `runDrainPromise` is awaited), and when the drain resumes the
+    // pre-claim barrier must abort it so NO claim UPDATE runs and the row stays pending.
+    // A fresh, running worker then claims the same still-pending row.
+    it('F72 lifecycle: stop() awaits a drain parked in the candidate SELECT and the barrier prevents any claim; a fresh worker then claims the row', async () => {
+      let releaseSelect!: () => void;
+      const selectGate = new Promise<void>((res) => { releaseSelect = res; });
+      let selectCall = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCall++;
+        if (selectCall === 1) {
+          // bootRecovery orphan scan — no orphans.
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        }
+        // The drain's candidate SELECT — park here until released, then surface a pending row.
+        return {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          orderBy: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockImplementation(async () => { await selectGate; return [{ id: 42 }]; }),
+        };
+      });
+      const claimSpy = vi.fn(() => updateWhereTerminus());
+      mockDb.db.update = claimSpy;
+
+      await worker.start(); // launches a drain that parks in the gated candidate SELECT
+
+      // stop() sets `stopping` and awaits the launched drain — it must NOT resolve while
+      // the drain is still parked in the SELECT.
+      let stopResolved = false;
+      const stopP = worker.stop().then(() => { stopResolved = true; });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(stopResolved).toBe(false); // stop() is awaiting the parked drain
+
+      releaseSelect(); // drain resumes from the SELECT
+      await stopP;
+      expect(stopResolved).toBe(true);
+
+      // Pre-claim barrier: the resumed drain aborted BEFORE the atomic claim — no
+      // UPDATE ran, so the durable import_jobs row is left `pending`.
+      expect(claimSpy).not.toHaveBeenCalled();
+
+      // A fresh, running worker's startup drain claims the still-pending row.
+      const fresh = new ImportQueueWorker(inject<Db>(mockDb.db), log);
+      (fresh as unknown as { running: boolean }).running = true;
+      mockDb.db.select = vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([{ id: 42 }]),
+      });
+      // rowsAffected:0 (lost race) so drainOne returns right after the claim — no job
+      // fetch / adapter path needed; we only prove the claim UPDATE was ATTEMPTED.
+      const freshClaim = vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 0 }) }) });
+      mockDb.db.update = freshClaim;
+      await (fresh as unknown as DrainSeam).drainOne();
+      expect(freshClaim).toHaveBeenCalled(); // the barrier does NOT abort a running worker
+    });
   });
 
   // #1122 — Within the worker, `requestDrain()` coalesces nudges and safety-poll
