@@ -293,7 +293,11 @@ export class ImportStagingService {
         .set({ status: 'processing', updatedAt: now })
         .where(and(eq(importSubmissions.id, id), eq(importSubmissions.status, 'receiving')));
       const [after] = await tx.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
-      return { header: after!, nudged: getRowsAffected(result) === 1 };
+      // A concurrent stale-'receiving' cleanup can delete the header between this tx's
+      // read and its CAS write (F27) — the update then affects 0 rows and there is no
+      // record to return. Treat that as cleanup-won: a typed 404, no nudge, no crash.
+      if (!after) throw new SubmissionError('submission-not-found', 404, 'submission not found');
+      return { header: after, nudged: getRowsAffected(result) === 1 };
     });
 
     if (nudged) {

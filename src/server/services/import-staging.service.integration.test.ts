@@ -27,13 +27,14 @@ function libraryDigest(items: StagedImportItem[]): string {
 
 describe('ImportStagingService (DB-backed, #1893)', () => {
   let dir: string;
+  let dbFile: string;
   let db: Db;
   let nudge: ReturnType<typeof vi.fn>;
   let service: ImportStagingService;
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'staging-svc-'));
-    const dbFile = join(dir, 'narratorr.db');
+    dbFile = join(dir, 'narratorr.db');
     await runMigrations(dbFile);
     db = createDb(dbFile);
     nudge = vi.fn();
@@ -69,6 +70,40 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
       await service.createSubmission(createBody);
       await expect(service.createSubmission({ ...createBody, payloadDigest: 'b'.repeat(64) }))
         .rejects.toMatchObject({ httpStatus: 409, code: 'submission-digest-conflict' });
+    });
+
+    // F15: the read-then-insert is not atomic; a concurrent identical create must still
+    // create-or-return (via the unique-index catch-and-reread), never leak a raw 5xx.
+    it('a create whose existence check missed still returns the existing header via the unique-violation reread (F15)', async () => {
+      await service.createSubmission(createBody); // row 1 exists
+      // Force the pre-insert existence check to MISS (simulates the concurrent-create
+      // race window) so the insert path runs and hits the client-id unique index.
+      const spy = vi.spyOn(service as unknown as { findHeaderByClientId: (id: string) => Promise<unknown> }, 'findHeaderByClientId');
+      spy.mockResolvedValueOnce(undefined);
+      const res = await service.createSubmission(createBody);
+      expect(res.id).toBe(1); // reread returned the existing header, not a raw error
+      expect(await db.select().from(importSubmissions)).toHaveLength(1); // no second row
+      spy.mockRestore();
+    });
+
+    it('a raced create with a DIFFERENT digest surfaces the typed 409 after the reread (F15)', async () => {
+      await service.createSubmission(createBody);
+      const spy = vi.spyOn(service as unknown as { findHeaderByClientId: (id: string) => Promise<unknown> }, 'findHeaderByClientId');
+      spy.mockResolvedValueOnce(undefined);
+      await expect(service.createSubmission({ ...createBody, payloadDigest: 'e'.repeat(64) }))
+        .rejects.toMatchObject({ httpStatus: 409, code: 'submission-digest-conflict' });
+      spy.mockRestore();
+    });
+
+    it('two concurrent identical creates both resolve to the same header id with one row (F15)', async () => {
+      const results = await Promise.allSettled([
+        service.createSubmission(createBody),
+        service.createSubmission(createBody),
+      ]);
+      expect(results.every((r) => r.status === 'fulfilled')).toBe(true); // neither leaks a raw 5xx
+      const ids = results.map((r) => (r as PromiseFulfilledResult<{ id: number }>).value.id);
+      expect(ids[0]).toBe(ids[1]);
+      expect(await db.select().from(importSubmissions)).toHaveLength(1);
     });
   });
 
@@ -282,6 +317,127 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
     if (detail.itemsIncluded) expect(detail.items).toHaveLength(2);
   });
 
+  // ── F16: query-shape deletion heuristic — summary must not select itemPayload ──
+  it('summary poll issues no full-row item SELECT; the detail arm does (F16 deletion heuristic)', async () => {
+    await service.createSubmission(createBody);
+    await service.putItems(1, { items: [{ ordinal: 0, item: items[0]! }, { ordinal: 1, item: items[1]! }] });
+    await service.finalize(1); // status 'processing' so computeProgress takes the live-count path
+
+    // A full-row item SELECT is `db.select()` with NO projection arg (all columns,
+    // incl. itemPayload). getById itself issues exactly ONE no-arg select (the header).
+    // If the summary path also did a full-row item select it would show 2 no-arg
+    // selects — matching the detail arm — and this heuristic would fail.
+    const selectSpy = vi.spyOn(db, 'select');
+
+    await service.getById(1, false); // summary
+    const summaryNoArgSelects = selectSpy.mock.calls.filter((c) => c[0] === undefined).length;
+    // The live-count path must use a projected `{ disposition }` select (never itemPayload).
+    expect(selectSpy.mock.calls.some((c) => c[0] !== undefined && 'disposition' in (c[0] as object))).toBe(true);
+
+    selectSpy.mockClear();
+    await service.getById(1, true); // detail
+    const detailNoArgSelects = selectSpy.mock.calls.filter((c) => c[0] === undefined).length;
+
+    // Detail loads full item rows (extra no-arg select); summary does not.
+    expect(summaryNoArgSelects).toBe(1); // header only
+    expect(detailNoArgSelects).toBeGreaterThan(summaryNoArgSelects);
+    selectSpy.mockRestore();
+  });
+
+  // ── F21: cumulative byte-cap inclusive boundary (just-below / at / just-above) ──
+  describe('byte-cap inclusive boundary (F21)', () => {
+    const itemBytes = (it: StagedImportItem): number => Buffer.byteLength(JSON.stringify(it), 'utf8');
+
+    async function seedReceivingAtBytes(clientId: string, receivedBytes: number): Promise<number> {
+      const [row] = await db.insert(importSubmissions).values({
+        clientSubmissionId: clientId, payloadDigest: 'a'.repeat(64), source: 'library',
+        expectedCount: 2, status: 'receiving', receivedBytes,
+      }).returning();
+      return row!.id;
+    }
+
+    it('accepts a PUT landing just below the cap', async () => {
+      const b = itemBytes(items[0]!);
+      const id = await seedReceivingAtBytes('cap-below', MAX_SUBMISSION_BYTES - b - 1);
+      const res = await service.putItems(id, { items: [{ ordinal: 0, item: items[0]! }] });
+      expect(res.receivedCount).toBe(1);
+      const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, id));
+      expect(h!.receivedBytes).toBe(MAX_SUBMISSION_BYTES - 1);
+      expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id))).toHaveLength(1);
+    });
+
+    it('accepts a PUT landing EXACTLY at the cap (proves inclusive <=, not <)', async () => {
+      const b = itemBytes(items[0]!);
+      const id = await seedReceivingAtBytes('cap-at', MAX_SUBMISSION_BYTES - b);
+      const res = await service.putItems(id, { items: [{ ordinal: 0, item: items[0]! }] });
+      expect(res.receivedCount).toBe(1);
+      const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, id));
+      expect(h!.receivedBytes).toBe(MAX_SUBMISSION_BYTES); // landed exactly at the cap and was accepted
+      expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id))).toHaveLength(1);
+    });
+
+    it('rejects a PUT one byte over the cap with 413 and no state change', async () => {
+      const b = itemBytes(items[0]!);
+      const id = await seedReceivingAtBytes('cap-over', MAX_SUBMISSION_BYTES - b + 1);
+      await expect(service.putItems(id, { items: [{ ordinal: 0, item: items[0]! }] }))
+        .rejects.toMatchObject({ httpStatus: 413, code: 'submission-byte-budget-exceeded' });
+      const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, id));
+      expect(h!.receivedBytes).toBe(MAX_SUBMISSION_BYTES - b + 1); // unchanged
+      expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id))).toHaveLength(0);
+    });
+  });
+
+  // ── F22: bounded finalize gaps report on a sparse submission ──────────────
+  it('finalize on a sparse submission returns a bounded gaps report (≤100 ordered entries, totalMissing, truncated) (F22)', async () => {
+    const expectedCount = 150;
+    const [row] = await db.insert(importSubmissions).values({
+      clientSubmissionId: 'sparse-gaps', payloadDigest: 'a'.repeat(64), source: 'library',
+      expectedCount, status: 'receiving',
+    }).returning();
+    // Only ordinal 0 present → ordinals 1..149 are missing (149 gaps).
+    await service.putItems(row!.id, { items: [{ ordinal: 0, item: items[0]! }] });
+
+    try {
+      await service.finalize(row!.id);
+      throw new Error('expected finalize to reject with a gaps report');
+    } catch (err) {
+      const gaps = (err as { code: string; gaps?: { missing: number[]; totalMissing: number; truncated: boolean } });
+      expect(gaps.code).toBe('finalize-gaps');
+      expect(gaps.gaps!.missing).toHaveLength(100); // bounded to ≤100
+      expect(gaps.gaps!.missing[0]).toBe(1); // ordered from the first gap
+      expect(gaps.gaps!.missing).toEqual([...gaps.gaps!.missing].sort((a, b) => a - b)); // ascending
+      expect(gaps.gaps!.totalMissing).toBe(149); // the FULL count, not the truncated length
+      expect(gaps.gaps!.truncated).toBe(true);
+    }
+    // No state change — the header stays receiving.
+    const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, row!.id));
+    expect(h!.status).toBe('receiving');
+  });
+
+  // ── F23: simultaneous finalize callers (separate connections) ────────────
+  it('two simultaneous finalize callers both land on processing with exactly one transition/nudge (F23)', async () => {
+    await service.createSubmission(createBody);
+    await service.putItems(1, { items: [{ ordinal: 0, item: items[0]! }, { ordinal: 1, item: items[1]! }] });
+
+    // Two callers over SEPARATE connections (real simultaneity via SQLite locking). Both
+    // share the SAME nudge counter so we can assert exactly ONE winning transition nudged.
+    const db2 = createDb(dbFile);
+    const service2 = new ImportStagingService(db2, noopLog, nudge as unknown as () => void);
+    const results = await Promise.allSettled([service.finalize(1), service2.finalize(1)]);
+    db2.$client.close();
+    // A lock-loss (SQLITE_BUSY) on one caller is retryable and idempotent — replay it.
+    for (const r of results) {
+      if (r.status === 'rejected') await service.finalize(1);
+    }
+
+    const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, 1));
+    expect(h!.status).toBe('processing');
+    // Only the winning receiving→processing CAS nudges; replays are no-ops.
+    expect(nudge).toHaveBeenCalledTimes(1);
+    // No duplicated item/header state.
+    expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, 1))).toHaveLength(2);
+  });
+
   // ── F12: retention method behavior ───────────────────────────────────────
   describe('retention & GC (F12)', () => {
     const hoursAgo = (h: number): Date => new Date(Date.now() - h * 60 * 60 * 1000);
@@ -359,6 +515,127 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
       const deleted = await service.sweepStaleReceiving();
       expect(deleted).toBe(0);
       expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, 1))).toHaveLength(1);
+    });
+
+    // ── F24/F25: exact strict-lt boundaries with a FROZEN clock ──────────────
+    // Freeze ONLY Date (real timers stay live so libSQL async is unaffected) so an
+    // exactly-at-boundary fixture cannot drift between the helper's and the service's
+    // independent Date.now() reads — that is what lets us distinguish `lt` from `lte`.
+    it('48h sweep boundary distinguishes strict lt from lte with a frozen clock (F24)', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        const now = new Date('2026-07-20T12:00:00.000Z');
+        vi.setSystemTime(now);
+        const ms48 = 48 * 60 * 60 * 1000;
+        const older = await seedReceiving('sw-older', new Date(now.getTime() - ms48 - 1000)); // strictly older → swept
+        const exact = await seedReceiving('sw-exact', new Date(now.getTime() - ms48));         // exactly 48h → kept (lt)
+        const newer = await seedReceiving('sw-newer', new Date(now.getTime() - ms48 + 1000));  // just under → kept
+
+        const deleted = await service.sweepStaleReceiving();
+        expect(deleted).toBe(1);
+        expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, older))).toHaveLength(0);
+        expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, exact))).toHaveLength(1);
+        expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, newer))).toHaveLength(1);
+        // Cascade only for the strictly-older row.
+        expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, older))).toHaveLength(0);
+        expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, exact))).toHaveLength(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('completed-detail retention boundary distinguishes strict lt from lte with a frozen clock (F25)', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        const now = new Date('2026-07-20T12:00:00.000Z');
+        vi.setSystemTime(now);
+        const msDay = 24 * 60 * 60 * 1000;
+        const exact = await seedComplete('rt-exact', new Date(now.getTime() - 90 * msDay));        // exactly 90d → kept (lt)
+        const beyond = await seedComplete('rt-beyond', new Date(now.getTime() - 90 * msDay - 1000)); // just beyond → pruned
+
+        const pruned = await service.pruneCompletedDetails(90);
+        expect(pruned).toBe(1);
+        expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, exact))).toHaveLength(1);
+        expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, beyond))).toHaveLength(0);
+        // Both permanent headers + aggregates survive.
+        for (const id of [exact, beyond]) {
+          const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, id));
+          expect(h!.status).toBe('complete');
+          expect(h!.acceptedCount).toBe(1);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // ── F26/F27: concurrent cleanup vs PUT / finalize (separate connections) ──
+    it('cleanup racing a concurrent PUT preserves the no-orphan invariant (F26)', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        const now = new Date('2026-07-20T12:00:00.000Z');
+        vi.setSystemTime(now);
+        const id = await seedReceiving('race-put', new Date(now.getTime() - 49 * 60 * 60 * 1000)); // stale
+        await db.delete(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id)); // clear pre-seeded item
+
+        const db2 = createDb(dbFile);
+        const service2 = new ImportStagingService(db2, noopLog, vi.fn() as unknown as () => void);
+        const results = await Promise.allSettled([
+          service.putItems(id, { items: [{ ordinal: 0, item: items[0]! }] }),
+          service2.sweepStaleReceiving(),
+        ]);
+        db2.$client.close();
+
+        const [hdr] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, id));
+        const itemRows = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id));
+        if (hdr) {
+          // No orphan: any surviving item belongs to the surviving receiving header.
+          if (results[0]!.status === 'fulfilled') {
+            expect(hdr.status).toBe('receiving');
+            expect(itemRows).toHaveLength(1);
+            expect(hdr.receivedCount).toBe(1);
+          }
+        } else {
+          // Cleanup won: header gone AND its items cascade-deleted — no orphan.
+          expect(itemRows).toHaveLength(0);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('cleanup racing a concurrent finalize preserves the permanent-record invariant (F27)', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        const now = new Date('2026-07-20T12:00:00.000Z');
+        vi.setSystemTime(now);
+        await service.createSubmission(createBody); // id 1, receiving, digest matches the 2 items
+        await service.putItems(1, { items: [{ ordinal: 0, item: items[0]! }, { ordinal: 1, item: items[1]! }] });
+        // Age the header so it is sweep-eligible while still receiving with all ordinals.
+        await db.update(importSubmissions).set({ updatedAt: new Date(now.getTime() - 49 * 60 * 60 * 1000) }).where(eq(importSubmissions.id, 1));
+
+        const db2 = createDb(dbFile);
+        const service2 = new ImportStagingService(db2, noopLog, vi.fn() as unknown as () => void);
+        await Promise.allSettled([service.finalize(1), service2.sweepStaleReceiving()]);
+        db2.$client.close();
+
+        // If the header survived but a lock-loss left it still 'receiving', the retry is
+        // an idempotent finalize (completes it); a replay on 'processing' is a no-op.
+        const [mid] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, 1));
+        if (mid && mid.status === 'receiving') await service.finalize(1);
+
+        const [hdr] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, 1));
+        if (hdr) {
+          // Finalize won: the permanent record flipped to processing with exactly one nudge.
+          expect(hdr.status).toBe('processing');
+          expect(nudge).toHaveBeenCalledTimes(1);
+        } else {
+          // Cleanup won: no processing record survives and finalize never nudged a deleted record.
+          expect(nudge).not.toHaveBeenCalled();
+          expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, 1))).toHaveLength(0);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
