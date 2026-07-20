@@ -93,6 +93,7 @@ export async function importSubmissionsRoutes(app: FastifyInstance, staging: Imp
       return await reply.status(200).send(result);
     } catch (error: unknown) {
       if (error instanceof SubmissionError) return sendSubmissionError(reply, error);
+      request.log.error({ error: serializeError(error), submissionId: idResult.data.id }, 'Staged import GET by id failed');
       throw error;
     }
   });
@@ -108,6 +109,7 @@ export async function importSubmissionsRoutes(app: FastifyInstance, staging: Imp
       return await reply.status(200).send(result);
     } catch (error: unknown) {
       if (error instanceof SubmissionError) return sendSubmissionError(reply, error);
+      request.log.error({ error: serializeError(error), clientSubmissionId: paramResult.data.clientSubmissionId }, 'Staged import GET by-client failed');
       throw error;
     }
   });

@@ -71,11 +71,33 @@ function stagedItemBytes(item: StagedImportItem): number {
  * ONLY on the winning finalize CAS.
  */
 export class ImportStagingService {
+  /**
+   * In-process serialization lane for MUTATING transactions (F36). A libSQL
+   * connection permits only one transaction at a time, so two overlapping
+   * `db.transaction` calls on the shared connection corrupt with SQLITE_BUSY /
+   * "SQL statements in progress". Routing PUT and finalize through one chain means no
+   * two of them ever overlap on the connection: each runs to commit before the next
+   * begins, giving deterministic idempotency (two finalizes both resolve to
+   * 'processing') and clean ordering (a PUT racing finalize sees the committed state,
+   * not a corrupted tx). The chain survives rejections so one failure never wedges the
+   * lane. This is the single-process supported path; cross-connection contention (the
+   * retention-cleanup races) is a separate durable-CAS backstop and intentionally not
+   * serialized here.
+   */
+  private writeChain: Promise<unknown> = Promise.resolve();
+
   constructor(
     private readonly db: Db,
     private readonly log: FastifyBaseLogger,
     private readonly nudgeRunner: () => void,
   ) {}
+
+  /** Run a mutating operation on the serialized write lane (see `writeChain`). */
+  private serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.writeChain.then(fn, fn);
+    this.writeChain = run.then(() => undefined, () => undefined);
+    return run;
+  }
 
   /**
    * Create-or-return by clientSubmissionId: same id + identical digest returns the
@@ -153,13 +175,14 @@ export class ImportStagingService {
     }
 
     // EVERYTHING that reads or writes mutable header state runs in ONE transaction
-    // (F1): the status/range gate, the existing-ordinal read, the byte-cap check, the
-    // ordinal inserts, and the counter update are atomic. The counter update is a
-    // CAS-guarded conditional increment — `WHERE status='receiving' AND
-    // receivedBytes + delta <= cap`, applied with SQL-relative `+=` — so two
-    // concurrent chunks cannot both read the same counters and lose an increment or
+    // (F1), serialized on the write lane (F36) so it never overlaps a concurrent PUT
+    // or finalize on the shared connection: the status/range gate, the existing-ordinal
+    // read, the byte-cap check, the ordinal inserts, and the counter update are atomic.
+    // The counter update is a CAS-guarded conditional increment — `WHERE
+    // status='receiving' AND receivedBytes + delta <= cap`, applied with SQL-relative
+    // `+=` — so two chunks cannot both read the same counters and lose an increment or
     // slip past the cap, and a PUT that raced a finalize cannot write after the flip.
-    const updated = await this.db.transaction(async (tx) => {
+    const updated = await this.serializeWrite(() => this.db.transaction(async (tx) => {
       const [header] = await tx.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
       if (!header) throw new SubmissionError('submission-not-found', 404, 'submission not found');
       if (header.status !== 'receiving') {
@@ -238,7 +261,7 @@ export class ImportStagingService {
 
       const [after] = await tx.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
       return after!;
-    });
+    }));
     return this.buildSummary(updated);
   }
 
@@ -248,6 +271,13 @@ export class ImportStagingService {
    * finalized header is a no-op (no re-nudge).
    */
   async finalize(id: number): Promise<SubmissionResponse> {
+    // Serialized on the write lane (F36) so simultaneous finalizes never overlap on the
+    // shared connection; the second observes the winner's committed 'processing'
+    // (idempotent replay, no re-nudge) and fulfills.
+    return this.serializeWrite(() => this.finalizeOnce(id));
+  }
+
+  private async finalizeOnce(id: number): Promise<SubmissionResponse> {
     // The ordinal read, gap/digest verification, and CAS flip all run in ONE
     // transaction (F1): a concurrent PUT or stale-'receiving' cleanup cannot
     // interleave between the verification and the transition, so finalize either
