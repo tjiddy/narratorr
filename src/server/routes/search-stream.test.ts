@@ -248,6 +248,18 @@ describe('searchStreamRoutes', () => {
       expect(indexerService.searchAllStreaming).not.toHaveBeenCalled();
     });
 
+    it('#1904 returns 400 for a "?!"-only query (cleaner strips them) before opening SSE', async () => {
+      const { reply, request, writeHead, hijack } = createMockReplyAndRequest();
+      (request as { query: Record<string, unknown> }).query = { q: '?!', limit: 50 };
+
+      await streamHandler!(request, reply);
+
+      expect(reply.status).toHaveBeenCalledWith(400);
+      expect(writeHead).not.toHaveBeenCalled();
+      expect(hijack).not.toHaveBeenCalled();
+      expect(indexerService.searchAllStreaming).not.toHaveBeenCalled();
+    });
+
     it('calls reply.hijack() before any reply.raw.write() calls', async () => {
       const callOrder: string[] = [];
       const { reply, request } = createMockReplyAndRequest();

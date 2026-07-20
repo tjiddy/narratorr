@@ -72,6 +72,64 @@ describe('cleanIndexerQuery', () => {
   it('collapses whitespace introduced by stripped punctuation', () => {
     expect(cleanIndexerQuery('Foo  (Bar)  Baz')).toBe('Foo Bar Baz');
   });
+
+  // ── #1904 Query-hostile punctuation (?, !, quotes, apostrophes) ──────────
+  it('specimen regression — strips trailing "?" mid-query so MAM can match', () => {
+    expect(cleanIndexerQuery('Is She Really Going Out with Him? Sophie Cousens'))
+      .toBe('Is She Really Going Out with Him Sophie Cousens');
+  });
+
+  it('strips a trailing question mark', () => {
+    expect(cleanIndexerQuery('Who?')).toBe('Who');
+  });
+
+  it('strips a trailing exclamation mark', () => {
+    expect(cleanIndexerQuery('Whose Body!')).toBe('Whose Body');
+  });
+
+  it('strips an interior question mark', () => {
+    expect(cleanIndexerQuery('What? Now')).toBe('What Now');
+  });
+
+  it('strips straight double quotes without leaving stray tokens', () => {
+    expect(cleanIndexerQuery('"Good" Omens')).toBe('Good Omens');
+  });
+
+  it('strips curly double quotes (U+201C/U+201D) without leaving stray tokens', () => {
+    expect(cleanIndexerQuery('“Good” Omens')).toBe('Good Omens');
+  });
+
+  it('drops a straight apostrophe without splitting the word', () => {
+    expect(cleanIndexerQuery("O'Malley")).toBe('OMalley');
+    expect(cleanIndexerQuery("O'Malley").split(/\s+/)).toHaveLength(1);
+  });
+
+  it('drops a curly apostrophe (U+2019) without splitting the word', () => {
+    expect(cleanIndexerQuery('O’Malley')).toBe('OMalley');
+    expect(cleanIndexerQuery('O’Malley').split(/\s+/)).toHaveLength(1);
+  });
+
+  it('drops apostrophes in contractions without splitting', () => {
+    expect(cleanIndexerQuery("don't")).toBe('dont');
+    expect(cleanIndexerQuery("it's")).toBe('its');
+  });
+
+  it('drops a curly single quote pair (U+2018/U+2019) — no stray quote survives', () => {
+    expect(cleanIndexerQuery('‘Good’ Omens')).toBe('Good Omens');
+  });
+
+  it('returns empty string for question/exclamation-only input', () => {
+    expect(cleanIndexerQuery('?!')).toBe('');
+  });
+
+  it('returns empty string for quote/apostrophe-only input', () => {
+    expect(cleanIndexerQuery('"“”\'‘’')).toBe('');
+  });
+
+  it('cleaning the new characters is idempotent', () => {
+    const once = cleanIndexerQuery("Is She Really Going Out with Him? O'Malley “Good”");
+    expect(cleanIndexerQuery(once)).toBe(once);
+  });
 });
 
 describe('cleanIndexerSearchOptions', () => {
