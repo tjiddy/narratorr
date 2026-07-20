@@ -255,6 +255,25 @@ export class BookService {
    * in the primitive) so a future caller-owned-tx rollback can never strand them.
    */
   async create(data: CreateBookInput): Promise<BookWithAuthor> {
+    const resolved = await this.resolveCreateInput(data);
+    const bookId = await this.createResolved(resolved);
+
+    this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: data.asin }, 'Book added to library');
+    this.trackUnmatchedGenres(data.genres).catch((error) => this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres'));
+    return this.getById(bookId) as Promise<BookWithAuthor>;
+  }
+
+  /**
+   * Provider-ASIN enrichment, extracted from `create()` (#1893). Fetches provider
+   * detail when `asin` is absent but `providerId` present, carries the resolved
+   * ASIN, drops the enrichment-only `providerId`, and returns a providerId-free
+   * `ResolvedBookCreateInput`. This is the ONLY provider I/O on the create path —
+   * call it BEFORE opening a transaction so `createResolved` does zero I/O inside
+   * the tx. `create()` delegates here (its pinned enrichment tests still pass);
+   * the staged-import runner calls it pre-transaction, then hands the result to
+   * `createResolved(resolved, tx)`.
+   */
+  async resolveCreateInput(data: CreateBookInput): Promise<ResolvedBookCreateInput> {
     // Enrich with ASIN from metadata provider if missing
     let enrichedAsin = data.asin;
     if (!enrichedAsin && data.providerId && this.metadataService) {
@@ -272,12 +291,7 @@ export class BookService {
     // Drop the enrichment-only `providerId` and carry the resolved ASIN into the
     // primitive — enrichment is now done, so `createResolved` does zero I/O.
     const { providerId: _providerId, ...rest } = data;
-    const resolved: ResolvedBookCreateInput = { ...rest, asin: enrichedAsin };
-    const bookId = await this.createResolved(resolved);
-
-    this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: data.asin }, 'Book added to library');
-    this.trackUnmatchedGenres(data.genres).catch((error) => this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres'));
-    return this.getById(bookId) as Promise<BookWithAuthor>;
+    return { ...rest, asin: enrichedAsin };
   }
 
   /**
@@ -541,7 +555,7 @@ export class BookService {
   }
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */
-  private async trackUnmatchedGenres(genres: string[] | undefined): Promise<void> {
+  async trackUnmatchedGenres(genres: string[] | undefined): Promise<void> {
     const unmatched = findUnmatchedGenres(normalizeGenres(genres));
     if (unmatched.length === 0) return;
 

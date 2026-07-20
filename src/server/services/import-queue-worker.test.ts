@@ -332,6 +332,10 @@ describe('ImportQueueWorker', () => {
     type DrainSeam = { drainOne(): Promise<boolean> };
 
     function setupSingleCandidate(claimResult: unknown) {
+      // The drain runs inside a running worker; the F72 pre-claim barrier
+      // (`this.stopping || !this.running`) aborts otherwise, so flip `running`
+      // to exercise the CAS path directly.
+      (worker as unknown as { running: boolean }).running = true;
       mockDb.db.select = vi.fn().mockReturnValueOnce({
         from: vi.fn().mockReturnThis(),
         where: vi.fn().mockReturnThis(),
@@ -367,6 +371,98 @@ describe('ImportQueueWorker', () => {
       await expect(
         (worker as unknown as DrainSeam).drainOne(),
       ).rejects.toThrow(/rowsAffected/);
+    });
+
+    // F72: a drain that resumes from the candidate SELECT after stop() set
+    // `stopping` must abort at the pre-claim barrier — no atomic claim UPDATE runs,
+    // so the durable `import_jobs` row stays `pending` for boot recovery.
+    it('F72 pre-claim barrier: aborts before the claim UPDATE when stopping is set (row stays pending)', async () => {
+      (worker as unknown as { running: boolean; stopping: boolean }).running = true;
+      (worker as unknown as { running: boolean; stopping: boolean }).stopping = true;
+      mockDb.db.select = vi.fn().mockReturnValueOnce({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([{ id: 42 }]),
+      });
+      const updateSpy = vi.fn();
+      mockDb.db.update = updateSpy;
+
+      const result = await (worker as unknown as DrainSeam).drainOne();
+
+      expect(result).toBe(false);
+      expect(updateSpy).not.toHaveBeenCalled();
+    });
+
+    // F72: the FULL lifecycle boundary — a real drain launched by start() and parked
+    // in the candidate SELECT when stop() is called. stop() must AWAIT that launched
+    // drain (proving `runDrainPromise` is awaited), and when the drain resumes the
+    // pre-claim barrier must abort it so NO claim UPDATE runs and the row stays pending.
+    // A fresh, running worker then claims the same still-pending row.
+    it('F72 lifecycle: stop() awaits a drain parked in the candidate SELECT and the barrier prevents any claim; a fresh worker then claims the row', async () => {
+      let releaseSelect!: () => void;
+      const selectGate = new Promise<void>((res) => { releaseSelect = res; });
+      let selectCall = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCall++;
+        if (selectCall === 1) {
+          // bootRecovery orphan scan — no orphans.
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        }
+        // The drain's candidate SELECT — park here until released, then surface a pending row.
+        return {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          orderBy: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockImplementation(async () => { await selectGate; return [{ id: 42 }]; }),
+        };
+      });
+      const claimSpy = vi.fn(() => updateWhereTerminus());
+      mockDb.db.update = claimSpy;
+
+      await worker.start(); // launches a drain that parks in the gated candidate SELECT
+
+      // stop() sets `stopping` and awaits the launched drain — it must NOT resolve while
+      // the drain is still parked in the SELECT.
+      let stopResolved = false;
+      const stopP = worker.stop().then(() => { stopResolved = true; });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(stopResolved).toBe(false); // stop() is awaiting the parked drain
+
+      releaseSelect(); // drain resumes from the SELECT
+      await stopP;
+      expect(stopResolved).toBe(true);
+
+      // Pre-claim barrier: the resumed drain aborted BEFORE the atomic claim — no
+      // UPDATE ran, so the durable import_jobs row is left `pending`.
+      expect(claimSpy).not.toHaveBeenCalled();
+
+      // F20: a fresh worker started through its PUBLIC api boot-recovers, claims the
+      // still-pending row, runs the adapter, and drives it to a terminal 'completed'
+      // write — proving the barrier-left-pending row is genuinely recovered on restart.
+      const processedIds: number[] = [];
+      registerImportAdapter({ type: 'manual', async process(job) { processedIds.push(job.id); } });
+
+      let freshSelect = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        freshSelect++;
+        if (freshSelect === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) }; // bootRecovery: no orphans
+        if (freshSelect === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 42 }]) }; // drain candidate
+        if (freshSelect === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 42, bookId: 10, type: 'manual', status: 'processing', metadata: '{}' }]) }; // full job fetch
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) }; // resolveBookTitle + no more candidates
+      });
+      const setPayloads: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((p: Record<string, unknown>) => { setPayloads.push(p); return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) }; }),
+      }));
+
+      const fresh = new ImportQueueWorker(inject<Db>(mockDb.db), log);
+      await fresh.start(); // public boot: bootRecovery → drainLoop → claim → adapter
+      await new Promise((r) => setTimeout(r, 100));
+      await fresh.stop();
+
+      expect(processedIds).toContain(42); // the durable pending row was claimed + processed
+      expect(setPayloads.some((p) => p.status === 'completed')).toBe(true); // reached terminal completed
     });
   });
 

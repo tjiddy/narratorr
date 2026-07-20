@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fetchApi, fetchMultipart, ApiError, URL_BASE } from './client';
+import { fetchApi, fetchMultipart, ApiError, URL_BASE, parseRetryAfterMs } from './client';
 
 describe('ApiError', () => {
   it('extracts error message from body.error', () => {
@@ -356,5 +356,49 @@ describe('fetchMultipart', () => {
     await fetchMultipart('/books/123/cover', new FormData());
 
     expect(fetch).toHaveBeenCalledWith('/api/books/123/cover', expect.anything());
+  });
+});
+
+// #1893 — Retry-After parsing + projection onto ApiError. The staged-import retry
+// helper honors `retryAfterMs`; the field is optional so existing callers are unaffected.
+describe('parseRetryAfterMs (#1893)', () => {
+  it('parses non-negative delta-seconds to ms', () => {
+    expect(parseRetryAfterMs('5')).toBe(5000);
+    expect(parseRetryAfterMs('0')).toBe(0);
+    expect(parseRetryAfterMs('  12 ')).toBe(12000);
+  });
+
+  it('parses a future HTTP-date relative to now', () => {
+    const now = Date.parse('2030-01-01T00:00:00Z');
+    const header = new Date(now + 5000).toUTCString();
+    expect(parseRetryAfterMs(header, now)).toBe(5000);
+  });
+
+  it('returns undefined for absent, empty, malformed, or past values', () => {
+    expect(parseRetryAfterMs(null)).toBeUndefined();
+    expect(parseRetryAfterMs('')).toBeUndefined();
+    expect(parseRetryAfterMs('later')).toBeUndefined();
+    const now = Date.parse('2030-01-01T00:00:10Z');
+    expect(parseRetryAfterMs(new Date(now - 5000).toUTCString(), now)).toBeUndefined();
+  });
+});
+
+describe('ApiError.retryAfterMs projection (#1893)', () => {
+  it('projects a valid Retry-After into ApiError.retryAfterMs', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 429,
+      headers: { get: (k: string) => (k.toLowerCase() === 'retry-after' ? '7' : null) },
+      json: () => Promise.resolve({ error: 'rate-limited' }),
+    });
+    await expect(fetchApi('/x')).rejects.toMatchObject({ status: 429, retryAfterMs: 7000 });
+  });
+
+  it('leaves retryAfterMs undefined when the header is absent', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 500,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ error: 'boom' }),
+    });
+    await expect(fetchApi('/x')).rejects.toSatisfy((e: unknown) => (e as ApiError).retryAfterMs === undefined);
   });
 });

@@ -75,6 +75,10 @@ describe('startJobs', () => {
     (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (services.qualityGateOrchestrator.cleanupDeferredRejections as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (services.import.cleanupDeferredImports as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    // Staged-import GC (#1893): import-maintenance sweeps stale 'receiving' headers;
+    // housekeeping prunes completed item details. Resolve both so the cron paths complete.
+    (services.importStaging.sweepStaleReceiving as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+    (services.importStaging.pruneCompletedDetails as ReturnType<typeof vi.fn>).mockResolvedValue(0);
     // Startup version check (#1225) chains .catch on the return value, so the mock
     // must return a Promise. Default to a resolved one; specific tests override.
     vi.mocked(checkForUpdate).mockResolvedValue(undefined);
@@ -427,6 +431,45 @@ describe('startJobs', () => {
       const names = tasks.map((t) => t.name);
       expect(names).not.toContain('import');
     });
+
+    // F17: the staged stale-receiving sweep must actually be invoked by the cron
+    // callback (deleting the sweep call would otherwise leave every jobs test green).
+    it('invokes the staged stale-receiving sweep (F17)', async () => {
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      scheduler.stopAll(); // stop leaked timers; executeTracked drives the callback directly
+
+      vi.clearAllMocks();
+      db.update.mockReturnValue(mockDbChain([]));
+      (services.importStaging.sweepStaleReceiving as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+
+      await services.taskRegistry.executeTracked('import-maintenance');
+
+      expect(services.importStaging.sweepStaleReceiving).toHaveBeenCalledTimes(1);
+    });
+
+    it('still runs the staged sweep after completed-download processing rejects, and logs its own rejection (F17)', async () => {
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      scheduler.stopAll();
+
+      vi.clearAllMocks();
+      db.update.mockReturnValue(mockDbChain([]));
+      // A persistent completed-download failure must NOT suppress the staged sweep (F8 isolation).
+      (services.qualityGateOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('QG down'));
+      (services.importStaging.sweepStaleReceiving as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('sweep down'));
+
+      await services.taskRegistry.executeTracked('import-maintenance');
+
+      expect(services.importStaging.sweepStaleReceiving).toHaveBeenCalledTimes(1); // ran despite the earlier failure
+      // The sweep's own rejection is serialized + logged, not thrown out of the callback.
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String) }) }),
+        expect.stringContaining('stale-receiving'),
+      );
+    });
   });
 
   // #477 — housekeeping callback coverage
@@ -679,6 +722,100 @@ describe('startJobs', () => {
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ message: deleteError.message, type: 'Error' }) }),
         expect.stringContaining('blacklist'),
+      );
+    });
+
+    // F18: the staged completed-detail prune must be invoked with the retention days,
+    // isolated so an event-history failure does not suppress it and its own failure
+    // does not suppress the later blacklist cleanup.
+    it('invokes the staged completed-detail prune with the configured retention days (F18)', async () => {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: 45 };
+        if (category === 'search') return { intervalMinutes: 30 };
+        if (category === 'rss') return { intervalMinutes: 30 };
+        if (category === 'system') return { backupIntervalMinutes: 60 };
+        if (category === 'discovery') return { intervalHours: 24 };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      scheduler.stopAll();
+
+      vi.clearAllMocks();
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: 45 };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+      (services.importStaging.pruneCompletedDetails as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+
+      await services.taskRegistry.executeTracked('housekeeping');
+
+      expect(services.importStaging.pruneCompletedDetails).toHaveBeenCalledWith(45);
+    });
+
+    it('defaults the staged prune to 90 days when housekeepingRetentionDays is null (F18)', async () => {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: null };
+        if (category === 'search') return { intervalMinutes: 30 };
+        if (category === 'rss') return { intervalMinutes: 30 };
+        if (category === 'system') return { backupIntervalMinutes: 60 };
+        if (category === 'discovery') return { intervalHours: 24 };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      scheduler.stopAll();
+
+      vi.clearAllMocks();
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: null };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+      (services.importStaging.pruneCompletedDetails as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+
+      await services.taskRegistry.executeTracked('housekeeping');
+
+      expect(services.importStaging.pruneCompletedDetails).toHaveBeenCalledWith(90);
+    });
+
+    it('runs the staged prune after an event-history failure, and its own failure does not suppress blacklist cleanup (F18)', async () => {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      scheduler.stopAll();
+
+      vi.clearAllMocks();
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+      // Event-history prune fails FIRST; the staged prune must still run (isolation).
+      (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('event-history down'));
+      (services.importStaging.pruneCompletedDetails as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('staged prune down'));
+      (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+
+      await services.taskRegistry.executeTracked('housekeeping');
+
+      expect(services.importStaging.pruneCompletedDetails).toHaveBeenCalledWith(30); // ran despite event-history failure
+      expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1); // staged failure did not suppress this
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String) }) }),
+        expect.stringContaining('staged-detail prune'),
       );
     });
 
