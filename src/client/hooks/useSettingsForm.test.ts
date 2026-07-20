@@ -595,4 +595,333 @@ describe('useSettingsForm', () => {
       expect(result.current.state.dirtyLabels).toEqual(['Housekeeping', 'Logging']);
     });
   });
+
+  describe('in-flight edit race (success-reset clobber)', () => {
+    beforeEach(() => {
+      _resetForTesting();
+    });
+
+    // Same probe as the guard-registration block, redeclared here so this describe is
+    // self-contained (both subscribe isDirty during render via useDirtyFormsState).
+    function useFormWithProbe<T extends Record<string, unknown>>(config: Parameters<typeof useSettingsForm<T>>[0]) {
+      const form = useSettingsForm(config);
+      const state = useDirtyFormsState();
+      return { form, state };
+    }
+
+    // A controllable deferred save: returns a { resolve } handle the test fires after
+    // making (or not making) an in-flight edit, mirroring the real click→response gap.
+    function deferSave() {
+      let resolve: (v: unknown) => void = () => {};
+      mockApi.updateSettings.mockReturnValue(new Promise((r) => { resolve = r; }));
+      return { resolve: (v: unknown) => resolve(v) };
+    }
+
+    // Transforming schema mirroring networkFormSchema's proxyUrl (trim + strip trailing
+    // slashes). Input === output === string, so it satisfies z.ZodType<T, T>.
+    const transformSchema = z.object({
+      url: z.string().transform((s) => s.trim().replace(/\/+$/, '')),
+    });
+    type TransformForm = { url: string };
+    const transformConfig = (label = 'Network'): Parameters<typeof useSettingsForm<TransformForm>>[0] => ({
+      schema: transformSchema as unknown as z.ZodType<TransformForm, TransformForm>,
+      defaultValues: { url: '' },
+      select: () => ({ url: '' }),
+      toPayload: (d: TransformForm) => ({ network: { proxyUrl: d.url } } as Record<string, unknown>),
+      successMessage: 'Network settings saved',
+      label,
+    });
+
+    it('preserves a forward in-flight edit (V1→V2, state 3): draft kept, form dirty', async () => {
+      // Never-resolving settings query isolates onSuccess from hydrate/refetch.
+      mockApi.getSettings.mockReturnValue(new Promise(() => {}));
+      const save = deferSave();
+
+      const { result } = renderHook(
+        () => useFormWithProbe({ ...hookConfig(), label: 'Test Section' }),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      // Dirty to the submit value V1, then submit it.
+      act(() => {
+        result.current.form.form.setValue('value', 99, { shouldDirty: true });
+      });
+      act(() => {
+        result.current.form.mutation.mutate({ enabled: true, value: 99 });
+      });
+
+      // Edit again while the save is in flight (V1→V2).
+      act(() => {
+        result.current.form.form.setValue('value', 123, { shouldDirty: true });
+      });
+
+      await act(async () => {
+        save.resolve(fullSettings);
+      });
+
+      // The newer value survives and the card stays dirty.
+      expect(result.current.form.form.getValues().value).toBe(123);
+      await waitFor(() => {
+        expect(result.current.state.dirtyLabels).toEqual(['Test Section']);
+      });
+    });
+
+    it('preserves a revert-to-baseline in-flight edit (V1→V0, state 3): draft kept, form dirty', async () => {
+      mockApi.getSettings.mockReturnValue(new Promise(() => {}));
+      const save = deferSave();
+
+      const { result } = renderHook(
+        () => useFormWithProbe({ ...hookConfig(), label: 'Test Section' }),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      // Baseline V0 = the default (10). Edit to V1 = 99 and submit.
+      act(() => {
+        result.current.form.form.setValue('value', 99, { shouldDirty: true });
+      });
+      act(() => {
+        result.current.form.mutation.mutate({ enabled: false, value: 99 });
+      });
+
+      // Revert back to the pre-submit baseline V0 while the save is in flight.
+      act(() => {
+        result.current.form.form.setValue('value', 10, { shouldDirty: true });
+      });
+
+      await act(async () => {
+        save.resolve(fullSettings);
+      });
+
+      // The reverted value (V0=10) is retained — NOT overwritten with the saved V1=99 —
+      // and the form is dirty relative to the saved value. This is the case keepDirtyValues
+      // would fail (reverting to the old default clears RHF's dirty flag).
+      expect(result.current.form.form.getValues().value).toBe(10);
+      await waitFor(() => {
+        expect(result.current.state.dirtyLabels).toEqual(['Test Section']);
+      });
+    });
+
+    it('does not alias a nested-object snapshot (deep clone): nested in-flight edit kept, dirty', async () => {
+      mockApi.getSettings.mockReturnValue(new Promise(() => {}));
+      const save = deferSave();
+
+      const nestedSchema = z.object({ group: z.object({ value: z.string() }) });
+      type NestedForm = { group: { value: string } };
+
+      const { result } = renderHook(
+        () => useFormWithProbe<NestedForm>({
+          schema: nestedSchema as unknown as z.ZodType<NestedForm, NestedForm>,
+          defaultValues: { group: { value: 'a' } },
+          select: () => ({ group: { value: 'a' } }),
+          toPayload: (d: NestedForm) => ({ testSection: d } as Record<string, unknown>),
+          successMessage: 'Saved',
+          label: 'Nested',
+        }),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      // Submit the current (default) value, then mutate a NESTED path while in flight.
+      act(() => {
+        result.current.form.mutation.mutate({ group: { value: 'a' } });
+      });
+      act(() => {
+        result.current.form.form.setValue('group.value', 'edited', { shouldDirty: true });
+      });
+
+      await act(async () => {
+        save.resolve(fullSettings);
+      });
+
+      // Only holds if the onMutate snapshot deep-cloned the nested object; a shallow copy
+      // would have been mutated in place by the setValue and read as "no drift".
+      expect(result.current.form.form.getValues().group.value).toBe('edited');
+      await waitFor(() => {
+        expect(result.current.state.dirtyLabels).toEqual(['Nested']);
+      });
+    });
+
+    it('transforming schema, no in-flight edit (state 1): settles clean and shows normalized value', async () => {
+      mockApi.getSettings.mockReturnValue(new Promise(() => {}));
+      const save = deferSave();
+
+      const { result } = renderHook(
+        () => useFormWithProbe(transformConfig('Network')),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      // Raw text with surrounding space + trailing slash; the resolver normalizes it.
+      act(() => {
+        result.current.form.form.setValue('url', ' http://x/ ', { shouldDirty: true });
+      });
+
+      // Real submit path so submittedData is the resolver-parsed value while getValues() stays raw.
+      await act(async () => {
+        await result.current.form.form.handleSubmit(result.current.form.onSubmit)();
+      });
+      // No in-flight edit made.
+      await act(async () => {
+        save.resolve(fullSettings);
+      });
+
+      // No false drift: clean, and the normalized value is displayed.
+      await waitFor(() => {
+        expect(result.current.state.dirtyLabels).toEqual([]);
+      });
+      expect(result.current.form.form.getValues('url')).toBe('http://x');
+    });
+
+    it('transforming schema, in-flight edit to a DIFFERENT value (state 3): raw draft kept, dirty', async () => {
+      mockApi.getSettings.mockReturnValue(new Promise(() => {}));
+      const save = deferSave();
+
+      const { result } = renderHook(
+        () => useFormWithProbe(transformConfig('Network')),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      act(() => {
+        result.current.form.form.setValue('url', ' http://x/ ', { shouldDirty: true });
+      });
+      await act(async () => {
+        await result.current.form.form.handleSubmit(result.current.form.onSubmit)();
+      });
+      // Edit to a different raw value while in flight.
+      act(() => {
+        result.current.form.form.setValue('url', ' http://y/ ', { shouldDirty: true });
+      });
+      await act(async () => {
+        save.resolve(fullSettings);
+      });
+
+      // The raw draft is retained verbatim and the card stays dirty.
+      expect(result.current.form.form.getValues('url')).toBe(' http://y/ ');
+      await waitFor(() => {
+        expect(result.current.state.dirtyLabels).toEqual(['Network']);
+      });
+    });
+
+    it('transforming schema, in-flight edit to the NORMALIZED-EQUIVALENT value (state 2): kept but clean', async () => {
+      mockApi.getSettings.mockReturnValue(new Promise(() => {}));
+      const save = deferSave();
+
+      const { result } = renderHook(
+        () => useFormWithProbe(transformConfig('Network')),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      // Saved P = 'http://x'. Submit ' http://x/ ', then edit to 'http://x' (raw, but === P).
+      act(() => {
+        result.current.form.form.setValue('url', ' http://x/ ', { shouldDirty: true });
+      });
+      await act(async () => {
+        await result.current.form.form.handleSubmit(result.current.form.onSubmit)();
+      });
+      act(() => {
+        result.current.form.form.setValue('url', 'http://x', { shouldDirty: true });
+      });
+      await act(async () => {
+        save.resolve(fullSettings);
+      });
+
+      // Drift occurred (a raw edit was made) so the draft is preserved, but the result
+      // equals the saved value, so it settles CLEAN — the drift-vs-dirty distinction.
+      expect(result.current.form.form.getValues('url')).toBe('http://x');
+      await waitFor(() => {
+        expect(result.current.state.dirtyLabels).toEqual([]);
+      });
+    });
+
+    it('refetch does not clobber an in-flight revert draft (stale-clean scenario, F1)', async () => {
+      // Exercises the stale-clean scenario the synchronous guard targets: an in-flight
+      // revert to the pre-submit baseline clears RHF's dirty flag (value === old default),
+      // so the reactive isDirtyRef settles FALSE before the response lands (asserted below
+      // via the empty dirtyLabels). The refetch then returns the saved V1 (99), so a
+      // hydrate that observed a stale-clean ref would reset the V0 (42) draft to 99.
+      //
+      // NOTE: this is a behavioral/scenario test, not a mutation-deletion test. Removing
+      // `isDirtyRef.current = drifted` (useSettingsForm.ts:108) does NOT turn it red,
+      // because the drift double-reset flips isDirty false→true, so the reactive
+      // isDirtyRef effect (source-ordered before the hydrate effect) sets the ref true in
+      // the reset commit — before the async refetch's hydrate commit runs. See F1
+      // disposition: a strictly deletion-proof hook test for this guard is not
+      // constructible in React's effect-ordering model; the guard stands as the
+      // AC-required synchronous defense for concurrent-render timing.
+      mockApi.getSettings.mockResolvedValue(fullSettings); // baseline V0 = testSection.value 42
+      const save = deferSave();
+
+      const { result } = renderHook(
+        () => useFormWithProbe({ ...hookConfig(), label: 'Test Section' }),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      await waitFor(() => {
+        expect(result.current.form.form.getValues()).toEqual({ enabled: true, value: 42 });
+      });
+
+      // Edit to V1 = 99 and submit it.
+      act(() => {
+        result.current.form.form.setValue('value', 99, { shouldDirty: true });
+      });
+      act(() => {
+        result.current.form.mutation.mutate({ enabled: true, value: 99 });
+      });
+
+      // Revert to the pre-submit baseline V0 = 42 while the save is in flight. This clears
+      // RHF's dirty flag (value === old default), so the reactive isDirtyRef settles false —
+      // the stale-clean state the synchronous guard must close before invalidation.
+      act(() => {
+        result.current.form.form.setValue('value', 42, { shouldDirty: true });
+      });
+      await waitFor(() => {
+        expect(result.current.state.dirtyLabels).toEqual([]);
+      });
+
+      // The refetch triggered by invalidateQueries returns the saved V1 = 99.
+      const savedSettings = { ...fullSettings, testSection: { enabled: true, value: 99 } };
+      mockApi.getSettings.mockResolvedValue(savedSettings);
+      await act(async () => {
+        save.resolve(savedSettings);
+      });
+
+      // Wait for the invalidation-triggered refetch to settle (getSettings call #2).
+      await waitFor(() => {
+        expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+      });
+
+      // The V0 draft must survive the refetch (not be reset to the saved V1 = 99) and
+      // stay dirty relative to the saved value.
+      await waitFor(() => {
+        expect(result.current.form.form.getValues().value).toBe(42);
+      });
+      expect(result.current.state.dirtyLabels).toEqual(['Test Section']);
+    });
+
+    it('non-transforming normal save clears and displays the submitted value', async () => {
+      mockApi.getSettings.mockResolvedValue(fullSettings);
+      mockApi.updateSettings.mockResolvedValue(fullSettings);
+
+      const { result } = renderHook(
+        () => useFormWithProbe({ ...hookConfig(), label: 'Test Section' }),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      await waitFor(() => {
+        expect(result.current.form.form.getValues()).toEqual({ enabled: true, value: 42 });
+      });
+
+      act(() => {
+        result.current.form.form.setValue('value', 99, { shouldDirty: true });
+      });
+
+      // No in-flight edit → clean rebaseline to the submitted value.
+      await act(async () => {
+        result.current.form.mutation.mutate({ enabled: true, value: 99 });
+      });
+
+      await waitFor(() => {
+        expect(result.current.state.dirtyLabels).toEqual([]);
+      });
+      expect(result.current.form.form.getValues().value).toBe(99);
+    });
+  });
 });
