@@ -452,6 +452,68 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
     expect(submissionResponseSchema.safeParse(res2).success).toBe(true);
   });
 
+  // ── F41: persisted-item validation at the PUT-replay + finalize read boundaries ──
+  describe('persisted-item validation at mutation read boundaries (F41)', () => {
+    it('re-PUT of an ordinal whose stored payload is malformed fails closed with 422 and no state change', async () => {
+      await service.createSubmission(createBody); // id 1, receiving, expectedCount 2
+      // Directly persist a malformed row (SQLite does not enforce the JSON $type).
+      await db.insert(importSubmissionItems).values({ submissionId: 1, ordinal: 0, itemPayload: { bogus: true } as never, path: '/a', title: 'A', disposition: 'pending' });
+      await db.update(importSubmissions).set({ receivedCount: 1, receivedBytes: 10 }).where(eq(importSubmissions.id, 1));
+
+      await expect(service.putItems(1, { items: [{ ordinal: 0, item: items[0]! }] }))
+        .rejects.toMatchObject({ code: 'item-invalid', httpStatus: 422 });
+
+      // No state change: still receiving, counters untouched.
+      const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, 1));
+      expect(h!.status).toBe('receiving');
+      expect(h!.receivedCount).toBe(1);
+      expect(h!.receivedBytes).toBe(10);
+    });
+
+    it('finalize over a malformed persisted row fails closed with 422, no transition, and no nudge', async () => {
+      await service.createSubmission(createBody); // expectedCount 2
+      await service.putItems(1, { items: [{ ordinal: 0, item: items[0]! }] }); // ordinal 0 valid
+      // Ordinal 1 present but malformed → finalize must fail closed BEFORE the CAS flip.
+      await db.insert(importSubmissionItems).values({ submissionId: 1, ordinal: 1, itemPayload: { bogus: true } as never, path: '/b', title: 'B', disposition: 'pending' });
+
+      await expect(service.finalize(1)).rejects.toMatchObject({ code: 'item-invalid', httpStatus: 422 });
+
+      const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, 1));
+      expect(h!.status).toBe('receiving'); // no receiving→processing transition
+      expect(nudge).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── F43: lost-finalize-response recovery via by-client lookup (through the service) ──
+  it('recovers a lost finalize response via by-client lookup: summary → retained detail → pruned aggregate arm (F43)', async () => {
+    await service.createSubmission(createBody); // id 1, clientSubmissionId = UUID
+    await service.putItems(1, { items: [{ ordinal: 0, item: items[0]! }, { ordinal: 1, item: items[1]! }] });
+    await service.finalize(1); // the response is "lost" — recover purely by client id below
+
+    // Summary arm: progress is queryable by client id, no item payloads.
+    const summary = await service.getByClientId(UUID, false);
+    expect(summary.clientSubmissionId).toBe(UUID);
+    expect(summary.status).toBe('processing');
+    expect(summary.itemsIncluded).toBe(false);
+    expect('items' in summary).toBe(false);
+
+    // Detail arm: retained item rows are projected, ordered by ordinal.
+    const detail = await service.getByClientId(UUID, true);
+    expect(detail.itemsIncluded).toBe(true);
+    if (detail.itemsIncluded) {
+      expect(detail.items.map((i) => i.ordinal)).toEqual([0, 1]);
+    }
+
+    // Pruned arm: a complete header with no item rows → aggregate-only summary via by-client.
+    await db.update(importSubmissions).set({ status: 'complete', receivedCount: 2, acceptedCount: 2, completedAt: new Date() }).where(eq(importSubmissions.id, 1));
+    await db.delete(importSubmissionItems).where(eq(importSubmissionItems.submissionId, 1));
+    const pruned = await service.getByClientId(UUID, true);
+    expect(pruned.detailsPruned).toBe(true);
+    expect(pruned.itemsIncluded).toBe(false);
+    expect('items' in pruned).toBe(false);
+    expect(pruned.aggregates).toEqual({ accepted: 2, held: 0, skipped: 0, failed: 0 });
+  });
+
   // ── F23/F36: simultaneous finalize callers on the SAME service (single-process) ──
   it('two simultaneous finalize callers on one service BOTH fulfill with the processing header and exactly one nudge (F36)', async () => {
     await service.createSubmission(createBody);

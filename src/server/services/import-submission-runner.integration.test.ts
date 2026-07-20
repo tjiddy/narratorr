@@ -50,10 +50,11 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
   });
 
-  async function seedProcessing(items: (StagedImportItem | null)[]): Promise<number> {
+  async function seedProcessing(items: (StagedImportItem | null)[], header?: { source?: 'library' | 'manual'; mode?: 'copy' | 'move' }): Promise<number> {
     const [sub] = await db.insert(importSubmissions).values({
-      clientSubmissionId: `c-${items.length}-${Math.round(performance.now())}`,
-      payloadDigest: 'a'.repeat(64), source: 'library', expectedCount: items.length, status: 'processing', receivedCount: items.length,
+      clientSubmissionId: `c-${items.length}-${Math.round(performance.now())}-${Math.random()}`,
+      payloadDigest: 'a'.repeat(64), source: header?.source ?? 'library', mode: header?.mode ?? null,
+      expectedCount: items.length, status: 'processing', receivedCount: items.length,
     }).returning();
     for (let i = 0; i < items.length; i++) {
       const it = items[i]!;
@@ -428,6 +429,57 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       const [row] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
       expect(row!.disposition).toBe('accepted');
       txSpy.mockRestore();
+    });
+
+    it('carries manual copy/move mode into the durable import-job payload; the library arm omits it (F42)', async () => {
+      // Manual submission → the enqueued job metadata carries the exact mode.
+      await seedProcessing([acceptedItem('/manual', 'M')], { source: 'manual', mode: 'copy' });
+      await drainRunner(makeRunner(new BookService(db, inject(log))));
+      const manualJob = (await db.select().from(importJobs)).find((j) => JSON.parse(j.metadata as string).path === '/manual');
+      expect(manualJob).toBeDefined();
+      expect(JSON.parse(manualJob!.metadata as string).mode).toBe('copy');
+
+      // Library submission → NO mode key (ManualImportAdapter falls back to pointer mode).
+      await seedProcessing([acceptedItem('/lib', 'L')]); // default library / no-mode
+      await drainRunner(makeRunner(new BookService(db, inject(log))));
+      const libJob = (await db.select().from(importJobs)).find((j) => JSON.parse(j.metadata as string).path === '/lib');
+      expect(libJob).toBeDefined();
+      expect('mode' in JSON.parse(libJob!.metadata as string)).toBe(false);
+    });
+
+    it('nudges the import worker EXACTLY once per accepted item (F45 cardinality)', async () => {
+      await seedProcessing([acceptedItem('/a', 'A')]);
+      await drainRunner(makeRunner(new BookService(db, inject(log))));
+      expect(nudge).toHaveBeenCalledTimes(1); // one accepted → one nudge
+
+      nudge.mockClear();
+      await seedProcessing([acceptedItem('/b', 'B'), acceptedItem('/c', 'C'), acceptedItem('/d', 'D')]);
+      await drainRunner(makeRunner(new BookService(db, inject(log))));
+      expect(nudge).toHaveBeenCalledTimes(3); // three accepted → exactly three nudges
+    });
+
+    it('serializes telemetry and event failures into diagnostic logs (F45)', async () => {
+      const bs = new BookService(db, inject(log));
+      vi.spyOn(bs, 'trackUnmatchedGenres').mockRejectedValue(new Error('telemetry boom'));
+      eventCreate.mockRejectedValue(new Error('event boom'));
+      (log.debug as ReturnType<typeof vi.fn>).mockClear();
+      (log.warn as ReturnType<typeof vi.fn>).mockClear();
+      await seedProcessing([acceptedItem('/a', 'A')]);
+
+      await drainRunner(makeRunner(bs));
+
+      // The best-effort .catch handlers log the SERIALIZED errors (debug for telemetry, warn for event).
+      await waitFor(() => (log.debug as ReturnType<typeof vi.fn>).mock.calls.length > 0 && (log.warn as ReturnType<typeof vi.fn>).mock.calls.length > 0);
+      expect(log.debug as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'telemetry boom' }) }),
+        expect.stringContaining('genres'),
+      );
+      expect(log.warn as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'event boom' }) }),
+        expect.stringContaining('book_added'),
+      );
+      // The item still committed as accepted despite the best-effort failures.
+      expect((await db.select().from(books))).toHaveLength(1);
     });
   });
 
