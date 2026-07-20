@@ -555,7 +555,7 @@ export class BookService {
   }
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */
-  private async trackUnmatchedGenres(genres: string[] | undefined): Promise<void> {
+  async trackUnmatchedGenres(genres: string[] | undefined): Promise<void> {
     const unmatched = findUnmatchedGenres(normalizeGenres(genres));
     if (unmatched.length === 0) return;
 

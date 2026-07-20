@@ -37,7 +37,7 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
     await runMigrations(dbFile);
     db = createDb(dbFile);
     nudge = vi.fn();
-    service = new ImportStagingService(db, noopLog, nudge);
+    service = new ImportStagingService(db, noopLog, nudge as unknown as () => void);
   });
 
   afterEach(() => {

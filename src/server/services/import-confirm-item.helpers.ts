@@ -40,9 +40,15 @@ export type ConfirmItemOutcome =
  *  - `review`/no-signal → a `HeldReviewItem` (not copied, not enqueued).
  *  - `different-recording` (or `forceImport`) → `'proceed'`.
  */
-type SkipClassification = { skip: true; existingBookId?: number; existingTitle?: string };
+export type SkipClassification = { skip: true; existingBookId?: number; existingTitle?: string };
 
-async function classifyConfirmItem(
+/**
+ * Recording-identity classification for a confirm/staged item (#1711/#1893).
+ * Reused by BOTH the legacy direct-confirm `processConfirmItem` and the staged
+ * submission runner — the dedup/hold/skip decision lives here once, never
+ * duplicated. Reads only (safe to call before opening a per-item transaction).
+ */
+export async function classifyConfirmItem(
   item: ImportConfirmItem,
   bookService: BookService,
   log: FastifyBaseLogger,
