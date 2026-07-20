@@ -75,6 +75,10 @@ describe('startJobs', () => {
     (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (services.qualityGateOrchestrator.cleanupDeferredRejections as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (services.import.cleanupDeferredImports as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    // Staged-import GC (#1893): import-maintenance sweeps stale 'receiving' headers;
+    // housekeeping prunes completed item details. Resolve both so the cron paths complete.
+    (services.importStaging.sweepStaleReceiving as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+    (services.importStaging.pruneCompletedDetails as ReturnType<typeof vi.fn>).mockResolvedValue(0);
     // Startup version check (#1225) chains .catch on the return value, so the mock
     // must return a Promise. Default to a resolved one; specific tests override.
     vi.mocked(checkForUpdate).mockResolvedValue(undefined);

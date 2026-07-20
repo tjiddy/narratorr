@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { eq, and, asc } from 'drizzle-orm';
+import { eq, and, asc, lt, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { importSubmissions, importSubmissionItems } from '../../db/schema.js';
@@ -20,6 +20,9 @@ import {
 
 type SubmissionRow = typeof importSubmissions.$inferSelect;
 type ItemRow = typeof importSubmissionItems.$inferSelect;
+
+/** A never-finalized 'receiving' header is GC-eligible after this long (F13 / Retention & GC). */
+const STALE_RECEIVING_MS = 48 * 60 * 60 * 1000;
 
 /**
  * A typed staged-submission error the routes map to an HTTP status + named code.
@@ -251,6 +254,41 @@ export class ImportStagingService {
       .limit(1);
     if (!header) throw new SubmissionError('submission-not-found', 404, 'submission not found');
     return includeItems ? this.buildDetail(header) : this.buildSummary(header);
+  }
+
+  // ── Retention & GC ────────────────────────────────────────────────────────
+
+  /**
+   * Stale-'receiving' sweep (5-min lane). A never-finalized 'receiving' header is
+   * inert (imported nothing) and GC-eligible after 48h; deleting it cascades its
+   * item rows. The `updatedAt < cutoff` guard is the atomic precondition against a
+   * concurrent PUT (a live upload keeps bumping `updatedAt`). Returns rows deleted.
+   */
+  async sweepStaleReceiving(): Promise<number> {
+    const cutoff = new Date(Date.now() - STALE_RECEIVING_MS);
+    const result = await this.db
+      .delete(importSubmissions)
+      .where(and(eq(importSubmissions.status, 'receiving'), lt(importSubmissions.updatedAt, cutoff)));
+    return getRowsAffected(result);
+  }
+
+  /**
+   * Completed-detail pruning (weekly lane). Item rows for 'complete' submissions
+   * older than `retentionDays` are pruned (strict `lt`); the finalized header +
+   * aggregate columns are kept INDEFINITELY, after which GET reports
+   * `detailsPruned: true` with aggregates only. Returns item rows deleted.
+   */
+  async pruneCompletedDetails(retentionDays: number): Promise<number> {
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    const stale = await this.db
+      .select({ id: importSubmissions.id })
+      .from(importSubmissions)
+      .where(and(eq(importSubmissions.status, 'complete'), lt(importSubmissions.completedAt, cutoff)));
+    if (stale.length === 0) return 0;
+    const result = await this.db
+      .delete(importSubmissionItems)
+      .where(inArray(importSubmissionItems.submissionId, stale.map((s) => s.id)));
+    return getRowsAffected(result);
   }
 
   // ── DTO assembly ──────────────────────────────────────────────────────────

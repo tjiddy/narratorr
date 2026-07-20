@@ -189,6 +189,9 @@ async function main() {
   // Start import queue worker first (boot recovery marks orphaned jobs as failed BEFORE download recovery)
   await services.importQueueWorker.start();
 
+  // Start the staged-submission runner (boot auto-resume drains any 'processing' submission, #1893).
+  services.importSubmissionRunner.start();
+
   // Start background jobs (includes download startup recovery which may re-enqueue downloads)
   const jobScheduler = startJobs(db, services, app.log);
 

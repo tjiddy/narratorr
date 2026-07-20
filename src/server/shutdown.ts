@@ -40,6 +40,10 @@ export async function gracefulShutdown(
   app.log.info('Shutting down server…');
   jobScheduler.stopAll();
   services.eventBroadcaster.stop();
+  // The staged-submission runner is a PRODUCER for ImportQueueWorker (F46/F52), so it
+  // stops before its consumer; the broadcaster stays first (heartbeat/hijacked-reply
+  // release). Order: scheduler → broadcaster → submissionRunner → importQueueWorker.
+  await services.importSubmissionRunner.stop();
   await services.importQueueWorker.stop();
   await services.connector.stop();
   await app.close();
