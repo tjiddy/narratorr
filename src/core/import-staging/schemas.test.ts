@@ -1,0 +1,208 @@
+import { describe, it, expect } from 'vitest';
+import {
+  stagedImportItemSchema,
+  stagedBookMetadataSchema,
+  createSubmissionBodySchema,
+  putItemsBodySchema,
+  submissionQuerySchema,
+  submissionResponseSchema,
+  stagedItemResultDtoSchema,
+  clientSubmissionIdSchema,
+  payloadDigestSchema,
+  serializeSubmissionForDigest,
+  MAX_SUBMISSION_BYTES,
+  EXPECTED_COUNT_MAX,
+} from './schemas.js';
+
+const validMetadata = {
+  title: 'A Book',
+  authors: [{ name: 'An Author' }],
+};
+
+const validStagedItem = {
+  path: '/library/a-book',
+  title: 'A Book',
+  metadata: validMetadata,
+};
+
+const VALID_UUID = '3f0f1a52-3b6e-4c1a-9d2b-2a4e6c8f0a11';
+const VALID_DIGEST = 'a'.repeat(64);
+
+describe('stagedImportItemSchema', () => {
+  it('accepts a minimal staged item and is strict', () => {
+    expect(stagedImportItemSchema.parse(validStagedItem)).toMatchObject({ path: '/library/a-book', title: 'A Book' });
+    expect(stagedImportItemSchema.safeParse({ ...validStagedItem, bogus: 1 }).success).toBe(false);
+  });
+
+  it('rejects nested unknown metadata keys', () => {
+    expect(
+      stagedImportItemSchema.safeParse({ ...validStagedItem, metadata: { ...validMetadata, bogus: true } }).success,
+    ).toBe(false);
+  });
+});
+
+describe('stagedBookMetadataSchema bounds (F34)', () => {
+  it('accepts array elements at the boundary and rejects just over', () => {
+    const at = {
+      ...validMetadata,
+      alternateAsins: ['x'.repeat(64)],
+      narrators: ['n'.repeat(512)],
+      genres: ['g'.repeat(128)],
+    };
+    expect(stagedBookMetadataSchema.safeParse(at).success).toBe(true);
+
+    expect(stagedBookMetadataSchema.safeParse({ ...validMetadata, alternateAsins: ['x'.repeat(65)] }).success).toBe(false);
+    expect(stagedBookMetadataSchema.safeParse({ ...validMetadata, narrators: ['n'.repeat(513)] }).success).toBe(false);
+    expect(stagedBookMetadataSchema.safeParse({ ...validMetadata, genres: ['g'.repeat(129)] }).success).toBe(false);
+  });
+
+  it('bounds array counts', () => {
+    expect(
+      stagedBookMetadataSchema.safeParse({ ...validMetadata, genres: Array.from({ length: 65 }, () => 'g') }).success,
+    ).toBe(false);
+  });
+
+  it('bounds scalar strings and requires a url cover', () => {
+    expect(stagedBookMetadataSchema.safeParse({ ...validMetadata, asin: 'a'.repeat(65) }).success).toBe(false);
+    expect(stagedBookMetadataSchema.safeParse({ ...validMetadata, description: 'd'.repeat(8001) }).success).toBe(false);
+    expect(stagedBookMetadataSchema.safeParse({ ...validMetadata, coverUrl: 'not-a-url' }).success).toBe(false);
+  });
+});
+
+describe('identifier validators (F56/F57)', () => {
+  it('clientSubmissionId requires a real UUID', () => {
+    expect(clientSubmissionIdSchema.safeParse(VALID_UUID).success).toBe(true);
+    expect(clientSubmissionIdSchema.safeParse('0'.repeat(36)).success).toBe(false);
+    expect(clientSubmissionIdSchema.safeParse('3f0f1a52-3b6e-4c1a-9d2b-2a4e6c8f0a1').success).toBe(false); // too short
+  });
+
+  it('payloadDigest requires 64 lowercase hex chars', () => {
+    expect(payloadDigestSchema.safeParse(VALID_DIGEST).success).toBe(true);
+    expect(payloadDigestSchema.safeParse('a'.repeat(63)).success).toBe(false);
+    expect(payloadDigestSchema.safeParse('a'.repeat(65)).success).toBe(false);
+    expect(payloadDigestSchema.safeParse('A'.repeat(64)).success).toBe(false);
+    expect(payloadDigestSchema.safeParse('g'.repeat(64)).success).toBe(false);
+  });
+});
+
+describe('createSubmissionBodySchema (source/mode union)', () => {
+  it('library requires no mode; manual requires mode', () => {
+    expect(
+      createSubmissionBodySchema.safeParse({ source: 'library', clientSubmissionId: VALID_UUID, payloadDigest: VALID_DIGEST, expectedCount: 3 }).success,
+    ).toBe(true);
+    expect(
+      createSubmissionBodySchema.safeParse({ source: 'manual', clientSubmissionId: VALID_UUID, payloadDigest: VALID_DIGEST, expectedCount: 3 }).success,
+    ).toBe(false); // manual without mode
+    expect(
+      createSubmissionBodySchema.safeParse({ source: 'library', mode: 'copy', clientSubmissionId: VALID_UUID, payloadDigest: VALID_DIGEST, expectedCount: 3 }).success,
+    ).toBe(false); // library with mode
+  });
+
+  it('bounds expectedCount 1..max', () => {
+    const base = { source: 'library' as const, clientSubmissionId: VALID_UUID, payloadDigest: VALID_DIGEST };
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 0 }).success).toBe(false);
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: EXPECTED_COUNT_MAX + 1 }).success).toBe(false);
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 1 }).success).toBe(true);
+  });
+});
+
+describe('putItemsBodySchema', () => {
+  it('accepts {ordinal,item} rows and is strict', () => {
+    expect(putItemsBodySchema.safeParse({ items: [{ ordinal: 0, item: validStagedItem }] }).success).toBe(true);
+    expect(putItemsBodySchema.safeParse({ items: [{ ordinal: 0, item: validStagedItem, path: 'x' }] }).success).toBe(false);
+    expect(putItemsBodySchema.safeParse({ items: [] }).success).toBe(false);
+  });
+});
+
+describe('submissionQuerySchema (F71)', () => {
+  it('omitted → false, "false" → false, "true" → true, invalid/unknown rejected', () => {
+    expect(submissionQuerySchema.parse({})).toEqual({ includeItems: false });
+    expect(submissionQuerySchema.parse({ includeItems: 'false' })).toEqual({ includeItems: false });
+    expect(submissionQuerySchema.parse({ includeItems: 'true' })).toEqual({ includeItems: true });
+    expect(submissionQuerySchema.safeParse({ includeItems: 'yes' }).success).toBe(false);
+    expect(submissionQuerySchema.safeParse({ other: '1' }).success).toBe(false);
+  });
+});
+
+describe('stagedItemResultDtoSchema (disposition union, F42)', () => {
+  const base = { ordinal: 0, path: '/p', title: 'T' };
+  it('accepts each disposition shape', () => {
+    expect(stagedItemResultDtoSchema.safeParse({ disposition: 'pending', ...base }).success).toBe(true);
+    expect(stagedItemResultDtoSchema.safeParse({ disposition: 'accepted', ...base, bookId: 7 }).success).toBe(true);
+    expect(stagedItemResultDtoSchema.safeParse({ disposition: 'accepted', ...base, bookId: null }).success).toBe(true);
+    expect(stagedItemResultDtoSchema.safeParse({ disposition: 'held', ...base, reason: 'recording-review-required' }).success).toBe(true);
+    expect(stagedItemResultDtoSchema.safeParse({ disposition: 'skipped', ...base, reason: 'already-in-library' }).success).toBe(true);
+    expect(stagedItemResultDtoSchema.safeParse({ disposition: 'failed', ...base, message: 'boom' }).success).toBe(true);
+  });
+
+  it('rejects cross-disposition fields', () => {
+    expect(stagedItemResultDtoSchema.safeParse({ disposition: 'held', ...base, reason: 'recording-review-required', message: 'x' }).success).toBe(false);
+    expect(stagedItemResultDtoSchema.safeParse({ disposition: 'accepted', ...base, bookId: 1, existingTitle: 'x' }).success).toBe(false);
+    expect(stagedItemResultDtoSchema.safeParse({ disposition: 'pending', ...base, reason: 'already-in-library' }).success).toBe(false);
+    expect(stagedItemResultDtoSchema.safeParse({ disposition: 'skipped', ...base, reason: 'bogus' }).success).toBe(false);
+  });
+});
+
+describe('submissionResponseSchema arms (F64)', () => {
+  const header = {
+    id: 1,
+    clientSubmissionId: VALID_UUID,
+    source: 'library' as const,
+    status: 'processing' as const,
+    expectedCount: 2,
+    receivedCount: 2,
+    processedCount: 0,
+    aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 },
+    detailsPruned: false,
+    createdAt: '2026-07-20T00:00:00.000Z',
+    updatedAt: '2026-07-20T00:00:00.000Z',
+  };
+
+  it('summary/processing: itemsIncluded false, no items', () => {
+    expect(submissionResponseSchema.safeParse({ ...header, itemsIncluded: false }).success).toBe(true);
+    expect(submissionResponseSchema.safeParse({ ...header, itemsIncluded: false, items: [] }).success).toBe(false);
+  });
+
+  it('detail/retained: itemsIncluded true with items', () => {
+    expect(
+      submissionResponseSchema.safeParse({
+        ...header,
+        itemsIncluded: true,
+        items: [{ disposition: 'pending', ordinal: 0, path: '/p', title: 'T' }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('detail/pruned: itemsIncluded false, detailsPruned true, no items', () => {
+    expect(submissionResponseSchema.safeParse({ ...header, status: 'complete', detailsPruned: true, itemsIncluded: false }).success).toBe(true);
+  });
+});
+
+describe('serializeSubmissionForDigest', () => {
+  it('omits mode for library, includes it for manual', () => {
+    const lib = serializeSubmissionForDigest({ source: 'library', items: [stagedImportItemSchema.parse(validStagedItem)] });
+    expect(lib.includes('"mode"')).toBe(false);
+    const man = serializeSubmissionForDigest({ source: 'manual', mode: 'copy', items: [stagedImportItemSchema.parse(validStagedItem)] });
+    expect(man.includes('"mode":"copy"')).toBe(true);
+  });
+
+  it('is stable regardless of input key order', () => {
+    const a = serializeSubmissionForDigest({ source: 'library', items: [stagedImportItemSchema.parse({ title: 'A Book', path: '/p', metadata: validMetadata })] });
+    const b = serializeSubmissionForDigest({ source: 'library', items: [stagedImportItemSchema.parse({ metadata: validMetadata, path: '/p', title: 'A Book' })] });
+    expect(a).toBe(b);
+  });
+
+  it('is order-significant across items', () => {
+    const i1 = stagedImportItemSchema.parse({ path: '/1', title: 'One', metadata: { title: 'One', authors: [{ name: 'X' }] } });
+    const i2 = stagedImportItemSchema.parse({ path: '/2', title: 'Two', metadata: { title: 'Two', authors: [{ name: 'X' }] } });
+    expect(serializeSubmissionForDigest({ source: 'library', items: [i1, i2] })).not.toBe(
+      serializeSubmissionForDigest({ source: 'library', items: [i2, i1] }),
+    );
+  });
+});
+
+describe('constants', () => {
+  it('MAX_SUBMISSION_BYTES is 64 MiB', () => {
+    expect(MAX_SUBMISSION_BYTES).toBe(64 * 1024 * 1024);
+  });
+});
