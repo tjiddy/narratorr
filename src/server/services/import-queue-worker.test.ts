@@ -332,6 +332,10 @@ describe('ImportQueueWorker', () => {
     type DrainSeam = { drainOne(): Promise<boolean> };
 
     function setupSingleCandidate(claimResult: unknown) {
+      // The drain runs inside a running worker; the F72 pre-claim barrier
+      // (`this.stopping || !this.running`) aborts otherwise, so flip `running`
+      // to exercise the CAS path directly.
+      (worker as unknown as { running: boolean }).running = true;
       mockDb.db.select = vi.fn().mockReturnValueOnce({
         from: vi.fn().mockReturnThis(),
         where: vi.fn().mockReturnThis(),
@@ -367,6 +371,27 @@ describe('ImportQueueWorker', () => {
       await expect(
         (worker as unknown as DrainSeam).drainOne(),
       ).rejects.toThrow(/rowsAffected/);
+    });
+
+    // F72: a drain that resumes from the candidate SELECT after stop() set
+    // `stopping` must abort at the pre-claim barrier — no atomic claim UPDATE runs,
+    // so the durable `import_jobs` row stays `pending` for boot recovery.
+    it('F72 pre-claim barrier: aborts before the claim UPDATE when stopping is set (row stays pending)', async () => {
+      (worker as unknown as { running: boolean; stopping: boolean }).running = true;
+      (worker as unknown as { running: boolean; stopping: boolean }).stopping = true;
+      mockDb.db.select = vi.fn().mockReturnValueOnce({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([{ id: 42 }]),
+      });
+      const updateSpy = vi.fn();
+      mockDb.db.update = updateSpy;
+
+      const result = await (worker as unknown as DrainSeam).drainOne();
+
+      expect(result).toBe(false);
+      expect(updateSpy).not.toHaveBeenCalled();
     });
   });
 
