@@ -7,13 +7,15 @@ import { getRowsAffected } from '../utils/db-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { OwnedRecordingError, type BookService } from './book.service.js';
+import { ASIN_UNIQUE_VIOLATION } from './book-dedup.js';
+import { isUniqueViolation } from '../../shared/error-message.js';
 import type { BookImportService } from './book-import.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { classifyConfirmItem } from './import-confirm-item.helpers.js';
 import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
 import type { ImportConfirmItem } from './library-scan.service.js';
 import type { ManualImportJobPayload } from './import-adapters/types.js';
-import type { ItemDisposition } from '../../core/import-staging/schemas.js';
+import { aggregateDispositions, stagedImportItemSchema, type ItemDisposition } from '../../core/import-staging/schemas.js';
 
 const SAFETY_POLL_INTERVAL_MS = 30_000;
 
@@ -159,32 +161,49 @@ export class ImportSubmissionRunner {
       .limit(1);
     if (!row) return false;
 
-    if (row.itemPayload == null) {
-      await this.writeTerminal(sub, row, { disposition: 'failed', reason: 'Staged item payload missing.' });
-      return true;
-    }
-    const item = row.itemPayload as unknown as ImportConfirmItem;
+    // The ENTIRE per-item pipeline (payload validation, classification, enrichment
+    // resolution, accepted tx) runs under one error boundary (F3): an unexpected
+    // classifier/read/preparation throw becomes a terminal `failed` for THIS row and
+    // the drain continues — it must never bubble to the drain loop, strand the row
+    // `pending`, and re-run forever on the safety poll.
+    try {
+      // Persisted staged JSON is untrusted at the read boundary — SQLite does not
+      // enforce Drizzle's compile-time `$type`, so parse with the canonical schema
+      // (F5). A missing or malformed payload is a terminal `failed`, not a crash.
+      const parsed = row.itemPayload == null ? null : stagedImportItemSchema.safeParse(row.itemPayload);
+      if (parsed == null || !parsed.success) {
+        await this.writeTerminal(sub, row, {
+          disposition: 'failed',
+          reason: parsed == null ? 'Staged item payload missing.' : 'Staged item payload failed validation.',
+        });
+        return true;
+      }
+      const item = parsed.data as ImportConfirmItem;
 
-    const classification = await classifyConfirmItem(item, this.bookService, this.log);
-    if (classification !== 'proceed' && 'skip' in classification) {
-      await this.writeTerminal(sub, row, {
-        disposition: 'skipped',
-        reason: 'already-in-library',
-        ...(classification.existingBookId !== undefined && { existingBookId: classification.existingBookId }),
-        ...(classification.existingTitle !== undefined && { existingTitle: classification.existingTitle }),
-      });
-      return true;
-    }
-    if (classification !== 'proceed') {
-      await this.writeTerminal(sub, row, {
-        disposition: 'held',
-        reason: 'recording-review-required',
-        ...(classification.existingBookId !== undefined && { existingBookId: classification.existingBookId }),
-      });
-      return true;
-    }
+      const classification = await classifyConfirmItem(item, this.bookService, this.log);
+      if (classification !== 'proceed' && 'skip' in classification) {
+        await this.writeTerminal(sub, row, {
+          disposition: 'skipped',
+          reason: 'already-in-library',
+          ...(classification.existingBookId !== undefined && { existingBookId: classification.existingBookId }),
+          ...(classification.existingTitle !== undefined && { existingTitle: classification.existingTitle }),
+        });
+        return true;
+      }
+      if (classification !== 'proceed') {
+        await this.writeTerminal(sub, row, {
+          disposition: 'held',
+          reason: 'recording-review-required',
+          ...(classification.existingBookId !== undefined && { existingBookId: classification.existingBookId }),
+        });
+        return true;
+      }
 
-    await this.acceptItem(sub, row, item);
+      await this.acceptItem(sub, row, item);
+    } catch (error: unknown) {
+      this.log.error({ error: serializeError(error), submissionId: sub.id, ordinal: row.ordinal }, 'Staged import item preparation failed');
+      await this.writeTerminal(sub, row, { disposition: 'failed', reason: 'Import failed — see server logs for details.' });
+    }
     return true;
   }
 
@@ -215,8 +234,26 @@ export class ImportSubmissionRunner {
         await this.maybeComplete(tx, sub.id);
       });
     } catch (error: unknown) {
+      // Same-ASIN create-time race (F2). `createResolved(resolved, tx)` runs on our
+      // transaction handle and, by contract, PROPAGATES the raw ASIN unique violation
+      // (it cannot do the incumbent lookup against an uncommitted caller tx) — so the
+      // tx path never yields an `OwnedRecordingError`. After this tx has rolled back,
+      // detect the raw violation and resolve the incumbent ourselves via
+      // `findAsinCollision` (sentinel -1: no self-row to exclude), then record the
+      // specified `already-in-library` skip carrying the incumbent id/title.
+      if (isUniqueViolation(error, ASIN_UNIQUE_VIOLATION)) {
+        const collision = await this.bookService.findAsinCollision(-1, resolved.asin ?? '');
+        await this.writeTerminal(sub, row, {
+          disposition: 'skipped',
+          reason: 'already-in-library',
+          ...(collision ? { existingBookId: collision.conflictBookId, existingTitle: collision.conflictTitle } : {}),
+        });
+        return;
+      }
       if (error instanceof OwnedRecordingError) {
-        // Same-ASIN create-time race — the recording is owned; skip carrying the incumbent.
+        // Defensive: the non-tx `createResolved` path maps the race to this typed
+        // error. Unreachable via the tx path above but kept so a future contract
+        // change fails closed to the same skip outcome.
         await this.writeTerminal(sub, row, {
           disposition: 'skipped',
           reason: 'already-in-library',
@@ -282,13 +319,8 @@ export class ImportSubmissionRunner {
       .select({ disposition: importSubmissionItems.disposition })
       .from(importSubmissionItems)
       .where(eq(importSubmissionItems.submissionId, submissionId));
-    const agg = { accepted: 0, held: 0, skipped: 0, failed: 0 };
-    for (const r of rows) {
-      if (r.disposition === 'accepted') agg.accepted++;
-      else if (r.disposition === 'held') agg.held++;
-      else if (r.disposition === 'skipped') agg.skipped++;
-      else if (r.disposition === 'failed') agg.failed++;
-    }
+    // One shared disposition→aggregate mapping with computeProgress (F13).
+    const agg = aggregateDispositions(rows.map((r) => r.disposition as ItemDisposition));
     const now = new Date();
     await tx
       .update(importSubmissions)

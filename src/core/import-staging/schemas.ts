@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { importConfirmItemSchema, importModeSchema, importSkipReasonSchema } from '../../shared/schemas/library-scan.js';
 import type { ImportMode } from '../../shared/schemas/library-scan.js';
+import { AuthorRefSchema, SeriesRefSchema, BookMetadataSchema } from '../metadata/schemas.js';
 
 // ============================================================================
 // Staged import submission — inert chunked upload / finalize / server-owned
@@ -76,9 +77,12 @@ export const SUBMISSION_ERROR_CODES = {
 export type SubmissionErrorCode = (typeof SUBMISSION_ERROR_CODES)[keyof typeof SUBMISSION_ERROR_CODES];
 
 // ---------------------------------------------------------------------------
-// Bounded staged metadata (F27 / F34) — strict, bounded derivative of the
-// canonical BookMetadataSchema, single-sourced so the client `BookMetadata`
-// type and the server validator cannot drift (guarded by a key-set test).
+// Bounded staged metadata (F27 / F34) — strict, bounded derivative that COMPOSES
+// the canonical BookMetadataSchema / AuthorRefSchema / SeriesRefSchema via
+// `.extend()` rather than re-declaring their fields (ZOD-2 / F6). Because it is
+// built on the canonical `.shape`, a future canonical field can never be silently
+// omitted from hashing/persistence — the key-set test asserts the shapes stay
+// aligned, and `.extend()` only overrides the per-field validators to add bounds.
 // ---------------------------------------------------------------------------
 
 const ID_MAX = 64;       // asin/isbn/goodreadsId/providerId + array-element identifiers
@@ -87,47 +91,44 @@ const DESCRIPTION_MAX = 8_000;
 const COVER_URL_MAX = 2_048;
 const GENRE_ELEMENT_MAX = 128;
 
-const stagedAuthorRefSchema = z
-  .object({
-    name: z.string().trim().min(1).max(SHORT_TEXT_MAX),
-    asin: z.string().max(ID_MAX).optional(),
-  })
-  .strict();
+const stagedAuthorRefSchema = AuthorRefSchema.extend({
+  name: z.string().trim().min(1).max(SHORT_TEXT_MAX),
+  asin: z.string().max(ID_MAX).optional(),
+}).strict();
 
-const stagedSeriesRefSchema = z
-  .object({
-    name: z.string().max(SHORT_TEXT_MAX),
-    position: z.number().finite().optional(),
-    asin: z.string().max(ID_MAX).optional(),
-  })
-  .strict();
+const stagedSeriesRefSchema = SeriesRefSchema.extend({
+  name: z.string().max(SHORT_TEXT_MAX),
+  position: z.number().finite().optional(),
+  asin: z.string().max(ID_MAX).optional(),
+}).strict();
 
-export const stagedBookMetadataSchema = z
-  .object({
-    asin: z.string().max(ID_MAX).optional(),
-    alternateAsins: z.array(z.string().max(ID_MAX)).max(32).optional(),
-    isbn: z.string().max(ID_MAX).optional(),
-    goodreadsId: z.string().max(ID_MAX).optional(),
-    providerId: z.string().max(ID_MAX).optional(),
-    title: z.string().trim().min(1).max(SHORT_TEXT_MAX),
-    subtitle: z.string().max(SHORT_TEXT_MAX).optional(),
-    authors: z.array(stagedAuthorRefSchema).min(1).max(64),
-    narrators: z.array(z.string().max(SHORT_TEXT_MAX)).max(64).optional(),
-    series: z.array(stagedSeriesRefSchema).max(32).optional(),
-    seriesPrimary: stagedSeriesRefSchema.optional(),
-    description: z.string().max(DESCRIPTION_MAX).optional(),
-    publisher: z.string().max(SHORT_TEXT_MAX).optional(),
-    publishedDate: z.string().max(SHORT_TEXT_MAX).optional(),
-    language: z.string().max(SHORT_TEXT_MAX).optional(),
-    coverUrl: z.string().url().max(COVER_URL_MAX).optional(),
-    duration: z.number().finite().optional(),
-    genres: z.array(z.string().max(GENRE_ELEMENT_MAX)).max(64).optional(),
-    relevance: z.number().finite().optional(),
-    formatType: z.string().max(SHORT_TEXT_MAX).optional(),
-    contentDeliveryType: z.string().max(SHORT_TEXT_MAX).optional(),
-  })
-  .strict();
+export const stagedBookMetadataSchema = BookMetadataSchema.extend({
+  asin: z.string().max(ID_MAX).optional(),
+  alternateAsins: z.array(z.string().max(ID_MAX)).max(32).optional(),
+  isbn: z.string().max(ID_MAX).optional(),
+  goodreadsId: z.string().max(ID_MAX).optional(),
+  providerId: z.string().max(ID_MAX).optional(),
+  title: z.string().trim().min(1).max(SHORT_TEXT_MAX),
+  subtitle: z.string().max(SHORT_TEXT_MAX).optional(),
+  authors: z.array(stagedAuthorRefSchema).min(1).max(64),
+  narrators: z.array(z.string().max(SHORT_TEXT_MAX)).max(64).optional(),
+  series: z.array(stagedSeriesRefSchema).max(32).optional(),
+  seriesPrimary: stagedSeriesRefSchema.optional(),
+  description: z.string().max(DESCRIPTION_MAX).optional(),
+  publisher: z.string().max(SHORT_TEXT_MAX).optional(),
+  publishedDate: z.string().max(SHORT_TEXT_MAX).optional(),
+  language: z.string().max(SHORT_TEXT_MAX).optional(),
+  coverUrl: z.string().url().max(COVER_URL_MAX).optional(),
+  duration: z.number().finite().optional(),
+  genres: z.array(z.string().max(GENRE_ELEMENT_MAX)).max(64).optional(),
+  relevance: z.number().finite().optional(),
+  formatType: z.string().max(SHORT_TEXT_MAX).optional(),
+  contentDeliveryType: z.string().max(SHORT_TEXT_MAX).optional(),
+}).strict();
 export type StagedBookMetadata = z.infer<typeof stagedBookMetadataSchema>;
+
+/** The canonical metadata key-set the staged schema must stay aligned with (F6). */
+export const CANONICAL_METADATA_KEYS = Object.keys(BookMetadataSchema.shape).sort();
 
 /**
  * The canonical staged item — SINGLE source for client hashing, PUT validation,
@@ -277,6 +278,23 @@ const submissionAggregatesSchema = z
   .strict();
 export type SubmissionAggregates = z.infer<typeof submissionAggregatesSchema>;
 
+/**
+ * The single disposition→aggregate mapping (F13). Both the runner's terminal
+ * `maybeComplete` freeze and the service's live `computeProgress` counts call
+ * THIS function, so pre-complete and post-complete progress can never disagree.
+ * Only terminal dispositions contribute; `pending` is ignored.
+ */
+export function aggregateDispositions(dispositions: readonly ItemDisposition[]): SubmissionAggregates {
+  const agg: SubmissionAggregates = { accepted: 0, held: 0, skipped: 0, failed: 0 };
+  for (const d of dispositions) {
+    if (d === 'accepted') agg.accepted++;
+    else if (d === 'held') agg.held++;
+    else if (d === 'skipped') agg.skipped++;
+    else if (d === 'failed') agg.failed++;
+  }
+  return agg;
+}
+
 const submissionHeaderFields = {
   id: z.number().int().positive(),
   clientSubmissionId: z.string(),
@@ -298,19 +316,34 @@ const submissionHeaderFields = {
  *  - summary request → `itemsIncluded:false`, no `items` (even while `detailsPruned:false`)
  *  - detail + retained → `itemsIncluded:true`, `items` present
  *  - detail + pruned → `itemsIncluded:false`, no `items`
- * The `itemsIncluded` discriminant resolves the earlier "requires-and-forbids items"
- * contradiction: `items` presence is EXACTLY driven by the discriminant.
+ * The `itemsIncluded` discriminant drives `items` presence EXACTLY. Two further
+ * cross-field invariants are enforced by refinement so the schema admits ONLY the
+ * legal protocol arms (F4): (a) source/mode discrimination — `library` carries no
+ * `mode`, `manual` requires one; (b) the detail arm (`itemsIncluded:true`) forbids
+ * `detailsPruned:true` (a pruned record has no items to include).
  */
-export const submissionResponseSchema = z.discriminatedUnion('itemsIncluded', [
-  z.object({ ...submissionHeaderFields, itemsIncluded: z.literal(false) }).strict(),
-  z
-    .object({
-      ...submissionHeaderFields,
-      itemsIncluded: z.literal(true),
-      items: z.array(stagedItemResultDtoSchema),
-    })
-    .strict(),
-]);
+export const submissionResponseSchema = z
+  .discriminatedUnion('itemsIncluded', [
+    z.object({ ...submissionHeaderFields, itemsIncluded: z.literal(false) }).strict(),
+    z
+      .object({
+        ...submissionHeaderFields,
+        itemsIncluded: z.literal(true),
+        items: z.array(stagedItemResultDtoSchema),
+      })
+      .strict(),
+  ])
+  .superRefine((val, ctx) => {
+    if (val.source === 'manual' && val.mode === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['mode'], message: 'manual submissions require a mode' });
+    }
+    if (val.source === 'library' && val.mode !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['mode'], message: 'library submissions must not carry a mode' });
+    }
+    if (val.itemsIncluded === true && val.detailsPruned === true) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['detailsPruned'], message: 'itemsIncluded:true requires detailsPruned:false' });
+    }
+  });
 export type SubmissionResponse = z.infer<typeof submissionResponseSchema>;
 
 // ---------------------------------------------------------------------------

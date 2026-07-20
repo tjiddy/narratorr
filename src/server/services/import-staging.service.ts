@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
-import { eq, and, asc, lt, inArray } from 'drizzle-orm';
+import { eq, and, asc, lt, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { importSubmissions, importSubmissionItems } from '../../db/schema.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import {
   serializeSubmissionForDigest,
+  aggregateDispositions,
+  stagedImportItemSchema,
   SUBMISSION_ERROR_CODES,
   MAX_SUBMISSION_BYTES,
   FINALIZE_GAPS_REPORT_MAX,
@@ -15,6 +17,8 @@ import {
   type SubmissionResponse,
   type StagedItemResultDto,
   type SubmissionStatus,
+  type SubmissionAggregates,
+  type ItemDisposition,
   type FinalizeGaps,
 } from '../../core/import-staging/schemas.js';
 
@@ -112,18 +116,7 @@ export class ImportStagingService {
    * would push `receivedBytes` over the cap → 413 with no state change.
    */
   async putItems(id: number, body: PutItemsBody): Promise<SubmissionResponse> {
-    const header = await this.loadHeader(id);
-    if (header.status !== 'receiving') {
-      throw new SubmissionError(SUBMISSION_ERROR_CODES.submissionNotReceiving, 409, `submission is '${header.status}', not receiving`);
-    }
-
-    // Range check (single status, F43) — no write on any out-of-range ordinal.
-    for (const row of body.items) {
-      if (row.ordinal < 0 || row.ordinal >= header.expectedCount) {
-        throw new SubmissionError(SUBMISSION_ERROR_CODES.ordinalOutOfRange, 400, `ordinal ${row.ordinal} out of range [0, ${header.expectedCount})`);
-      }
-    }
-    // Intra-request duplicate ordinals → 409, no partial write.
+    // Intra-request duplicate ordinals → 409, no partial write (pure, no state).
     const seen = new Set<number>();
     for (const row of body.items) {
       if (seen.has(row.ordinal)) {
@@ -132,7 +125,27 @@ export class ImportStagingService {
       seen.add(row.ordinal);
     }
 
-    return this.db.transaction(async (tx) => {
+    // EVERYTHING that reads or writes mutable header state runs in ONE transaction
+    // (F1): the status/range gate, the existing-ordinal read, the byte-cap check, the
+    // ordinal inserts, and the counter update are atomic. The counter update is a
+    // CAS-guarded conditional increment — `WHERE status='receiving' AND
+    // receivedBytes + delta <= cap`, applied with SQL-relative `+=` — so two
+    // concurrent chunks cannot both read the same counters and lose an increment or
+    // slip past the cap, and a PUT that raced a finalize cannot write after the flip.
+    const updated = await this.db.transaction(async (tx) => {
+      const [header] = await tx.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
+      if (!header) throw new SubmissionError('submission-not-found', 404, 'submission not found');
+      if (header.status !== 'receiving') {
+        throw new SubmissionError(SUBMISSION_ERROR_CODES.submissionNotReceiving, 409, `submission is '${header.status}', not receiving`);
+      }
+
+      // Range check (single status, F43) — against the in-tx expectedCount.
+      for (const row of body.items) {
+        if (row.ordinal < 0 || row.ordinal >= header.expectedCount) {
+          throw new SubmissionError(SUBMISSION_ERROR_CODES.ordinalOutOfRange, 400, `ordinal ${row.ordinal} out of range [0, ${header.expectedCount})`);
+        }
+      }
+
       const existingRows = await tx
         .select({ ordinal: importSubmissionItems.ordinal, itemPayload: importSubmissionItems.itemPayload })
         .from(importSubmissionItems)
@@ -157,8 +170,32 @@ export class ImportStagingService {
         toInsert.push({ ordinal: row.ordinal, item: row.item });
       }
 
-      if (header.receivedBytes + deltaBytes > MAX_SUBMISSION_BYTES) {
-        throw new SubmissionError(SUBMISSION_ERROR_CODES.byteBudgetExceeded, 413, 'submission byte budget exceeded');
+      // CAS-guarded increment: the cap is enforced in the WHERE clause against the
+      // row's CURRENT bytes (not the pre-read snapshot), so the check and the write
+      // are one atomic step. rowsAffected === 0 means the guard failed → distinguish
+      // over-cap from a lost 'receiving' race and throw with no state change (the
+      // inserts below never ran).
+      const now = new Date();
+      const result = await tx
+        .update(importSubmissions)
+        .set({
+          receivedCount: sql`${importSubmissions.receivedCount} + ${newOrdinals}`,
+          receivedBytes: sql`${importSubmissions.receivedBytes} + ${deltaBytes}`,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(importSubmissions.id, id),
+            eq(importSubmissions.status, 'receiving'),
+            sql`${importSubmissions.receivedBytes} + ${deltaBytes} <= ${MAX_SUBMISSION_BYTES}`,
+          ),
+        );
+      if (getRowsAffected(result) !== 1) {
+        const [current] = await tx.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
+        if (current && current.status === 'receiving') {
+          throw new SubmissionError(SUBMISSION_ERROR_CODES.byteBudgetExceeded, 413, 'submission byte budget exceeded');
+        }
+        throw new SubmissionError(SUBMISSION_ERROR_CODES.submissionNotReceiving, 409, `submission is '${current?.status ?? 'gone'}', not receiving`);
       }
 
       for (const { ordinal, item } of toInsert) {
@@ -172,17 +209,10 @@ export class ImportStagingService {
         });
       }
 
-      const [updated] = await tx
-        .update(importSubmissions)
-        .set({
-          receivedCount: header.receivedCount + newOrdinals,
-          receivedBytes: header.receivedBytes + deltaBytes,
-          updatedAt: new Date(),
-        })
-        .where(eq(importSubmissions.id, id))
-        .returning();
-      return this.buildSummary(updated!);
+      const [after] = await tx.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
+      return after!;
     });
+    return this.buildSummary(updated);
   }
 
   /**
@@ -191,51 +221,59 @@ export class ImportStagingService {
    * finalized header is a no-op (no re-nudge).
    */
   async finalize(id: number): Promise<SubmissionResponse> {
-    const header = await this.loadHeader(id);
-    if (header.status !== 'receiving') {
-      // Idempotent replay — a second finalize on processing/complete is a no-op.
-      return this.buildSummary(header);
-    }
+    // The ordinal read, gap/digest verification, and CAS flip all run in ONE
+    // transaction (F1): a concurrent PUT or stale-'receiving' cleanup cannot
+    // interleave between the verification and the transition, so finalize either
+    // sees a consistent snapshot and flips it, or sees the header already gone/
+    // transitioned. `nudgeRunner` fires AFTER commit, only on the winning CAS.
+    const { header, nudged } = await this.db.transaction(async (tx) => {
+      const [current] = await tx.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
+      if (!current) throw new SubmissionError('submission-not-found', 404, 'submission not found');
+      if (current.status !== 'receiving') {
+        // Idempotent replay — a second finalize on processing/complete is a no-op.
+        return { header: current, nudged: false };
+      }
 
-    const rows = await this.db
-      .select()
-      .from(importSubmissionItems)
-      .where(eq(importSubmissionItems.submissionId, id))
-      .orderBy(asc(importSubmissionItems.ordinal));
+      const rows = await tx
+        .select()
+        .from(importSubmissionItems)
+        .where(eq(importSubmissionItems.submissionId, id))
+        .orderBy(asc(importSubmissionItems.ordinal));
 
-    const present = new Set(rows.map((r) => r.ordinal));
-    const missing: number[] = [];
-    for (let i = 0; i < header.expectedCount; i++) {
-      if (!present.has(i)) missing.push(i);
-    }
-    if (missing.length > 0) {
-      const gaps: FinalizeGaps = {
-        missing: missing.slice(0, FINALIZE_GAPS_REPORT_MAX),
-        totalMissing: missing.length,
-        truncated: missing.length > FINALIZE_GAPS_REPORT_MAX,
-      };
-      throw new SubmissionError(SUBMISSION_ERROR_CODES.finalizeGaps, 409, 'submission has missing ordinals', gaps);
-    }
+      const present = new Set(rows.map((r) => r.ordinal));
+      const missing: number[] = [];
+      for (let i = 0; i < current.expectedCount; i++) {
+        if (!present.has(i)) missing.push(i);
+      }
+      if (missing.length > 0) {
+        const gaps: FinalizeGaps = {
+          missing: missing.slice(0, FINALIZE_GAPS_REPORT_MAX),
+          totalMissing: missing.length,
+          truncated: missing.length > FINALIZE_GAPS_REPORT_MAX,
+        };
+        throw new SubmissionError(SUBMISSION_ERROR_CODES.finalizeGaps, 409, 'submission has missing ordinals', gaps);
+      }
 
-    const orderedItems = rows.map((r) => r.itemPayload).filter((p): p is StagedImportItem => p != null);
-    const recomputed = digestItems(header.source, header.mode, orderedItems);
-    if (recomputed !== header.payloadDigest) {
-      throw new SubmissionError(SUBMISSION_ERROR_CODES.digestMismatch, 409, 'finalize digest mismatch');
-    }
+      const orderedItems = rows.map((r) => r.itemPayload).filter((p): p is StagedImportItem => p != null);
+      const recomputed = digestItems(current.source, current.mode, orderedItems);
+      if (recomputed !== current.payloadDigest) {
+        throw new SubmissionError(SUBMISSION_ERROR_CODES.digestMismatch, 409, 'finalize digest mismatch');
+      }
 
-    const now = new Date();
-    const result = await this.db
-      .update(importSubmissions)
-      .set({ status: 'processing', updatedAt: now })
-      .where(and(eq(importSubmissions.id, id), eq(importSubmissions.status, 'receiving')));
+      const now = new Date();
+      const result = await tx
+        .update(importSubmissions)
+        .set({ status: 'processing', updatedAt: now })
+        .where(and(eq(importSubmissions.id, id), eq(importSubmissions.status, 'receiving')));
+      const [after] = await tx.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
+      return { header: after!, nudged: getRowsAffected(result) === 1 };
+    });
 
-    if (getRowsAffected(result) === 1) {
+    if (nudged) {
       this.log.info({ submissionId: id }, 'Staged import submission finalized — nudging runner');
       this.nudgeRunner();
     }
-
-    const [after] = await this.db.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
-    return this.buildSummary(after!);
+    return this.buildSummary(header);
   }
 
   /** Query-selected DTO by numeric id. */
@@ -293,48 +331,54 @@ export class ImportStagingService {
 
   // ── DTO assembly ──────────────────────────────────────────────────────────
 
-  private async loadHeader(id: number): Promise<SubmissionRow> {
-    const [header] = await this.db.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
-    if (!header) throw new SubmissionError('submission-not-found', 404, 'submission not found');
-    return header;
-  }
-
-  /** Aggregate counts + processedCount + detailsPruned, sourced live or from frozen columns. */
-  private async computeProgress(header: SubmissionRow): Promise<{
-    aggregates: { accepted: number; held: number; skipped: number; failed: number };
+  /**
+   * Aggregate counts + processedCount + detailsPruned, plus item rows ONLY when
+   * `loadItems` is true (F7). The summary path never selects `itemPayload` — live
+   * counts come from a `disposition`-only projection fed through the shared
+   * `aggregateDispositions` (F13), and `detailsPruned` uses a `limit 1` existence
+   * probe — so a cheap progress poll of a 10 000-row submission never transfers or
+   * parses the stored detail JSON.
+   */
+  private async computeProgress(header: SubmissionRow, loadItems: boolean): Promise<{
+    aggregates: SubmissionAggregates;
     processedCount: number;
     detailsPruned: boolean;
     itemRows: ItemRow[];
   }> {
-    const itemRows = await this.db
-      .select()
-      .from(importSubmissionItems)
-      .where(eq(importSubmissionItems.submissionId, header.id))
-      .orderBy(asc(importSubmissionItems.ordinal));
-
-    const detailsPruned = header.status === 'complete' && itemRows.length === 0 && header.expectedCount > 0;
+    const itemRows = loadItems
+      ? await this.db
+          .select()
+          .from(importSubmissionItems)
+          .where(eq(importSubmissionItems.submissionId, header.id))
+          .orderBy(asc(importSubmissionItems.ordinal))
+      : [];
 
     if (header.status === 'complete') {
       // Frozen aggregate columns survive item pruning (the durable record).
-      const aggregates = {
+      const aggregates: SubmissionAggregates = {
         accepted: header.acceptedCount,
         held: header.heldCount,
         skipped: header.skippedCount,
         failed: header.failedCount,
       };
+      const [anyItem] = await this.db
+        .select({ id: importSubmissionItems.id })
+        .from(importSubmissionItems)
+        .where(eq(importSubmissionItems.submissionId, header.id))
+        .limit(1);
+      const detailsPruned = !anyItem && header.expectedCount > 0;
       return { aggregates, processedCount: aggregates.accepted + aggregates.held + aggregates.skipped + aggregates.failed, detailsPruned, itemRows };
     }
 
-    // Live counts during receiving/processing (0 during receiving).
-    const aggregates = { accepted: 0, held: 0, skipped: 0, failed: 0 };
-    for (const row of itemRows) {
-      if (row.disposition === 'accepted') aggregates.accepted++;
-      else if (row.disposition === 'held') aggregates.held++;
-      else if (row.disposition === 'skipped') aggregates.skipped++;
-      else if (row.disposition === 'failed') aggregates.failed++;
-    }
+    // Live counts during receiving/processing (0 during receiving) from a
+    // disposition-only projection — no itemPayload transfer.
+    const dispositionRows = await this.db
+      .select({ disposition: importSubmissionItems.disposition })
+      .from(importSubmissionItems)
+      .where(eq(importSubmissionItems.submissionId, header.id));
+    const aggregates = aggregateDispositions(dispositionRows.map((r) => r.disposition as ItemDisposition));
     const processedCount = aggregates.accepted + aggregates.held + aggregates.skipped + aggregates.failed;
-    return { aggregates, processedCount, detailsPruned, itemRows };
+    return { aggregates, processedCount, detailsPruned: false, itemRows };
   }
 
   private headerFields(header: SubmissionRow, progress: Awaited<ReturnType<ImportStagingService['computeProgress']>>) {
@@ -356,12 +400,12 @@ export class ImportStagingService {
   }
 
   private async buildSummary(header: SubmissionRow): Promise<SubmissionResponse> {
-    const progress = await this.computeProgress(header);
+    const progress = await this.computeProgress(header, false);
     return { ...this.headerFields(header, progress), itemsIncluded: false };
   }
 
   private async buildDetail(header: SubmissionRow): Promise<SubmissionResponse> {
-    const progress = await this.computeProgress(header);
+    const progress = await this.computeProgress(header, true);
     // Detail + pruned → the summary arm (aggregates-only permanent record).
     if (progress.detailsPruned) {
       return { ...this.headerFields(header, progress), itemsIncluded: false };
@@ -370,11 +414,30 @@ export class ImportStagingService {
     return { ...this.headerFields(header, progress), itemsIncluded: true, items };
   }
 
+  /**
+   * Parse a persisted `itemPayload` at the read boundary (F5) — SQLite does not
+   * enforce Drizzle's compile-time `$type`, so a stored blob is untrusted. A
+   * malformed/absent payload projects as `item: null` rather than leaking an
+   * unvalidated shape into the DTO (the projected path/title columns are the
+   * durable display fields and always present).
+   */
+  private parseItemPayload(row: ItemRow): StagedImportItem | null {
+    if (row.itemPayload == null) return null;
+    const parsed = stagedImportItemSchema.safeParse(row.itemPayload);
+    if (!parsed.success) {
+      this.log.warn({ submissionId: row.submissionId, ordinal: row.ordinal }, 'Persisted staged item failed validation on read');
+      return null;
+    }
+    return parsed.data;
+  }
+
   private toItemDto(row: ItemRow): StagedItemResultDto {
     const base = { ordinal: row.ordinal, path: row.path, title: row.title };
     switch (row.disposition) {
-      case 'accepted':
-        return { disposition: 'accepted', ...base, bookId: row.bookId, ...(row.itemPayload != null ? { item: row.itemPayload } : {}) };
+      case 'accepted': {
+        const item = this.parseItemPayload(row);
+        return { disposition: 'accepted', ...base, bookId: row.bookId, ...(item != null ? { item } : {}) };
+      }
       case 'held':
         return { disposition: 'held', ...base, reason: 'recording-review-required', ...(row.existingBookId != null ? { existingBookId: row.existingBookId } : {}) };
       case 'skipped':

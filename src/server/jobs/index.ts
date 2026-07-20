@@ -36,6 +36,20 @@ interface TimeoutJob {
 
 type JobEntry = CronJob | TimeoutJob;
 
+/**
+ * Run one maintenance subtask isolated behind its own guard (F8): a throw is logged
+ * and swallowed so it neither suppresses a LATER subtask in the same callback nor an
+ * EARLIER unrelated failure prevents this one from running. Used to decouple the
+ * staged-submission cleanups from the other housekeeping/import-maintenance steps.
+ */
+async function runGuarded(log: FastifyBaseLogger, label: string, fn: () => Promise<unknown> | unknown): Promise<void> {
+  try {
+    await fn();
+  } catch (error: unknown) {
+    log.warn({ error: serializeError(error) }, label);
+  }
+}
+
 /** Stoppable handle for a single timeout-loop job (see `scheduleTimeoutLoop`). */
 interface TimeoutLoopHandle {
   stop(): void;
@@ -83,21 +97,39 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger): J
   const jobRegistry: JobEntry[] = [
     { name: 'monitor', type: 'cron', schedule: MONITOR_CRON_INTERVAL, callback: () => monitorDownloads(db, services.downloadClient, services.notifier, log, retryDeps, services.eventBroadcaster, services.remotePathMapping, services.qualityGateOrchestrator, services.eventHistory) },
     { name: 'enrichment', type: 'cron', schedule: '*/5 * * * *', callback: () => runEnrichment(db, services.metadata, services.book, log) },
-    { name: 'import-maintenance', type: 'cron', schedule: '*/5 * * * *', callback: async () => { await services.qualityGateOrchestrator.processCompletedDownloads(); await services.importOrchestrator.processCompletedDownloads(); await services.qualityGateOrchestrator.cleanupDeferredRejections(); await services.import.cleanupDeferredImports(); try { await services.importStaging.sweepStaleReceiving(); } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Import-maintenance: stale-receiving sweep failed'); } } },
+    { name: 'import-maintenance', type: 'cron', schedule: '*/5 * * * *', callback: async () => {
+      // Each subtask is independently guarded (F8) so the staged stale-receiving sweep
+      // runs even if the completed-download processing above it fails persistently.
+      await runGuarded(log, 'Import-maintenance: completed-download processing failed', async () => {
+        await services.qualityGateOrchestrator.processCompletedDownloads();
+        await services.importOrchestrator.processCompletedDownloads();
+        await services.qualityGateOrchestrator.cleanupDeferredRejections();
+        await services.import.cleanupDeferredImports();
+      });
+      await runGuarded(log, 'Import-maintenance: stale-receiving sweep failed', () => services.importStaging.sweepStaleReceiving());
+    } },
     { name: 'search', type: 'timeout', getIntervalMinutes: () => services.settings.get('search').then((s) => s.intervalMinutes), callback: () => runSearchJob(services.settings, services.bookList, services.indexerSearch, services.downloadOrchestrator, log, services.blacklist, services.indexer, services.eventHistory, services.retryBudget, services.eventBroadcaster) },
     { name: 'rss', type: 'timeout', getIntervalMinutes: () => services.settings.get('rss').then((s) => s.intervalMinutes), callback: () => runRssJob(services.settings, services.bookList, services.indexerSearch, services.downloadOrchestrator, services.blacklist, services.indexer, log) },
     { name: 'backup', type: 'timeout', getIntervalMinutes: () => services.settings.get('system').then((s) => s.backupIntervalMinutes), callback: () => runBackupJob(services.backup, log) },
     { name: 'housekeeping', type: 'cron', schedule: '0 0 * * 0', callback: async () => {
-      try { await db.run(sql`VACUUM`); } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: VACUUM failed'); }
-      try {
-        const generalSettings = await services.settings.get('general');
-        const retentionDays = generalSettings.housekeepingRetentionDays ?? 90;
-        await services.eventHistory.pruneOlderThan(retentionDays);
-        // Prune staged-submission item details past retention; the finalized header +
-        // aggregate columns are kept indefinitely (detailsPruned becomes observable, #1893).
-        await services.importStaging.pruneCompletedDetails(retentionDays);
-      } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: retention prune failed'); }
-      try { await services.blacklist.deleteExpired(); } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: blacklist cleanup failed'); }
+      await runGuarded(log, 'Housekeeping: VACUUM failed', () => db.run(sql`VACUUM`));
+      // Read retention once. On failure it stays null and BOTH retention prunes are
+      // skipped (conservative: never prune against an unknown window), but the
+      // blacklist cleanup below still runs.
+      let retentionDays: number | null = null;
+      await runGuarded(log, 'Housekeeping: retention read failed', async () => {
+        retentionDays = (await services.settings.get('general')).housekeepingRetentionDays ?? 90;
+      });
+      // Each retention prune is independently guarded (F8): an event-history failure
+      // must not suppress the staged-detail prune, and vice-versa. The finalized
+      // staged header + aggregate columns are kept indefinitely (detailsPruned becomes
+      // observable, #1893).
+      if (retentionDays !== null) {
+        const days = retentionDays;
+        await runGuarded(log, 'Housekeeping: event-history prune failed', () => services.eventHistory.pruneOlderThan(days));
+        await runGuarded(log, 'Housekeeping: staged-detail prune failed', () => services.importStaging.pruneCompletedDetails(days));
+      }
+      await runGuarded(log, 'Housekeeping: blacklist cleanup failed', () => services.blacklist.deleteExpired());
     } },
     { name: 'health-check', type: 'cron', schedule: '*/5 * * * *', callback: () => services.healthCheck.runAllChecks() },
     { name: 'version-check', type: 'cron', schedule: '0 2 * * *', callback: () => checkForUpdate(log, onUpdateChanged) },
