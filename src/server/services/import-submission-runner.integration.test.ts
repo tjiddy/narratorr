@@ -306,6 +306,131 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
     });
   });
 
+  // ── F35/F39/F40: crash atomicity, post-commit side effects, provider ordering ──
+  describe('accepted-item crash atomicity, side effects & provider ordering (F35/F39/F40)', () => {
+    // Simulate PROCESS DEATH after a mid-tx crash: the accepted tx rolls back AND the
+    // terminal-disposition write does not land (writeTerminal no-op'd once), so the item
+    // is left 'pending' for boot recovery — a live process would instead mark it failed.
+    async function crashOnce(runner: ImportSubmissionRunner): Promise<void> {
+      vi.spyOn(runner as unknown as { writeTerminal: (...a: unknown[]) => Promise<void> }, 'writeTerminal').mockResolvedValueOnce(undefined);
+      (runner as unknown as { running: boolean }).running = true;
+      await (runner as unknown as DrainSeam).drainOne();
+      (runner as unknown as { running: boolean }).running = false;
+    }
+
+    it('crash AFTER enqueue rolls back book+job (no orphan); a re-driven runner completes the still-pending item once (F35)', async () => {
+      const bs = new BookService(db, inject(log));
+      const bis = new BookImportService(db, inject(log));
+      const originalEnqueue = bis.enqueue.bind(bis);
+      vi.spyOn(bis, 'enqueue').mockImplementation(async (input, tx) => {
+        await originalEnqueue(input, tx); // real in-tx job insert
+        throw new Error('crash after enqueue'); // then die → the whole tx rolls back
+      });
+      const subId = await seedProcessing([acceptedItem('/a', 'A')]);
+
+      await crashOnce(makeRunner(bs, bis));
+
+      // No orphan: the book insert AND the job enqueue rolled back with the crashing tx.
+      expect(await db.select().from(books)).toHaveLength(0);
+      expect(await db.select().from(importJobs)).toHaveLength(0);
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item!.disposition).toBe('pending'); // left pending for recovery
+
+      // Boot recovery: a fresh runner re-drives and completes the item ONCE (no duplicate).
+      await drainRunner(makeRunner(new BookService(db, inject(log)), new BookImportService(db, inject(log))));
+      expect(await db.select().from(books)).toHaveLength(1);
+      expect(await db.select().from(importJobs)).toHaveLength(1);
+      const [done] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(done!.disposition).toBe('accepted');
+      const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
+      expect(h!.status).toBe('complete');
+      expect(h!.acceptedCount).toBe(1);
+    });
+
+    it('crash AFTER the disposition write rolls back book+job+disposition (no orphan); re-drive completes once (F35)', async () => {
+      const bs = new BookService(db, inject(log));
+      const runner = makeRunner(bs);
+      // Fail maybeComplete (runs immediately after the CAS disposition write, inside the tx).
+      vi.spyOn(runner as unknown as { maybeComplete: (...a: unknown[]) => Promise<void> }, 'maybeComplete').mockRejectedValueOnce(new Error('crash after disposition'));
+      const subId = await seedProcessing([acceptedItem('/a', 'A')]);
+
+      await crashOnce(runner);
+
+      expect(await db.select().from(books)).toHaveLength(0);
+      expect(await db.select().from(importJobs)).toHaveLength(0);
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item!.disposition).toBe('pending'); // disposition write rolled back with the tx
+
+      await drainRunner(makeRunner(new BookService(db, inject(log))));
+      expect(await db.select().from(books)).toHaveLength(1);
+      const [done] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(done!.disposition).toBe('accepted');
+      const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
+      expect(h!.status).toBe('complete');
+      expect(h!.acceptedCount).toBe(1);
+    });
+
+    it('emits info log, genre telemetry, one book_added event, and a worker nudge after an accepted commit (F39)', async () => {
+      const bs = new BookService(db, inject(log));
+      const genreSpy = vi.spyOn(bs, 'trackUnmatchedGenres').mockResolvedValue(undefined);
+      const subId = await seedProcessing([acceptedItem('/a', 'A')]);
+
+      await drainRunner(makeRunner(bs));
+
+      expect(genreSpy).toHaveBeenCalledTimes(1);
+      expect(eventCreate).toHaveBeenCalledTimes(1);
+      expect(eventCreate.mock.calls[0]![0]).toMatchObject({ eventType: 'book_added', source: 'manual' });
+      expect(nudge).toHaveBeenCalled(); // import-worker nudge
+      expect(log.info as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+        expect.objectContaining({ submissionId: subId, bookId: expect.any(Number) }),
+        expect.stringContaining('accepted'),
+      );
+    });
+
+    it('best-effort side-effect rejections (telemetry/event) do not fail the accepted item or block later items (F39)', async () => {
+      const bs = new BookService(db, inject(log));
+      vi.spyOn(bs, 'trackUnmatchedGenres').mockRejectedValue(new Error('telemetry down'));
+      eventCreate.mockRejectedValue(new Error('event down'));
+      const subId = await seedProcessing([acceptedItem('/a', 'A'), acceptedItem('/b', 'B')]);
+
+      await drainRunner(makeRunner(bs));
+
+      // Both items still accepted with books/jobs; the header still completes — failures isolated.
+      const rows = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId)).orderBy(asc(importSubmissionItems.ordinal));
+      expect(rows.every((r) => r.disposition === 'accepted')).toBe(true);
+      expect(await db.select().from(books)).toHaveLength(2);
+      expect(await db.select().from(importJobs)).toHaveLength(2);
+      const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
+      expect(h!.status).toBe('complete');
+      expect(h!.acceptedCount).toBe(2);
+    });
+
+    it('resolves provider ASIN enrichment BEFORE opening the accepted-item transaction (F40)', async () => {
+      let releaseProvider!: (v: { asin: string }) => void;
+      const providerGate = new Promise<{ asin: string }>((res) => { releaseProvider = res; });
+      const metadataService = { getBook: vi.fn().mockReturnValue(providerGate) };
+      const bs = new BookService(db, inject(log), metadataService as never);
+      const txSpy = vi.spyOn(db, 'transaction');
+      const runner = makeRunner(bs);
+      // A providerId but NO asin forces resolveCreateInput to call the provider.
+      const item: StagedImportItem = { path: '/a', title: 'A', forceImport: true, metadata: { title: 'A', authors: [{ name: 'X' }], providerId: 'prov-1' } };
+      const subId = await seedProcessing([item]);
+
+      const drainP = drainRunner(runner);
+      await waitFor(() => (metadataService.getBook as ReturnType<typeof vi.fn>).mock.calls.length > 0);
+      // The accepted-item transaction must NOT open while provider I/O is still in flight.
+      expect(txSpy).not.toHaveBeenCalled();
+
+      releaseProvider({ asin: 'B0PROV1' });
+      await drainP;
+
+      expect(txSpy).toHaveBeenCalled(); // tx opened only after enrichment settled
+      const [row] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(row!.disposition).toBe('accepted');
+      txSpy.mockRestore();
+    });
+  });
+
   // ── F10: public runner lifecycle & concurrency ───────────────────────────
   describe('lifecycle & concurrency (F10)', () => {
     it('start() boot-resumes a processing submission to completion via the public drain loop', async () => {
