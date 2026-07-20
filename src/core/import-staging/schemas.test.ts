@@ -10,9 +10,12 @@ import {
   clientSubmissionIdSchema,
   payloadDigestSchema,
   serializeSubmissionForDigest,
+  aggregateDispositions,
+  CANONICAL_METADATA_KEYS,
   MAX_SUBMISSION_BYTES,
   EXPECTED_COUNT_MAX,
 } from './schemas.js';
+import { BookMetadataSchema } from '../metadata/schemas.js';
 
 const validMetadata = {
   title: 'A Book',
@@ -66,6 +69,52 @@ describe('stagedBookMetadataSchema bounds (F34)', () => {
     expect(stagedBookMetadataSchema.safeParse({ ...validMetadata, asin: 'a'.repeat(65) }).success).toBe(false);
     expect(stagedBookMetadataSchema.safeParse({ ...validMetadata, description: 'd'.repeat(8001) }).success).toBe(false);
     expect(stagedBookMetadataSchema.safeParse({ ...validMetadata, coverUrl: 'not-a-url' }).success).toBe(false);
+  });
+});
+
+describe('stagedBookMetadataSchema composes the canonical schema (F6)', () => {
+  it('key-set matches BookMetadataSchema exactly (no drift on a future canonical field)', () => {
+    const stagedKeys = Object.keys(stagedBookMetadataSchema.shape).sort();
+    const canonicalKeys = Object.keys(BookMetadataSchema.shape).sort();
+    expect(stagedKeys).toEqual(canonicalKeys);
+    expect(CANONICAL_METADATA_KEYS).toEqual(canonicalKeys);
+  });
+
+  it('round-trips every canonical field without dropping any (full-field parse)', () => {
+    const full = {
+      asin: 'B000000001',
+      alternateAsins: ['B000000002'],
+      isbn: '9781234567897',
+      goodreadsId: 'gr-1',
+      providerId: 'prov-1',
+      title: 'A Full Book',
+      subtitle: 'The Subtitle',
+      authors: [{ name: 'An Author', asin: 'AUTH00001' }],
+      narrators: ['A Narrator'],
+      series: [{ name: 'A Series', position: 1, asin: 'SER000001' }],
+      seriesPrimary: { name: 'A Series', position: 1, asin: 'SER000001' },
+      description: 'A description.',
+      publisher: 'A Publisher',
+      publishedDate: '2020-01-01',
+      language: 'en',
+      coverUrl: 'https://example.com/cover.jpg',
+      duration: 36000,
+      genres: ['Fantasy'],
+      relevance: 0.95,
+      formatType: 'unabridged',
+      contentDeliveryType: 'download',
+    };
+    expect(stagedBookMetadataSchema.parse(full)).toEqual(full);
+  });
+});
+
+describe('aggregateDispositions (single mapping, F13)', () => {
+  it('counts every terminal disposition and ignores pending', () => {
+    expect(aggregateDispositions(['accepted', 'accepted', 'held', 'skipped', 'failed', 'pending'])).toEqual({
+      accepted: 2, held: 1, skipped: 1, failed: 0 + 1,
+    });
+    expect(aggregateDispositions([])).toEqual({ accepted: 0, held: 0, skipped: 0, failed: 0 });
+    expect(aggregateDispositions(['pending', 'pending'])).toEqual({ accepted: 0, held: 0, skipped: 0, failed: 0 });
   });
 });
 
@@ -175,6 +224,21 @@ describe('submissionResponseSchema arms (F64)', () => {
 
   it('detail/pruned: itemsIncluded false, detailsPruned true, no items', () => {
     expect(submissionResponseSchema.safeParse({ ...header, status: 'complete', detailsPruned: true, itemsIncluded: false }).success).toBe(true);
+  });
+
+  it('rejects impossible source/mode arms (F4)', () => {
+    // manual without a mode
+    expect(submissionResponseSchema.safeParse({ ...header, source: 'manual', itemsIncluded: false }).success).toBe(false);
+    // library carrying a mode
+    expect(submissionResponseSchema.safeParse({ ...header, mode: 'copy', itemsIncluded: false }).success).toBe(false);
+    // manual WITH a mode is legal
+    expect(submissionResponseSchema.safeParse({ ...header, source: 'manual', mode: 'copy', itemsIncluded: false }).success).toBe(true);
+  });
+
+  it('rejects the detail arm claiming pruned details (F4)', () => {
+    expect(
+      submissionResponseSchema.safeParse({ ...header, status: 'complete', detailsPruned: true, itemsIncluded: true, items: [] }).success,
+    ).toBe(false);
   });
 });
 
