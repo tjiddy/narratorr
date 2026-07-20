@@ -16,7 +16,12 @@ import { suggestionReasonSchema, SUGGESTION_REASONS } from './schemas/discovery.
 import { connectorTypeSchema } from './schemas/connector.js';
 import { importJobTypeSchema, importJobStatusSchema, importJobPhaseSchema } from './schemas/import-job.js';
 import { protocolSchema, PROTOCOLS } from './schemas/download-protocol.js';
-import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents, connectors, importJobs } from '../db/schema.js';
+import {
+  submissionStatusSchema, SUBMISSION_STATUSES,
+  itemDispositionSchema, ITEM_DISPOSITIONS,
+  submissionSourceSchema, SUBMISSION_SOURCES,
+} from '../core/import-staging/schemas.js';
+import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents, connectors, importJobs, importSubmissions, importSubmissionItems } from '../db/schema.js';
 
 describe('schema-DB alignment', () => {
   describe('adapter type enums derive from registries', () => {
@@ -148,6 +153,23 @@ describe('schema-DB alignment', () => {
     // only guard. (SQLite text-enums emit no DB CHECK: drizzle-sqlite-text-enum-no-db-check.)
     it('blacklist.blacklistType DB column enum matches blacklistTypeSchema.options', () => {
       expect([...blacklist.blacklistType.enumValues].sort()).toEqual([...blacklistTypeSchema.options].sort());
+    });
+
+    // #1893: staged-import text-enums emit no DB CHECK, so these set-equality
+    // tests are the only guard against the Zod enum and the Drizzle column drifting.
+    it('importSubmissions.status DB column enum matches SUBMISSION_STATUSES', () => {
+      expect([...importSubmissions.status.enumValues].sort()).toEqual([...SUBMISSION_STATUSES].sort());
+      expect([...submissionStatusSchema.options].sort()).toEqual([...SUBMISSION_STATUSES].sort());
+    });
+
+    it('importSubmissions.source DB column enum matches SUBMISSION_SOURCES', () => {
+      expect([...importSubmissions.source.enumValues].sort()).toEqual([...SUBMISSION_SOURCES].sort());
+      expect([...submissionSourceSchema.options].sort()).toEqual([...SUBMISSION_SOURCES].sort());
+    });
+
+    it('importSubmissionItems.disposition DB column enum matches ITEM_DISPOSITIONS', () => {
+      expect([...importSubmissionItems.disposition.enumValues].sort()).toEqual([...ITEM_DISPOSITIONS].sort());
+      expect([...itemDispositionSchema.options].sort()).toEqual([...ITEM_DISPOSITIONS].sort());
     });
   });
 
