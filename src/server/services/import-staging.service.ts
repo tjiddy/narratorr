@@ -209,8 +209,11 @@ export class ImportStagingService {
       for (const row of body.items) {
         const prior = existingByOrdinal.get(row.ordinal);
         if (prior !== undefined) {
+          // Validate the persisted row before comparing (F41) — a malformed stored
+          // payload fails closed rather than deciding equality on untrusted JSON.
+          const priorItem = this.parseStoredItemOrThrow(prior, row.ordinal);
           // Already stored — identical content is a no-op (0 bytes); conflicting content → 409.
-          if (JSON.stringify(prior) !== JSON.stringify(row.item)) {
+          if (JSON.stringify(priorItem) !== JSON.stringify(row.item)) {
             throw new SubmissionError(SUBMISSION_ERROR_CODES.ordinalContentConflict, 409, `ordinal ${row.ordinal} already stored with different content`);
           }
           continue;
@@ -311,7 +314,14 @@ export class ImportStagingService {
         throw new SubmissionError(SUBMISSION_ERROR_CODES.finalizeGaps, 409, 'submission has missing ordinals', gaps);
       }
 
-      const orderedItems = rows.map((r) => r.itemPayload).filter((p): p is StagedImportItem => p != null);
+      // Validate every persisted item before it feeds the AUTHORITATIVE digest (F41):
+      // a malformed stored row fails closed here (typed error, no receiving→processing
+      // transition, no nudge) rather than being hashed as untrusted JSON. (All ordinals
+      // are present + non-null at finalize; a nulled payload would already fail the gap
+      // check above, so any survivor is expected to parse.)
+      const orderedItems = rows
+        .filter((r) => r.itemPayload != null)
+        .map((r) => this.parseStoredItemOrThrow(r.itemPayload, r.ordinal));
       const recomputed = digestItems(current.source, current.mode, orderedItems);
       if (recomputed !== current.payloadDigest) {
         throw new SubmissionError(SUBMISSION_ERROR_CODES.digestMismatch, 409, 'finalize digest mismatch');
@@ -488,6 +498,22 @@ export class ImportStagingService {
     if (!parsed.success) {
       this.log.warn({ submissionId: row.submissionId, ordinal: row.ordinal }, 'Persisted staged item failed validation on read');
       return null;
+    }
+    return parsed.data;
+  }
+
+  /**
+   * Parse a persisted `itemPayload` at a MUTATION read boundary (F41) — the re-PUT
+   * content-equality check and the authoritative finalize digest both consume stored
+   * JSON, which SQLite does not validate against Drizzle's compile-time `$type`. A
+   * malformed persisted row must NOT silently participate in an equality/digest
+   * decision, so we fail closed with a typed error and no state transition/nudge.
+   */
+  private parseStoredItemOrThrow(payload: unknown, ordinal: number): StagedImportItem {
+    const parsed = stagedImportItemSchema.safeParse(payload);
+    if (!parsed.success) {
+      this.log.warn({ ordinal }, 'Persisted staged item failed validation at a mutation read boundary');
+      throw new SubmissionError(SUBMISSION_ERROR_CODES.itemInvalid, 422, `persisted staged item at ordinal ${ordinal} failed validation`);
     }
     return parsed.data;
   }

@@ -9,18 +9,10 @@ import {
   SUBMISSION_ERROR_CODES,
 } from '../../core/import-staging/schemas.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { idParamSchema } from '../../shared/schemas/common.js';
 
-/** Positive-integer :id path param (mirrors the shared idParamSchema contract). */
-const submissionIdParamSchema = z.object({
-  id: z.string().transform((val, ctx) => {
-    const parsed = parseInt(val, 10);
-    if (isNaN(parsed) || parsed < 1) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid ID' });
-      return z.NEVER;
-    }
-    return parsed;
-  }),
-});
+/** Positive-integer :id path param — the canonical shared contract (F46, DRY-2/ZOD-2). */
+const submissionIdParamSchema = idParamSchema;
 
 const byClientParamSchema = z.object({ clientSubmissionId: clientSubmissionIdSchema });
 
