@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, type vi } from 'vitest';
-import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { createTestApp, createMockServices, resetMockServices, installMockAppLog } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import { SubmissionError } from '../services/import-staging.service.js';
 
@@ -45,6 +45,20 @@ describe('import-submissions routes (#1893)', () => {
     it('rejects manual without mode with 400', async () => {
       const res = await app.inject({ method: 'POST', url: '/api/import/submissions', payload: { source: 'manual', clientSubmissionId: UUID, payloadDigest: DIGEST, expectedCount: 2 } });
       expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects invalid clientSubmissionId shapes with 400 (F32 — same validator as by-client)', async () => {
+      for (const bad of ['not-a-uuid', '0'.repeat(36), '3f0f1a52-3b6e-0c1a-9d2b-2a4e6c8f0a11', '3f0f1a52-3b6e-4c1a-cd2b-2a4e6c8f0a11', UUID + '0']) {
+        const res = await app.inject({ method: 'POST', url: '/api/import/submissions', payload: { source: 'library', clientSubmissionId: bad, payloadDigest: DIGEST, expectedCount: 2 } });
+        expect(res.statusCode).toBe(400);
+      }
+    });
+
+    it('rejects expectedCount 0 and > max with 400, accepts exactly max (F33)', async () => {
+      mockFn(services, 'createSubmission').mockResolvedValue(summary);
+      expect((await app.inject({ method: 'POST', url: '/api/import/submissions', payload: { source: 'library', clientSubmissionId: UUID, payloadDigest: DIGEST, expectedCount: 0 } })).statusCode).toBe(400);
+      expect((await app.inject({ method: 'POST', url: '/api/import/submissions', payload: { source: 'library', clientSubmissionId: UUID, payloadDigest: DIGEST, expectedCount: 10001 } })).statusCode).toBe(400);
+      expect((await app.inject({ method: 'POST', url: '/api/import/submissions', payload: { source: 'library', clientSubmissionId: UUID, payloadDigest: DIGEST, expectedCount: 10000 } })).statusCode).toBe(200);
     });
 
     it('maps a digest conflict to 409 with the named code', async () => {
@@ -118,6 +132,18 @@ describe('import-submissions routes (#1893)', () => {
       const res = await app.inject({ method: 'GET', url: '/api/import/submissions/999' });
       expect(res.statusCode).toBe(404);
     });
+
+    it('logs a serialized error when getById fails unexpectedly, then rethrows (F30)', async () => {
+      const { spies, restore } = installMockAppLog(app);
+      mockFn(services, 'getById').mockRejectedValue(new Error('projection boom'));
+      const res = await app.inject({ method: 'GET', url: '/api/import/submissions/7' });
+      expect(res.statusCode).toBe(500); // rethrown to the generic handler
+      expect(spies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'projection boom' }), submissionId: 7 }),
+        expect.stringContaining('GET by id'),
+      );
+      restore();
+    });
   });
 
   describe('GET /api/import/submissions/by-client/:clientSubmissionId (F14 — same query-selected DTO contract)', () => {
@@ -160,15 +186,29 @@ describe('import-submissions routes (#1893)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('invalid uuid → 400', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/import/submissions/by-client/not-a-uuid' });
-      expect(res.statusCode).toBe(400);
+    it('rejects invalid clientSubmissionId shapes with 400 (F32 — same validator as create)', async () => {
+      for (const bad of ['not-a-uuid', '0'.repeat(36), '3f0f1a52-3b6e-0c1a-9d2b-2a4e6c8f0a11', '3f0f1a52-3b6e-4c1a-cd2b-2a4e6c8f0a11']) {
+        const res = await app.inject({ method: 'GET', url: `/api/import/submissions/by-client/${bad}` });
+        expect(res.statusCode).toBe(400);
+      }
     });
 
     it('unknown clientSubmissionId → 404', async () => {
       mockFn(services, 'getByClientId').mockRejectedValue(new SubmissionError('submission-not-found', 404, 'nf'));
       const res = await app.inject({ method: 'GET', url: `/api/import/submissions/by-client/${UUID}` });
       expect(res.statusCode).toBe(404);
+    });
+
+    it('logs a serialized error when getByClientId fails unexpectedly, then rethrows (F30)', async () => {
+      const { spies, restore } = installMockAppLog(app);
+      mockFn(services, 'getByClientId').mockRejectedValue(new Error('lookup boom'));
+      const res = await app.inject({ method: 'GET', url: `/api/import/submissions/by-client/${UUID}` });
+      expect(res.statusCode).toBe(500);
+      expect(spies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'lookup boom' }), clientSubmissionId: UUID }),
+        expect.stringContaining('GET by-client'),
+      );
+      restore();
     });
   });
 });

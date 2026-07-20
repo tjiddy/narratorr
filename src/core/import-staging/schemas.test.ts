@@ -70,6 +70,68 @@ describe('stagedBookMetadataSchema bounds (F34)', () => {
     expect(stagedBookMetadataSchema.safeParse({ ...validMetadata, description: 'd'.repeat(8001) }).success).toBe(false);
     expect(stagedBookMetadataSchema.safeParse({ ...validMetadata, coverUrl: 'not-a-url' }).success).toBe(false);
   });
+
+  // F34: exhaustive at/over matrix for EVERY independent bound so removing/reversing
+  // any single bound fails a test.
+  const parse = (over: Record<string, unknown>) => stagedBookMetadataSchema.safeParse({ ...validMetadata, ...over }).success;
+
+  it('bounds every scalar string field at exactly its maximum', () => {
+    const idMax = 64, shortMax = 512, descMax = 8_000;
+    const scalars: Array<[string, number]> = [
+      ['asin', idMax], ['isbn', idMax], ['goodreadsId', idMax], ['providerId', idMax],
+      ['subtitle', shortMax], ['publisher', shortMax], ['publishedDate', shortMax], ['language', shortMax],
+      ['formatType', shortMax], ['contentDeliveryType', shortMax], ['description', descMax],
+    ];
+    for (const [field, max] of scalars) {
+      expect(parse({ [field]: 'x'.repeat(max) })).toBe(true);   // at boundary
+      expect(parse({ [field]: 'x'.repeat(max + 1) })).toBe(false); // just over
+    }
+    // title has both a min(1) and a 512 max.
+    expect(parse({ title: 'x'.repeat(512) })).toBe(true);
+    expect(parse({ title: 'x'.repeat(513) })).toBe(false);
+  });
+
+  it('bounds coverUrl length and enforces url()', () => {
+    expect(parse({ coverUrl: 'https://e.com/' + 'a'.repeat(2034) })).toBe(true); // exactly 2048
+    expect(parse({ coverUrl: 'https://e.com/' + 'a'.repeat(2040) })).toBe(false); // over 2048
+    expect(parse({ coverUrl: 'a'.repeat(100) })).toBe(false); // not a URL
+  });
+
+  it('bounds nested AuthorRef/SeriesRef fields and enforces their strictness', () => {
+    expect(parse({ authors: [{ name: 'x'.repeat(512) }] })).toBe(true);
+    expect(parse({ authors: [{ name: 'x'.repeat(513) }] })).toBe(false);
+    expect(parse({ authors: [{ name: 'A', asin: 'x'.repeat(64) }] })).toBe(true);
+    expect(parse({ authors: [{ name: 'A', asin: 'x'.repeat(65) }] })).toBe(false);
+    expect(parse({ authors: [{ name: 'A', bogus: 1 }] })).toBe(false); // AuthorRef strict
+    expect(parse({ series: [{ name: 'x'.repeat(512) }] })).toBe(true);
+    expect(parse({ series: [{ name: 'x'.repeat(513) }] })).toBe(false);
+    expect(parse({ series: [{ name: 'S', asin: 'x'.repeat(65) }] })).toBe(false);
+    expect(parse({ series: [{ name: 'S', bogus: 1 }] })).toBe(false); // SeriesRef strict
+    expect(parse({ seriesPrimary: { name: 'S', bogus: 1 } })).toBe(false); // nested strict
+  });
+
+  it('rejects non-finite numbers on position/duration/relevance', () => {
+    expect(parse({ duration: Infinity })).toBe(false);
+    expect(parse({ duration: Number.NaN })).toBe(false);
+    expect(parse({ relevance: Infinity })).toBe(false);
+    expect(parse({ series: [{ name: 'S', position: Infinity }] })).toBe(false);
+    // finite values are accepted
+    expect(parse({ duration: 3600, relevance: 0.9, series: [{ name: 'S', position: 1 }] })).toBe(true);
+  });
+
+  it('bounds every array COUNT at exactly its maximum', () => {
+    const counts: Array<[string, number, () => unknown]> = [
+      ['alternateAsins', 32, () => 'a'],
+      ['authors', 64, () => ({ name: 'A' })],
+      ['narrators', 64, () => 'n'],
+      ['series', 32, () => ({ name: 'S' })],
+      ['genres', 64, () => 'g'],
+    ];
+    for (const [field, max, make] of counts) {
+      expect(parse({ [field]: Array.from({ length: max }, make) })).toBe(true);   // at
+      expect(parse({ [field]: Array.from({ length: max + 1 }, make) })).toBe(false); // over
+    }
+  });
 });
 
 describe('stagedBookMetadataSchema composes the canonical schema (F6)', () => {
@@ -119,10 +181,16 @@ describe('aggregateDispositions (single mapping, F13)', () => {
 });
 
 describe('identifier validators (F56/F57)', () => {
-  it('clientSubmissionId requires a real UUID', () => {
+  it('clientSubmissionId requires a real UUID — full rejection matrix (F32)', () => {
     expect(clientSubmissionIdSchema.safeParse(VALID_UUID).success).toBe(true);
-    expect(clientSubmissionIdSchema.safeParse('0'.repeat(36)).success).toBe(false);
     expect(clientSubmissionIdSchema.safeParse('3f0f1a52-3b6e-4c1a-9d2b-2a4e6c8f0a1').success).toBe(false); // too short
+    expect(clientSubmissionIdSchema.safeParse(VALID_UUID + '0').success).toBe(false); // over-length
+    expect(clientSubmissionIdSchema.safeParse('0'.repeat(36)).success).toBe(false); // 36 chars, no hyphens
+    expect(clientSubmissionIdSchema.safeParse('-'.repeat(36)).success).toBe(false); // all hyphens
+    expect(clientSubmissionIdSchema.safeParse('3f0f1a523-b6e-4c1a-9d2b-2a4e6c8f0a11').success).toBe(false); // misplaced hyphens
+    expect(clientSubmissionIdSchema.safeParse('3f0f1a52-3b6e-0c1a-9d2b-2a4e6c8f0a11').success).toBe(false); // invalid version (0)
+    expect(clientSubmissionIdSchema.safeParse('3f0f1a52-3b6e-4c1a-cd2b-2a4e6c8f0a11').success).toBe(false); // invalid variant (c)
+    expect(clientSubmissionIdSchema.safeParse('3f0f1a52-3b6e-4c1a-9d2b-2a4e6c8f0a1z').success).toBe(false); // non-hex char
   });
 
   it('payloadDigest requires 64 lowercase hex chars', () => {
@@ -147,11 +215,13 @@ describe('createSubmissionBodySchema (source/mode union)', () => {
     ).toBe(false); // library with mode
   });
 
-  it('bounds expectedCount 1..max', () => {
+  it('bounds expectedCount 1..EXPECTED_COUNT_MAX inclusive (F33)', () => {
     const base = { source: 'library' as const, clientSubmissionId: VALID_UUID, payloadDigest: VALID_DIGEST };
-    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 0 }).success).toBe(false);
-    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: EXPECTED_COUNT_MAX + 1 }).success).toBe(false);
-    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 1 }).success).toBe(true);
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 0 }).success).toBe(false); // below min
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 1 }).success).toBe(true); // at min
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: EXPECTED_COUNT_MAX }).success).toBe(true); // EXACTLY at max
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: EXPECTED_COUNT_MAX + 1 }).success).toBe(false); // over max
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 1.5 }).success).toBe(false); // non-integer
   });
 });
 
