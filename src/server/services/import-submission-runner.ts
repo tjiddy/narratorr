@@ -275,11 +275,19 @@ export class ImportSubmissionRunner {
     if (createdBookId === undefined) return;
     this.log.info({ submissionId: sub.id, ordinal: row.ordinal, bookId: createdBookId, title: item.title }, 'Staged import item accepted');
     this.bookService.trackUnmatchedGenres(resolved.genres).catch((err) => this.log.debug({ error: serializeError(err) }, 'Failed to track unmatched genres'));
-    const book = await this.bookService.getById(createdBookId);
-    if (book) {
-      this.eventHistory
-        .create({ bookId: book.id, ...snapshotBookForEvent(book), eventType: 'book_added', source: 'manual' })
-        .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
+    // The book_added event lookup/record is BEST-EFFORT (F49): a rejected getById must
+    // NOT escape and suppress the durable-job nudge below — a committed accepted import
+    // would then wait for the queue worker's safety poll. Guard the whole event path and
+    // always fire the worker nudge.
+    try {
+      const book = await this.bookService.getById(createdBookId);
+      if (book) {
+        this.eventHistory
+          .create({ bookId: book.id, ...snapshotBookForEvent(book), eventType: 'book_added', source: 'manual' })
+          .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
+      }
+    } catch (err: unknown) {
+      this.log.warn({ error: serializeError(err), submissionId: sub.id, ordinal: row.ordinal }, 'Failed to record book_added event — book lookup failed');
     }
     this.nudgeImportWorker();
   }
