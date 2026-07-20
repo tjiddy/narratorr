@@ -391,19 +391,30 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       expect(h!.status).toBe('complete');
     });
 
-    it('safety poll re-drives a submission that arrived without a nudge (recovery without restart)', async () => {
+    it('recovers on the next safety poll after a drain-level failure, without a restart (F19)', async () => {
       vi.useFakeTimers();
       try {
+        const subId = await seedProcessing([acceptedItem('/a', 'A')]); // a 'processing' row exists up-front
         const r = makeRunner(new BookService(db, inject(log)));
-        r.start(); // immediate drain finds nothing yet
-        await vi.advanceTimersByTimeAsync(5);
-        // A submission becomes 'processing' with NO nudge delivered to the runner.
-        const subId = await seedProcessing([acceptedItem('/a', 'A')]);
-        // Advance past the 30s safety-poll interval → the poll's requestDrain picks it up.
+        // Inject a ONE-SHOT drain-level failure: the first drainOne's submission SELECT
+        // throws, bubbling to runDrain's catch. The item must be left pending (not failed)
+        // and the drain must NOT wedge (drainInProgress/runDrainPromise reset).
+        const selectSpy = vi.spyOn(db, 'select').mockImplementationOnce(() => { throw new Error('transient drain blip'); });
+        r.start();
+        await vi.advanceTimersByTimeAsync(50);
+
+        expect(selectSpy).toHaveBeenCalled(); // the blip fired
+        const [afterFail] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+        expect(afterFail!.disposition).toBe('pending'); // failure left it pending, not terminal
+        const [hdrFail] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
+        expect(hdrFail!.status).toBe('processing'); // still awaiting processing
+
+        // The safety poll re-drives WITHOUT a restart and completes it.
         await vi.advanceTimersByTimeAsync(31_000);
-        await vi.advanceTimersByTimeAsync(200); // let the async drain settle
-        const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
-        expect(h!.status).toBe('complete');
+        await vi.advanceTimersByTimeAsync(200);
+        const [done] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
+        expect(done!.status).toBe('complete');
+        expect(await db.select().from(books)).toHaveLength(1);
         await r.stop();
       } finally {
         vi.useRealTimers();

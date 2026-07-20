@@ -437,21 +437,32 @@ describe('ImportQueueWorker', () => {
       // UPDATE ran, so the durable import_jobs row is left `pending`.
       expect(claimSpy).not.toHaveBeenCalled();
 
-      // A fresh, running worker's startup drain claims the still-pending row.
-      const fresh = new ImportQueueWorker(inject<Db>(mockDb.db), log);
-      (fresh as unknown as { running: boolean }).running = true;
-      mockDb.db.select = vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue([{ id: 42 }]),
+      // F20: a fresh worker started through its PUBLIC api boot-recovers, claims the
+      // still-pending row, runs the adapter, and drives it to a terminal 'completed'
+      // write — proving the barrier-left-pending row is genuinely recovered on restart.
+      const processedIds: number[] = [];
+      registerImportAdapter({ type: 'manual', async process(job) { processedIds.push(job.id); } });
+
+      let freshSelect = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        freshSelect++;
+        if (freshSelect === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) }; // bootRecovery: no orphans
+        if (freshSelect === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 42 }]) }; // drain candidate
+        if (freshSelect === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 42, bookId: 10, type: 'manual', status: 'processing', metadata: '{}' }]) }; // full job fetch
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) }; // resolveBookTitle + no more candidates
       });
-      // rowsAffected:0 (lost race) so drainOne returns right after the claim — no job
-      // fetch / adapter path needed; we only prove the claim UPDATE was ATTEMPTED.
-      const freshClaim = vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 0 }) }) });
-      mockDb.db.update = freshClaim;
-      await (fresh as unknown as DrainSeam).drainOne();
-      expect(freshClaim).toHaveBeenCalled(); // the barrier does NOT abort a running worker
+      const setPayloads: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((p: Record<string, unknown>) => { setPayloads.push(p); return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) }; }),
+      }));
+
+      const fresh = new ImportQueueWorker(inject<Db>(mockDb.db), log);
+      await fresh.start(); // public boot: bootRecovery → drainLoop → claim → adapter
+      await new Promise((r) => setTimeout(r, 100));
+      await fresh.stop();
+
+      expect(processedIds).toContain(42); // the durable pending row was claimed + processed
+      expect(setPayloads.some((p) => p.status === 'completed')).toBe(true); // reached terminal completed
     });
   });
 
