@@ -496,4 +496,44 @@ describe('createServices', () => {
     expect(mergeInstances).toHaveLength(1);
     expect(mergeServiceArg).toBe(mergeInstances[0]);
   });
+
+  // F29: the composition root must wire the winning-finalize nudge to the SAME
+  // ImportSubmissionRunner instance it returns, and the accepted-item nudge to the
+  // SAME ImportQueueWorker instance — passing no-op/reversed callbacks would compile
+  // and leave service-local tests green while delaying finalized/accepted processing.
+  it('wires the finalize nudge to the composed runner and the accepted-item nudge to the composed worker (F29)', async () => {
+    const { SettingsService } = await import('../services/index.js');
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    const services = await createServices(db, log);
+
+    // ImportQueueWorker is a constructor mock (no methods) — give the SAME instance the
+    // composition root captured a `nudge` spy so the runner's callback can invoke it.
+    const workerNudge = vi.fn();
+    (services.importQueueWorker as unknown as { nudge: () => void }).nudge = workerNudge;
+    // ImportSubmissionRunner is a REAL instance — spy its nudge to observe the staging callback.
+    const runnerNudge = vi.spyOn(services.importSubmissionRunner, 'nudge').mockImplementation(() => {});
+
+    // Invoke the two callbacks the composition root injected into the real services.
+    (services.importStaging as unknown as { nudgeRunner: () => void }).nudgeRunner();
+    (services.importSubmissionRunner as unknown as { nudgeImportWorker: () => void }).nudgeImportWorker();
+
+    // staging's nudgeRunner → the composed runner instance; runner's nudge → the composed worker.
+    expect(runnerNudge).toHaveBeenCalledTimes(1);
+    expect(workerNudge).toHaveBeenCalledTimes(1);
+  });
 });
