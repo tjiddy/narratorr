@@ -5,12 +5,14 @@ import { join } from 'path';
 import { eq, asc } from 'drizzle-orm';
 import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { books, importJobs, importSubmissions, importSubmissionItems } from '../../db/schema.js';
+import { createHash, randomUUID } from 'node:crypto';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { BookService } from './book.service.js';
 import { BookImportService } from './book-import.service.js';
 import { ImportSubmissionRunner } from './import-submission-runner.js';
+import { ImportStagingService } from './import-staging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import type { StagedImportItem } from '../../core/import-staging/schemas.js';
+import { serializeSubmissionForDigest, type StagedImportItem } from '../../core/import-staging/schemas.js';
 
 interface DrainSeam { drainOne(): Promise<boolean> }
 
@@ -431,20 +433,60 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       txSpy.mockRestore();
     });
 
-    it('carries manual copy/move mode into the durable import-job payload; the library arm omits it (F42)', async () => {
-      // Manual submission → the enqueued job metadata carries the exact mode.
-      await seedProcessing([acceptedItem('/manual', 'M')], { source: 'manual', mode: 'copy' });
-      await drainRunner(makeRunner(new BookService(db, inject(log))));
-      const manualJob = (await db.select().from(importJobs)).find((j) => JSON.parse(j.metadata as string).path === '/manual');
-      expect(manualJob).toBeDefined();
-      expect(JSON.parse(manualJob!.metadata as string).mode).toBe('copy');
+    it('persists manual copy AND move mode through the FULL createSubmission→PUT→finalize→runner flow; library omits it (F48)', async () => {
+      const staging = new ImportStagingService(db, inject(log), () => { /* runner nudge no-op — driven manually */ });
 
-      // Library submission → NO mode key (ManualImportAdapter falls back to pointer mode).
-      await seedProcessing([acceptedItem('/lib', 'L')]); // default library / no-mode
-      await drainRunner(makeRunner(new BookService(db, inject(log))));
-      const libJob = (await db.select().from(importJobs)).find((j) => JSON.parse(j.metadata as string).path === '/lib');
-      expect(libJob).toBeDefined();
-      expect('mode' in JSON.parse(libJob!.metadata as string)).toBe(false);
+      async function runFlow(source: 'library' | 'manual', mode: 'copy' | 'move' | undefined, path: string): Promise<void> {
+        const item = acceptedItem(path, path);
+        const clientSubmissionId = randomUUID();
+        const digest = createHash('sha256')
+          .update(serializeSubmissionForDigest({ source, ...(mode ? { mode } : {}), items: [item] }))
+          .digest('hex');
+        await staging.createSubmission({ source, ...(mode ? { mode } : {}), clientSubmissionId, payloadDigest: digest, expectedCount: 1 } as never);
+        const [hdr] = await db.select().from(importSubmissions).where(eq(importSubmissions.clientSubmissionId, clientSubmissionId));
+        await staging.putItems(hdr!.id, { items: [{ ordinal: 0, item }] });
+        await staging.finalize(hdr!.id); // real digest verification over the persisted mode
+        // The persisted header carries the exact source/mode.
+        const [afterFinalize] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, hdr!.id));
+        expect(afterFinalize!.source).toBe(source);
+        expect(afterFinalize!.mode).toBe(mode ?? null);
+        await drainRunner(makeRunner(new BookService(db, inject(log))));
+      }
+
+      await runFlow('manual', 'copy', '/manual-copy');
+      await runFlow('manual', 'move', '/manual-move');
+      await runFlow('library', undefined, '/lib48');
+
+      const jobs = await db.select().from(importJobs);
+      const jobFor = (p: string) => jobs.find((j) => JSON.parse(j.metadata as string).path === p);
+      expect(JSON.parse(jobFor('/manual-copy')!.metadata as string).mode).toBe('copy');
+      expect(JSON.parse(jobFor('/manual-move')!.metadata as string).mode).toBe('move');
+      expect('mode' in JSON.parse(jobFor('/lib48')!.metadata as string)).toBe(false); // pointer-mode fallback
+    });
+
+    it('a post-commit book lookup failure does not suppress the worker nudge; item stays accepted and processing continues (F49)', async () => {
+      const bs = new BookService(db, inject(log));
+      // The FIRST accepted item's post-commit getById rejects; the second succeeds.
+      vi.spyOn(bs, 'getById').mockRejectedValueOnce(new Error('book lookup boom'));
+      (log.warn as ReturnType<typeof vi.fn>).mockClear();
+      const subId = await seedProcessing([acceptedItem('/a', 'A'), acceptedItem('/b', 'B')]);
+
+      await drainRunner(makeRunner(bs));
+
+      const rows = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId)).orderBy(asc(importSubmissionItems.ordinal));
+      expect(rows[0]!.disposition).toBe('accepted'); // already committed — the lookup failure can't undo it
+      expect(rows[1]!.disposition).toBe('accepted'); // processing continued to the later item
+      // The worker nudge fired for BOTH accepted items — including the lookup-failed one
+      // (the OLD unguarded code would nudge only once, deferring the first to the safety poll).
+      expect(nudge).toHaveBeenCalledTimes(2);
+      // The lookup failure is a serialized best-effort diagnostic.
+      expect(log.warn as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'book lookup boom' }), submissionId: subId, ordinal: 0 }),
+        expect.stringContaining('book lookup failed'),
+      );
+      const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
+      expect(h!.status).toBe('complete');
+      expect(h!.acceptedCount).toBe(2);
     });
 
     it('nudges the import worker EXACTLY once per accepted item (F45 cardinality)', async () => {

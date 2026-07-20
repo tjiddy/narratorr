@@ -452,6 +452,36 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
     expect(submissionResponseSchema.safeParse(res2).success).toBe(true);
   });
 
+  it('GET detail projects a malformed accepted itemPayload as item:null (still schema-valid) + logs a warning; valid control keeps its item (F50)', async () => {
+    const warnSpy = vi.spyOn(noopLog, 'warn');
+    const [placeholder] = await db.insert(books).values({ publicId: 'ph-mal', title: 'PH', status: 'importing' }).returning();
+    const [row] = await db.insert(importSubmissions).values({
+      clientSubmissionId: 'mal-detail', payloadDigest: 'a'.repeat(64), source: 'library',
+      expectedCount: 2, status: 'complete', receivedCount: 2, acceptedCount: 2, completedAt: new Date(),
+    }).returning();
+    const subId = row!.id;
+    // ordinal 0: VALID accepted payload (control); ordinal 1: MALFORMED accepted payload.
+    await db.insert(importSubmissionItems).values([
+      { submissionId: subId, ordinal: 0, itemPayload: items[0]!, path: '/a', title: 'A', disposition: 'accepted', bookId: placeholder!.id },
+      { submissionId: subId, ordinal: 1, itemPayload: { bogus: true } as never, path: '/b', title: 'B', disposition: 'accepted', bookId: placeholder!.id },
+    ]);
+
+    const res = await service.getById(subId, true);
+    expect(res.itemsIncluded).toBe(true);
+    if (!res.itemsIncluded) throw new Error('expected detail arm');
+    const byOrd = Object.fromEntries(res.items.map((i) => [i.ordinal, i])) as Record<number, Record<string, unknown>>;
+    expect(byOrd[0]!.item).toBeTruthy();     // valid control → item present (unconditional-null would fail here)
+    expect(byOrd[1]!.item).toBeNull();       // malformed → explicit null, never the raw {bogus:true} shape
+    // The strict response schema still validates the whole detail response.
+    expect(submissionResponseSchema.safeParse(res).success).toBe(true);
+    // The read-boundary failure is logged with submission/ordinal context.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ submissionId: subId, ordinal: 1 }),
+      expect.stringContaining('failed validation on read'),
+    );
+    warnSpy.mockRestore();
+  });
+
   // ── F41: persisted-item validation at the PUT-replay + finalize read boundaries ──
   describe('persisted-item validation at mutation read boundaries (F41)', () => {
     it('re-PUT of an ordinal whose stored payload is malformed fails closed with 422 and no state change', async () => {

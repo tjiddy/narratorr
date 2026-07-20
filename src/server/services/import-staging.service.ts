@@ -486,14 +486,16 @@ export class ImportStagingService {
   }
 
   /**
-   * Parse a persisted `itemPayload` at the read boundary (F5) — SQLite does not
-   * enforce Drizzle's compile-time `$type`, so a stored blob is untrusted. A
-   * malformed/absent payload projects as `item: null` rather than leaking an
-   * unvalidated shape into the DTO (the projected path/title columns are the
-   * durable display fields and always present).
+   * Project a persisted accepted `itemPayload` at the detail read boundary (F5/F50) —
+   * SQLite does not enforce Drizzle's compile-time `$type`, so a stored blob is
+   * untrusted. Three-state so the accepted DTO can distinguish the cases without ever
+   * leaking an unvalidated shape:
+   *  - `undefined` → payload was intentionally nulled at disposition (omit `item`);
+   *  - `null`      → payload present but MALFORMED (project `item: null`, log a warning);
+   *  - object      → valid parsed item.
    */
-  private parseItemPayload(row: ItemRow): StagedImportItem | null {
-    if (row.itemPayload == null) return null;
+  private projectAcceptedItem(row: ItemRow): StagedImportItem | null | undefined {
+    if (row.itemPayload == null) return undefined;
     const parsed = stagedImportItemSchema.safeParse(row.itemPayload);
     if (!parsed.success) {
       this.log.warn({ submissionId: row.submissionId, ordinal: row.ordinal }, 'Persisted staged item failed validation on read');
@@ -522,8 +524,9 @@ export class ImportStagingService {
     const base = { ordinal: row.ordinal, path: row.path, title: row.title };
     switch (row.disposition) {
       case 'accepted': {
-        const item = this.parseItemPayload(row);
-        return { disposition: 'accepted', ...base, bookId: row.bookId, ...(item != null ? { item } : {}) };
+        const item = this.projectAcceptedItem(row);
+        // `undefined` → omit (payload nulled); `null` → explicit malformed signal; object → valid.
+        return { disposition: 'accepted', ...base, bookId: row.bookId, ...(item !== undefined ? { item } : {}) };
       }
       case 'held':
         return { disposition: 'held', ...base, reason: 'recording-review-required', ...(row.existingBookId != null ? { existingBookId: row.existingBookId } : {}) };
