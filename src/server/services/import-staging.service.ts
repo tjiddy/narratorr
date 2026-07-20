@@ -4,6 +4,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { importSubmissions, importSubmissionItems } from '../../db/schema.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
+import { isUniqueViolation } from '../../shared/error-message.js';
 import {
   serializeSubmissionForDigest,
   aggregateDispositions,
@@ -27,6 +28,9 @@ type ItemRow = typeof importSubmissionItems.$inferSelect;
 
 /** A never-finalized 'receiving' header is GC-eligible after this long (F13 / Retention & GC). */
 const STALE_RECEIVING_MS = 48 * 60 * 60 * 1000;
+
+/** Matches the `client_submission_id` unique-index violation for race-safe create-or-return (F15). */
+const CLIENT_SUBMISSION_ID_UNIQUE = /UNIQUE constraint failed.*(?:import_submissions_client_submission_id_unique|import_submissions\.client_submission_id)/;
 
 /**
  * A typed staged-submission error the routes map to an HTTP status + named code.
@@ -77,35 +81,58 @@ export class ImportStagingService {
    * Create-or-return by clientSubmissionId: same id + identical digest returns the
    * existing header; same id + different digest → typed 409. A lost create response
    * replayed re-returns the same header (no second row).
+   *
+   * Race-safe (F15): the read-then-insert is not atomic, so two overlapping identical
+   * creates can both observe no row. The insert's `clientSubmissionId` unique index
+   * lets exactly one win; the loser catches the unique violation and re-reads, so it
+   * also returns create-or-return (same id / same digest → 409) instead of leaking a
+   * raw 5xx. Only the header unique violation is handled — any other error propagates.
    */
   async createSubmission(body: CreateSubmissionBody): Promise<SubmissionResponse> {
-    const [existing] = await this.db
-      .select()
-      .from(importSubmissions)
-      .where(eq(importSubmissions.clientSubmissionId, body.clientSubmissionId))
-      .limit(1);
-
-    if (existing) {
-      if (existing.payloadDigest !== body.payloadDigest) {
-        throw new SubmissionError(SUBMISSION_ERROR_CODES.digestConflict, 409, 'clientSubmissionId already used with a different payload digest');
-      }
-      return this.buildSummary(existing);
-    }
+    const existing = await this.findHeaderByClientId(body.clientSubmissionId);
+    if (existing) return this.createOrReturn(existing, body.payloadDigest);
 
     const mode = body.source === 'manual' ? body.mode : null;
-    const [row] = await this.db
-      .insert(importSubmissions)
-      .values({
-        clientSubmissionId: body.clientSubmissionId,
-        payloadDigest: body.payloadDigest,
-        source: body.source,
-        mode,
-        expectedCount: body.expectedCount,
-        status: 'receiving',
-      })
-      .returning();
-    this.log.info({ clientSubmissionId: body.clientSubmissionId, source: body.source, expectedCount: body.expectedCount }, 'Staged import submission created');
-    return this.buildSummary(row!);
+    try {
+      const [row] = await this.db
+        .insert(importSubmissions)
+        .values({
+          clientSubmissionId: body.clientSubmissionId,
+          payloadDigest: body.payloadDigest,
+          source: body.source,
+          mode,
+          expectedCount: body.expectedCount,
+          status: 'receiving',
+        })
+        .returning();
+      this.log.info({ clientSubmissionId: body.clientSubmissionId, source: body.source, expectedCount: body.expectedCount }, 'Staged import submission created');
+      return await this.buildSummary(row!);
+    } catch (error: unknown) {
+      // A concurrent identical create won the unique index — re-read and honour the
+      // same create-or-return contract rather than surfacing a raw unique violation.
+      if (isUniqueViolation(error, CLIENT_SUBMISSION_ID_UNIQUE)) {
+        const raced = await this.findHeaderByClientId(body.clientSubmissionId);
+        if (raced) return this.createOrReturn(raced, body.payloadDigest);
+      }
+      throw error;
+    }
+  }
+
+  private async findHeaderByClientId(clientSubmissionId: string): Promise<SubmissionRow | undefined> {
+    const [header] = await this.db
+      .select()
+      .from(importSubmissions)
+      .where(eq(importSubmissions.clientSubmissionId, clientSubmissionId))
+      .limit(1);
+    return header;
+  }
+
+  /** Create-or-return on an existing header: identical digest → the header, else typed 409. */
+  private createOrReturn(existing: SubmissionRow, payloadDigest: string): Promise<SubmissionResponse> {
+    if (existing.payloadDigest !== payloadDigest) {
+      throw new SubmissionError(SUBMISSION_ERROR_CODES.digestConflict, 409, 'clientSubmissionId already used with a different payload digest');
+    }
+    return this.buildSummary(existing);
   }
 
   /**
