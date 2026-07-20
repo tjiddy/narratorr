@@ -2,11 +2,21 @@ import type { SearchOptions } from '../../core/index.js';
 
 /**
  * Strip punctuation that fragments indexer Torznab queries while preserving
- * inner words and letters. Replaces parens/brackets/braces/dots/colons/
- * semicolons/commas with spaces, then collapses whitespace. Indexers tokenize
- * the same characters on their side, so dropping them client-side does not
- * lose matches and prevents zero-result queries from titles like
- * `Blood Ties (World of Warcraft: Midnight)` or authors like `M. O. Walsh`.
+ * inner words and letters. Two tiers:
+ *
+ * 1. **Apostrophes are dropped (no space):** straight `'` (U+0027) and curly
+ *    single quotes `‘`/`’` (U+2018/U+2019). This keeps contractions and names
+ *    as single tokens — `O'Malley → OMalley`, `don't → dont` — instead of
+ *    splitting them (`O Malley`), matching *arr-standard behavior.
+ * 2. **Word-fragmenting punctuation is replaced with a space:** parens/brackets/
+ *    braces/dots/colons/semicolons/commas, plus query-hostile `?`/`!` and
+ *    double quotes `"`/`“`/`”` (U+201C/U+201D). Then whitespace collapses.
+ *
+ * Indexers tokenize these characters on their side, so dropping them
+ * client-side does not lose matches and prevents zero-result queries from
+ * titles like `Blood Ties (World of Warcraft: Midnight)`, authors like
+ * `M. O. Walsh`, or `?`-terminated titles that MAM's text engine cannot match
+ * (`Is She Really Going Out with Him?` — see #1904).
  *
  * Distinct from `cleanName` in `folder-parsing.ts` — that strips trailing
  * parens *and their content* for narrator annotations during library import.
@@ -14,7 +24,8 @@ import type { SearchOptions } from '../../core/index.js';
  */
 export function cleanIndexerQuery(s: string): string {
   return s
-    .replace(/[()[\]{}.:;,]/g, ' ')
+    .replace(/['‘’]/g, '')
+    .replace(/[()[\]{}.:;,?!"“”]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }

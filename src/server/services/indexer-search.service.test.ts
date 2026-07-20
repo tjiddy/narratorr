@@ -1273,6 +1273,41 @@ describe('IndexerSearchService', () => {
         );
       });
 
+      it('#1904 strips a trailing "?" from the transportQuery (MAM specimen)', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        await searchService.searchAll('Is She Really Going Out with Him? Sophie Cousens');
+
+        expect(mockAdapter.search).toHaveBeenCalledWith(
+          'Is She Really Going Out with Him Sophie Cousens',
+          undefined,
+        );
+      });
+
+      it('#1904 drops apostrophes in options.author without splitting the token', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        await searchService.searchAll('Trouble', {
+          title: 'Trouble',
+          author: "Fintan O'Toole",
+        });
+
+        const passedOptions = mockAdapter.search.mock.calls[0]![1];
+        expect(passedOptions.author).toBe('Fintan OToole');
+      });
+
       it('cleans options.author dotted initials before passing to adapter.search', async () => {
         db.select.mockReturnValue(mockDbChain([mockIndexer]));
         const mockAdapter = {
@@ -1419,6 +1454,30 @@ describe('IndexerSearchService', () => {
         expect(results[0]!.matchScore).toBe(1);
       });
 
+      it('#1904 searchAll: matchScore is 1.0 for exact-match raw context with a "?" (NOT cleaned)', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([
+            // Result arrives raw from the indexer with the original punctuation
+            { title: 'Is She Really Going Out with Him?', indexer: 'ABB', protocol: 'torrent' },
+          ])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        const results = await searchService.searchAll(
+          'Is She Really Going Out with Him Sophie Cousens',
+          { title: 'Is She Really Going Out with Him?' },
+        );
+
+        // Transport query was cleaned, but ranking scored the raw punctuated title → exact match.
+        expect(mockAdapter.search.mock.calls[0]![0]).toBe(
+          'Is She Really Going Out with Him Sophie Cousens',
+        );
+        expect(results[0]!.matchScore).toBe(1);
+      });
+
       it('searchAllStreaming: matchScore is 1.0 for exact-match raw context with dots', async () => {
         db.select.mockReturnValue(mockDbChain([mockIndexer]));
         const mockAdapter = {
@@ -1453,6 +1512,21 @@ describe('IndexerSearchService', () => {
         vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
         const results = await searchService.searchAll('()');
+
+        expect(results).toEqual([]);
+        expect(mockAdapter.search).not.toHaveBeenCalled();
+      });
+
+      it('#1904 searchAll short-circuits when a "?!"-only query cleans to empty (no adapter call)', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn(),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        const results = await searchService.searchAll('?!');
 
         expect(results).toEqual([]);
         expect(mockAdapter.search).not.toHaveBeenCalled();
