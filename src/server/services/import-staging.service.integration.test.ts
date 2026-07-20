@@ -7,7 +7,7 @@ import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { importSubmissions, importSubmissionItems, books } from '../../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { ImportStagingService } from './import-staging.service.js';
-import { serializeSubmissionForDigest, MAX_SUBMISSION_BYTES, type StagedImportItem } from '../../core/import-staging/schemas.js';
+import { serializeSubmissionForDigest, submissionResponseSchema, MAX_SUBMISSION_BYTES, EXPECTED_COUNT_MAX, type StagedImportItem } from '../../core/import-staging/schemas.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 const noopLog = {
@@ -387,14 +387,14 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
     });
   });
 
-  // ── F22: bounded finalize gaps report on a sparse submission ──────────────
-  it('finalize on a sparse submission returns a bounded gaps report (≤100 ordered entries, totalMissing, truncated) (F22)', async () => {
-    const expectedCount = 150;
+  // ── F22/F33: bounded finalize gaps report on a MAX-sized sparse submission ──
+  it('finalize on a max-count sparse submission returns a bounded gaps report (≤100 ordered, totalMissing, truncated) (F22/F33)', async () => {
+    const expectedCount = EXPECTED_COUNT_MAX; // the explicitly-required maximum (10,000)
     const [row] = await db.insert(importSubmissions).values({
       clientSubmissionId: 'sparse-gaps', payloadDigest: 'a'.repeat(64), source: 'library',
       expectedCount, status: 'receiving',
     }).returning();
-    // Only ordinal 0 present → ordinals 1..149 are missing (149 gaps).
+    // Only ordinal 0 present → ordinals 1..(MAX-1) are missing.
     await service.putItems(row!.id, { items: [{ ordinal: 0, item: items[0]! }] });
 
     try {
@@ -403,10 +403,10 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
     } catch (err) {
       const gaps = (err as { code: string; gaps?: { missing: number[]; totalMissing: number; truncated: boolean } });
       expect(gaps.code).toBe('finalize-gaps');
-      expect(gaps.gaps!.missing).toHaveLength(100); // bounded to ≤100
+      expect(gaps.gaps!.missing).toHaveLength(100); // bounded to ≤100 even at the maximum count
       expect(gaps.gaps!.missing[0]).toBe(1); // ordered from the first gap
       expect(gaps.gaps!.missing).toEqual([...gaps.gaps!.missing].sort((a, b) => a - b)); // ascending
-      expect(gaps.gaps!.totalMissing).toBe(149); // the FULL count, not the truncated length
+      expect(gaps.gaps!.totalMissing).toBe(expectedCount - 1); // the FULL count, not the truncated length
       expect(gaps.gaps!.truncated).toBe(true);
     }
     // No state change — the header stays receiving.
@@ -414,28 +414,82 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
     expect(h!.status).toBe('receiving');
   });
 
-  // ── F23: simultaneous finalize callers (separate connections) ────────────
-  it('two simultaneous finalize callers both land on processing with exactly one transition/nudge (F23)', async () => {
+  // ── F31: terminal detail DTO projection driven through the service ────────
+  it('projects every terminal disposition through toItemDto and reflects accepted-book deletion (F31/F50)', async () => {
+    const [placeholder] = await db.insert(books).values({ publicId: 'ph-term', title: 'Placeholder', status: 'importing' }).returning();
+    const [incumbent] = await db.insert(books).values({ publicId: 'inc-term', title: 'Incumbent', status: 'imported' }).returning();
+    const [row] = await db.insert(importSubmissions).values({
+      clientSubmissionId: 'term-proj', payloadDigest: 'a'.repeat(64), source: 'library',
+      expectedCount: 4, status: 'complete', receivedCount: 4,
+      acceptedCount: 1, heldCount: 1, skippedCount: 1, failedCount: 1, completedAt: new Date(),
+    }).returning();
+    const subId = row!.id;
+    await db.insert(importSubmissionItems).values([
+      { submissionId: subId, ordinal: 0, itemPayload: items[0]!, path: '/a', title: 'A', disposition: 'accepted', bookId: placeholder!.id },
+      { submissionId: subId, ordinal: 1, itemPayload: items[1]!, path: '/b', title: 'B', disposition: 'held', existingBookId: incumbent!.id },
+      { submissionId: subId, ordinal: 2, itemPayload: items[0]!, path: '/c', title: 'C', disposition: 'skipped', reason: 'already-in-library', existingBookId: incumbent!.id, existingTitle: 'Incumbent' },
+      { submissionId: subId, ordinal: 3, itemPayload: items[1]!, path: '/d', title: 'D', disposition: 'failed', reason: 'Import failed — see server logs for details.' },
+    ]);
+
+    const res = await service.getById(subId, true);
+    expect(res.itemsIncluded).toBe(true);
+    if (!res.itemsIncluded) throw new Error('expected detail arm');
+    const byOrd = Object.fromEntries(res.items.map((i) => [i.ordinal, i])) as Record<number, Record<string, unknown>>;
+    expect(byOrd[0]).toMatchObject({ disposition: 'accepted', bookId: placeholder!.id });
+    expect(byOrd[0]!.item).toBeTruthy(); // accepted itemPayload parsed + projected
+    expect(byOrd[1]).toMatchObject({ disposition: 'held', reason: 'recording-review-required', existingBookId: incumbent!.id });
+    expect(byOrd[2]).toMatchObject({ disposition: 'skipped', reason: 'already-in-library', existingBookId: incumbent!.id, existingTitle: 'Incumbent' });
+    expect(byOrd[3]).toMatchObject({ disposition: 'failed', message: 'Import failed — see server logs for details.' });
+    // The full detail response validates against the strict DTO union (no cross-disposition leakage).
+    expect(submissionResponseSchema.safeParse(res).success).toBe(true);
+
+    // F50: deleting the accepted placeholder book set-nulls bookId while the disposition stays 'accepted'.
+    await db.delete(books).where(eq(books.id, placeholder!.id));
+    const res2 = await service.getById(subId, true);
+    if (!res2.itemsIncluded) throw new Error('expected detail arm');
+    const acc = res2.items.find((i) => i.ordinal === 0)!;
+    expect(acc).toMatchObject({ disposition: 'accepted', bookId: null });
+    expect(submissionResponseSchema.safeParse(res2).success).toBe(true);
+  });
+
+  // ── F23/F36: simultaneous finalize callers on the SAME service (single-process) ──
+  it('two simultaneous finalize callers on one service BOTH fulfill with the processing header and exactly one nudge (F36)', async () => {
     await service.createSubmission(createBody);
     await service.putItems(1, { items: [{ ordinal: 0, item: items[0]! }, { ordinal: 1, item: items[1]! }] });
 
-    // Two callers over SEPARATE connections (real simultaneity via SQLite locking). Both
-    // share the SAME nudge counter so we can assert exactly ONE winning transition nudged.
+    // Both calls hit the SAME composed service (the supported single-process path). The
+    // in-process write lane serializes them so neither rejects; both ORIGINAL promises
+    // must fulfill with 'processing', and only the winning CAS nudges.
+    const results = await Promise.allSettled([service.finalize(1), service.finalize(1)]);
+    expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+    for (const r of results) {
+      expect((r as PromiseFulfilledResult<{ status: string }>).value.status).toBe('processing');
+    }
+    expect(nudge).toHaveBeenCalledTimes(1);
+
+    const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, 1));
+    expect(h!.status).toBe('processing');
+    expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, 1))).toHaveLength(2);
+  });
+
+  // Cross-connection invariant (a separate durable-CAS backstop): a second process
+  // contends via a distinct connection; SQLite file locking still yields exactly one
+  // winning transition/nudge, with a retryable lock-loss on the loser.
+  it('finalize contention across SEPARATE connections still transitions once (F23 backstop)', async () => {
+    await service.createSubmission(createBody);
+    await service.putItems(1, { items: [{ ordinal: 0, item: items[0]! }, { ordinal: 1, item: items[1]! }] });
+
     const db2 = createDb(dbFile);
     const service2 = new ImportStagingService(db2, noopLog, nudge as unknown as () => void);
     const results = await Promise.allSettled([service.finalize(1), service2.finalize(1)]);
     db2.$client.close();
-    // A lock-loss (SQLITE_BUSY) on one caller is retryable and idempotent — replay it.
     for (const r of results) {
-      if (r.status === 'rejected') await service.finalize(1);
+      if (r.status === 'rejected') await service.finalize(1); // lock-loss is retryable + idempotent
     }
 
     const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, 1));
     expect(h!.status).toBe('processing');
-    // Only the winning receiving→processing CAS nudges; replays are no-ops.
     expect(nudge).toHaveBeenCalledTimes(1);
-    // No duplicated item/header state.
-    expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, 1))).toHaveLength(2);
   });
 
   // ── F12: retention method behavior ───────────────────────────────────────
@@ -568,8 +622,9 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
       }
     });
 
-    // ── F26/F27: concurrent cleanup vs PUT / finalize (separate connections) ──
-    it('cleanup racing a concurrent PUT preserves the no-orphan invariant (F26)', async () => {
+    // ── F37/F38: concurrent cleanup vs PUT / finalize (separate connections) ──
+    // Each raced result is classified explicitly — no vacuous branches.
+    it('cleanup racing a concurrent PUT: fulfilled PUT retains header+item+counters; cleanup winner leaves neither (F37)', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       try {
         const now = new Date('2026-07-20T12:00:00.000Z');
@@ -585,25 +640,44 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
         ]);
         db2.$client.close();
 
+        const putResult = results[0]!;
         const [hdr] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, id));
         const itemRows = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id));
-        if (hdr) {
-          // No orphan: any surviving item belongs to the surviving receiving header.
-          if (results[0]!.status === 'fulfilled') {
-            expect(hdr.status).toBe('receiving');
-            expect(itemRows).toHaveLength(1);
-            expect(hdr.receivedCount).toBe(1);
-          }
-        } else {
-          // Cleanup won: header gone AND its items cascade-deleted — no orphan.
+
+        if (putResult.status === 'fulfilled') {
+          // PUT won: header survives, refreshed (updatedAt=now so sweep couldn't delete),
+          // and carries exactly its item + counters — a complete, non-partial write.
+          expect(hdr).toBeDefined();
+          expect(hdr!.status).toBe('receiving');
+          expect(hdr!.receivedCount).toBe(1);
+          expect(hdr!.receivedBytes).toBeGreaterThan(0);
+          expect(hdr!.updatedAt.getTime()).toBe(now.getTime());
+          expect(itemRows).toHaveLength(1);
+        } else if (!hdr) {
+          // Cleanup won: header gone AND items cascade-deleted — PUT rejected, no orphan.
           expect(itemRows).toHaveLength(0);
+        } else {
+          // Lock-loss (SQLITE_BUSY): the whole PUT tx rolled back — NO partial item and
+          // NO counter change under the surviving stale header.
+          expect(hdr!.status).toBe('receiving');
+          expect(itemRows).toHaveLength(0);
+          expect(hdr!.receivedCount).toBe(0);
         }
       } finally {
         vi.useRealTimers();
       }
     });
 
-    it('cleanup racing a concurrent finalize preserves the permanent-record invariant (F27)', async () => {
+    it('finalize on an already-deleted header returns a typed 404 (cleanup-winner outcome, F38)', async () => {
+      await service.createSubmission(createBody);
+      await service.putItems(1, { items: [{ ordinal: 0, item: items[0]! }, { ordinal: 1, item: items[1]! }] });
+      // Simulate a cleanup that deleted the header before finalize runs.
+      await db.delete(importSubmissions).where(eq(importSubmissions.id, 1));
+      await expect(service.finalize(1)).rejects.toMatchObject({ httpStatus: 404 });
+      expect(nudge).not.toHaveBeenCalled();
+    });
+
+    it('cleanup racing a concurrent finalize: fulfilled finalize → processing+one nudge; cleanup winner → typed 404, no record, zero nudges (F38)', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       try {
         const now = new Date('2026-07-20T12:00:00.000Z');
@@ -615,23 +689,28 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
 
         const db2 = createDb(dbFile);
         const service2 = new ImportStagingService(db2, noopLog, vi.fn() as unknown as () => void);
-        await Promise.allSettled([service.finalize(1), service2.sweepStaleReceiving()]);
+        const results = await Promise.allSettled([service.finalize(1), service2.sweepStaleReceiving()]);
         db2.$client.close();
 
-        // If the header survived but a lock-loss left it still 'receiving', the retry is
-        // an idempotent finalize (completes it); a replay on 'processing' is a no-op.
-        const [mid] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, 1));
-        if (mid && mid.status === 'receiving') await service.finalize(1);
-
+        const finalizeResult = results[0]!;
         const [hdr] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, 1));
-        if (hdr) {
+
+        if (finalizeResult.status === 'fulfilled') {
           // Finalize won: the permanent record flipped to processing with exactly one nudge.
-          expect(hdr.status).toBe('processing');
+          expect((finalizeResult.value as { status: string }).status).toBe('processing');
+          expect(hdr!.status).toBe('processing');
           expect(nudge).toHaveBeenCalledTimes(1);
-        } else {
-          // Cleanup won: no processing record survives and finalize never nudged a deleted record.
+        } else if (!hdr) {
+          // Cleanup won: the finalize rejection is the TYPED 404 (not a raw failure/stale
+          // success), no record/items survive, and nothing was nudged.
+          expect((finalizeResult.reason as { httpStatus?: number }).httpStatus).toBe(404);
           expect(nudge).not.toHaveBeenCalled();
           expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, 1))).toHaveLength(0);
+        } else {
+          // Lock-loss (SQLITE_BUSY): no transition, no nudge; the header is still receiving
+          // and finalize is retryable/idempotent.
+          expect(hdr!.status).toBe('receiving');
+          expect(nudge).not.toHaveBeenCalled();
         }
       } finally {
         vi.useRealTimers();
