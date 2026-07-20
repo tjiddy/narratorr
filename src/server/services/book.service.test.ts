@@ -844,6 +844,37 @@ describe('BookService', () => {
       expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
     });
 
+    // #1893 — the extracted `resolveCreateInput` primitive that the staged-import
+    // runner calls BEFORE opening its per-item transaction. It performs the ONLY
+    // provider I/O and returns a providerId-free resolved input.
+    describe('resolveCreateInput (#1893 pre-transaction enrichment)', () => {
+      it('carries the provider ASIN and drops providerId (positive)', async () => {
+        mockMetadata.getBook.mockResolvedValueOnce({ title: 'Book', authors: [], asin: 'B_ENRICHED' });
+        const resolved = await serviceWithMeta.resolveCreateInput({ title: 'Test', authors: [], providerId: 'hc-123' });
+        expect(resolved.asin).toBe('B_ENRICHED');
+        expect('providerId' in resolved).toBe(false);
+        expect(mockMetadata.getBook).toHaveBeenCalledWith('hc-123');
+      });
+
+      it('skips provider I/O when an ASIN is already present', async () => {
+        const resolved = await serviceWithMeta.resolveCreateInput({ title: 'Test', authors: [], asin: 'B_ALREADY', providerId: 'hc-123' });
+        expect(resolved.asin).toBe('B_ALREADY');
+        expect(mockMetadata.getBook).not.toHaveBeenCalled();
+      });
+
+      it('leaves asin undefined when the provider yields no ASIN (null-ASIN)', async () => {
+        mockMetadata.getBook.mockResolvedValueOnce(null);
+        const resolved = await serviceWithMeta.resolveCreateInput({ title: 'Test', authors: [], providerId: 'hc-999' });
+        expect(resolved.asin).toBeUndefined();
+      });
+
+      it('swallows a provider failure and leaves asin undefined', async () => {
+        mockMetadata.getBook.mockRejectedValueOnce(new Error('API timeout'));
+        const resolved = await serviceWithMeta.resolveCreateInput({ title: 'Test', authors: [], providerId: 'hc-bad' });
+        expect(resolved.asin).toBeUndefined();
+      });
+    });
+
     it('inserts null asin when getBook resolves metadata with an EMPTY-string asin (AC4/F9)', async () => {
       const infoLog = createMockLogger();
       const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(infoLog), inject<MetadataService>(mockMetadata));
