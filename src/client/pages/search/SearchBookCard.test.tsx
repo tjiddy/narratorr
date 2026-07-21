@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { SearchBookCard } from './SearchBookCard';
+import { mapBookMetadataToPayload } from '@/lib/helpers';
 import { createMockBookMetadata, createMockBook } from '@/__tests__/factories';
 
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -143,9 +144,17 @@ describe('SearchBookCard', () => {
     await user.click(screen.getByRole('button', { name: /add book/i }));
     const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
     await user.click(addToLibrary);
+    // AC4 — Add must submit the SEARCHED edition's payload, not the owned
+    // incumbent. Assert the exact mapped payload: the searched ASIN (B003P2WO5E,
+    // NOT the incumbent's B00DIFFEDN), the searched authors, and the resolved
+    // searchImmediately (false, from the mocked quality defaults).
     await waitFor(() => {
-      expect(api.addBook).toHaveBeenCalledTimes(1);
+      expect(api.addBook).toHaveBeenCalledWith(
+        mapBookMetadataToPayload(createMockBookMetadata(), { searchImmediately: false }),
+      );
     });
+    expect(api.addBook).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.addBook).mock.calls[0]![0]!.asin).toBe('B003P2WO5E');
   });
 
   // AC1a — array order must not re-enable Add for an exact-ASIN-owned recording.
