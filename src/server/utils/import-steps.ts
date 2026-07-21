@@ -40,13 +40,16 @@ import { deleteManagedBookFiles } from './delete-managed-files.js';
 // re-exported here so existing importers (import.service.ts, manual path, tests) are unchanged.
 export {
   prepareImportSiblings, commitStagedImport, cleanupImportSiblings, stagedAudioReplace, removeImportSibling,
-  markerPresent, BackupRecoveryError, findCommitPendingMarkers, sweepCommitPendingMarkers,
-  convergeStrandedMarker, assertMarkerPathWritable, MarkerPathConflictError,
+  markerPresent, BackupRecoveryError, BackupAmbiguityError,
+  assertMarkerPathWritable, MarkerPathConflictError,
 } from './import-staging.js';
 export type {
   PrepareImportSiblingsArgs, CommitStagedImportArgs, CleanupImportSiblingsArgs, StagedAudioReplaceArgs,
-  MarkerSweepResult,
 } from './import-staging.js';
+// The boot-time marker sweep moved to its own module (#1911 line-cap split); re-export here so
+// existing consumers (marker-sweep.test.ts, import-queue-worker) keep one entry point.
+export { findCommitPendingMarkers, sweepCommitPendingMarkers, convergeStrandedMarker } from './import-marker-sweep.js';
+export type { MarkerSweepResult } from './import-marker-sweep.js';
 
 // ── isContentFailure ────────────────────────────────────────────────────
 

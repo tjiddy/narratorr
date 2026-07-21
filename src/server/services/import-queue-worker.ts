@@ -12,7 +12,7 @@ import { serializeError } from '../utils/serialize-error.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { parsePhaseHistory } from '../utils/parse-phase-history.js';
 import { safeEmit } from '../utils/safe-emit.js';
-import { sweepCommitPendingMarkers } from '../utils/import-staging.js';
+import { sweepCommitPendingMarkers } from '../utils/import-marker-sweep.js';
 import { transitionBookStatus } from '../utils/book-status.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { OwnedRecordingError } from './book.service.js';

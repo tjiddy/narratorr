@@ -33,11 +33,5 @@ export async function recoverInterruptedCommit(
   log: FastifyBaseLogger,
 ): Promise<void> {
   await assertMarkerPathWritable(targetPath);
-  await prepareImportSiblings({
-    stagingPath: `${targetPath}.import-tmp`,
-    backupPath: `${targetPath}.import-bak`,
-    targetPath,
-    libraryRoot,
-    log,
-  });
+  await prepareImportSiblings({ targetPath, libraryRoot, log });
 }

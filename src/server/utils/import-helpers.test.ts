@@ -209,6 +209,14 @@ describe('buildTargetPath', () => {
       expect(norm(result)).toBe('/audiobooks/Blake Crouch/Dark Matter (Full Cast)');
     });
 
+    it('#1911: the active scratch suffixes are reserved on the edition label too', () => {
+      for (const suffix of ['.import-staging', '.import-backup']) {
+        const result = buildTargetPath('/audiobooks', '{author}/{title}', book, 'Blake Crouch', undefined, `Full Cast${suffix}`);
+        expect(norm(result).endsWith(suffix)).toBe(false);
+        expect(norm(result)).toBe('/audiobooks/Blake Crouch/Dark Matter (Full Cast)');
+      }
+    });
+
     describe('no truncation-collapse with a 255-char title (F9)', () => {
       const longTitle = 'T'.repeat(255);
       const longBook = { title: longTitle };

@@ -21,6 +21,7 @@ import {
   verifyCopy, commitStagedImport, cleanupOldBookPath, handleImportFailure,
   assertMarkerPathWritable,
 } from '../utils/import-steps.js';
+import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
 import type { DownloadRow } from './types.js';
 import { removeOrDeferTorrent, type TorrentRemovalResult } from './torrent-removal.helpers.js';
 import { transitionDownloadState, qualityGateEligibleDownloadCondition } from '../utils/download-state.js';
@@ -160,8 +161,9 @@ export class ImportService {
       // sibling cleanup runs, an adjacent pre-existing `.import-bak` survives) and protectTarget
       // already set. Aborts before prepareImportSiblings can strict-clear any sibling.
       await assertMarkerPathWritable(targetPath);
-      stagingPath = `${targetPath}.import-tmp`;
-      backupPath = `${targetPath}.import-bak`;
+      // Active born-hidden scratch (#1911) via the ONE shared helper: `.import-staging` /
+      // `.import-backup`, dot-led so an ABS scan mid-copy ingests nothing from the staging dir.
+      ({ stagingPath, backupPath } = deriveImportSiblings(targetPath));
       this.log.debug({ downloadId, bookTitle: book.title, targetPath, protectTarget }, 'Built target path');
 
       const { sourcePath, fileCount, sourceStats } = await validateSource(savePath, this.remotePathMappingService, download.downloadClientId);
@@ -173,7 +175,7 @@ export class ImportService {
       // Copy, rename and verify the new version into `.import-tmp`. The existing
       // targetPath is never touched here, so a copy failure can't destroy the
       // current book — old audio, cover and metadata all remain in place.
-      await prepareImportSiblings({ stagingPath, targetPath, backupPath, libraryRoot, log: this.log });
+      await prepareImportSiblings({ targetPath, libraryRoot, log: this.log });
       await notifyPhase(callbacks, 'copying');
       await copyToLibrary({
         sourcePath, targetPath: stagingPath, sourceStats, log: this.log,
