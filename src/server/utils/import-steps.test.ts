@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
@@ -1271,6 +1271,19 @@ describe('#1911 recovery preservation: strict marker-removal + late total-clean 
     vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);
     vi.mocked(rename).mockResolvedValue(undefined as never);
     vi.mocked(mkdir).mockResolvedValue(undefined as never);
+    // Each test installs its own `rm.mockImplementation`; start from a clean resolved default.
+    vi.mocked(rm).mockReset();
+    vi.mocked(rm).mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    // These tests install a persistent `rm.mockImplementation` (path-specific rejections).
+    // `vi.clearAllMocks()` (the file-level `beforeEach`) clears CALLS but NOT implementations,
+    // and the downstream `handleImportFailure` suite reuses this exact `.import-bak` path
+    // without resetting `rm` — so restore the resolved default here or the leaked rejection
+    // silently drives an unintended cleanup-failure branch in those tests (#1911 review F5).
+    vi.mocked(rm).mockReset();
+    vi.mocked(rm).mockResolvedValue(undefined as never);
   });
 
   it('F2 (AC9): a strict marker-removal `rm` failure throws BackupRecoveryError, preserves the marker, and the stage/mutation callback is never reached', async () => {
