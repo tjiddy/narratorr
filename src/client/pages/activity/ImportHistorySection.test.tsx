@@ -293,38 +293,47 @@ describe('ImportHistorySection (#1894)', () => {
     expect(getImportSubmissionDetail.mock.calls.length).toBe(calls);
   });
 
-  it('an OFF-PAGE deep-linked card self-polls to terminal ROWS and HEADER, stays terminal across collapse/re-expand, and never refetches the list (F35/F46)', async () => {
+  it('an OFF-PAGE deep-linked card self-polls to terminal ROWS + HEADER (status/count/completed-time), stays terminal across collapse/re-expand, and never refetches the list (F35/F46/F49)', async () => {
     vi.useFakeTimers();
+    const now = new Date('2026-07-21T12:00:00.000Z');
+    vi.setSystemTime(now); // freeze Date so the relative-time labels are deterministic
+    const createdAt = new Date(now.getTime() - 3 * 3600_000).toISOString(); // 3h ago
+    const completedAt = new Date(now.getTime() - 1 * 3600_000).toISOString(); // 1h ago (distinct label)
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 }); // page lacks id 9
     let phase: 'processing' | 'complete' = 'processing';
     getImportSubmissionDetail.mockImplementation(() => Promise.resolve(
       phase === 'processing'
-        ? { ...summary({ id: 9, status: 'processing', processedCount: 0, aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 } }), itemsIncluded: true, items: [{ disposition: 'pending', ordinal: 0, path: '/a', title: 'Pending Book' }] }
-        : { ...summary({ id: 9, status: 'complete', processedCount: 1, aggregates: { accepted: 0, held: 1, skipped: 0, failed: 0 }, completedAt: new Date('2026-07-21T00:00:00.000Z').toISOString() }), itemsIncluded: true, items: [{ disposition: 'held', ordinal: 0, path: '/a', title: 'Held Book', reason: 'recording-review-required' }] },
+        ? { ...summary({ id: 9, status: 'processing', processedCount: 0, aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 }, createdAt }), itemsIncluded: true, items: [{ disposition: 'pending', ordinal: 0, path: '/a', title: 'Pending Book' }] }
+        : { ...summary({ id: 9, status: 'complete', processedCount: 1, aggregates: { accepted: 0, held: 1, skipped: 0, failed: 0 }, createdAt, completedAt }), itemsIncluded: true, items: [{ disposition: 'held', ordinal: 0, path: '/a', title: 'Held Book', reason: 'recording-review-required' }] },
     ));
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=9' });
     await vi.advanceTimersByTimeAsync(10);
     const card9 = () => screen.getByTestId('import-history-card-9'); // re-query (DOM re-renders)
     expect(within(card9()).getByText('Processing')).toBeInTheDocument(); // header from the detail (processing)
+    expect(within(card9()).getByText('3h ago')).toBeInTheDocument(); // processing → createdAt time
     expect(screen.queryByText('Held Book')).not.toBeInTheDocument();
     const listCalls = listImportSubmissions.mock.calls.length;
 
     phase = 'complete';
     await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10); // the detail's own poll advances
-    // Terminal ROWS and terminal HEADER (status + counts) both update from the detail.
+    // Terminal ROWS and terminal HEADER (status + count + COMPLETED time) all update.
     expect(screen.getByText('Held Book')).toBeInTheDocument();
     expect(within(card9()).getByText('Completed')).toBeInTheDocument();
     expect(within(card9()).getByText('1 held')).toBeInTheDocument();
+    expect(within(card9()).getByText('1h ago')).toBeInTheDocument(); // complete → completedAt time
     expect(within(card9()).queryByText('Processing')).not.toBeInTheDocument();
+    expect(within(card9()).queryByText('3h ago')).not.toBeInTheDocument(); // no longer the createdAt time
 
-    // Collapse and re-expand — the header stays terminal (never reverts to Processing).
+    // Collapse and re-expand — the header stays terminal (status + completed time).
     fireEvent.click(within(card9()).getAllByRole('button')[0]!);
     await vi.advanceTimersByTimeAsync(10);
     expect(within(card9()).getByText('Completed')).toBeInTheDocument();
+    expect(within(card9()).getByText('1h ago')).toBeInTheDocument();
     expect(screen.queryByText('Held Book')).not.toBeInTheDocument(); // rows collapsed
     fireEvent.click(within(card9()).getAllByRole('button')[0]!);
     await vi.advanceTimersByTimeAsync(10);
     expect(within(card9()).getByText('Completed')).toBeInTheDocument();
+    expect(within(card9()).getByText('1h ago')).toBeInTheDocument();
     expect(screen.getByText('Held Book')).toBeInTheDocument();
 
     // The detail poll STOPPED at complete, and the off-page path never refetched the list.

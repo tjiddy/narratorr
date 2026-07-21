@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
@@ -192,10 +192,20 @@ describe('ImportAttentionBanner (#1894)', () => {
     // The fast poll fails (retry:2 backoff) → the failure is OBSERVABLE, not silent null.
     await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 5000);
     expect(screen.getByTestId('attention-error')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+
+    // Retry re-hits the attention read with the SAME source and, on success, clears the
+    // error and surfaces the banner (F48).
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(7), true));
+    const callsBefore = getImportSubmissionAttention.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(getImportSubmissionAttention.mock.calls.length).toBeGreaterThan(callsBefore);
+    expect(getImportSubmissionAttention).toHaveBeenLastCalledWith({ source: 'library' });
+    expect(screen.queryByTestId('attention-error')).not.toBeInTheDocument(); // error cleared
+    expect(screen.getByText(/nothing was imported/)).toBeInTheDocument(); // banner now shown
   });
 
-  it('after a VISIBLE banner, a POLL rejection retains the banner + a refresh-error retry (F37/F42)', async () => {
+  it('after a VISIBLE banner, a POLL rejection retains the banner + a refresh-error retry that recovers on success (F37/F42/F48)', async () => {
     vi.useFakeTimers();
     // completed-attention with watch:true (another non-terminal run in scope) → fast poll.
     getImportSubmissionAttention.mockResolvedValueOnce(resp(completed(5, 2, 0), true));
@@ -209,6 +219,17 @@ describe('ImportAttentionBanner (#1894)', () => {
     expect(screen.getByTestId('import-attention-banner')).toBeInTheDocument();
     expect(screen.getByText('Import finished with 2 holds')).toBeInTheDocument();
     expect(screen.getByTestId('attention-refresh-error')).toBeInTheDocument();
+
+    // Retry re-hits the attention read with the SAME source and, on success, clears the
+    // refresh error while the banner stays (F48).
+    getImportSubmissionAttention.mockResolvedValue(resp(completed(5, 2, 0), false));
+    const callsBefore = getImportSubmissionAttention.mock.calls.length;
+    fireEvent.click(within(screen.getByTestId('attention-refresh-error')).getByRole('button', { name: 'Retry' }));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(getImportSubmissionAttention.mock.calls.length).toBeGreaterThan(callsBefore);
+    expect(getImportSubmissionAttention).toHaveBeenLastCalledWith({ source: 'library' });
+    expect(screen.queryByTestId('attention-refresh-error')).not.toBeInTheDocument(); // refresh error cleared
+    expect(screen.getByText('Import finished with 2 holds')).toBeInTheDocument(); // banner retained
   });
 
   // ── F18: discard/view-details mutation & navigation lifecycle ────────────────
