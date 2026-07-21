@@ -62,6 +62,30 @@ describe('ImportCard', () => {
       expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
     });
 
+    // #1895 — a genuinely-new pending row renders "Paused" (no spinner) when paused=true.
+    it('paused=true: genuinely-new pending row shows "Paused" badge with NO spinner', () => {
+      render(<ImportCard {...defaultProps} row={makeRow()} paused />);
+      expect(screen.getByText('Paused')).toBeInTheDocument();
+      expect(screen.queryByText('Matching')).not.toBeInTheDocument();
+      const badge = screen.getByTestId('badge');
+      expect(badge).toHaveClass('bg-muted/50', 'ring-1', 'ring-border/20');
+      // No icon: the muted paused badge drops the LoadingSpinner svg entirely.
+      expect(badge.querySelector('svg')).not.toBeInTheDocument();
+    });
+
+    it('paused omitted (default false): pending row keeps the spinning "Matching" badge', () => {
+      render(<ImportCard {...defaultProps} row={makeRow()} />);
+      expect(screen.getByText('Matching')).toBeInTheDocument();
+      expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+      expect(screen.getByTestId('badge').querySelector('svg')).toBeInTheDocument();
+    });
+
+    it('paused=true has no effect on a matched (high-confidence) row', () => {
+      render(<ImportCard {...defaultProps} row={makeRow({ matchResult: makeMatchResult({ confidence: 'high' }) })} paused />);
+      expect(screen.getByText('Matched')).toBeInTheDocument();
+      expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+    });
+
     it('shows green "Matched" badge for high confidence', () => {
       render(<ImportCard {...defaultProps} row={makeRow({ matchResult: makeMatchResult({ confidence: 'high' }) })} />);
       expect(screen.getByText('Matched')).toBeInTheDocument();
@@ -649,6 +673,18 @@ describe('ImportCard — relativePath prop (#133)', () => {
       render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
       expect(screen.getByText('Duplicate in scan')).toBeInTheDocument();
       expect(screen.queryByText('Already owned')).not.toBeInTheDocument();
+    });
+
+    // #1895 F9 — within-scan precedence: paused does NOT re-badge a result-less within-scan
+    // row (it never reaches ConfidenceBadge), so it keeps "Duplicate in scan", not "Paused".
+    it('paused=true: a result-less within-scan duplicate keeps "Duplicate in scan" (not "Paused")', () => {
+      const row = makeRow({
+        book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
+      });
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates paused />);
+      expect(screen.getByText('Duplicate in scan')).toBeInTheDocument();
+      expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+      expect(screen.queryByText('Matching')).not.toBeInTheDocument();
     });
 
     it('within-scan duplicate has checkbox shown (selectable) when lockDuplicates is true', () => {

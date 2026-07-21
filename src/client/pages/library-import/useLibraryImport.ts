@@ -47,6 +47,10 @@ export function useLibraryImport() {
     onDeselectAccepted: (paths) => setRows((prev) => prev.map((r) => (paths.has(r.book.path) ? { ...r, selected: false } : r))),
     captureHeld,
     clearHeld,
+    // Paused-subset import (#1895): a clean completion while the match run is paused must
+    // stay on the page and deselect the accepted rows in place — navigating to /library would
+    // unmount `useMatchJob` and dispose the paused engine, losing the resumable remainder.
+    shouldStayOnClean: () => paused,
   });
   const stagedSubmit = staged.submit;
   useEffect(() => {
@@ -207,6 +211,15 @@ export function useLibraryImport() {
     staged.submit(items, undefined);
   }, [rows, staged]);
 
+  // Deselect-pending affordance (#1895): while paused, clear `selected` on every pending row
+  // — result-less and NOT a DB duplicate — so the remaining matched selection can import. The
+  // predicate mirrors `selectedPendingCount` exactly (the canonical `isLibraryDbDuplicate`
+  // helper, not a bare `!isDuplicate`): a within-scan duplicate is actionable and gets cleared,
+  // a path/slug DB duplicate isn't selectable to begin with. Matched selections stay intact.
+  const handleDeselectPending = useCallback(() => {
+    setRows(prev => prev.map(r => (!r.matchResult && !isLibraryDbDuplicate(r.book)) ? { ...r, selected: false } : r));
+  }, []);
+
   const handleRetry = useCallback(() => {
     const libraryPath = settings?.library.path ?? '';
     if (!libraryPath) return;
@@ -254,49 +267,57 @@ export function useLibraryImport() {
   // Library root path for relative-path computation
   const libraryRoot = settings?.library.path ?? '';
 
+  // Grouped return surface (state / actions / mutations / counts) mirroring the sibling
+  // `useManualImport` hook (F2) — keeps the page's consumed API navigable instead of a flat
+  // 30+-value god-hook surface.
   return {
-    step,
-    hasLibraryPath,
-    scanError,
-    emptyResult,
-    rows,
-    editIndex,
-    setEditIndex,
-    isMatching,
-    progress,
-    chunkProgress,
-    libraryRoot,
-    heldReview,
-    banner: staged.banner,
-    dismissBanner: staged.dismissBanner,
-
-    // Match-phase recovery (#1864)
-    recovering,
-    paused,
-    pausedReason,
-    matchRemaining,
-    matchTotal,
-
-    handleToggle,
-    handleSelectAll,
-    handleEdit,
-    handleRegister,
-    handleReconfirmHeld,
-    handleRetry,
-    handleRestartMatch,
-    handleResumeMatch,
-
-    scanMutation,
-    registerMutation,
-
-    selectedCount,
-    selectedUnmatchedCount,
-    readyCount,
-    reviewCount,
-    noMatchCount,
-    pendingCount,
-    selectedPendingCount,
-    duplicateCount,
-    allSelected,
+    state: {
+      step,
+      hasLibraryPath,
+      scanError,
+      emptyResult,
+      rows,
+      editIndex,
+      setEditIndex,
+      isMatching,
+      progress,
+      chunkProgress,
+      libraryRoot,
+      heldReview,
+      banner: staged.banner,
+      dismissBanner: staged.dismissBanner,
+      // Match-phase recovery (#1864)
+      recovering,
+      paused,
+      pausedReason,
+      matchRemaining,
+      matchTotal,
+    },
+    actions: {
+      handleToggle,
+      handleSelectAll,
+      handleEdit,
+      handleRegister,
+      handleReconfirmHeld,
+      handleRetry,
+      handleRestartMatch,
+      handleResumeMatch,
+      handleDeselectPending,
+    },
+    mutations: {
+      scanMutation,
+      registerMutation,
+    },
+    counts: {
+      selectedCount,
+      selectedUnmatchedCount,
+      readyCount,
+      reviewCount,
+      noMatchCount,
+      pendingCount,
+      selectedPendingCount,
+      duplicateCount,
+      allSelected,
+    },
   };
 }

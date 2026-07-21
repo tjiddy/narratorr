@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useLocation } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { LibraryImportPage } from './LibraryImportPage';
@@ -46,7 +47,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
   };
 });
 
-const { api } = await import('@/lib/api');
+const { api, ApiError } = await import('@/lib/api');
 const mockApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const stagedMocks = {
   create: mockApi.createImportSubmission!, put: mockApi.putImportSubmissionItems!, finalize: mockApi.finalizeImportSubmission!,
@@ -62,6 +63,17 @@ const engineClock = matchTimer as unknown as import('@/__tests__/match-timer-moc
 async function firePoll(): Promise<void> {
   await waitFor(() => expect(engineClock.__pending()).toBeGreaterThan(0));
   await act(async () => { engineClock.__flushNext(); });
+}
+
+/**
+ * F12 navigation probe: `renderWithProviders` mounts the page directly under `MemoryRouter`
+ * WITHOUT a `<Routes>` tree, so an erroneous `navigate('/library')` changes the in-memory
+ * location but leaves the page mounted. Rendering this probe alongside the page lets a test
+ * assert the pathname stayed `/library-import` — proving navigation was actually suppressed.
+ */
+function LocationProbe() {
+  const { pathname } = useLocation();
+  return <div data-testid="location">{pathname}</div>;
 }
 
 const mockSettingsWithPath = createMockSettings({
@@ -197,9 +209,10 @@ describe('LibraryImportPage (#133)', () => {
     expect(screen.getByRole('button', { name: /import/i })).toBeDisabled();
   });
 
-  it('unconditional fail-closed: Import stays disabled while paused even after deselecting every pending row (#1864)', async () => {
-    // One matched row + one pending row; the run pauses. Deselecting the pending row
-    // would drop selectedPendingCount to 0 — but the paused gate keeps Import disabled.
+  it('paused-gate relaxation: Import disabled with a selected pending row, ENABLED after deselecting it (#1895)', async () => {
+    // Inverts the old #1864 unconditional fail-closed: one matched row + one pending row, run
+    // paused. While the pending row is still selected Import stays disabled (its own selection
+    // gate); deselecting JUST the pending row re-enables Import — the paused halt no longer gates.
     mockApi.scanDirectory!.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/A/B1', parsedTitle: 'B1', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
@@ -219,11 +232,16 @@ describe('LibraryImportPage (#133)', () => {
 
     await waitFor(() => { expect(screen.getByText(/matching paused/i)).toBeInTheDocument(); });
 
-    // Deselect every row (including the pending one).
-    await userEvent.click(screen.getByRole('button', { name: /deselect all/i }));
+    // Pending B2 still selected → disabled, with the existing "still matching" tooltip copy.
+    const importBtn = screen.getByRole('button', { name: /import/i });
+    expect(importBtn).toBeDisabled();
+    expect(importBtn).toHaveAttribute('title', '1 selected book is still matching');
 
-    // Still disabled — the pause gate is unconditional.
-    expect(screen.getByRole('button', { name: /import/i })).toBeDisabled();
+    // Deselect ONLY the pending B2 row (index 1), leaving matched B1 selected.
+    await userEvent.click(screen.getAllByLabelText('Deselect')[1]!);
+
+    // Clean selection while paused ⇒ Import enabled (the relaxed gate).
+    await waitFor(() => { expect(screen.getByRole('button', { name: /import/i })).toBeEnabled(); });
   });
 
   it('unconditional fail-closed: Import stays disabled during AUTOMATIC recovery (recovering, not paused) after deselecting the pending row (#1864 F10)', async () => {
@@ -263,6 +281,161 @@ describe('LibraryImportPage (#133)', () => {
 
     // Import stays disabled — the recovering gate is unconditional.
     expect(screen.getByRole('button', { name: /import/i })).toBeDisabled();
+  });
+
+  describe('paused-subset import (#1895)', () => {
+    const disc = (path: string, title: string, over: Record<string, unknown> = {}) =>
+      ({ path, parsedTitle: title, parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false, ...over });
+    const highResult = (path: string, title: string) =>
+      ({ path, confidence: 'high', bestMatch: { title, authors: [{ name: 'A' }], asin: path }, alternatives: [] });
+
+    /** Scan B1(matched-high) + the given extra rows, then drive the run to a request-rejected pause. */
+    async function renderPaused(extra: ReturnType<typeof disc>[], probe = false) {
+      mockApi.scanDirectory!.mockResolvedValue({ discoveries: [disc('/audiobooks/A/B1', 'B1'), ...extra], totalFolders: 1 + extra.length });
+      mockApi.getMatchJob!
+        .mockResolvedValueOnce({ id: 'job-1', status: 'matching', total: 1 + extra.length, matched: 1, results: [highResult('/audiobooks/A/B1', 'B1')] })
+        .mockRejectedValue(new ApiError(400, { error: 'bad' })); // pause request-rejected
+      renderWithProviders(probe ? <><LibraryImportPage /><LocationProbe /></> : <LibraryImportPage />, { route: '/library-import' });
+      await waitFor(() => { expect(screen.getByText('B1')).toBeInTheDocument(); });
+      await firePoll(); // poll1: B1 matched
+      await firePoll(); // poll2: 4xx → pause
+      await waitFor(() => { expect(screen.getByText(/matching paused/i)).toBeInTheDocument(); });
+    }
+
+    it('paused with a fully-matched selection (no pending selected) → Import enabled', async () => {
+      // B1 + B2 both matched, then the run pauses. No pending rows exist → clean selection → enabled.
+      mockApi.scanDirectory!.mockResolvedValue({ discoveries: [disc('/audiobooks/A/B1', 'B1'), disc('/audiobooks/A/B2', 'B2')], totalFolders: 2 });
+      mockApi.getMatchJob!
+        .mockResolvedValueOnce({ id: 'job-1', status: 'matching', total: 2, matched: 2, results: [highResult('/audiobooks/A/B1', 'B1'), highResult('/audiobooks/A/B2', 'B2')] })
+        .mockRejectedValue(new ApiError(400, { error: 'bad' }));
+      renderWithProviders(<LibraryImportPage />, { route: '/library-import' });
+      await waitFor(() => { expect(screen.getByText('B1')).toBeInTheDocument(); });
+      await firePoll();
+      await firePoll();
+      await waitFor(() => { expect(screen.getByText(/matching paused/i)).toBeInTheDocument(); });
+
+      expect(screen.getByRole('button', { name: /import 2 books/i })).toBeEnabled();
+    });
+
+    it('deselect-pending affordance clears pending rows, keeps matched, and flips Import enabled', async () => {
+      await renderPaused([disc('/audiobooks/A/B2', 'B2')]);
+
+      // Affordance visible (paused + 1 selected pending); Import disabled until it runs.
+      expect(screen.getByRole('button', { name: /import/i })).toBeDisabled();
+      const affordance = screen.getByRole('button', { name: /deselect 1 pending/i });
+      await userEvent.click(affordance);
+
+      // Pending B2 cleared, matched B1 kept → "1 of 2 new selected" and Import enabled.
+      await waitFor(() => { expect(screen.getByText(/1 of 2 new selected/i)).toBeInTheDocument(); });
+      expect(screen.getByRole('button', { name: /import 1 book$/i })).toBeEnabled();
+      // The affordance disappears once no selected pending rows remain.
+      expect(screen.queryByRole('button', { name: /deselect \d+ pending/i })).not.toBeInTheDocument();
+    });
+
+    it('deselect-pending affordance is absent when NOT paused', async () => {
+      mockApi.scanDirectory!.mockResolvedValue({ discoveries: [disc('/audiobooks/A/B1', 'B1'), disc('/audiobooks/A/B2', 'B2')], totalFolders: 2 });
+      // Job stays matching (B2 pending) but never pauses.
+      mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'matching', total: 2, matched: 1, results: [highResult('/audiobooks/A/B1', 'B1')] });
+      renderWithProviders(<LibraryImportPage />, { route: '/library-import' });
+      await waitFor(() => { expect(screen.getByText('B1')).toBeInTheDocument(); });
+      await firePoll();
+      await waitFor(() => { expect(screen.getByText('1 matching')).toBeInTheDocument(); });
+
+      expect(screen.queryByRole('button', { name: /deselect \d+ pending/i })).not.toBeInTheDocument();
+    });
+
+    it('deselect-pending affordance is absent when paused with no selected pending rows', async () => {
+      await renderPaused([disc('/audiobooks/A/B2', 'B2')]);
+      // Deselect the pending B2 → no selected pending left → affordance gone.
+      await userEvent.click(screen.getAllByLabelText('Deselect')[1]!);
+      await waitFor(() => { expect(screen.queryByRole('button', { name: /deselect \d+ pending/i })).not.toBeInTheDocument(); });
+    });
+
+    it('F5: affordance clears the actionable within-scan pending row, leaving the DB duplicate (canonical helper)', async () => {
+      // Matched B1 + a result-less WITHIN-SCAN duplicate (actionable, selected) + a DB slug dup
+      // (not selectable). A bare `!r.book.isDuplicate` handler would skip the within-scan row.
+      await renderPaused([
+        disc('/audiobooks/A/WS', 'WS', { isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/A/B1' }),
+        disc('/audiobooks/A/DB', 'DB', { isDuplicate: true, duplicateReason: 'slug' }),
+      ]);
+
+      // A within-scan dup starts UNSELECTED (isDuplicate=true) — select it so it's a selected
+      // pending row. DB dup is excluded from the "new" denominator, so selecting WS → "2 of 2".
+      await userEvent.click(screen.getByLabelText('Select'));
+      await waitFor(() => { expect(screen.getByText(/2 of 2 new selected/i)).toBeInTheDocument(); });
+      await userEvent.click(screen.getByRole('button', { name: /deselect 1 pending/i }));
+
+      // WS cleared (helper treats within-scan as actionable); matched B1 kept → Import enabled.
+      await waitFor(() => { expect(screen.getByText(/1 of 2 new selected/i)).toBeInTheDocument(); });
+      expect(screen.getByRole('button', { name: /import 1 book$/i })).toBeEnabled();
+    });
+
+    it('paused visual: genuinely-new pending row shows "Paused" (no spinner) and the summary shows "{n} paused"', async () => {
+      await renderPaused([disc('/audiobooks/A/B2', 'B2')]);
+
+      // Per-row badge: static "Paused", no LoadingSpinner svg inside it.
+      const badge = screen.getByText('Paused');
+      expect(badge).toBeInTheDocument();
+      expect(badge.querySelector('svg')).toBeNull();
+      // Summary segment: "1 paused" replaces "1 matching", no spinner.
+      const segment = screen.getByText('1 paused');
+      expect(segment).toBeInTheDocument();
+      expect(screen.queryByText('1 matching')).not.toBeInTheDocument();
+      expect(segment.querySelector('svg')).toBeNull();
+    });
+
+    it('F9: a paused result-less within-scan row keeps "Duplicate in scan" (not "Paused")', async () => {
+      await renderPaused([disc('/audiobooks/A/WS', 'WS', { isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/A/B1' })]);
+
+      // The within-scan badge precedes ConfidenceBadge, so paused does not re-badge it.
+      expect(screen.getByText('Duplicate in scan')).toBeInTheDocument();
+      expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+      // …but selection-wise WS is still a pending row, so the summary count reads "1 paused".
+      expect(screen.getByText('1 paused')).toBeInTheDocument();
+    });
+
+    it('clean paused-subset import stays on the page, deselects the accepted row in place, and preserves the paused run (F1/F12)', async () => {
+      wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, '/audiobooks/A/B1', 'B1')] });
+      await renderPaused([disc('/audiobooks/A/B2', 'B2')], /* probe */ true);
+      expect(screen.getByTestId('location')).toHaveTextContent('/library-import');
+
+      // Deselect the pending B2 so only matched B1 is selected, then import the subset.
+      await userEvent.click(screen.getAllByLabelText('Deselect')[1]!);
+      await waitFor(() => { expect(screen.getByRole('button', { name: /import 1 book$/i })).toBeEnabled(); });
+
+      // Exact paused counts BEFORE the import: B1 observed, B2 the result-less remainder.
+      expect(screen.getByText(/Matching paused — 1 of 2 books remaining\./i)).toBeInTheDocument();
+
+      const cancelCallsBefore = mockApi.cancelMatchJob!.mock.calls.length;
+      const startCallsBefore = mockApi.startMatchJob!.mock.calls.length; // initial run only
+      await userEvent.click(screen.getByRole('button', { name: /import 1 book$/i }));
+
+      // Clean all-accepted completion: accepted B1 is deselected IN PLACE → "0 of 2 new selected".
+      await waitFor(() => { expect(screen.getByText(/0 of 2 new selected/i)).toBeInTheDocument(); });
+      // (a) No navigation away from the page, and no engine cancel/disposal.
+      expect(screen.getByTestId('location')).toHaveTextContent('/library-import');
+      expect(mockApi.cancelMatchJob!.mock.calls.length).toBe(cancelCallsBefore);
+      // (b/c) The paused run is untouched by the import: banner + Resume affordance survive, the
+      // exact remaining/total counts are UNCHANGED, B1 stays matched, B2 stays the paused remainder.
+      expect(screen.getByText(/Matching paused — 1 of 2 books remaining\./i)).toBeInTheDocument();
+      expect(screen.getByText('Matched')).toBeInTheDocument();
+      expect(screen.getByText('Paused')).toBeInTheDocument();
+      expect(mockApi.startMatchJob!.mock.calls.length).toBe(startCallsBefore); // import started no match run
+
+      // (d) A subsequent Resume re-matches ONLY the result-less remainder. Re-wire the resume-entry
+      // probe's job lookup to 404 (gone) so it abandons the paused job and starts a fresh remainder.
+      mockApi.getMatchJob!.mockRejectedValue(new ApiError(404, { error: 'gone' }));
+      await userEvent.click(screen.getByRole('button', { name: /resume remaining/i }));
+
+      // The remainder run starts exactly one new match job whose candidate set is ONLY B2 — a
+      // regression that rebuilt or cleared the resume set after accepted-row deselection would
+      // include B1 (or nothing) here.
+      await waitFor(() => { expect(mockApi.startMatchJob!.mock.calls.length).toBe(startCallsBefore + 1); });
+      const resumeCandidates = mockApi.startMatchJob!.mock.calls[startCallsBefore]![0] as Array<{ path: string }>;
+      expect(resumeCandidates.map((c) => c.path)).toEqual(['/audiobooks/A/B2']);
+      // B1's observed match survived the resume (still rendered Matched).
+      expect(screen.getByText('Matched')).toBeInTheDocument();
+    });
   });
 
   it('existing rows hidden by default, toggle shows them', async () => {

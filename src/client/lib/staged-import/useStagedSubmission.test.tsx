@@ -3,8 +3,9 @@ import { renderHook, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import { useStagedSubmission } from './useStagedSubmission.js';
-import { summaryResponse } from './__tests__/staged-fixtures.js';
+import { summaryResponse, detailResponse, acceptedRow } from './__tests__/staged-fixtures.js';
 import { __resetOutboxCache, readOutbox } from './outbox.js';
+import type { SubmissionAggregates } from '@/lib/api';
 
 /**
  * Focused unit tests for the run-supersession / abort / epoch guards (#1902 F19). The
@@ -151,5 +152,120 @@ describe('useStagedSubmission — run supersession (F19)', () => {
     expect(readOutbox('library')).toMatchObject({ clientSubmissionId: bClientId, status: 'finalized', submissionId: 200 });
     expect(params.onCleanNavigate).not.toHaveBeenCalled();
     expect(params.onDeselectAccepted).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Paused clean-completion policy (#1895 F6/F7/F8/F11). `shouldStayOnClean` is snapshotted
+ * per-run AFTER preflight (alongside the frozen submitted paths); a clean completion whose
+ * snapshot is true STAYS on the page and deselects the frozen submitted survivors in place
+ * (robust to a pruned aggregates-only terminal detail), instead of calling `onCleanNavigate`.
+ */
+describe('useStagedSubmission — paused clean-completion policy (#1895)', () => {
+  const cleanAgg = (accepted: number): SubmissionAggregates => ({ accepted, held: 0, skipped: 0, failed: 0 });
+
+  /** Wire a full submit that polls to a CLEAN `complete`; `pruned` drops the terminal item detail. */
+  function wireCleanTerminal(id: number, accepted: number, { pruned = false } = {}): void {
+    const agg = cleanAgg(accepted);
+    mockCreate.mockResolvedValue(summaryResponse({ id, source: 'library', status: 'receiving', expectedCount: accepted }));
+    mockPut.mockResolvedValue(summaryResponse({ id, source: 'library', status: 'receiving', expectedCount: accepted }));
+    mockFinalize.mockResolvedValue(summaryResponse({ id, source: 'library', status: 'processing', expectedCount: accepted, aggregates: agg }));
+    mockGet.mockImplementation((_id: number, includeItems?: boolean) => {
+      const base = { id, source: 'library' as const, status: 'complete' as const, expectedCount: accepted, processedCount: accepted, aggregates: agg, detailsPruned: pruned };
+      if (includeItems && !pruned) {
+        const items = Array.from({ length: accepted }, (_, i) => acceptedRow(i, `/p${i}`, `P${i}`));
+        return Promise.resolve(detailResponse(items, base));
+      }
+      // Summary polls, and the terminal detail fetch when pruned (aggregates only, no items).
+      return Promise.resolve(summaryResponse(base));
+    });
+  }
+
+  function renderStay(shouldStayOnClean: () => boolean) {
+    const params = {
+      source: 'library' as const,
+      acceptedVerb: 'registered',
+      onCleanNavigate: vi.fn(),
+      onDeselectAccepted: vi.fn(),
+      captureHeld: vi.fn(),
+      clearHeld: vi.fn(),
+      shouldStayOnClean,
+    };
+    const view = renderHook(() => useStagedSubmission(params), { wrapper });
+    return { ...view, params };
+  }
+
+  /** Drain the create→put→finalize→poll→terminal-detail→projectOutcome chain (real macrotask). */
+  async function settle(): Promise<void> {
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  }
+
+  it('F6: a PRUNED clean terminal (aggregates only, no items) + stay=true → no navigate, deselects EVERY frozen path', async () => {
+    wireCleanTerminal(7, 2, { pruned: true });
+    const { result, params } = renderStay(() => true);
+
+    act(() => { result.current.submit([{ path: '/a', title: 'A' }, { path: '/b', title: 'B' }], undefined); });
+    await act(async () => { digestResolvers[0]!(DIGEST); });
+    await settle();
+
+    // Proves the clean branch uses `submittedPathsRef` (frozen at submit), not the empty
+    // item-derived set — the terminal had NO items to derive an accepted set from.
+    expect(params.onCleanNavigate).not.toHaveBeenCalled();
+    expect(params.onDeselectAccepted).toHaveBeenCalledTimes(1);
+    expect([...params.onDeselectAccepted.mock.calls[0]![0]].sort()).toEqual(['/a', '/b']);
+  });
+
+  it.each([
+    { initial: true, flipped: false, stays: true },
+    { initial: false, flipped: true, stays: false },
+  ])('F7: clean terminal follows the SUBMIT-TIME snapshot (initial=$initial), not a later flip to $flipped', async ({ initial, flipped, stays }) => {
+    wireCleanTerminal(8, 1, { pruned: false });
+    // A single stable closure reading a live `let` — mirrors `() => paused` where a mid-processing
+    // `MatchEngine.resume()` clears `paused` synchronously AFTER the run was accepted.
+    let stay = initial;
+    const { result, params } = renderStay(() => stay);
+
+    act(() => { result.current.submit([{ path: '/a', title: 'A' }], undefined); });
+    // Flip the live value BEFORE the terminal resolves (the digest is still pending).
+    stay = flipped;
+    await act(async () => { digestResolvers[0]!(DIGEST); });
+    await settle();
+
+    if (stays) {
+      expect(params.onCleanNavigate).not.toHaveBeenCalled();
+      expect(params.onDeselectAccepted).toHaveBeenCalledTimes(1);
+      expect([...params.onDeselectAccepted.mock.calls[0]![0]].sort()).toEqual(['/a']);
+    } else {
+      expect(params.onCleanNavigate).toHaveBeenCalledTimes(1);
+      expect(params.onDeselectAccepted).not.toHaveBeenCalled();
+    }
+  });
+
+  it('F8/F11: a superseding submit that FAILS preflight cannot overwrite the active run\'s stay snapshot', async () => {
+    wireCleanTerminal(9, 2, { pruned: false });
+    let stay = true;
+    const { result, params } = renderStay(() => stay);
+
+    // Run A accepted while paused (stay=true) — snapshots true AFTER its preflight; still active
+    // (digest pending, so it has NOT reached its terminal projection yet).
+    act(() => { result.current.submit([{ path: '/a', title: 'A' }, { path: '/b', title: 'B' }], undefined); });
+    expect(digestResolvers).toHaveLength(1);
+
+    // Run B carries the OPPOSITE policy (stay=false) but is an explicit zero-survivors submit:
+    // it fails preflight with zero classified local exclusions, so it returns BEFORE the
+    // post-preflight snapshot line and BEFORE bumping the epoch — leaving A's ownership intact.
+    stay = false;
+    act(() => { result.current.submit([], undefined); });
+    expect(digestResolvers).toHaveLength(1); // B never reached the digest — preflight rejected it
+
+    // A's clean terminal now resolves: it must obey ITS OWN snapshot (stay) — a top-of-submit
+    // snapshot bug would have let B's false clobber it and navigate instead.
+    await act(async () => { digestResolvers[0]!(DIGEST); });
+    await settle();
+
+    expect(params.onCleanNavigate).not.toHaveBeenCalled();
+    expect(params.onDeselectAccepted).toHaveBeenCalledTimes(1);
+    expect([...params.onDeselectAccepted.mock.calls[0]![0]].sort()).toEqual(['/a', '/b']);
   });
 });
