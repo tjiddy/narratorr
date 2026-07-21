@@ -14,6 +14,7 @@ import { reconcileByClient } from './reconcile.js';
 import { readOutbox, putOutbox, markOutboxFinalized, evictOutbox, type OutboxRecord } from './outbox.js';
 import { STAGED_COPY, type StagedBannerKey } from './messages.js';
 import { buildStagedOutcomeToast, isCleanCompletion, type LocalExclusions } from './outcome.js';
+import { acceptedItemPaths } from '@/lib/import-outcome.js';
 
 /**
  * Staged-import submit + poll orchestrator (#1902). Wires the built staged modules —
@@ -65,12 +66,6 @@ function toHeldReviewItem(row: Extract<StagedItemResultDto, { disposition: 'held
     reason: 'recording-review-required',
     ...(row.existingBookId !== undefined ? { existingBookId: row.existingBookId } : {}),
   };
-}
-
-/** Paths of the rows the server accepted (from the detail projection). */
-function acceptedPathsFromDetail(detail: SubmissionResponse): Set<string> {
-  if (!('items' in detail) || !detail.items) return new Set();
-  return new Set(detail.items.filter((i) => i.disposition === 'accepted').map((i) => i.path));
 }
 
 // eslint-disable-next-line max-lines-per-function -- one cohesive submit/poll/reconcile lifecycle; splitting it would scatter shared refs
@@ -133,7 +128,7 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
         onCleanNavigate();
         return;
       }
-      const acceptedPaths = acceptedPathsFromDetail(detail);
+      const acceptedPaths = 'items' in detail && detail.items ? acceptedItemPaths(detail.items) : new Set<string>();
       if (acceptedPaths.size > 0) onDeselectAccepted(acceptedPaths);
     },
     [acceptedVerb, captureHeld, clearHeld, invalidateReportReads, onCleanNavigate, onDeselectAccepted, queryClient, source],

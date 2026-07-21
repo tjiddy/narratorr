@@ -8,7 +8,6 @@ import { copyToLibrary as stageSourceAudio, stagedAudioReplace } from '../utils/
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { OwnedRecordingError, type BookService, type BookWithAuthor } from './book.service.js';
-import type { HeldReviewItem, ImportResult, ImportSkippedItem, ImportFailedItem } from '../../shared/schemas/library-scan.js';
 import { resolveRecordingIdentity, deriveEditionLabel, type RecordingCandidate } from '../../core/utils/recording-identity.js';
 import { sanitizeEditionDiscriminator } from '../../core/utils/naming.js';
 import { normalizeProductionType } from '../../core/metadata/production-type.js';
@@ -21,7 +20,6 @@ import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js
 import { deleteManagedBookFiles } from '../utils/delete-managed-files.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import type { EnrichmentDeps } from './enrichment-orchestration.helpers.js';
-import { processConfirmItem } from './import-confirm-item.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
@@ -447,38 +445,3 @@ async function copyDiscGroupToLibrary(
   return { targetPath, ...(editionLabel !== undefined && { editionLabel }) };
 }
 
-export async function confirmImport(
-  items: ImportConfirmItem[],
-  deps: ImportPipelineDeps,
-  mode?: ImportMode,
-  nudgeWorker?: () => void,
-): Promise<ImportResult> {
-  const { log } = deps;
-
-  log.info({ count: items.length, mode: mode ?? 'pointer' }, 'Accepting library import');
-
-  let acceptedCount = 0;
-  const heldReview: HeldReviewItem[] = [];
-  const skipped: ImportSkippedItem[] = [];
-  const failed: ImportFailedItem[] = [];
-
-  // Each item resolves to exactly one bucket (#1822) — a no-op import (all refused or
-  // errored) is a reported disposition, never a silent drop hidden behind a green toast.
-  for (const item of items) {
-    const outcome = await processConfirmItem(item, deps, mode);
-    switch (outcome.kind) {
-      case 'accepted': acceptedCount++; break;
-      case 'held': heldReview.push(outcome.held); break;
-      case 'skipped': skipped.push(outcome.skipped); break;
-      case 'failed': failed.push(outcome.failed); break;
-    }
-  }
-
-  log.info({ accepted: acceptedCount, held: heldReview.length, skipped: skipped.length, failed: failed.length }, 'Import jobs created, nudging worker');
-
-  if (acceptedCount > 0 && nudgeWorker) {
-    nudgeWorker();
-  }
-
-  return { accepted: acceptedCount, heldReview, skipped, failed };
-}

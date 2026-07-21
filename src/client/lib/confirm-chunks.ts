@@ -1,4 +1,3 @@
-import type { ImportConfirmItem } from '@/lib/api';
 import type { StagedImportItem } from '../../core/import-staging/schemas.js';
 
 /**
@@ -31,20 +30,8 @@ export const MAX_SINGLE_ITEM_BYTES = 900 * 1024; // 900 KiB
 /** Secondary bound so a chunk of tiny items never balloons the request item count. */
 export const MAX_CHUNK_ITEMS = 200;
 
-export interface PackResult {
-  /** Chunks to POST sequentially. Each serializes under budget (or is a lone ship-alone item). */
-  chunks: ImportConfirmItem[][];
-  /** Items whose own serialized size exceeds the transport ceiling — never sent. */
-  tooLarge: ImportConfirmItem[];
-}
-
 /** Reused across every item serialization instead of ~5k per-pack allocations (#1833). */
 const encoder = new TextEncoder();
-
-/** Serialized UTF-8 byte size of a single confirm item (what actually crosses the wire). */
-export function serializedItemBytes(item: ImportConfirmItem): number {
-  return encoder.encode(JSON.stringify(item)).length;
-}
 
 /**
  * A staged PUT row — `{ ordinal, item }` where `item` is the WHOLE parsed staged
@@ -96,38 +83,4 @@ export function packStagedChunks(rows: readonly StagedPutRow[]): StagedPutRow[][
   flush();
 
   return chunks;
-}
-
-export function packConfirmChunks(items: ImportConfirmItem[]): PackResult {
-  const chunks: ImportConfirmItem[][] = [];
-  const tooLarge: ImportConfirmItem[] = [];
-  let current: ImportConfirmItem[] = [];
-  let currentBytes = 0;
-
-  const flush = () => {
-    if (current.length > 0) {
-      chunks.push(current);
-      current = [];
-      currentBytes = 0;
-    }
-  };
-
-  for (const item of items) {
-    const bytes = serializedItemBytes(item);
-    // Self-oversize: divert pre-flight, never pack or send (fail-open — stays selected upstream).
-    if (bytes > MAX_SINGLE_ITEM_BYTES) {
-      tooLarge.push(item);
-      continue;
-    }
-    // Start a new chunk when the current one would overflow the byte budget or the count bound.
-    // An item that alone exceeds the budget lands in an (otherwise empty) chunk and ships alone.
-    const overflowsBudget = currentBytes + bytes > CHUNK_BYTE_BUDGET;
-    const overflowsCount = current.length >= MAX_CHUNK_ITEMS;
-    if (current.length > 0 && (overflowsBudget || overflowsCount)) flush();
-    current.push(item);
-    currentBytes += bytes;
-  }
-  flush();
-
-  return { chunks, tooLarge };
 }
