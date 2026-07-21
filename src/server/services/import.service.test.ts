@@ -1391,14 +1391,15 @@ describe('ImportService', () => {
       await expect(service.importDownload(1)).rejects.toThrow('DB write failed');
 
       // #1257: the failure is post-commit, so protectTarget is already true — the
-      // committed new version at targetPath is NOT blanket-removed.
+      // committed new version at targetPath is NOT blanket-removed. Separator-agnostic
+      // matchers: production builds these paths with join() (backslashes on Windows).
       expect(rmMock).not.toHaveBeenCalledWith(
-        '/audiobooks/Brandon Sanderson/The Way of Kings',
+        expect.stringMatching(/[\\/]audiobooks[\\/]Brandon Sanderson[\\/]The Way of Kings$/),
         { recursive: true, force: true },
       );
       // Transient siblings are still cleaned (active born-hidden staging, #1911).
       expect(rmMock).toHaveBeenCalledWith(
-        '/audiobooks/Brandon Sanderson/.The Way of Kings.import-staging',
+        expect.stringMatching(/[\\/]audiobooks[\\/]Brandon Sanderson[\\/]\.The Way of Kings\.import-staging$/),
         { recursive: true, force: true },
       );
 

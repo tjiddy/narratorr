@@ -2121,7 +2121,12 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries[0]!.existingBookId).toBe(200);
     });
 
-    it('sorted discovery makes duplicateFirstPath stable across readdir permutations, through the REAL discoverBooks (F3)', async () => {
+    // skipIf(win32): the fixture requires a literal backslash INSIDE a folder name
+    // (`/root/a\b`) to construct the fold-collision pair — on Windows `\` IS the path
+    // separator, so the fixture is platform-unconstructible (path.join inside the real
+    // discoverBooks re-keys every mocked entry and the collision premise dissolves).
+    // The comparator itself stays covered cross-platform by path-order.test.ts.
+    it.skipIf(process.platform === 'win32')('sorted discovery makes duplicateFirstPath stable across readdir permutations, through the REAL discoverBooks (F3)', async () => {
       // Cross-boundary regression: delegate the mocked discoverBooks to the ACTUAL
       // implementation so its `results.sort(comparePosixPath)` runs in-path. A
       // folded-key collision pair — nested `/root/a/b` and one literal folder `/root/a\b`

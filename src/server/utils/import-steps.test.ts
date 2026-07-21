@@ -1211,11 +1211,13 @@ describe('partial in-process rollback restore failure (#1336 window 5)', () => {
     // a real marker is a file, so it reads as present (#1341 isFile).
     vi.mocked(stat).mockRejectedValueOnce(enoent()).mockRejectedValueOnce(enoent()).mockResolvedValue({ isFile: () => true } as never);
     vi.mocked(rename).mockImplementation(async (src: unknown, dst: unknown) => {
-      // Normalize separators: production builds these args with join() (backslashes on Windows),
-      // so match against the POSIX needles below regardless of host.
-      const s = String(src).split('\\').join('/'), d = String(dst).split('\\').join('/');
-      if (s === `${staging}/new.m4b`) throw new Error('EIO move-in');           // move-in fails → rollback
-      if (s === `${backup}/z.mp3` && d === `${target}/z.mp3`) throw new Error('EIO restore z'); // one restore fails (swallowed)
+      // Normalize separators on BOTH sides: production builds its args with join() AND the
+      // staging/backup needles come from deriveImportSiblings (also join-built), so on Windows
+      // both carry backslashes — normalize actuals and needles alike or nothing matches.
+      const norm = (x: unknown) => String(x).split('\\').join('/');
+      const s = norm(src), d = norm(dst);
+      if (s === `${norm(staging)}/new.m4b`) throw new Error('EIO move-in');     // move-in fails → rollback
+      if (s === `${norm(backup)}/z.mp3` && d === `${norm(target)}/z.mp3`) throw new Error('EIO restore z'); // one restore fails (swallowed)
       return undefined as never;                                                // backups + a.mp3 restore succeed
     });
 
