@@ -478,4 +478,21 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
 
     expect(await findCommitPendingMarkers(root)).toEqual([marker]);
   }));
+
+  it('#1911 AC13 findCommitPendingMarkers: a HIDDEN-target legacy scratch (`.Title.import-bak` beside `.Title.import-commit-pending`) is pruned, its decoy subtree not collected', withTmp(async (root) => {
+    // The explicit AC13 hidden-target legacy pairing: a dot-led target `.Title` whose legacy
+    // backup `.Title.import-bak` sits beside its OWN dot-led marker `.Title.import-commit-pending`.
+    // isScratchSibling must pair the un-dotted-suffix legacy sibling with the marker on the SAME
+    // (dot-led) basename, so the scratch dir is pruned and the decoy marker inside it is skipped.
+    const author = join(root, 'Author');
+    await mkdir(author, { recursive: true });
+    const legacyBackup = join(author, '.Title.import-bak');       // hidden target's legacy backup
+    const liveMarker = join(author, '.Title.import-commit-pending'); // its live sibling marker
+    await mkdir(legacyBackup, { recursive: true });
+    await writeFile(join(legacyBackup, 'decoy.import-commit-pending'), ''); // must NOT be collected
+    await writeFile(liveMarker, '');
+
+    // Only the live sibling marker is found; the pruned scratch subtree's decoy is excluded.
+    expect(await findCommitPendingMarkers(root)).toEqual([liveMarker]);
+  }));
 });

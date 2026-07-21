@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdir, rm, writeFile, readFile, readdir, stat } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { stagedAudioReplace, prepareImportSiblings, BackupRecoveryError, markerPresent, MarkerPathConflictError } from './import-steps.js';
 import { deriveImportSiblings } from './import-sibling-paths.js';
@@ -96,14 +96,16 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
       log: makeLog(),
       sourceAudioSize: await getAudioPathSize(source),
       stage: async (sp) => {
-        observedStagingBasename = sp.split('/').pop();
+        // `basename` (not `split('/')`) so the dot-led check holds on Windows, where the
+        // Node-composed path uses backslash separators (cross-platform test rule).
+        observedStagingBasename = basename(sp);
         await copyAudioFiles(source, sp);
         stagingWasDotLedDuringStage = await pathExists(sp) && observedStagingBasename!.startsWith('.');
       },
     });
 
     // The staging dir handed to `stage()` is the born-hidden active path and is dot-led.
-    expect(stagingPath.split('/').pop()).toMatch(/^\.Title\.import-staging$/);
+    expect(basename(stagingPath)).toMatch(/^\.Title\.import-staging$/);
     expect(stagingWasDotLedDuringStage).toBe(true);
     // Audio committed into the VISIBLE target; scratch gone.
     expect(await listAllFiles(target)).toContain('new.mp3');

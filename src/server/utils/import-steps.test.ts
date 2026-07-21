@@ -1256,6 +1256,80 @@ describe('partial in-process rollback restore failure (#1336 window 5)', () => {
   });
 });
 
+// ── #1911 recovery total-clean: marker-removal + late non-selected-clear preservation ──
+
+describe('#1911 recovery preservation: strict marker-removal + late total-clean failures abort the caller (F2/F3)', () => {
+  const dirent = (name: string, isFile = true) => ({ name, isFile: () => isFile, isDirectory: () => !isFile });
+  const target = '/library/Author/Title';
+  const { backupPath: backup, legacyBackupPath: legacyBackup, markerPath: marker } =
+    deriveImportSiblings(target);
+
+  beforeEach(() => {
+    vi.mocked(stat).mockReset();
+    // Marker present as a FILE for the #1341 preflight AND prepareImportSiblings' marker check,
+    // so recovery runs (not the marker-absent branch).
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);
+    vi.mocked(rename).mockResolvedValue(undefined as never);
+    vi.mocked(mkdir).mockResolvedValue(undefined as never);
+  });
+
+  it('F2 (AC9): a strict marker-removal `rm` failure throws BackupRecoveryError, preserves the marker, and the stage/mutation callback is never reached', async () => {
+    const log = createMockLog();
+    // Both backups empty → no restore, no ambiguity; the FOUR staging/backup clears all
+    // succeed, so the ONLY failure point is the last-step strict `rm(marker)`.
+    vi.mocked(readdir).mockResolvedValue([] as never);
+    vi.mocked(rm).mockImplementation(async (p: unknown, opts: unknown) => {
+      const isMarkerRemoval = String(p) === marker && (opts as { force?: boolean; recursive?: boolean })?.force === true
+        && !(opts as { recursive?: boolean })?.recursive;
+      if (isMarkerRemoval) throw Object.assign(new Error('EACCES marker rm'), { code: 'EACCES' });
+      return undefined as never;
+    });
+
+    const stage = vi.fn(async () => { /* mutation callback — must never run */ });
+    const thrown = await stagedAudioReplace({
+      targetPath: target, libraryRoot: '/library', log, sourceAudioSize: 1, stage,
+    }).then(() => null, (e: unknown) => e);
+
+    // Typed preservation error surfaced (strict removal, not the best-effort swallow).
+    expect(thrown).toBeInstanceOf(BackupRecoveryError);
+    // The strict marker removal WAS attempted (proving we reached the last recovery step)…
+    expect(rm).toHaveBeenCalledWith(marker, { force: true });
+    // …and, having failed, no other code path removed the marker — it survives for the next attempt.
+    expect(vi.mocked(rm).mock.calls.filter(([p, o]) =>
+      String(p) === marker && (o as { force?: boolean })?.force === true).length).toBe(1);
+    // Proceed-signal contract: prepareImportSiblings threw, so staging/mutation never ran.
+    expect(stage).not.toHaveBeenCalled();
+  });
+
+  it('F3 (AC8/F25iii): a late clear failure on the NON-selected convention throws, retains the marker, and never reaches the stage/mutation callback', async () => {
+    const log = createMockLog();
+    // ACTIVE backup is the populated (selected) convention; LEGACY backup is empty (non-selected).
+    vi.mocked(readdir).mockImplementation(async (p: unknown) =>
+      (p === backup ? [dirent('old.m4b')] : []) as never);
+    // The selected restore + the earlier three clears all succeed; the LATE clear of the
+    // non-selected legacy backup fails by exact path — this must abort BEFORE marker removal.
+    vi.mocked(rm).mockImplementation(async (p: unknown) => {
+      if (String(p) === legacyBackup) throw Object.assign(new Error('EBUSY legacy backup'), { code: 'EBUSY' });
+      return undefined as never;
+    });
+
+    const stage = vi.fn(async () => { /* mutation callback — must never run */ });
+    const thrown = await stagedAudioReplace({
+      targetPath: target, libraryRoot: '/library', log, sourceAudioSize: 1, stage,
+    }).then(() => null, (e: unknown) => e);
+
+    // The selected (active) backup WAS restored additively before the total-clean began…
+    expect(rename).toHaveBeenCalledWith(join(backup, 'old.m4b'), join(target, 'old.m4b'));
+    // …but the non-selected clear failed → typed preservation error naming the legacy convention.
+    expect(thrown).toBeInstanceOf(BackupRecoveryError);
+    expect((thrown as BackupRecoveryError).convention).toBe('legacy');
+    // Marker NEVER removed while the total-clean is incomplete (F10/F18) — it survives.
+    expect(rm).not.toHaveBeenCalledWith(marker, { force: true });
+    // Proceed-signal contract: the caller aborts, staging/mutation never ran.
+    expect(stage).not.toHaveBeenCalled();
+  });
+});
+
 // ── handleImportFailure ─────────────────────────────────────────────────
 
 describe('handleImportFailure', () => {
