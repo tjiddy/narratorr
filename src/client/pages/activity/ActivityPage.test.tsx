@@ -911,6 +911,20 @@ describe('ActivityPage', () => {
       expect(screen.getByText('All')).toBeInTheDocument();
     });
 
+    it('renders Import history ABOVE event history, and event history stays usable when import history is empty (F22)', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('Nothing running right now')).toBeInTheDocument());
+      await user.click(screen.getByRole('tab', { name: /history/i }));
+
+      const section = await screen.findByTestId('import-history-section');
+      expect(await screen.findByTestId('import-history-empty')).toBeInTheDocument(); // empty import history
+      // Event history is still rendered (its "All" filter) and comes AFTER the import section.
+      const allFilter = screen.getByText('All');
+      expect(allFilter).toBeInTheDocument();
+      expect(section.compareDocumentPosition(allFilter) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
     it('clicking Active tab from History restores active downloads content', async () => {
       const user = userEvent.setup();
       renderWithProviders(<ActivityPage />);

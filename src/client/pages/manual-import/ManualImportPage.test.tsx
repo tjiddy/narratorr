@@ -71,6 +71,7 @@ const mockConfirmImport = vi.fn();
 
 const mockBrowseDirectory = vi.fn();
 const mockGetSettings = vi.fn();
+const mockGetImportSubmissionAttention = vi.fn();
 
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual('@/lib/api');
@@ -84,7 +85,7 @@ vi.mock('@/lib/api', async () => {
       getSettings: (...args: unknown[]) => mockGetSettings(...args),
       // #1894 — the last-import panel + attention banner mounted at the page top.
       listImportSubmissions: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-      getImportSubmissionAttention: vi.fn().mockResolvedValue({ data: null, watch: false }),
+      getImportSubmissionAttention: (...args: unknown[]) => mockGetImportSubmissionAttention(...args),
       getImportSubmissionDetail: vi.fn(),
       discardImportSubmission: vi.fn(),
     },
@@ -208,6 +209,7 @@ describe('ManualImportPage', () => {
     mockRecents = [];
     mockGetSettings.mockResolvedValue({ library: { path: '/audiobooks', folderFormat: '{author}/{title}' } });
     mockBrowseDirectory.mockResolvedValue({ dirs: ['audiobooks', 'media'], parent: '/' });
+    mockGetImportSubmissionAttention.mockResolvedValue({ data: null, watch: false });
   });
 
   describe('scan step', () => {
@@ -1388,5 +1390,28 @@ describe('ManualImportPage — scanned path display (#284)', () => {
     // Path display should show the new directory
     expect(screen.getByText('/other/dir')).toBeInTheDocument();
     expect(screen.queryByText('/media/audiobooks')).not.toBeInTheDocument();
+  });
+
+  describe('attention banner host (#1894, F1/F21)', () => {
+    const abandonedManual = {
+      id: 7, clientSubmissionId: 'c', source: 'manual' as const, status: 'receiving' as const,
+      expectedCount: 3, receivedCount: 1, processedCount: 0,
+      aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 }, detailsPruned: false,
+      itemsIncluded: false as const, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      attention: { kind: 'abandoned' as const },
+    };
+
+    it('"Import again" resets to the path step WITHOUT navigating away (F1)', async () => {
+      const user = userEvent.setup();
+      mockGetImportSubmissionAttention.mockResolvedValue({ data: abandonedManual, watch: true });
+      renderPage();
+      // The banner is source-scoped to manual and shows on the path step.
+      await waitFor(() => expect(mockGetImportSubmissionAttention).toHaveBeenCalledWith({ source: 'manual' }));
+      const banner = await screen.findByTestId('import-attention-banner');
+      await user.click(within(banner).getByRole('button', { name: 'Import again' }));
+      // Still on the path step (the Scan button is present) and never navigated to /library.
+      expect(screen.getByText('Scan')).toBeInTheDocument();
+      expect(mockNavigate).not.toHaveBeenCalledWith('/library');
+    });
   });
 });

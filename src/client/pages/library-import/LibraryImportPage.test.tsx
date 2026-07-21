@@ -1097,4 +1097,29 @@ describe('LibraryImportPage (#133)', () => {
       });
     });
   });
+
+  describe('attention banner host (#1894, F21)', () => {
+    const abandonedLibrary = {
+      id: 7, clientSubmissionId: 'c', source: 'library' as const, status: 'receiving' as const,
+      expectedCount: 3, receivedCount: 1, processedCount: 0,
+      aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 }, detailsPruned: false,
+      itemsIncluded: false as const, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      attention: { kind: 'abandoned' as const },
+    };
+
+    it('mounts the source-scoped panel + banner and "Import again" re-triggers the library scan', async () => {
+      const user = userEvent.setup();
+      mockApi.listImportSubmissions!.mockResolvedValue({ data: [], total: 0 });
+      mockApi.getImportSubmissionAttention!.mockResolvedValue({ data: abandonedLibrary, watch: true });
+      renderWithProviders(<LibraryImportPage />);
+      // The source-scoped panel + banner query for library submissions.
+      await waitFor(() => expect(mockApi.getImportSubmissionAttention).toHaveBeenCalledWith({ source: 'library' }));
+      await waitFor(() => expect(mockApi.listImportSubmissions).toHaveBeenCalledWith({ source: 'library', limit: 1 }));
+      // The mount scan ran once; "Import again" re-triggers it.
+      await waitFor(() => expect(mockApi.scanDirectory).toHaveBeenCalledTimes(1));
+      const banner = await screen.findByTestId('import-attention-banner');
+      await user.click(within(banner).getByRole('button', { name: 'Import again' }));
+      await waitFor(() => expect(mockApi.scanDirectory).toHaveBeenCalledTimes(2));
+    });
+  });
 });
