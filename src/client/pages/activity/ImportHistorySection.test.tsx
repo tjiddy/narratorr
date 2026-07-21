@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { FAST_POLL_MS } from '@/lib/import-report/polling';
 import { ImportHistorySection } from './ImportHistorySection';
 import type { SubmissionResponse, SubmissionSummary } from '@/lib/api';
 
@@ -34,6 +35,10 @@ function summary(overrides: Partial<SubmissionSummary> = {}): SubmissionSummary 
 beforeEach(() => {
   listImportSubmissions.mockReset();
   getImportSubmissionDetail.mockReset();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('ImportHistorySection (#1894)', () => {
@@ -148,4 +153,105 @@ describe('ImportHistorySection (#1894)', () => {
     expect(await screen.findByTestId('import-details-expired')).toBeInTheDocument();
     expect(getImportSubmissionDetail).toHaveBeenCalledWith(3);
   });
+
+  // ── F20: status labels, relative-time source, pagination ────────────────────
+  it('renders all three status labels and uses completedAt/createdAt correctly under a frozen clock (F20)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const now = new Date('2026-07-21T12:00:00.000Z');
+    vi.setSystemTime(now);
+    listImportSubmissions.mockResolvedValue({
+      data: [
+        summary({ id: 1, status: 'complete', createdAt: new Date(now.getTime() - 60_000).toISOString(), completedAt: new Date(now.getTime() - 2 * 3600_000).toISOString() }),
+        summary({ id: 2, status: 'processing', createdAt: new Date(now.getTime() - 3 * 3600_000).toISOString() }),
+        summary({ id: 3, status: 'receiving', createdAt: new Date(now.getTime() - 5 * 60_000).toISOString() }),
+      ],
+      total: 3,
+    });
+    renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history' });
+    await screen.findByTestId('import-history-card-1');
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(screen.getByText('Processing')).toBeInTheDocument();
+    expect(screen.getByText('Receiving')).toBeInTheDocument();
+    // complete → completedAt (2h ago), NOT createdAt (1m ago); processing → createdAt (3h ago).
+    expect(screen.getByText('2h ago')).toBeInTheDocument();
+    expect(screen.getByText('3h ago')).toBeInTheDocument();
+  });
+
+  it('paginates — a page change re-queries with the next offset (F20)', async () => {
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 120 }); // > page size
+    renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history' });
+    await screen.findByTestId('import-history-card-1');
+    expect(listImportSubmissions).toHaveBeenCalledWith({ limit: 50, offset: 0 });
+    await userEvent.click(screen.getByRole('button', { name: /next/i }));
+    await waitFor(() => expect(listImportSubmissions).toHaveBeenCalledWith({ limit: 50, offset: 50 }));
+  });
+
+  // ── F17: shared detail hook self-polls processing → complete ────────────────
+  it('an expanded card self-polls its detail from processing to terminal rows, patches the header, then stops (F17)', async () => {
+    vi.useFakeTimers();
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1, status: 'processing', processedCount: 1 })], total: 1 });
+    getImportSubmissionDetail
+      .mockResolvedValueOnce({ ...summary({ id: 1, status: 'processing' }), itemsIncluded: true, items: [{ disposition: 'pending', ordinal: 0, path: '/a', title: 'Pending Book' }] })
+      .mockResolvedValue({ ...summary({ id: 1, status: 'complete', processedCount: 2 }), itemsIncluded: true, items: [{ disposition: 'failed', ordinal: 0, path: '/a', title: 'Failed Book', message: 'boom' }] });
+    renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history' });
+    await vi.advanceTimersByTimeAsync(10);
+    fireEvent.click(screen.getByTestId('import-history-card-1').querySelector('button')!);
+    await vi.advanceTimersByTimeAsync(10);
+    // Pre-terminal snapshot: only a pending row → no attention rows yet.
+    expect(screen.queryByText('Failed Book')).not.toBeInTheDocument();
+    // Advance the detail's own poll → terminal state.
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10);
+    expect(screen.getByText('Failed Book')).toBeInTheDocument(); // terminal rows replace pending
+    expect(screen.getByText('Completed')).toBeInTheDocument(); // header patched (F86)
+    // The detail poll STOPS at complete — no further detail fetches.
+    const calls = getImportSubmissionDetail.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS * 3);
+    expect(getImportSubmissionDetail.mock.calls.length).toBe(calls);
+  });
+
+  it('an OFF-PAGE deep-linked card reaches its terminal rows from its own detail, with no list summary (F17/F81)', async () => {
+    // The off-page card has no list-summary header — it renders entirely from the
+    // direct detail read. (The processing→complete poll timing is covered by the
+    // on-page test above; here the hydrator + expansion both observe the same detail.)
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 }); // page lacks id 9
+    getImportSubmissionDetail.mockResolvedValue({
+      ...summary({ id: 9, status: 'complete' }), itemsIncluded: true,
+      items: [{ disposition: 'held', ordinal: 0, path: '/a', title: 'Held Book', reason: 'recording-review-required' }],
+    });
+    renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=9' });
+    await screen.findByText('Held Book');
+    expect(screen.getAllByTestId('import-history-card-9')).toHaveLength(1);
+  });
+
+  it('a malformed detail renders the error arm (effect-keyed warn) (F17)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 });
+    getImportSubmissionDetail.mockResolvedValue({ ...summary({ id: 1 }), itemsIncluded: true, items: [{ disposition: 'bogus', ordinal: 0 }] });
+    renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=1' });
+    await screen.findByText('Import details were malformed.');
+    await waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining('Malformed'), expect.anything()));
+    warn.mockRestore();
+  });
+
+  // ── F23: transient deep-link + per-card detail failure isolation ────────────
+  it('a transient (non-404) deep-link failure renders a focused retry card while other cards remain (F23)', async () => {
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 }); // id 1 on page
+    getImportSubmissionDetail.mockRejectedValue(new Error('network')); // off-page hydrate for run=9 fails transiently
+    renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=9' });
+    // A transient (non-404) error retries twice (backoff ~3s) before surfacing.
+    await screen.findByText('Couldn’t load this import run.', {}, { timeout: 8000 });
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByTestId('import-history-card-1')).toBeInTheDocument(); // other cards remain
+    expect(screen.queryByTestId('import-run-unavailable')).not.toBeInTheDocument(); // not the 404 arm
+  }, 12000);
+
+  it('a per-card detail failure shows a local retry inside that card only (F23)', async () => {
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 }), summary({ id: 2 })], total: 2 });
+    getImportSubmissionDetail.mockRejectedValue(new Error('boom'));
+    renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history' });
+    await screen.findByTestId('import-history-card-1');
+    fireEvent.click(screen.getByTestId('import-history-card-1').querySelector('button')!);
+    await screen.findByText('Couldn’t load import details.', {}, { timeout: 8000 });
+    expect(screen.getByTestId('import-history-card-2')).toBeInTheDocument(); // sibling card unaffected
+  }, 12000);
 });
