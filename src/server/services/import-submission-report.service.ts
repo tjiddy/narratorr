@@ -31,18 +31,22 @@ type SubmissionRow = typeof importSubmissions.$inferSelect;
  * The exact projected column set the report-detail read selects (F62/F66). The
  * KEYS mirror `REPORT_ITEM_COLUMNS`; a regression guard asserts `itemPayload` is
  * absent so a report expansion of an accepted row can never transfer its (up to
- * 64 MiB) staged payload.
+ * 64 MiB) staged payload. A FUNCTION (not a module-level const) so it does not
+ * dereference schema columns at import time — that would break the suites that
+ * partially mock `db/schema`.
  */
-export const REPORT_ITEM_PROJECTION = {
-  disposition: importSubmissionItems.disposition,
-  ordinal: importSubmissionItems.ordinal,
-  path: importSubmissionItems.path,
-  title: importSubmissionItems.title,
-  reason: importSubmissionItems.reason,
-  existingBookId: importSubmissionItems.existingBookId,
-  existingTitle: importSubmissionItems.existingTitle,
-  bookId: importSubmissionItems.bookId,
-} as const;
+export function reportItemProjection() {
+  return {
+    disposition: importSubmissionItems.disposition,
+    ordinal: importSubmissionItems.ordinal,
+    path: importSubmissionItems.path,
+    title: importSubmissionItems.title,
+    reason: importSubmissionItems.reason,
+    existingBookId: importSubmissionItems.existingBookId,
+    existingTitle: importSubmissionItems.existingTitle,
+    bookId: importSubmissionItems.bookId,
+  } as const;
+}
 
 /** One raw row of the atomic attention CTE (columns aliased to camelCase). */
 interface AttentionQueryRow {
@@ -264,7 +268,7 @@ export class ImportSubmissionReportService {
       return { ...buildHeaderFields(header, progress), itemsIncluded: false };
     }
     const rows = await this.db
-      .select(REPORT_ITEM_PROJECTION)
+      .select(reportItemProjection())
       .from(importSubmissionItems)
       .where(eq(importSubmissionItems.submissionId, id))
       .orderBy(asc(importSubmissionItems.ordinal));

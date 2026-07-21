@@ -6,7 +6,7 @@ import { eq } from 'drizzle-orm';
 import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { importSubmissions, importSubmissionItems, books } from '../../db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
-import { ImportSubmissionReportService, REPORT_ITEM_PROJECTION } from './import-submission-report.service.js';
+import { ImportSubmissionReportService, reportItemProjection } from './import-submission-report.service.js';
 import { ABANDONED_UPLOAD_GRACE_MS } from './import-staging.service.js';
 import { REPORT_ITEM_COLUMNS } from './import-submission-dto.js';
 import type { ItemDisposition, StagedImportItem, SubmissionSource, SubmissionStatus } from '../../core/import-staging/schemas.js';
@@ -228,9 +228,9 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
 
   describe('reportDetail', () => {
     it('projection column set excludes itemPayload and has no message column (F62/F66)', () => {
-      expect(Object.keys(REPORT_ITEM_PROJECTION)).toEqual([...REPORT_ITEM_COLUMNS]);
-      expect(Object.keys(REPORT_ITEM_PROJECTION)).not.toContain('itemPayload');
-      expect(Object.keys(REPORT_ITEM_PROJECTION)).not.toContain('message');
+      expect(Object.keys(reportItemProjection())).toEqual([...REPORT_ITEM_COLUMNS]);
+      expect(Object.keys(reportItemProjection())).not.toContain('itemPayload');
+      expect(Object.keys(reportItemProjection())).not.toContain('message');
     });
 
     it('maps arms correctly — accepted without item, failed message from reason', async () => {
