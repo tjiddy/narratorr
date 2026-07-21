@@ -21,7 +21,7 @@ export type { ImportList, ImportListItem, ImportListPreview } from './import-lis
 export type { SuggestionRow, MarkAddedResult, RefreshResult } from './discover.js';
 export type { BulkOpType, BulkJobStatus, BulkRenamePreview, BulkRenamePreviewItem } from './bulk-operations.js';
 export type { ImportJobWithBook, ImportJobBook, ImportJobsParams } from './import-jobs.js';
-export type { ImportSubmissionListParams, AttentionResponse, AttentionSubmission, SubmissionAttention, SubmissionListResponse, SubmissionResponse, SubmissionSummary, StagedItemResultDto, SubmissionAggregates } from './submissions.js';
+export type { ImportSubmissionListParams, AttentionResponse, AttentionSubmission, SubmissionAttention, CreateSubmissionBody, PutItemsBody, PutItemRow, SubmissionListResponse, SubmissionResponse, SubmissionSummary, StagedItemResultDto, StagedImportItem, SubmissionAggregates } from './submissions.js';
 
 export { formatBytes } from '@core/utils/parse.js';
 export { formatBytesPerSec } from './formatBytesPerSec.js';
