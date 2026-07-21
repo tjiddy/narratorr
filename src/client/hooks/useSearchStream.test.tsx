@@ -1169,6 +1169,53 @@ describe('useSearchStream', () => {
       expect(result.current.state.phase).toBe('idle');
     });
 
+    // F3 — a stale remint REJECTION after a NEWER start() must not overwrite the
+    // newer session's phase/error (the catch's generation guard no-ops).
+    it('a stale remint rejection after a newer start() does not overwrite the newer session (F3)', async () => {
+      const deferred = createDeferred<{ token: string; expiresInMs: number }>();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 }) // query mount
+        .mockReturnValueOnce(deferred.promise) // stale remint (held)
+        .mockResolvedValue({ token: 'token-live', expiresInMs: 300_000 });
+
+      const { result } = renderHook(() => useSearchStream('query A'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+
+      await act(async () => { MockEventSource.instances[0]!.onerror?.(new Event('error')); });
+      act(() => { result.current.actions.start(); }); // newer live session
+      expect(result.current.state.phase).toBe('searching');
+
+      // Stale rejection lands after the newer start — the guard makes it a no-op.
+      await act(async () => { deferred.reject(new Error('mint failed')); await deferred.promise.catch(() => {}); });
+      expect(result.current.state.phase).toBe('searching'); // newer session untouched
+      expect(result.current.state.error).toBeNull(); // no 'Search connection failed'
+    });
+
+    // F3 — a stale remint REJECTION after UNMOUNT is a no-op: the generation advanced
+    // synchronously on the layout-phase unmount seam, so the catch neither throws nor
+    // opens a stream. (Post-unmount there is no mounted phase/error to observe — the
+    // observable contract is "no orphan stream, no unhandled rejection".)
+    it('a stale remint rejection after unmount is a silent no-op (F3)', async () => {
+      const deferred = createDeferred<{ token: string; expiresInMs: number }>();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 })
+        .mockReturnValueOnce(deferred.promise);
+
+      const { result, unmount } = renderHook(() => useSearchStream('query A'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+
+      await act(async () => { MockEventSource.instances[0]!.onerror?.(new Event('error')); });
+      const countBeforeUnmount = MockEventSource.instances.length;
+      unmount(); // layout-phase seam advances the generation synchronously
+
+      await act(async () => { deferred.reject(new Error('mint failed')); await deferred.promise.catch(() => {}); });
+      expect(MockEventSource.instances.length).toBe(countBeforeUnmount); // no orphan/reopen
+    });
+
     // F18 — a rejection within the still-live session DOES reach the generic error.
     it('a remint rejection within the live session reaches the generic error state (F18)', async () => {
       (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();

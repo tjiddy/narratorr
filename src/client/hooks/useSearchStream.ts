@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type Dispatch, type SetStateAction } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, type Dispatch, type SetStateAction } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';
@@ -390,10 +390,15 @@ export function useSearchStream(
     resultsShownRef.current = false;
   }, [cleanup]);
 
-  // Cleanup on unmount. Advancing the session generation here is what makes a
-  // pending token re-mint that settles AFTER unmount a no-op (F11/F18) — a passive
-  // boolean would be StrictMode-fragile, but a monotonic generation is not.
-  useEffect(() => () => {
+  // Cleanup on unmount. Advancing the session generation MUST happen on a
+  // synchronous (layout-phase) seam, not a passive `useEffect` cleanup (F1): during a
+  // keyed book switch or close, React runs this layout cleanup during the commit —
+  // before the next book's body is interactive and before passive effects flush. A
+  // passive cleanup runs AFTER the new UI commits, leaving a window in which a pending
+  // token re-mint that settles can still see `scheduledGen === sessionGenRef.current`
+  // and reopen a superseded/orphan stream. A value-compared generation (not a boolean)
+  // keeps this StrictMode-safe under the dev setup→cleanup→setup probe.
+  useLayoutEffect(() => () => {
     sessionGenRef.current += 1;
     cleanup();
   }, [cleanup]);
