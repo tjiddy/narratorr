@@ -403,7 +403,11 @@ describe('LibraryImportPage (#133)', () => {
       await userEvent.click(screen.getAllByLabelText('Deselect')[1]!);
       await waitFor(() => { expect(screen.getByRole('button', { name: /import 1 book$/i })).toBeEnabled(); });
 
+      // Exact paused counts BEFORE the import: B1 observed, B2 the result-less remainder.
+      expect(screen.getByText(/Matching paused — 1 of 2 books remaining\./i)).toBeInTheDocument();
+
       const cancelCallsBefore = mockApi.cancelMatchJob!.mock.calls.length;
+      const startCallsBefore = mockApi.startMatchJob!.mock.calls.length; // initial run only
       await userEvent.click(screen.getByRole('button', { name: /import 1 book$/i }));
 
       // Clean all-accepted completion: accepted B1 is deselected IN PLACE → "0 of 2 new selected".
@@ -411,14 +415,26 @@ describe('LibraryImportPage (#133)', () => {
       // (a) No navigation away from the page, and no engine cancel/disposal.
       expect(screen.getByTestId('location')).toHaveTextContent('/library-import');
       expect(mockApi.cancelMatchJob!.mock.calls.length).toBe(cancelCallsBefore);
-      // (b/c) The paused banner + its Resume affordance survive the import — the run was neither
-      // unmounted nor disposed; B1's matched result and B2's pending remainder are still shown.
-      expect(screen.getByText(/matching paused/i)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /resume remaining/i })).toBeInTheDocument();
+      // (b/c) The paused run is untouched by the import: banner + Resume affordance survive, the
+      // exact remaining/total counts are UNCHANGED, B1 stays matched, B2 stays the paused remainder.
+      expect(screen.getByText(/Matching paused — 1 of 2 books remaining\./i)).toBeInTheDocument();
       expect(screen.getByText('Matched')).toBeInTheDocument();
-      // (d) The result-less remainder (B2) is still the paused remainder — Resume re-matching
-      // ONLY that remainder is covered by the dedicated resume regression above.
       expect(screen.getByText('Paused')).toBeInTheDocument();
+      expect(mockApi.startMatchJob!.mock.calls.length).toBe(startCallsBefore); // import started no match run
+
+      // (d) A subsequent Resume re-matches ONLY the result-less remainder. Re-wire the resume-entry
+      // probe's job lookup to 404 (gone) so it abandons the paused job and starts a fresh remainder.
+      mockApi.getMatchJob!.mockRejectedValue(new ApiError(404, { error: 'gone' }));
+      await userEvent.click(screen.getByRole('button', { name: /resume remaining/i }));
+
+      // The remainder run starts exactly one new match job whose candidate set is ONLY B2 — a
+      // regression that rebuilt or cleared the resume set after accepted-row deselection would
+      // include B1 (or nothing) here.
+      await waitFor(() => { expect(mockApi.startMatchJob!.mock.calls.length).toBe(startCallsBefore + 1); });
+      const resumeCandidates = mockApi.startMatchJob!.mock.calls[startCallsBefore]![0] as Array<{ path: string }>;
+      expect(resumeCandidates.map((c) => c.path)).toEqual(['/audiobooks/A/B2']);
+      // B1's observed match survived the resume (still rendered Matched).
+      expect(screen.getByText('Matched')).toBeInTheDocument();
     });
   });
 

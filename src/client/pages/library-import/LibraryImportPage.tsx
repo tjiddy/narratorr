@@ -13,46 +13,19 @@ import { StagedSubmitBanner } from '@/components/import-report/StagedSubmitBanne
 
 // eslint-disable-next-line max-lines-per-function, complexity -- page orchestrator with scan, match, duplicate, register flows
 export function LibraryImportPage() {
+  const { state, actions, mutations, counts } = useLibraryImport();
   const {
-    step,
-    hasLibraryPath,
-    scanError,
-    emptyResult,
-    rows,
-    editIndex,
-    setEditIndex,
-    isMatching,
-    progress,
-    chunkProgress,
-    libraryRoot,
-    heldReview,
-    banner,
-    dismissBanner,
-    recovering,
-    paused,
-    pausedReason,
-    matchRemaining,
-    matchTotal,
-    handleToggle,
-    handleSelectAll,
-    handleEdit,
-    handleRegister,
-    handleReconfirmHeld,
-    handleRetry,
-    handleRestartMatch,
-    handleResumeMatch,
-    handleDeselectPending,
-    registerMutation,
-    selectedCount,
-    selectedUnmatchedCount,
-    selectedPendingCount,
-    readyCount,
-    reviewCount,
-    noMatchCount,
-    pendingCount,
-    duplicateCount,
-    allSelected,
-  } = useLibraryImport();
+    step, hasLibraryPath, scanError, emptyResult, rows, editIndex, setEditIndex, isMatching, progress,
+    chunkProgress, libraryRoot, heldReview, banner, dismissBanner, recovering, paused, pausedReason, matchRemaining, matchTotal,
+  } = state;
+  const {
+    handleToggle, handleSelectAll, handleEdit, handleRegister, handleReconfirmHeld, handleRetry,
+    handleRestartMatch, handleResumeMatch, handleDeselectPending,
+  } = actions;
+  const { registerMutation } = mutations;
+  const {
+    selectedCount, selectedUnmatchedCount, selectedPendingCount, readyCount, reviewCount, noMatchCount, pendingCount, duplicateCount, allSelected,
+  } = counts;
 
   const [showExisting, setShowExisting] = useState(false);
   const displayedRows = rows.filter(r => showExisting || !isLibraryDbDuplicate(r.book));

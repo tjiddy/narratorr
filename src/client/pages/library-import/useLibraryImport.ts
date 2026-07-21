@@ -267,50 +267,57 @@ export function useLibraryImport() {
   // Library root path for relative-path computation
   const libraryRoot = settings?.library.path ?? '';
 
+  // Grouped return surface (state / actions / mutations / counts) mirroring the sibling
+  // `useManualImport` hook (F2) — keeps the page's consumed API navigable instead of a flat
+  // 30+-value god-hook surface.
   return {
-    step,
-    hasLibraryPath,
-    scanError,
-    emptyResult,
-    rows,
-    editIndex,
-    setEditIndex,
-    isMatching,
-    progress,
-    chunkProgress,
-    libraryRoot,
-    heldReview,
-    banner: staged.banner,
-    dismissBanner: staged.dismissBanner,
-
-    // Match-phase recovery (#1864)
-    recovering,
-    paused,
-    pausedReason,
-    matchRemaining,
-    matchTotal,
-
-    handleToggle,
-    handleSelectAll,
-    handleEdit,
-    handleRegister,
-    handleReconfirmHeld,
-    handleRetry,
-    handleRestartMatch,
-    handleResumeMatch,
-    handleDeselectPending,
-
-    scanMutation,
-    registerMutation,
-
-    selectedCount,
-    selectedUnmatchedCount,
-    readyCount,
-    reviewCount,
-    noMatchCount,
-    pendingCount,
-    selectedPendingCount,
-    duplicateCount,
-    allSelected,
+    state: {
+      step,
+      hasLibraryPath,
+      scanError,
+      emptyResult,
+      rows,
+      editIndex,
+      setEditIndex,
+      isMatching,
+      progress,
+      chunkProgress,
+      libraryRoot,
+      heldReview,
+      banner: staged.banner,
+      dismissBanner: staged.dismissBanner,
+      // Match-phase recovery (#1864)
+      recovering,
+      paused,
+      pausedReason,
+      matchRemaining,
+      matchTotal,
+    },
+    actions: {
+      handleToggle,
+      handleSelectAll,
+      handleEdit,
+      handleRegister,
+      handleReconfirmHeld,
+      handleRetry,
+      handleRestartMatch,
+      handleResumeMatch,
+      handleDeselectPending,
+    },
+    mutations: {
+      scanMutation,
+      registerMutation,
+    },
+    counts: {
+      selectedCount,
+      selectedUnmatchedCount,
+      readyCount,
+      reviewCount,
+      noMatchCount,
+      pendingCount,
+      selectedPendingCount,
+      duplicateCount,
+      allSelected,
+    },
   };
 }

@@ -102,7 +102,7 @@ describe('useLibraryImport hook (#133)', () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(result.current.step).toBe('review');
+      expect(result.current.state.step).toBe('review');
     });
 
     expect(mockScanDirectory).toHaveBeenCalledWith('/audiobooks');
@@ -115,7 +115,7 @@ describe('useLibraryImport hook (#133)', () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(result.current.hasLibraryPath).toBe(false);
+      expect(result.current.state.hasLibraryPath).toBe(false);
     });
 
     expect(mockScanDirectory).not.toHaveBeenCalled();
@@ -127,7 +127,7 @@ describe('useLibraryImport hook (#133)', () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(result.current.hasLibraryPath).toBe(false);
+      expect(result.current.state.hasLibraryPath).toBe(false);
     });
 
     expect(mockScanDirectory).not.toHaveBeenCalled();
@@ -139,7 +139,7 @@ describe('useLibraryImport hook (#133)', () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(result.current.scanError).toBe('Permission denied');
+      expect(result.current.state.scanError).toBe('Permission denied');
     });
   });
 
@@ -158,20 +158,20 @@ describe('useLibraryImport hook (#133)', () => {
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
     // Before poll fires: non-dup starts selected
-    const nonDupRowBefore = result.current.rows.find(r => !r.book.isDuplicate);
+    const nonDupRowBefore = result.current.state.rows.find(r => !r.book.isDuplicate);
     expect(nonDupRowBefore?.selected).toBe(true);
 
     // After poll fires (2s interval): non-dup row should be deselected due to confidence='none'
     await waitFor(() => {
-      const nonDupRow = result.current.rows.find(r => !r.book.isDuplicate);
+      const nonDupRow = result.current.state.rows.find(r => !r.book.isDuplicate);
       expect(nonDupRow?.selected).toBe(false);
     }, { timeout: 5000 });
 
     // Duplicate rows remain unselected regardless
-    const pathDupRow = result.current.rows.find(r => r.book.duplicateReason === 'path');
+    const pathDupRow = result.current.state.rows.find(r => r.book.duplicateReason === 'path');
     expect(pathDupRow?.selected).toBe(false);
   });
 
@@ -205,19 +205,19 @@ describe('useLibraryImport hook (#133)', () => {
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-    await waitFor(() => expect(result.current.step).toBe('review'));
-    expect(result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(true);
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
+    expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(true);
 
     // After the post-match flag arrives, the row is flagged AND deselected.
     await waitFor(() => {
-      const row = result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1');
+      const row = result.current.state.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1');
       expect(row?.book.isDuplicate).toBe(true);
       expect(row?.book.existingBookId).toBe(421);
       expect(row?.selected).toBe(false);
     }, { timeout: 5000 });
 
     // It is therefore absent from the staged submission (which still carries the sibling).
-    act(() => result.current.handleRegister());
+    act(() => result.current.actions.handleRegister());
     await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
     const paths = submittedItems().map(i => i.path);
     expect(paths).toContain('/audiobooks/AuthorD/Book4');
@@ -239,40 +239,40 @@ describe('useLibraryImport hook (#133)', () => {
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
     // Before poll fires: non-dup starts selected
-    const nonDupRowBefore = result.current.rows.find(r => !r.book.isDuplicate);
+    const nonDupRowBefore = result.current.state.rows.find(r => !r.book.isDuplicate);
     expect(nonDupRowBefore?.selected).toBe(true);
 
     // After poll fires: non-dup row deselected due to confidence='medium'
     await waitFor(() => {
-      const nonDupRow = result.current.rows.find(r => !r.book.isDuplicate);
+      const nonDupRow = result.current.state.rows.find(r => !r.book.isDuplicate);
       expect(nonDupRow?.matchResult?.confidence).toBe('medium');
       expect(nonDupRow?.selected).toBe(false);
     }, { timeout: 5000 });
 
     // reviewCount counts the medium row; selectedCount must not include it
-    expect(result.current.reviewCount).toBe(1);
-    const nonDupRow = result.current.rows.find(r => !r.book.isDuplicate);
-    expect(result.current.selectedCount).toBe(0);
+    expect(result.current.counts.reviewCount).toBe(1);
+    const nonDupRow = result.current.state.rows.find(r => !r.book.isDuplicate);
+    expect(result.current.counts.selectedCount).toBe(0);
     expect(nonDupRow?.selected).toBe(false);
   });
 
   it('Select All: only selects rows where isDuplicate=false', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
     // First deselect the non-dup row to set up a partial state
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
-    act(() => result.current.handleToggle(nonDupIdx));
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
+    act(() => result.current.actions.handleToggle(nonDupIdx));
 
     // Now handleSelectAll should re-select only non-dup rows
-    act(() => result.current.handleSelectAll());
+    act(() => result.current.actions.handleSelectAll());
 
-    const pathDupRow = result.current.rows.find(r => r.book.duplicateReason === 'path');
-    const nonDupRow = result.current.rows.find(r => !r.book.isDuplicate);
+    const pathDupRow = result.current.state.rows.find(r => r.book.duplicateReason === 'path');
+    const nonDupRow = result.current.state.rows.find(r => !r.book.isDuplicate);
     expect(pathDupRow?.selected).toBe(false);
     expect(nonDupRow?.selected).toBe(true);
   });
@@ -284,17 +284,17 @@ describe('useLibraryImport hook (#133)', () => {
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
+    const slugDupIdx = result.current.state.rows.findIndex(r => r.book.duplicateReason === 'slug');
     expect(slugDupIdx).toBeGreaterThanOrEqual(0);
 
     act(() => {
-      result.current.handleEdit(slugDupIdx, { title: 'Different Title', author: 'Different Author', series: '' });
+      result.current.actions.handleEdit(slugDupIdx, { title: 'Different Title', author: 'Different Author', series: '' });
     });
 
     await waitFor(() => {
-      const row = result.current.rows[slugDupIdx];
+      const row = result.current.state.rows[slugDupIdx];
       expect(row!.book.isDuplicate).toBe(false);
     });
   });
@@ -310,17 +310,17 @@ describe('useLibraryImport hook (#133)', () => {
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
+    const slugDupIdx = result.current.state.rows.findIndex(r => r.book.duplicateReason === 'slug');
 
     act(() => {
-      result.current.handleEdit(slugDupIdx, { title: 'Book Three: A Subtitle', author: 'author c', series: '' });
+      result.current.actions.handleEdit(slugDupIdx, { title: 'Book Three: A Subtitle', author: 'author c', series: '' });
     });
 
     // Give the recheck a tick; the row must remain flagged.
-    await waitFor(() => expect(result.current.rows[slugDupIdx]!.userEdited).toBe(true));
-    expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
+    await waitFor(() => expect(result.current.state.rows[slugDupIdx]!.userEdited).toBe(true));
+    expect(result.current.state.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
   });
 
   it('slug-duplicate row flagged by ASIN stays flagged after non-colliding title/author edits (#1662 F5)', async () => {
@@ -333,16 +333,16 @@ describe('useLibraryImport hook (#133)', () => {
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
+    const slugDupIdx = result.current.state.rows.findIndex(r => r.book.duplicateReason === 'slug');
 
     act(() => {
-      result.current.handleEdit(slugDupIdx, { title: 'Totally Different', author: 'Someone Else', series: '', asin: 'B0OWNEDASIN' });
+      result.current.actions.handleEdit(slugDupIdx, { title: 'Totally Different', author: 'Someone Else', series: '', asin: 'B0OWNEDASIN' });
     });
 
-    await waitFor(() => expect(result.current.rows[slugDupIdx]!.userEdited).toBe(true));
-    expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
+    await waitFor(() => expect(result.current.state.rows[slugDupIdx]!.userEdited).toBe(true));
+    expect(result.current.state.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
   });
 
   it('match-job start failure: pauses start-failed (no active job) instead of a raw error string (#1864)', async () => {
@@ -350,11 +350,11 @@ describe('useLibraryImport hook (#133)', () => {
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
     await waitFor(() => {
-      expect(result.current.paused).toBe(true);
-      expect(result.current.pausedReason).toBe('start-failed');
+      expect(result.current.state.paused).toBe(true);
+      expect(result.current.state.pausedReason).toBe('start-failed');
     });
   });
 
@@ -367,12 +367,12 @@ describe('useLibraryImport hook (#133)', () => {
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-    await waitFor(() => expect(result.current.paused).toBe(true));
+    await waitFor(() => expect(result.current.state.paused).toBe(true));
 
     // Restart — beginLogical clears the pause synchronously before the new start.
-    act(() => result.current.handleRestartMatch());
+    act(() => result.current.actions.handleRestartMatch());
 
-    await waitFor(() => expect(result.current.paused).toBe(false));
+    await waitFor(() => expect(result.current.state.paused).toBe(false));
 
     // startMatchJob called twice: initial scan + restart
     expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
@@ -387,17 +387,17 @@ describe('useLibraryImport hook (#133)', () => {
   // (regression guard, #1028): deleting the spread at useLibraryImport.ts would drop it.
   it('handleRestartMatch: threads edited seriesPosition (including 0) into restart candidates (#1849)', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     // Seed a genuine position-0 via edit so the restart builder must carry it.
     act(() => {
-      result.current.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: 'Fablehaven', seriesPosition: 0 });
+      result.current.actions.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: 'Fablehaven', seriesPosition: 0 });
     });
 
     // Isolate the restart call from the initial auto-scan match job.
     mockStartMatchJob.mockClear();
-    act(() => { result.current.handleRestartMatch(); });
+    act(() => { result.current.actions.handleRestartMatch(); });
     await waitFor(() => { expect(mockStartMatchJob).toHaveBeenCalled(); });
 
     const restartCandidates = mockStartMatchJob.mock.calls[0]![0] as Array<{ path: string; seriesPosition?: number }>;
@@ -412,8 +412,8 @@ describe('useLibraryImport hook (#133)', () => {
       .mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
-    await waitFor(() => expect(result.current.recovering).toBe(true), { timeout: 5000 });
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.recovering).toBe(true), { timeout: 5000 });
   });
 
   it('Restart CLEARS already-matched rows to pending immediately (#1864 §5b/F5)', async () => {
@@ -425,14 +425,14 @@ describe('useLibraryImport hook (#133)', () => {
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const idx = result.current.rows.findIndex(r => !r.book.isDuplicate);
-    await waitFor(() => expect(result.current.rows[idx]!.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+    const idx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
+    await waitFor(() => expect(result.current.state.rows[idx]!.matchResult?.confidence).toBe('high'), { timeout: 5000 });
 
     // Restart clears the stale match to pending BEFORE the new run's first result lands.
-    act(() => result.current.handleRestartMatch());
-    expect(result.current.rows[idx]!.matchResult).toBeUndefined();
+    act(() => result.current.actions.handleRestartMatch());
+    expect(result.current.state.rows[idx]!.matchResult).toBeUndefined();
   });
 
   it('Resume PRESERVES already-matched rows and only re-matches the remainder (#1864 §5b/F5)', async () => {
@@ -453,18 +453,18 @@ describe('useLibraryImport hook (#133)', () => {
       .mockResolvedValueOnce({ id: 'job-1', status: 'completed', total: 2, matched: 2, results: [b1, b2] }); // resume-entry probe completes
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.rows.length).toBe(2));
+    await waitFor(() => expect(result.current.state.rows.length).toBe(2));
 
     // B1 matches, then the run pauses — B1's match is kept.
-    await waitFor(() => expect(result.current.rows.find(r => r.book.path === '/audiobooks/A/B1')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
-    await waitFor(() => expect(result.current.paused).toBe(true), { timeout: 5000 });
-    expect(result.current.rows.find(r => r.book.path === '/audiobooks/A/B1')?.matchResult?.confidence).toBe('high');
+    await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/A/B1')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+    await waitFor(() => expect(result.current.state.paused).toBe(true), { timeout: 5000 });
+    expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/A/B1')?.matchResult?.confidence).toBe('high');
 
     // Resume preserves B1 and fills in B2.
-    act(() => result.current.handleResumeMatch());
-    await waitFor(() => expect(result.current.rows.find(r => r.book.path === '/audiobooks/A/B2')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
-    expect(result.current.rows.find(r => r.book.path === '/audiobooks/A/B1')?.matchResult?.confidence).toBe('high');
-    expect(result.current.paused).toBe(false);
+    act(() => result.current.actions.handleResumeMatch());
+    await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/A/B2')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+    expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/A/B1')?.matchResult?.confidence).toBe('high');
+    expect(result.current.state.paused).toBe(false);
   }, 20000);
 
   it('path-duplicate row: no edit-triggered recheck, row stays locked', async () => {
@@ -474,16 +474,16 @@ describe('useLibraryImport hook (#133)', () => {
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const pathDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'path');
+    const pathDupIdx = result.current.state.rows.findIndex(r => r.book.duplicateReason === 'path');
 
     act(() => {
-      result.current.handleEdit(pathDupIdx, { title: 'Totally Different', author: 'New Author', series: '' });
+      result.current.actions.handleEdit(pathDupIdx, { title: 'Totally Different', author: 'New Author', series: '' });
     });
 
     await waitFor(() => {
-      const row = result.current.rows[pathDupIdx];
+      const row = result.current.state.rows[pathDupIdx];
       expect(row!.book.isDuplicate).toBe(true);
       expect(row!.book.duplicateReason).toBe('path');
     });
@@ -492,9 +492,9 @@ describe('useLibraryImport hook (#133)', () => {
   // ── Staged submit + poll flow (#1902) ──────────────────────────────────────
   it('Register: createImportSubmission called with source=library, no mode, and the shaped items', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    await act(async () => { result.current.handleRegister(); });
+    await act(async () => { result.current.actions.handleRegister(); });
     await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
 
     expect(mockCreateSubmission.mock.calls[0]![0]).toMatchObject({ source: 'library' });
@@ -509,13 +509,13 @@ describe('useLibraryImport hook (#133)', () => {
     wireStagedComplete(stagedMocks, { source: 'library', items: [heldRow(0, heldPath, 'Book One')] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    await act(async () => { result.current.handleRegister(); });
+    await act(async () => { result.current.actions.handleRegister(); });
 
-    await waitFor(() => expect(result.current.heldReview).toHaveLength(1));
-    expect(result.current.heldReview[0]!.path).toBe(heldPath);
-    expect(result.current.heldReview[0]!.reason).toBe('recording-review-required');
+    await waitFor(() => expect(result.current.state.heldReview).toHaveLength(1));
+    expect(result.current.state.heldReview[0]!.path).toBe(heldPath);
+    expect(result.current.state.heldReview[0]!.reason).toBe('recording-review-required');
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(toast.warning).toHaveBeenCalled();
   });
@@ -525,15 +525,15 @@ describe('useLibraryImport hook (#133)', () => {
     wireStagedComplete(stagedMocks, { source: 'library', items: [heldRow(0, heldPath, 'Book One')] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    await act(async () => { result.current.handleRegister(); });
-    await waitFor(() => expect(result.current.heldReview).toHaveLength(1));
+    await act(async () => { result.current.actions.handleRegister(); });
+    await waitFor(() => expect(result.current.state.heldReview).toHaveLength(1));
 
     // Re-confirm resubmits the held row with forceImport bypassing the safety-net.
     mockPutSubmissionItems.mockClear();
     wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, heldPath, 'Book One')] });
-    await act(async () => { result.current.handleReconfirmHeld(); });
+    await act(async () => { result.current.actions.handleReconfirmHeld(); });
 
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/library'));
     expect(submittedItems()).toEqual(expect.arrayContaining([
@@ -543,14 +543,14 @@ describe('useLibraryImport hook (#133)', () => {
 
   it('handleRegister forwards edited.narrators and seriesPosition (#1028)', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     act(() => {
-      result.current.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: 'Discworld', narrators: ['Jim Dale'], seriesPosition: 27 });
+      result.current.actions.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: 'Discworld', narrators: ['Jim Dale'], seriesPosition: 27 });
     });
 
-    await act(async () => { result.current.handleRegister(); });
+    await act(async () => { result.current.actions.handleRegister(); });
     await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
 
     expect(submittedItems()).toEqual(expect.arrayContaining([
@@ -560,14 +560,14 @@ describe('useLibraryImport hook (#133)', () => {
 
   it('handleRegister forwards seriesPosition: 0 (regression guard) (#1028)', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     act(() => {
-      result.current.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: 'Series', seriesPosition: 0 });
+      result.current.actions.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: 'Series', seriesPosition: 0 });
     });
 
-    await act(async () => { result.current.handleRegister(); });
+    await act(async () => { result.current.actions.handleRegister(); });
     await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
     const found = submittedItems().find(b => b.path === '/audiobooks/AuthorA/Book1');
     expect(found?.seriesPosition).toBe(0);
@@ -582,24 +582,24 @@ describe('useLibraryImport hook (#133)', () => {
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
-    expect(result.current.rows[0]!.edited.seriesPosition).toBe(2.5);
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
+    expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(2.5);
 
-    await act(async () => { result.current.handleRegister(); });
+    await act(async () => { result.current.actions.handleRegister(); });
     await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
     expect(submittedItems()[0]!.seriesPosition).toBe(2.5);
   });
 
   it('handleRegister does not forward narrators when empty array (#1028)', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     act(() => {
-      result.current.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: '', narrators: [] });
+      result.current.actions.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: '', narrators: [] });
     });
 
-    await act(async () => { result.current.handleRegister(); });
+    await act(async () => { result.current.actions.handleRegister(); });
     await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
     const found = submittedItems().find(b => b.path === '/audiobooks/AuthorA/Book1');
     expect(found).not.toHaveProperty('narrators');
@@ -609,9 +609,9 @@ describe('useLibraryImport hook (#133)', () => {
     wireStagedComplete(stagedMocks, { source: 'library', items: [skippedRow(0, '/audiobooks/AuthorA/Book1', 'Book One')] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    await act(async () => { result.current.handleRegister(); });
+    await act(async () => { result.current.actions.handleRegister(); });
     await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('1 already in your library'));
     expect(toast.success).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
@@ -621,9 +621,9 @@ describe('useLibraryImport hook (#133)', () => {
     wireStagedComplete(stagedMocks, { source: 'library', items: [failedRow(0, '/audiobooks/AuthorA/Book1', 'Book One')] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    await act(async () => { result.current.handleRegister(); });
+    await act(async () => { result.current.actions.handleRegister(); });
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('1 failed'));
     expect(toast.success).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
@@ -636,10 +636,10 @@ describe('useLibraryImport hook (#133)', () => {
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    await act(async () => { result.current.handleRegister(); });
-    await waitFor(() => expect(result.current.heldReview).toHaveLength(1));
+    await act(async () => { result.current.actions.handleRegister(); });
+    await waitFor(() => expect(result.current.state.heldReview).toHaveLength(1));
 
     expect(toast.warning).toHaveBeenCalledWith('1 held for recording review');
     expect(toast.error).toHaveBeenCalledWith('1 failed');
@@ -660,14 +660,14 @@ describe('useLibraryImport hook (#133)', () => {
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
-    await waitFor(() => expect(result.current.rows).toHaveLength(2));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.rows).toHaveLength(2));
 
-    await act(async () => { result.current.handleRegister(); });
+    await act(async () => { result.current.actions.handleRegister(); });
     await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('1 registered · 1 already in your library'));
     expect(mockNavigate).not.toHaveBeenCalled();
     // The accepted row (Book1) is deselected; the skipped row (Book2) stays as-is.
-    await waitFor(() => expect(result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(false));
+    await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(false));
   });
 
   it('create failure surfaces a recoverable banner and does not navigate (F9)', async () => {
@@ -675,10 +675,10 @@ describe('useLibraryImport hook (#133)', () => {
     mockCreateSubmission.mockRejectedValue(new ApiError(400, { error: 'invalid-body' }));
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
-    await act(async () => { result.current.handleRegister(); });
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
+    await act(async () => { result.current.actions.handleRegister(); });
 
-    await waitFor(() => expect(result.current.banner).toBeTruthy());
+    await waitFor(() => expect(result.current.state.banner).toBeTruthy());
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
   });
@@ -687,31 +687,31 @@ describe('useLibraryImport hook (#133)', () => {
     mockPutSubmissionItems.mockRejectedValue(new ApiError(409, { error: 'submission-not-receiving' }));
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
-    await act(async () => { result.current.handleRegister(); });
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
+    await act(async () => { result.current.actions.handleRegister(); });
 
-    await waitFor(() => expect(result.current.banner).toBeTruthy());
+    await waitFor(() => expect(result.current.state.banner).toBeTruthy());
     expect(mockFinalizeSubmission).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
-    expect(result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(true);
+    expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(true);
   });
 
   it('an all-oversize selection is refused pre-create with the too-large banner, rows stay selected (F17/F39)', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
     // A metadata author name over the 512-char bound is a pure `too_big` exclusion →
     // oversize (not invalid), so the batch trips the zero-survivor too-large refusal.
-    const idx = result.current.rows.findIndex(r => r.book.path === '/audiobooks/AuthorA/Book1');
+    const idx = result.current.state.rows.findIndex(r => r.book.path === '/audiobooks/AuthorA/Book1');
     const oversizeMeta = { title: 'Book One', authors: [{ name: 'x'.repeat(513) }] } as unknown as import('@/lib/api').BookMetadata;
-    act(() => result.current.handleEdit(idx, { title: 'Book One', author: 'Author A', series: '', metadata: oversizeMeta }));
+    act(() => result.current.actions.handleEdit(idx, { title: 'Book One', author: 'Author A', series: '', metadata: oversizeMeta }));
 
-    act(() => result.current.handleRegister());
+    act(() => result.current.actions.handleRegister());
 
-    await waitFor(() => expect(result.current.banner).toMatch(/too large/i));
+    await waitFor(() => expect(result.current.state.banner).toMatch(/too large/i));
     expect(mockCreateSubmission).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
-    expect(result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(true);
+    expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(true);
   });
 
   // AC3: empty state (#141)
@@ -721,9 +721,9 @@ describe('useLibraryImport hook (#133)', () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(result.current.emptyResult).toBe(true);
+      expect(result.current.state.emptyResult).toBe(true);
     });
-    expect(result.current.scanError).toBeNull();
+    expect(result.current.state.scanError).toBeNull();
     expect(mockStartMatchJob).not.toHaveBeenCalled();
   });
 
@@ -739,9 +739,9 @@ describe('useLibraryImport hook (#133)', () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(result.current.emptyResult).toBe(true);
+      expect(result.current.state.emptyResult).toBe(true);
     });
-    expect(result.current.scanError).toBeNull();
+    expect(result.current.state.scanError).toBeNull();
     expect(mockStartMatchJob).not.toHaveBeenCalled();
   });
 
@@ -752,9 +752,9 @@ describe('useLibraryImport hook (#133)', () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(result.current.step).toBe('review');
+      expect(result.current.state.step).toBe('review');
     });
-    expect(result.current.emptyResult).toBe(false);
+    expect(result.current.state.emptyResult).toBe(false);
     expect(mockStartMatchJob).toHaveBeenCalled();
   });
 
@@ -776,9 +776,9 @@ describe('useLibraryImport hook (#133)', () => {
 
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => expect(result.current.step).toBe('review'));
+      await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-      const row = result.current.rows.find(r => !!r.book.reviewReason);
+      const row = result.current.state.rows.find(r => !!r.book.reviewReason);
       expect(row).toBeDefined();
       expect(row!.selected).toBe(true);
     });
@@ -807,19 +807,19 @@ describe('match merge — selection behavior (#185)', () => {
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
     // Deselect the non-duplicate row before match results arrive
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
-    act(() => result.current.handleToggle(nonDupIdx));
-    expect(result.current.rows[nonDupIdx]!.selected).toBe(false);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
+    act(() => result.current.actions.handleToggle(nonDupIdx));
+    expect(result.current.state.rows[nonDupIdx]!.selected).toBe(false);
 
     // Match result with high confidence merges — should NOT auto-select
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
     }, { timeout: 5000 });
 
-    expect(result.current.rows[nonDupIdx]!.selected).toBe(false);
+    expect(result.current.state.rows[nonDupIdx]!.selected).toBe(false);
   });
 
   it('high confidence keeps a default (still-checked) non-duplicate row selected', async () => {
@@ -836,17 +836,17 @@ describe('match merge — selection behavior (#185)', () => {
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
     // Do NOT touch the row — it starts selected by default
     await waitFor(() => {
-      const nonDupRow = result.current.rows.find(r => !r.book.isDuplicate);
+      const nonDupRow = result.current.state.rows.find(r => !r.book.isDuplicate);
       expect(nonDupRow?.matchResult?.confidence).toBe('high');
     }, { timeout: 5000 });
 
-    const nonDupRow = result.current.rows.find(r => !r.book.isDuplicate);
+    const nonDupRow = result.current.state.rows.find(r => !r.book.isDuplicate);
     expect(nonDupRow?.selected).toBe(true);
-    expect(result.current.readyCount).toBe(1);
+    expect(result.current.counts.readyCount).toBe(1);
   });
 
   it('edit-during-matching preserves selection: a user-FIXED row stays checked when a later medium match merges (#1374)', async () => {
@@ -854,19 +854,19 @@ describe('match merge — selection behavior (#185)', () => {
     mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
 
     // User commits a fix — sets userEdited + auto-checks the row.
     act(() => {
-      result.current.handleEdit(nonDupIdx, {
+      result.current.actions.handleEdit(nonDupIdx, {
         title: 'Corrected Title', author: 'Author A', series: '',
         metadata: { title: 'Corrected Title', authors: [{ name: 'Author A' }] },
       });
     });
-    expect(result.current.rows[nonDupIdx]!.userEdited).toBe(true);
-    expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
+    expect(result.current.state.rows[nonDupIdx]!.userEdited).toBe(true);
+    expect(result.current.state.rows[nonDupIdx]!.selected).toBe(true);
 
     // The in-flight job (searched on the scan-time title) returns a medium result.
     mockGetMatchJob.mockResolvedValue({
@@ -875,13 +875,13 @@ describe('match merge — selection behavior (#185)', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
     }, { timeout: 5000 });
 
     // userEdited row keeps its selection despite the medium merge.
-    expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
-    expect(result.current.rows[nonDupIdx]!.userEdited).toBe(true);
-    expect(result.current.selectedCount).toBeGreaterThanOrEqual(1);
+    expect(result.current.state.rows[nonDupIdx]!.selected).toBe(true);
+    expect(result.current.state.rows[nonDupIdx]!.userEdited).toBe(true);
+    expect(result.current.counts.selectedCount).toBeGreaterThanOrEqual(1);
   });
 
   it('Retry Match preserves a user-FIXED row: a re-result at medium does not uncheck it (#1374)', async () => {
@@ -892,55 +892,55 @@ describe('match merge — selection behavior (#185)', () => {
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
-    await waitFor(() => expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
+    await waitFor(() => expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('high'), { timeout: 5000 });
 
     // User fixes the row.
     act(() => {
-      result.current.handleEdit(nonDupIdx, {
+      result.current.actions.handleEdit(nonDupIdx, {
         title: 'Corrected', author: 'Author A', series: '',
         metadata: { title: 'Corrected', authors: [{ name: 'Author A' }] },
       });
     });
-    expect(result.current.rows[nonDupIdx]!.userEdited).toBe(true);
-    expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
+    expect(result.current.state.rows[nonDupIdx]!.userEdited).toBe(true);
+    expect(result.current.state.rows[nonDupIdx]!.selected).toBe(true);
 
     // Restart re-matches all non-dup rows; the re-result comes back medium.
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
       results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'medium', bestMatch: { title: 'Other', authors: [{ name: 'Author A' }] }, alternatives: [] }],
     });
-    act(() => result.current.handleRestartMatch());
+    act(() => result.current.actions.handleRestartMatch());
 
-    await waitFor(() => expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium'), { timeout: 5000 });
-    expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
+    await waitFor(() => expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium'), { timeout: 5000 });
+    expect(result.current.state.rows[nonDupIdx]!.selected).toBe(true);
   });
 
   it('#1318 guard: a merely-toggled (not edited) row is still unchecked by a medium merge', async () => {
     mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     // Bare checkbox interaction (toggle off then on) must NOT set userEdited.
-    act(() => result.current.handleToggle(nonDupIdx));
-    act(() => result.current.handleToggle(nonDupIdx));
-    expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
-    expect(result.current.rows[nonDupIdx]!.userEdited).toBe(false);
+    act(() => result.current.actions.handleToggle(nonDupIdx));
+    act(() => result.current.actions.handleToggle(nonDupIdx));
+    expect(result.current.state.rows[nonDupIdx]!.selected).toBe(true);
+    expect(result.current.state.rows[nonDupIdx]!.userEdited).toBe(false);
 
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
       results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'medium', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
     });
 
-    await waitFor(() => expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium'), { timeout: 5000 });
-    expect(result.current.rows[nonDupIdx]!.selected).toBe(false);
-    expect(result.current.rows[nonDupIdx]!.userEdited).toBe(false);
-    expect(result.current.reviewCount).toBe(1);
-    expect(result.current.selectedCount).toBe(0);
+    await waitFor(() => expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium'), { timeout: 5000 });
+    expect(result.current.state.rows[nonDupIdx]!.selected).toBe(false);
+    expect(result.current.state.rows[nonDupIdx]!.userEdited).toBe(false);
+    expect(result.current.counts.reviewCount).toBe(1);
+    expect(result.current.counts.selectedCount).toBe(0);
   });
 
   it('garbage confidence fails closed (unchecked) for a non-userEdited row', async () => {
@@ -950,11 +950,11 @@ describe('match merge — selection behavior (#185)', () => {
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
-    await waitFor(() => expect(result.current.rows[nonDupIdx]!.matchResult).toBeDefined(), { timeout: 5000 });
-    expect(result.current.rows[nonDupIdx]!.selected).toBe(false);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
+    await waitFor(() => expect(result.current.state.rows[nonDupIdx]!.matchResult).toBeDefined(), { timeout: 5000 });
+    expect(result.current.state.rows[nonDupIdx]!.selected).toBe(false);
   });
 });
 
@@ -971,21 +971,21 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
 
   it('unselected row with metadata attached auto-selects the row', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
-    act(() => result.current.handleToggle(nonDupIdx));
-    expect(result.current.rows[nonDupIdx]!.selected).toBe(false);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
+    act(() => result.current.actions.handleToggle(nonDupIdx));
+    expect(result.current.state.rows[nonDupIdx]!.selected).toBe(false);
 
     // Edit with metadata → auto-selects
     act(() => {
-      result.current.handleEdit(nonDupIdx, {
+      result.current.actions.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
         metadata: { title: 'Book One', authors: [{ name: 'Author A' }] },
       });
     });
 
-    expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
+    expect(result.current.state.rows[nonDupIdx]!.selected).toBe(true);
   });
 
   it('confidence upgrade from none to medium when metadata provided', async () => {
@@ -1001,23 +1001,23 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
 
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
     }, { timeout: 5000 });
 
     // Edit with metadata → confidence upgrades to medium
     act(() => {
-      result.current.handleEdit(nonDupIdx, {
+      result.current.actions.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
         metadata: { title: 'Book One', authors: [{ name: 'Author A' }] },
       });
     });
 
-    expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
+    expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
   });
 
   // ── #335 Manual match override: medium → high ──────────────────────────
@@ -1033,23 +1033,23 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
 
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
     }, { timeout: 5000 });
 
     // Edit with provider metadata → confidence upgrades to high
     act(() => {
-      result.current.handleEdit(nonDupIdx, {
+      result.current.actions.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
         metadata: { title: 'Book One', authors: [{ name: 'Author A' }] },
       });
     });
 
-    expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
+    expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
   });
 
   it('confidence stays high when provider metadata provided on high-confidence row', async () => {
@@ -1064,23 +1064,23 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
 
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
     }, { timeout: 5000 });
 
     // Edit with provider metadata → confidence stays high
     act(() => {
-      result.current.handleEdit(nonDupIdx, {
+      result.current.actions.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
         metadata: { title: 'Book One', authors: [{ name: 'Author A' }] },
       });
     });
 
-    expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
+    expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
   });
 
   it('confidence stays medium when saved with preloaded metadata (no re-selection)', async () => {
@@ -1096,25 +1096,25 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
 
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
     }, { timeout: 5000 });
 
     // Save with the SAME metadata reference (user opened modal without re-selecting)
-    const preloadedMetadata = result.current.rows[nonDupIdx]!.edited.metadata;
+    const preloadedMetadata = result.current.state.rows[nonDupIdx]!.edited.metadata;
     act(() => {
-      result.current.handleEdit(nonDupIdx, {
+      result.current.actions.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
         ...(preloadedMetadata !== undefined && { metadata: preloadedMetadata }),
       });
     });
 
     // Should NOT upgrade — no explicit provider re-selection
-    expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
+    expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
   });
 
   it('confidence upgrade from medium to high when explicit click on SAME current match', async () => {
@@ -1130,23 +1130,23 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
 
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
     }, { timeout: 5000 });
 
     // Simulate explicit click on the current match — applyMetadata spreads to new reference
     act(() => {
-      result.current.handleEdit(nonDupIdx, {
+      result.current.actions.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
         metadata: { ...bestMatch },
       });
     });
 
-    expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
+    expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
   });
 
   it('slug-duplicate row: title+author still collides → stays duplicate', async () => {
@@ -1155,16 +1155,16 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     ]);
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
+    const slugDupIdx = result.current.state.rows.findIndex(r => r.book.duplicateReason === 'slug');
 
     // Edit but keep same colliding title+author
     act(() => {
-      result.current.handleEdit(slugDupIdx, { title: 'Book Three', author: 'Author C', series: '' });
+      result.current.actions.handleEdit(slugDupIdx, { title: 'Book Three', author: 'Author C', series: '' });
     });
 
-    expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
+    expect(result.current.state.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
   });
 
   it('slug-duplicate row: title+author no longer collides → duplicate cleared', async () => {
@@ -1173,15 +1173,15 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     ]);
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
+    const slugDupIdx = result.current.state.rows.findIndex(r => r.book.duplicateReason === 'slug');
 
     act(() => {
-      result.current.handleEdit(slugDupIdx, { title: 'New Title', author: 'New Author', series: '' });
+      result.current.actions.handleEdit(slugDupIdx, { title: 'New Title', author: 'New Author', series: '' });
     });
 
-    expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(false);
+    expect(result.current.state.rows[slugDupIdx]!.book.isDuplicate).toBe(false);
   });
 
   it('undefined bookIdentifiers (query not yet resolved) — no crash, guard prevents recheck', async () => {
@@ -1189,17 +1189,17 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     mockGetBookIdentifiers.mockReturnValue(undefined as never);
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
+    const slugDupIdx = result.current.state.rows.findIndex(r => r.book.duplicateReason === 'slug');
 
     // Edit slug-duplicate row — should not crash even though bookIdentifiers is undefined
     act(() => {
-      result.current.handleEdit(slugDupIdx, { title: 'New Title', author: 'New Author', series: '' });
+      result.current.actions.handleEdit(slugDupIdx, { title: 'New Title', author: 'New Author', series: '' });
     });
 
     // Row stays duplicate because the guard skipped the recheck
-    expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
+    expect(result.current.state.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
   });
 
   // ── #415 Match confidence reason passthrough ────────────────────────
@@ -1217,14 +1217,14 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       });
 
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-      await waitFor(() => expect(result.current.step).toBe('review'));
+      await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-      const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+      const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
       await waitFor(() => {
-        expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
+        expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
       }, { timeout: 5000 });
 
-      expect(result.current.rows[nonDupIdx]!.matchResult?.reason).toBe(
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.reason).toBe(
         'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
       );
     });
@@ -1242,24 +1242,24 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       });
 
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-      await waitFor(() => expect(result.current.step).toBe('review'));
+      await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-      const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+      const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
       await waitFor(() => {
-        expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
+        expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
       }, { timeout: 5000 });
-      expect(result.current.rows[nonDupIdx]!.matchResult?.reason).toBeDefined();
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.reason).toBeDefined();
 
       // Edit with NEW metadata → upgrades to high, reason must be cleared
       act(() => {
-        result.current.handleEdit(nonDupIdx, {
+        result.current.actions.handleEdit(nonDupIdx, {
           title: 'Book One', author: 'Author A', series: '',
           metadata: { title: 'Book One', authors: [{ name: 'Author A' }] },
         });
       });
 
-      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
-      expect(result.current.rows[nonDupIdx]!.matchResult?.reason).toBeUndefined();
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.reason).toBeUndefined();
     });
 
     it('none → medium upgrade does not set a reason (user-initiated)', async () => {
@@ -1274,23 +1274,23 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       });
 
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-      await waitFor(() => expect(result.current.step).toBe('review'));
+      await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-      const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+      const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
       await waitFor(() => {
-        expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
+        expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
       }, { timeout: 5000 });
 
       // Edit with metadata → upgrades to medium, but no system reason
       act(() => {
-        result.current.handleEdit(nonDupIdx, {
+        result.current.actions.handleEdit(nonDupIdx, {
           title: 'Book One', author: 'Author A', series: '',
           metadata: { title: 'Book One', authors: [{ name: 'Author A' }] },
         });
       });
 
-      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
-      expect(result.current.rows[nonDupIdx]!.matchResult?.reason).toBeUndefined();
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.reason).toBeUndefined();
     });
   });
 });
@@ -1314,12 +1314,12 @@ describe('retry mechanics (#185)', () => {
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
     // Wait for initial match results to merge (poll interval fires)
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx]!.edited.title).toBe('First Match');
+      expect(result.current.state.rows[nonDupIdx]!.edited.title).toBe('First Match');
     }, { timeout: 5000 });
 
     // Phase 2: retry — new scan + new match with different result
@@ -1330,13 +1330,13 @@ describe('retry mechanics (#185)', () => {
       results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'Retry Match', authors: [{ name: 'Author A' }] }, alternatives: [] }],
     });
 
-    await act(async () => { result.current.handleRetry(); });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await act(async () => { result.current.actions.handleRetry(); });
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
     // Observable: post-retry result is merged from index 0, not lost to stale offset
-    const retryNonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const retryNonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     await waitFor(() => {
-      expect(result.current.rows[retryNonDupIdx]!.edited.title).toBe('Retry Match');
+      expect(result.current.state.rows[retryNonDupIdx]!.edited.title).toBe('Retry Match');
     }, { timeout: 5000 });
   });
 
@@ -1349,11 +1349,11 @@ describe('retry mechanics (#185)', () => {
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
     }, { timeout: 5000 });
 
     // Phase 2: Restart — new match job with different result
@@ -1363,13 +1363,13 @@ describe('retry mechanics (#185)', () => {
       results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'Better Match', authors: [{ name: 'Author A' }] }, alternatives: [] }],
     });
 
-    act(() => { result.current.handleRestartMatch(); });
+    act(() => { result.current.actions.handleRestartMatch(); });
 
     // Observable: post-retry result merged at index 0 — confidence upgraded and title changed
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
+      expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
     }, { timeout: 5000 });
-    expect(result.current.rows[nonDupIdx]!.edited.title).toBe('Better Match');
+    expect(result.current.state.rows[nonDupIdx]!.edited.title).toBe('Better Match');
   });
 });
 
@@ -1380,9 +1380,9 @@ describe('empty result edge case', () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(result.current.emptyResult).toBe(true);
+      expect(result.current.state.emptyResult).toBe(true);
     });
-    expect(result.current.scanError).toBeNull();
+    expect(result.current.state.scanError).toBeNull();
   });
 
   describe('within-scan duplicates — visibility and selection (#342)', () => {
@@ -1399,9 +1399,9 @@ describe('empty result edge case', () => {
       mockScanDirectory.mockResolvedValue(scanResultWithWithinScan);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      const withinScanRow = result.current.rows.find(r => r.book.duplicateReason === 'within-scan');
+      const withinScanRow = result.current.state.rows.find(r => r.book.duplicateReason === 'within-scan');
       expect(withinScanRow?.selected).toBe(false);
     });
 
@@ -1409,11 +1409,11 @@ describe('empty result edge case', () => {
       mockScanDirectory.mockResolvedValue(scanResultWithWithinScan);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      act(() => { result.current.handleSelectAll(); });
+      act(() => { result.current.actions.handleSelectAll(); });
 
-      const withinScanRow = result.current.rows.find(r => r.book.duplicateReason === 'within-scan');
+      const withinScanRow = result.current.state.rows.find(r => r.book.duplicateReason === 'within-scan');
       expect(withinScanRow?.selected).toBe(true);
     });
 
@@ -1421,11 +1421,11 @@ describe('empty result edge case', () => {
       mockScanDirectory.mockResolvedValue(scanResultWithWithinScan);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      act(() => { result.current.handleSelectAll(); });
+      act(() => { result.current.actions.handleSelectAll(); });
 
-      const dbDupRow = result.current.rows.find(r => r.book.duplicateReason === 'slug');
+      const dbDupRow = result.current.state.rows.find(r => r.book.duplicateReason === 'slug');
       expect(dbDupRow?.selected).toBe(false);
     });
   });
@@ -1500,15 +1500,15 @@ describe('empty result edge case', () => {
 
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
       // After poll merges match results, within-scan row should have matchResult and edited metadata
       await waitFor(() => {
-        const withinScanRow = result.current.rows.find(r => r.book.duplicateReason === 'within-scan');
+        const withinScanRow = result.current.state.rows.find(r => r.book.duplicateReason === 'within-scan');
         expect(withinScanRow?.matchResult?.confidence).toBe('high');
       }, { timeout: 5000 });
 
-      const withinScanRow = result.current.rows.find(r => r.book.duplicateReason === 'within-scan');
+      const withinScanRow = result.current.state.rows.find(r => r.book.duplicateReason === 'within-scan');
       expect(withinScanRow?.edited.title).toBe('Matched Title');
       expect(withinScanRow?.edited.author).toBe('Matched Author');
       expect(withinScanRow?.edited.asin).toBe('B999');
@@ -1529,15 +1529,15 @@ describe('empty result edge case', () => {
 
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
       // Select the within-scan row first
-      const withinScanIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'within-scan');
-      act(() => { result.current.handleToggle(withinScanIdx); });
+      const withinScanIdx = result.current.state.rows.findIndex(r => r.book.duplicateReason === 'within-scan');
+      act(() => { result.current.actions.handleToggle(withinScanIdx); });
 
       // After poll merges confidence=none, the row should be deselected
       await waitFor(() => {
-        const row = result.current.rows.find(r => r.book.duplicateReason === 'within-scan');
+        const row = result.current.state.rows.find(r => r.book.duplicateReason === 'within-scan');
         expect(row?.matchResult?.confidence).toBe('none');
         expect(row?.selected).toBe(false);
       }, { timeout: 5000 });
@@ -1553,13 +1553,13 @@ describe('empty result edge case', () => {
 
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => expect(result.current.paused).toBe(true));
+      await waitFor(() => expect(result.current.state.paused).toBe(true));
 
       // Clear call history so we can assert only the restart call
       mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-2' });
 
       // Trigger Restart
-      act(() => result.current.handleRestartMatch());
+      act(() => result.current.actions.handleRestartMatch());
 
       await waitFor(() => expect(mockStartMatchJob).toHaveBeenCalledTimes(1));
 
@@ -1598,14 +1598,14 @@ describe('empty result edge case', () => {
 
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
       // Select all actionable rows (including within-scan dup)
-      act(() => { result.current.handleSelectAll(); });
+      act(() => { result.current.actions.handleSelectAll(); });
 
       // Wait for match results to merge
       await waitFor(() => {
-        expect(result.current.readyCount).toBe(2); // non-dup + within-scan dup, both selected + high confidence
+        expect(result.current.counts.readyCount).toBe(2); // non-dup + within-scan dup, both selected + high confidence
       }, { timeout: 5000 });
     });
 
@@ -1613,12 +1613,12 @@ describe('empty result edge case', () => {
       mockScanDirectory.mockResolvedValue(scanResultMixed);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
       // Within-scan dup has no matchResult yet → should count as pending
       // DB dup should NOT count as pending
       // Non-dup has no matchResult yet → should count as pending
-      expect(result.current.pendingCount).toBe(2); // non-dup + within-scan dup
+      expect(result.current.counts.pendingCount).toBe(2); // non-dup + within-scan dup
     });
 
     // #1102 — selectedPendingCount is scoped to selection, excludes DB duplicates
@@ -1626,57 +1626,57 @@ describe('empty result edge case', () => {
       mockScanDirectory.mockResolvedValue(scanResultMixed);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
       // Non-dup row is auto-selected; within-scan dup is auto-deselected.
-      expect(result.current.pendingCount).toBe(2);
-      expect(result.current.selectedPendingCount).toBe(1);
+      expect(result.current.counts.pendingCount).toBe(2);
+      expect(result.current.counts.selectedPendingCount).toBe(1);
 
       // Selecting all actionable rows includes the within-scan dup → 2 pending selected.
-      act(() => { result.current.handleSelectAll(); });
-      expect(result.current.selectedPendingCount).toBe(2);
+      act(() => { result.current.actions.handleSelectAll(); });
+      expect(result.current.counts.selectedPendingCount).toBe(2);
     });
 
     it('selectedPendingCount excludes DB duplicates even if forcibly selected', async () => {
       mockScanDirectory.mockResolvedValue(scanResultMixed);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
       // Locate the DB-dup row index (slug duplicate) and force-select it via handleToggle.
-      const dbDupIndex = result.current.rows.findIndex(r =>
+      const dbDupIndex = result.current.state.rows.findIndex(r =>
         r.book.isDuplicate && r.book.duplicateReason !== 'within-scan',
       );
       expect(dbDupIndex).toBeGreaterThanOrEqual(0);
-      act(() => { result.current.handleToggle(dbDupIndex); });
-      expect(result.current.rows[dbDupIndex]!.selected).toBe(true);
+      act(() => { result.current.actions.handleToggle(dbDupIndex); });
+      expect(result.current.state.rows[dbDupIndex]!.selected).toBe(true);
 
       // DB dup must NOT contribute to selectedPendingCount (matches pendingCount semantics).
-      expect(result.current.selectedPendingCount).toBe(1);
+      expect(result.current.counts.selectedPendingCount).toBe(1);
     });
 
     it('duplicateCount counts only DB duplicates', async () => {
       mockScanDirectory.mockResolvedValue(scanResultMixed);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      expect(result.current.duplicateCount).toBe(1); // only DB slug dup
+      expect(result.current.counts.duplicateCount).toBe(1); // only DB slug dup
     });
 
     it('allSelected treats within-scan duplicates as actionable', async () => {
       mockScanDirectory.mockResolvedValue(scanResultMixed);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
       // Not all selected yet (within-scan dup is auto-deselected)
-      expect(result.current.allSelected).toBe(false);
+      expect(result.current.counts.allSelected).toBe(false);
 
       // Select all actionable rows
-      act(() => { result.current.handleSelectAll(); });
+      act(() => { result.current.actions.handleSelectAll(); });
 
-      expect(result.current.allSelected).toBe(true);
+      expect(result.current.counts.allSelected).toBe(true);
     });
   });
 
@@ -1696,11 +1696,11 @@ describe('empty result edge case', () => {
       });
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
       // Select all (including within-scan dup)
-      act(() => { result.current.handleSelectAll(); });
-      act(() => { result.current.handleRegister(); });
+      act(() => { result.current.actions.handleSelectAll(); });
+      act(() => { result.current.actions.handleRegister(); });
 
       await waitFor(() => { expect(mockCreateSubmission).toHaveBeenCalled(); });
 
@@ -1722,7 +1722,7 @@ describe('empty result edge case', () => {
       mockScanDirectory.mockResolvedValue(allDbDups);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.emptyResult).toBe(true); });
+      await waitFor(() => { expect(result.current.state.emptyResult).toBe(true); });
     });
 
     it('scan with mix of new + within-scan duplicates does NOT show All caught up', async () => {
@@ -1736,8 +1736,8 @@ describe('empty result edge case', () => {
       mockScanDirectory.mockResolvedValue(mixedResult);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
-      expect(result.current.emptyResult).toBe(false);
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
+      expect(result.current.state.emptyResult).toBe(false);
     });
   });
 
@@ -1771,11 +1771,11 @@ describe('empty result edge case', () => {
       });
 
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
       await waitFor(() => {
-        expect(result.current.rows[0]!.edited.narrators).toEqual(['Jim Dale']);
-        expect(result.current.rows[0]!.edited.seriesPosition).toBe(27);
+        expect(result.current.state.rows[0]!.edited.narrators).toEqual(['Jim Dale']);
+        expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(27);
       }, { timeout: 5000 });
     });
 
@@ -1800,10 +1800,10 @@ describe('empty result edge case', () => {
       });
 
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
       await waitFor(() => {
-        expect(result.current.rows[0]!.edited.seriesPosition).toBe(0);
+        expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(0);
       }, { timeout: 5000 });
     });
 
@@ -1824,14 +1824,14 @@ describe('empty result edge case', () => {
       });
 
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
       await waitFor(() => {
-        expect(result.current.rows[0]!.matchResult?.confidence).toBe('high');
+        expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
       }, { timeout: 5000 });
 
-      expect(result.current.rows[0]!.edited).not.toHaveProperty('narrators');
-      expect(result.current.rows[0]!.edited).not.toHaveProperty('seriesPosition');
+      expect(result.current.state.rows[0]!.edited).not.toHaveProperty('narrators');
+      expect(result.current.state.rows[0]!.edited).not.toHaveProperty('seriesPosition');
     });
   });
 });
