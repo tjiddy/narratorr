@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
+import { submissionResponseSchema } from '@core/import-staging/schemas.js';
 import { api, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { usePagination } from '@/hooks/usePagination';
 import { useImportSubmissionDetail } from '@/hooks/useImportReport';
+import { useDtoValid } from '@/lib/import-report/useDtoWarn';
 import { detailToSummary } from '@/lib/import-report/detailToSummary';
 import { Pagination } from '@/components/Pagination';
 import { LoadingSpinner } from '@/components/icons';
@@ -26,7 +28,10 @@ function parseRun(value: string | null): number | null {
  */
 function HydratedDeepLinkCard({ id }: { id: number }) {
   const query = useImportSubmissionDetail(id, true);
-  if (query.isError) {
+  // Validate BEFORE converting the raw response into a card header (F29): a
+  // malformed off-page header must render an error, never reach StatusChip/counts.
+  const valid = useDtoValid(submissionResponseSchema, query.data, 'deep-link import submission');
+  if (query.isError && !query.data) {
     const status = query.error instanceof ApiError ? query.error.status : undefined;
     if (status === 404) {
       return (
@@ -44,6 +49,9 @@ function HydratedDeepLinkCard({ id }: { id: number }) {
   }
   if (!query.data) {
     return <div className="rounded-lg border border-border p-3 text-sm text-muted-foreground">Loading import run…</div>;
+  }
+  if (!valid) {
+    return <div className="rounded-lg border border-border p-3 text-sm text-destructive" data-testid="import-run-malformed">This import run couldn’t be displayed.</div>;
   }
   return <ImportHistoryCard row={detailToSummary(query.data)} defaultExpanded />;
 }
@@ -71,28 +79,38 @@ export function ImportHistorySection() {
   useEffect(() => { clampToTotal(total); }, [total, clampToTotal]);
 
   const onPage = runId != null && rows.some((r) => r.id === runId);
-  const showHydrated = runId != null && !onPage && !listQuery.isLoading && !listQuery.isError;
+  // The deep-link direct GET is INDEPENDENT of the list request (F28): render the
+  // hydrated card whenever the run is not already on the current page — INCLUDING
+  // while the list is loading or has failed. `onPage` only becomes true once list
+  // data actually contains the id, at which point the on-page auto-expanded card
+  // takes over (no duplication).
+  const showHydrated = runId != null && !onPage;
 
   const heading = <h3 className="text-sm font-semibold text-muted-foreground">Import history</h3>;
 
+  let listBody: React.ReactNode;
   if (listQuery.isLoading) {
-    return (
-      <section className="space-y-3" data-testid="import-history-section">
-        {heading}
-        <div className="flex justify-center py-6"><LoadingSpinner className="w-6 h-6 text-primary" /></div>
-      </section>
+    listBody = <div className="flex justify-center py-6"><LoadingSpinner className="w-6 h-6 text-primary" /></div>;
+  } else if (listQuery.isError) {
+    listBody = (
+      <div className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm text-destructive">
+        <span>Couldn’t load import history.</span>
+        <button type="button" className="underline" onClick={() => listQuery.refetch()}>Retry</button>
+      </div>
     );
-  }
-
-  if (listQuery.isError) {
-    return (
-      <section className="space-y-3" data-testid="import-history-section">
-        {heading}
-        <div className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm text-destructive">
-          <span>Couldn’t load import history.</span>
-          <button type="button" className="underline" onClick={() => listQuery.refetch()}>Retry</button>
-        </div>
-      </section>
+  } else if (total === 0 && !showHydrated) {
+    listBody = (
+      <div className="rounded-lg border border-border p-6 text-center text-sm text-muted-foreground" data-testid="import-history-empty">
+        No import history yet.
+      </div>
+    );
+  } else {
+    listBody = (
+      <div className="space-y-2">
+        {rows.map((row) => (
+          <ImportHistoryCard key={row.id} row={row} defaultExpanded={row.id === runId} />
+        ))}
+      </div>
     );
   }
 
@@ -100,18 +118,8 @@ export function ImportHistorySection() {
     <section className="space-y-3" data-testid="import-history-section">
       {heading}
       {showHydrated && <HydratedDeepLinkCard id={runId} />}
-      {total === 0 && !showHydrated ? (
-        <div className="rounded-lg border border-border p-6 text-center text-sm text-muted-foreground" data-testid="import-history-empty">
-          No import history yet.
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {rows.map((row) => (
-            <ImportHistoryCard key={row.id} row={row} defaultExpanded={row.id === runId} />
-          ))}
-        </div>
-      )}
-      {total > 0 && (
+      {listBody}
+      {!listQuery.isLoading && !listQuery.isError && total > 0 && (
         <Pagination
           page={pagination.page}
           totalPages={pagination.totalPages(total)}

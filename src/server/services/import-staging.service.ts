@@ -5,7 +5,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { importSubmissions, importSubmissionItems } from '../../db/schema.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { isUniqueViolation } from '../../shared/error-message.js';
-import { buildHeaderFields, reportRowToDto, completeProgress, liveProgress } from './import-submission-dto.js';
+import { buildHeaderFields, drizzleHeaderInput, reportRowToDto, completeProgress, liveProgress } from './import-submission-dto.js';
 import {
   serializeSubmissionForDigest,
   stagedImportItemSchema,
@@ -484,8 +484,8 @@ export class ImportStagingService {
   }
 
   private headerFields(header: SubmissionRow, progress: Awaited<ReturnType<ImportStagingService['computeProgress']>>) {
-    // Canonical header assembly lives once in the pure DTO module (F82/F85).
-    return buildHeaderFields(header, progress);
+    // Canonical header assembly lives once in the pure DTO module (F82/F85/F39).
+    return buildHeaderFields(drizzleHeaderInput(header), progress);
   }
 
   private async buildSummary(header: SubmissionRow): Promise<SubmissionResponse> {

@@ -1,15 +1,53 @@
 import type { importSubmissions, importSubmissionItems } from '../../db/schema.js';
+import type { ImportMode } from '../../shared/schemas/library-scan.js';
 import {
   aggregateDispositions,
   type ItemDisposition,
   type StagedItemResultDto,
   type SubmissionAggregates,
+  type SubmissionSource,
   type SubmissionStatus,
   type SubmissionSummary,
 } from '../../core/import-staging/schemas.js';
 
 type SubmissionRow = typeof importSubmissions.$inferSelect;
 type ItemRow = typeof importSubmissionItems.$inferSelect;
+
+/**
+ * The NORMALIZED header input the single canonical mapper consumes (#1894, F39).
+ * Timestamps are already ISO strings and primitives are canonical, so both a
+ * Drizzle row (`drizzleHeaderInput`) and the raw attention CTE row adapt to this
+ * one shape — there is exactly one place that decides how header fields become the
+ * wire summary, so the attention path can never drift from list/staging.
+ */
+export interface SubmissionHeaderInput {
+  id: number;
+  clientSubmissionId: string;
+  source: SubmissionSource;
+  mode: ImportMode | null;
+  status: SubmissionStatus;
+  expectedCount: number;
+  receivedCount: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+/** Adapt a Drizzle `import_submissions` row to the normalized header input (F39). */
+export function drizzleHeaderInput(row: SubmissionRow): SubmissionHeaderInput {
+  return {
+    id: row.id,
+    clientSubmissionId: row.clientSubmissionId,
+    source: row.source,
+    mode: row.mode ?? null,
+    status: row.status as SubmissionStatus,
+    expectedCount: row.expectedCount,
+    receivedCount: row.receivedCount,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+  };
+}
 
 /**
  * Pure DTO assembly for staged submissions (#1894, F82/F85). These mappers carry
@@ -51,28 +89,33 @@ export function liveProgress(dispositions: readonly ItemDisposition[]): Submissi
   return liveProgressFromAggregates(aggregateDispositions(dispositions));
 }
 
-/** header row + precomputed progress → the canonical summary header field object. */
-export function buildHeaderFields(header: SubmissionRow, progress: SubmissionProgress) {
+/**
+ * The SINGLE canonical header mapper (#1894, F39): normalized header input +
+ * precomputed progress → the wire summary header fields. Both the Drizzle-row and
+ * attention-CTE paths feed this, so optional `mode`/`completedAt` presence and
+ * field assembly are decided once.
+ */
+export function buildHeaderFields(header: SubmissionHeaderInput, progress: SubmissionProgress) {
   return {
     id: header.id,
     clientSubmissionId: header.clientSubmissionId,
     source: header.source,
     ...(header.mode ? { mode: header.mode } : {}),
-    status: header.status as SubmissionStatus,
+    status: header.status,
     expectedCount: header.expectedCount,
     receivedCount: header.receivedCount,
     processedCount: progress.processedCount,
     aggregates: progress.aggregates,
     detailsPruned: progress.detailsPruned,
-    createdAt: header.createdAt.toISOString(),
-    updatedAt: header.updatedAt.toISOString(),
-    ...(header.completedAt ? { completedAt: header.completedAt.toISOString() } : {}),
+    createdAt: header.createdAt,
+    updatedAt: header.updatedAt,
+    ...(header.completedAt ? { completedAt: header.completedAt } : {}),
   };
 }
 
-/** header row + precomputed progress → the summary DTO (`itemsIncluded:false`). */
+/** Drizzle header row + precomputed progress → the summary DTO (`itemsIncluded:false`). */
 export function toSummaryDto(header: SubmissionRow, progress: SubmissionProgress): SubmissionSummary {
-  return { ...buildHeaderFields(header, progress), itemsIncluded: false } as SubmissionSummary;
+  return { ...buildHeaderFields(drizzleHeaderInput(header), progress), itemsIncluded: false } as SubmissionSummary;
 }
 
 /**

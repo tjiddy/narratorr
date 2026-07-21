@@ -40,25 +40,35 @@ export function ImportAttentionBanner({
     onError: (error: unknown) => setDiscardError(getErrorMessage(error)),
   });
 
-  // A failed attention read is observable/retryable, not rendered as "no banner".
-  if (query.isError && !query.data) {
-    return (
-      <div className="mb-4 flex items-center gap-3 rounded-lg border border-border p-3 text-sm text-destructive" data-testid="attention-error">
-        <span>Couldn’t check for import attention.</span>
-        <button type="button" className="underline" onClick={() => query.refetch()}>Retry</button>
-      </div>
-    );
-  }
+  const attentionError = (
+    <div className="mb-4 flex items-center gap-3 rounded-lg border border-border p-3 text-sm text-destructive" data-testid="attention-error">
+      <span>Couldn’t check for import attention.</span>
+      <button type="button" className="underline" onClick={() => query.refetch()}>Retry</button>
+    </div>
+  );
 
   const data = query.data?.data ?? null;
-  if (!data) return null;
+
+  // A failed attention read is observable/retryable, NEVER silently "no banner" —
+  // this must hold even AFTER a cached `{data:null, watch}` response, whose retained
+  // envelope would otherwise leave `query.data` truthy and `data` null (F37).
+  if (!data) {
+    return query.isError ? attentionError : null;
+  }
 
   const kind: 'abandoned' | 'completed-attention' = data.attention.kind;
   const key = dismissalKey(data.id, kind);
-  if (isDismissed(key)) return null;
+  if (isDismissed(key)) return query.isError ? attentionError : null;
 
   return (
     <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" data-testid="import-attention-banner">
+      {query.isError && (
+        // A background poll failed but a last-good banner is retained — surface a retry.
+        <div className="mb-2 flex items-center gap-2 text-xs text-destructive" data-testid="attention-refresh-error">
+          <span>Couldn’t refresh attention.</span>
+          <button type="button" className="underline" onClick={() => query.refetch()}>Retry</button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span className="text-sm">{attentionCopy(data)}</span>
         <span className="ml-auto flex items-center gap-2">

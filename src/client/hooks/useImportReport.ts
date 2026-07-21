@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { submissionResponseSchema } from '@core/import-staging/schemas.js';
 import { api, ApiError, type AttentionResponse, type SubmissionResponse, type SubmissionSummary } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { pollCadence, FAST_POLL_MS } from '@/lib/import-report/polling';
@@ -65,7 +66,11 @@ export function useImportSubmissionDetail(id: number | null, enabled = true) {
     queryKey: queryKeys.importSubmissions.detail(id ?? -1),
     queryFn: async () => {
       const detail = await api.getImportSubmissionDetail(id!);
-      patchImportHistoryCache(queryClient, detail);
+      // Validate BEFORE any cache side effect (F29): a malformed header must never
+      // poison cached list pages. Consumers re-validate for their own render arm.
+      if (submissionResponseSchema.safeParse(detail).success) {
+        patchImportHistoryCache(queryClient, detail);
+      }
       return detail;
     },
     enabled: id != null && enabled,

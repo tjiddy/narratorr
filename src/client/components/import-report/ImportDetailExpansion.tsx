@@ -17,13 +17,12 @@ export function ImportDetailExpansion({ id, enabled = true }: { id: number; enab
   const detail = query.data;
   const valid = useDtoValid(submissionResponseSchema, detail, 'import submission detail');
 
-  if (query.isError) {
+  // COLD failure only — no retained data to fall back on → replacement error + retry.
+  if (query.isError && !detail) {
     return (
-      <div className="flex items-center gap-3 py-2 text-sm text-destructive">
+      <div className="flex items-center gap-3 py-2 text-sm text-destructive" data-testid="import-detail-error">
         <span>Couldn’t load import details.</span>
-        <button type="button" className="underline" onClick={() => query.refetch()}>
-          Retry
-        </button>
+        <button type="button" className="underline" onClick={() => query.refetch()}>Retry</button>
       </div>
     );
   }
@@ -36,14 +35,30 @@ export function ImportDetailExpansion({ id, enabled = true }: { id: number; enab
     return <div className="py-2 text-sm text-destructive">Import details were malformed.</div>;
   }
 
+  // A BACKGROUND poll failure (retained `detail` present) must NOT blank the rows:
+  // keep last-good content and surface a subtle retry affordance (F30).
+  const refreshBanner = query.isError ? (
+    <div className="flex items-center gap-2 py-1 text-xs text-destructive" data-testid="import-detail-refresh-error">
+      <span>Couldn’t refresh — showing the last result.</span>
+      <button type="button" className="underline" onClick={() => query.refetch()}>Retry</button>
+    </div>
+  ) : null;
+
+  let body: React.ReactNode;
   if (!detail.itemsIncluded) {
     // Summary arm reached via detail → the item rows were pruned (details expired).
-    return <div className="py-2 text-sm text-muted-foreground" data-testid="import-details-expired">Details expired.</div>;
+    body = <div className="py-2 text-sm text-muted-foreground" data-testid="import-details-expired">Details expired.</div>;
+  } else {
+    const attention = detail.items.filter((i) => i.disposition !== 'accepted' && i.disposition !== 'pending');
+    body = attention.length === 0
+      ? <div className="py-2 text-sm text-muted-foreground">No items need attention.</div>
+      : <ImportAttentionRows items={detail.items} />;
   }
 
-  const attention = detail.items.filter((i) => i.disposition !== 'accepted' && i.disposition !== 'pending');
-  if (attention.length === 0) {
-    return <div className="py-2 text-sm text-muted-foreground">No items need attention.</div>;
-  }
-  return <ImportAttentionRows items={detail.items} />;
+  return (
+    <>
+      {refreshBanner}
+      {body}
+    </>
+  );
 }

@@ -18,12 +18,14 @@ import {
 import { ABANDONED_UPLOAD_GRACE_MS, SubmissionError } from './import-staging.service.js';
 import {
   buildHeaderFields,
+  drizzleHeaderInput,
   completeProgress,
   liveProgress,
   liveProgressFromAggregates,
   reportRowToDto,
   toSummaryDto,
   type ReportItemRow,
+  type SubmissionHeaderInput,
   type SubmissionProgress,
 } from './import-submission-dto.js';
 
@@ -227,23 +229,21 @@ export class ImportSubmissionReportService {
     const attention: SubmissionAttention = isComplete
       ? { kind: 'completed-attention', held: progress.aggregates.held, failed: progress.aggregates.failed }
       : { kind: 'abandoned' };
-    return {
+    // Adapt the raw CTE row to the normalized header input and feed the SINGLE
+    // canonical mapper — no second summary-header assembly here (F39).
+    const headerInput: SubmissionHeaderInput = {
       id: Number(row.id),
       clientSubmissionId: row.clientSubmissionId!,
       source: row.source as SubmissionSource,
-      ...(row.mode ? { mode: row.mode as ImportMode } : {}),
+      mode: (row.mode as ImportMode | null) ?? null,
       status: row.status as SubmissionStatus,
       expectedCount: Number(row.expectedCount),
       receivedCount: Number(row.receivedCount),
-      processedCount: progress.processedCount,
-      aggregates: progress.aggregates,
-      detailsPruned: progress.detailsPruned,
-      itemsIncluded: false,
       createdAt: toIso(Number(row.createdAt)),
       updatedAt: toIso(Number(row.updatedAt)),
-      ...(row.completedAt != null ? { completedAt: toIso(Number(row.completedAt)) } : {}),
-      attention,
+      completedAt: row.completedAt != null ? toIso(Number(row.completedAt)) : null,
     };
+    return { ...buildHeaderFields(headerInput, progress), itemsIncluded: false, attention };
   }
 
   /**
@@ -257,7 +257,7 @@ export class ImportSubmissionReportService {
     if (!header) throw new SubmissionError('submission-not-found', 404, 'submission not found');
     const progress = await this.recordProgress(header);
     if (progress.detailsPruned) {
-      return { ...buildHeaderFields(header, progress), itemsIncluded: false };
+      return { ...buildHeaderFields(drizzleHeaderInput(header), progress), itemsIncluded: false };
     }
     const rows = await this.db
       .select(reportItemProjection())
@@ -265,7 +265,7 @@ export class ImportSubmissionReportService {
       .where(eq(importSubmissionItems.submissionId, id))
       .orderBy(asc(importSubmissionItems.ordinal));
     const items = (rows as ReportItemRow[]).map(reportRowToDto);
-    return { ...buildHeaderFields(header, progress), itemsIncluded: true, items };
+    return { ...buildHeaderFields(drizzleHeaderInput(header), progress), itemsIncluded: true, items };
   }
 
   /** Single-record progress for report-detail — the shared pure builders decide (F6). */
