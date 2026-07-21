@@ -72,6 +72,7 @@ const mockConfirmImport = vi.fn();
 const mockBrowseDirectory = vi.fn();
 const mockGetSettings = vi.fn();
 const mockGetImportSubmissionAttention = vi.fn();
+const mockListImportSubmissions = vi.fn();
 
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual('@/lib/api');
@@ -84,7 +85,7 @@ vi.mock('@/lib/api', async () => {
       browseDirectory: (...args: unknown[]) => mockBrowseDirectory(...args),
       getSettings: (...args: unknown[]) => mockGetSettings(...args),
       // #1894 — the last-import panel + attention banner mounted at the page top.
-      listImportSubmissions: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+      listImportSubmissions: (...args: unknown[]) => mockListImportSubmissions(...args),
       getImportSubmissionAttention: (...args: unknown[]) => mockGetImportSubmissionAttention(...args),
       getImportSubmissionDetail: vi.fn(),
       discardImportSubmission: vi.fn(),
@@ -210,6 +211,7 @@ describe('ManualImportPage', () => {
     mockGetSettings.mockResolvedValue({ library: { path: '/audiobooks', folderFormat: '{author}/{title}' } });
     mockBrowseDirectory.mockResolvedValue({ dirs: ['audiobooks', 'media'], parent: '/' });
     mockGetImportSubmissionAttention.mockResolvedValue({ data: null, watch: false });
+    mockListImportSubmissions.mockResolvedValue({ data: [], total: 0 });
   });
 
   describe('scan step', () => {
@@ -1401,7 +1403,7 @@ describe('ManualImportPage — scanned path display (#284)', () => {
       attention: { kind: 'abandoned' as const },
     };
 
-    it('"Import again" resets to the path step WITHOUT navigating away (F1)', async () => {
+    it('"Import again" from the PATH step stays on path without navigating away (F1)', async () => {
       const user = userEvent.setup();
       mockGetImportSubmissionAttention.mockResolvedValue({ data: abandonedManual, watch: true });
       renderPage();
@@ -1412,6 +1414,35 @@ describe('ManualImportPage — scanned path display (#284)', () => {
       // Still on the path step (the Scan button is present) and never navigated to /library.
       expect(screen.getByText('Scan')).toBeInTheDocument();
       expect(mockNavigate).not.toHaveBeenCalledWith('/library');
+    });
+
+    it('"Import again" from the REVIEW step resets to path — review rows clear, no navigation (F38)', async () => {
+      const user = userEvent.setup();
+      mockGetImportSubmissionAttention.mockResolvedValue({ data: abandonedManual, watch: true });
+      await scanAndReview([makeDiscoveredBook()]); // drives the page to the review step
+      expect(screen.getByText(/selected/)).toBeInTheDocument(); // review content present
+      const banner = await screen.findByTestId('import-attention-banner');
+      await user.click(within(banner).getByRole('button', { name: 'Import again' }));
+      // Reset lands back on the path step: the Scan button returns and review content clears…
+      expect(screen.getByText('Scan')).toBeInTheDocument();
+      await waitFor(() => expect(screen.queryByText(/selected/)).not.toBeInTheDocument());
+      // …without navigating away (deletion-proof: a no-op callback would leave review mounted).
+      expect(mockNavigate).not.toHaveBeenCalledWith('/library');
+    });
+
+    it('mounts the source-scoped last-import PANEL (source=manual) on Manual Import (F36)', async () => {
+      const manualSummary = {
+        id: 9, clientSubmissionId: 'c', source: 'manual' as const, mode: 'copy' as const, status: 'complete' as const,
+        expectedCount: 2, receivedCount: 2, processedCount: 2,
+        aggregates: { accepted: 1, held: 1, skipped: 0, failed: 0 }, detailsPruned: false,
+        itemsIncluded: false as const, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), completedAt: new Date().toISOString(),
+      };
+      mockListImportSubmissions.mockResolvedValue({ data: [manualSummary], total: 1 });
+      renderPage();
+      // The panel queries the LATEST manual submission and renders its output.
+      await waitFor(() => expect(mockListImportSubmissions).toHaveBeenCalledWith({ source: 'manual', limit: 1 }));
+      expect(await screen.findByTestId('last-import-panel')).toBeInTheDocument();
+      expect(screen.getByText('1 held')).toBeInTheDocument();
     });
   });
 });

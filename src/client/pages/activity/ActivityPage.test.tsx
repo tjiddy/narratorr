@@ -925,6 +925,26 @@ describe('ActivityPage', () => {
       expect(section.compareDocumentPosition(allFilter) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
+    it('an import-history render crash is isolated to its section fallback; Event history stays usable (F5/F31)', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); // silence React's caught-error log
+      const user = userEvent.setup();
+      // A malformed list row (no `aggregates`) crashes DispositionCounts during render —
+      // a real API/data-shape failure that must NOT reach the route boundary.
+      vi.mocked(api.listImportSubmissions).mockResolvedValue({
+        data: [{ id: 1, clientSubmissionId: 'c', source: 'library', status: 'complete', expectedCount: 1, receivedCount: 1, processedCount: 1, detailsPruned: false, itemsIncluded: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as never],
+        total: 1,
+      });
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('Nothing running right now')).toBeInTheDocument());
+      await user.click(screen.getByRole('tab', { name: /history/i }));
+
+      // The section's local boundary shows its fallback…
+      expect(await screen.findByTestId('import-history-boundary-fallback')).toBeInTheDocument();
+      // …and Event history below it remains usable (its "All" filter renders).
+      expect(screen.getByText('All')).toBeInTheDocument();
+      errSpy.mockRestore();
+    });
+
     it('clicking Active tab from History restores active downloads content', async () => {
       const user = userEvent.setup();
       renderWithProviders(<ActivityPage />);
