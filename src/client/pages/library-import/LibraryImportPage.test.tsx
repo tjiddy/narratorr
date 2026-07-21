@@ -30,6 +30,11 @@ vi.mock('@/lib/api', async (importOriginal) => {
       cancelMatchJob: vi.fn(),
       getSettings: vi.fn(),
       getBookIdentifiers: vi.fn(),
+      // #1894 — the last-import panel + attention banner mounted at the page top.
+      listImportSubmissions: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+      getImportSubmissionAttention: vi.fn().mockResolvedValue({ data: null, watch: false }),
+      getImportSubmissionDetail: vi.fn(),
+      discardImportSubmission: vi.fn(),
     },
   };
 });

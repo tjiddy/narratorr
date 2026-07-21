@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/PageHeader.js';
 import { makeRelativePath } from '@/lib/pathUtils.js';
 import { useLibraryImport } from './useLibraryImport.js';
 import { isLibraryDbDuplicate } from './isLibraryDbDuplicate.js';
+import { LastImportPanel } from '@/components/import-report/LastImportPanel';
 
 // eslint-disable-next-line max-lines-per-function, complexity -- page orchestrator with scan, match, duplicate, register flows
 export function LibraryImportPage() {
@@ -76,6 +77,9 @@ export function LibraryImportPage() {
               : `${rows.length} book${rows.length !== 1 ? 's' : ''} found`}
         </p>
       </div>
+
+      {/* Durable last-import panel (#1894) — fresh on mount, independent of scan state */}
+      <LastImportPanel source="library" />
 
       {/* No library path configured */}
       {!hasLibraryPath && (

@@ -82,6 +82,11 @@ vi.mock('@/lib/api', async () => {
       searchMetadata: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }),
       browseDirectory: (...args: unknown[]) => mockBrowseDirectory(...args),
       getSettings: (...args: unknown[]) => mockGetSettings(...args),
+      // #1894 — the last-import panel + attention banner mounted at the page top.
+      listImportSubmissions: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+      getImportSubmissionAttention: vi.fn().mockResolvedValue({ data: null, watch: false }),
+      getImportSubmissionDetail: vi.fn(),
+      discardImportSubmission: vi.fn(),
     },
     formatBytes: (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`,
   };

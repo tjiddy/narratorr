@@ -12,6 +12,7 @@ import { useManualImport } from './useManualImport.js';
 import { useFolderHistory } from './useFolderHistory.js';
 import { PathStep } from './PathStep.js';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
+import { LastImportPanel } from '@/components/import-report/LastImportPanel';
 
 // eslint-disable-next-line complexity -- 3-step page with 21 hook props, path input, and conditional step rendering
 export function ManualImportPage() {
@@ -55,6 +56,9 @@ export function ManualImportPage() {
           <p className="text-sm text-muted-foreground mt-1 ml-10">{scanPath}</p>
         )}
       </div>
+
+      {/* Durable last-import panel (#1894) — fresh on mount, independent of scan state */}
+      <LastImportPanel source="manual" />
 
       {/* Step 1: Path Input */}
       {step === 'path' && (
