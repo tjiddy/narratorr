@@ -306,6 +306,48 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       await seed({ status: 'complete', completedAt: new Date('2026-06-01T00:00:00.000Z'), counts: { accepted: 3 } }); // healthy
       expect(await service.attention({})).toEqual({ data: null, watch: false });
     });
+
+    it('computes data + watch in exactly ONE executed statement carrying both arms (F32)', async () => {
+      await seed({ status: 'complete', completedAt: new Date('2026-06-01T00:00:00.000Z'), counts: { held: 1 } });
+      await seed({ status: 'processing' });
+      const spy = spyStatements(db);
+      await service.attention({});
+      spy.restore();
+      // A single statement referencing import_submissions — splitting `data` and
+      // `watch` into two reads would make this 2. And that one statement must carry
+      // BOTH the abandoned/completed predicate AND the non-terminal watch EXISTS.
+      const submissionStmts = spy.statements.filter((s) => /import_submissions/i.test(s));
+      expect(submissionStmts).toHaveLength(1);
+      const cte = submissionStmts[0]!.toLowerCase();
+      expect(cte).toMatch(/held_count|completed|abandon|receiving/); // attention predicate
+      expect(cte).toMatch(/exists/); // the watch EXISTS(...) sub-select
+    });
+
+    it('crosses the grace with ONE captured cutoff — a past-grace receiving is abandoned while a boundary receiving keeps watch (F32/F61)', async () => {
+      const now = new Date('2026-07-21T00:00:00.000Z');
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+      // Boundary row (exactly at grace → NOT abandoned) and a one-tick-past row
+      // (abandoned) share one snapshot with one captured cutoff.
+      await seed({ status: 'receiving', expectedCount: 2, receivedCount: 1, createdAt: new Date('2026-07-20T10:00:00.000Z'), updatedAt: new Date(now.getTime() - ABANDONED_UPLOAD_GRACE_MS) });
+      const past = await seed({ status: 'receiving', expectedCount: 2, receivedCount: 1, createdAt: new Date('2026-07-20T11:00:00.000Z'), updatedAt: new Date(now.getTime() - ABANDONED_UPLOAD_GRACE_MS - 1000) });
+      const res = await service.attention({});
+      expect(res.data?.id).toBe(past); // only the strictly-past-grace row is abandoned
+      expect(res.data?.attention).toEqual({ kind: 'abandoned' });
+      expect(res.watch).toBe(true); // both receiving rows keep watch true (same snapshot)
+    });
+
+    it('attention header is byte-identical to the list summary header for the same submission (single canonical mapper, F39)', async () => {
+      const id = await seed({
+        source: 'manual', mode: 'copy', status: 'complete', expectedCount: 4,
+        createdAt: new Date('2026-05-30T00:00:00.000Z'), completedAt: new Date('2026-06-01T00:00:00.000Z'),
+        counts: { accepted: 1, held: 2, skipped: 0, failed: 1 },
+      });
+      await seedItem(id, 0, 'held', { reason: 'recording-review-required' }); // retained (not pruned)
+      const listRow = (await service.list({ limit: 20, offset: 0 })).data.find((d) => d.id === id)!;
+      const { attention: _attention, ...attnHeader } = (await service.attention({ source: 'manual' })).data!;
+      expect(attnHeader).toEqual(listRow); // same canonical header — no drift between the two mappers
+    });
   });
 
   // ── reportDetail (projection) ────────────────────────────────────────────────
@@ -418,4 +460,17 @@ function spyItemQueries(db: Db): { statements: string[]; get count(): number; re
     get count() { return statements.length; },
     restore: () => { client.execute = original as typeof client.execute; },
   };
+}
+
+/** Spy capturing EVERY executed SQL string (used to prove a single-statement read). */
+function spyStatements(db: Db): { statements: string[]; restore: () => void } {
+  const client = db.$client as unknown as { execute: (...a: unknown[]) => unknown };
+  const original = client.execute.bind(client);
+  const statements: string[] = [];
+  client.execute = ((stmt: unknown, ...rest: unknown[]) => {
+    const sql = typeof stmt === 'string' ? stmt : (stmt as { sql?: string })?.sql ?? '';
+    statements.push(sql);
+    return original(stmt as never, ...(rest as never[]));
+  }) as typeof client.execute;
+  return { statements, restore: () => { client.execute = original as typeof client.execute; } };
 }

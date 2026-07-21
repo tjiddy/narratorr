@@ -602,16 +602,22 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       });
     });
 
-    it('dispatches only AFTER the completion commits — the header is already complete at notify time (F14)', async () => {
+    it('dispatch is strictly POST-COMMIT — proven via a SEPARATE connection that sees only committed data (F33/F14)', async () => {
       const subId = await seedProcessing([null], { source: 'library' });
-      let statusAtDispatch: string | undefined;
+      // A distinct connection to the same file sees ONLY committed state. If the
+      // dispatch were moved inside the completion transaction (pre-commit), this
+      // read would still observe the pre-completion status — so 'complete' here is
+      // deletion-proof evidence that notify fires only after the tx promise resolves.
+      const observer = createDb(dbFile);
+      let statusSeenBySeparateConn: string | undefined;
       notifyStub.mockImplementation(async () => {
-        const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId)).limit(1);
-        statusAtDispatch = h?.status;
+        const [h] = await observer.select().from(importSubmissions).where(eq(importSubmissions.id, subId)).limit(1);
+        statusSeenBySeparateConn = h?.status;
       });
       await drainAll();
       expect(notifyStub).toHaveBeenCalledTimes(1);
-      expect(statusAtDispatch).toBe('complete'); // committed before dispatch
+      expect(statusSeenBySeparateConn).toBe('complete'); // committed before dispatch
+      observer.$client.close();
     });
 
     it('a rejected notifier dispatch leaves the header complete and does not stall later submissions (F14)', async () => {
