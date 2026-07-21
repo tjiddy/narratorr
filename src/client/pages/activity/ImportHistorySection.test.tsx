@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { FAST_POLL_MS } from '@/lib/import-report/polling';
@@ -93,6 +93,44 @@ describe('ImportHistorySection (#1894)', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     // The rest of the section still renders.
     expect(screen.getByTestId('import-history-card-1')).toBeInTheDocument();
+  });
+
+  it('an ON-PAGE deep-link 404 (discarded/GC\'d between snapshot and read) renders the same 404 placeholder, not the generic detail error (F43)', async () => {
+    const { ApiError } = await import('@/lib/api');
+    // The run id IS on the current page, but the direct read now 404s.
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 });
+    getImportSubmissionDetail.mockRejectedValue(new ApiError(404, { error: 'submission-not-found' }));
+    renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=1' });
+    // One 404-aware hydration authority regardless of on/off page.
+    expect(await screen.findByTestId('import-run-unavailable')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument(); // 404 → no retry
+    expect(screen.queryByText('Couldn’t load import details.')).not.toBeInTheDocument(); // NOT the generic arm
+    expect(screen.queryByTestId('import-history-card-1')).not.toBeInTheDocument(); // target not also rendered as a list row
+  });
+
+  it('a detail that completes BEFORE the list resolves keeps its terminal header — a late processing list row cannot revert it (F44)', async () => {
+    let resolveList!: (v: { data: SubmissionSummary[]; total: number }) => void;
+    listImportSubmissions.mockReturnValue(new Promise((res) => { resolveList = res; })); // list stays pending
+    getImportSubmissionDetail.mockResolvedValue({
+      ...summary({ id: 1, status: 'complete', completedAt: new Date().toISOString(), processedCount: 3, aggregates: { accepted: 1, held: 1, skipped: 0, failed: 1 } }),
+      itemsIncluded: true, items: [{ disposition: 'failed', ordinal: 0, path: '/a', title: 'Failed Book', message: 'boom' }],
+    });
+    renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=1' });
+    // The detail reaches complete while the list is still loading.
+    await screen.findByText('Completed');
+    await screen.findByText('Failed Book');
+    const listCallsBefore = listImportSubmissions.mock.calls.length;
+
+    // The list now resolves with the SAME id from an EARLIER processing snapshot.
+    resolveList({ data: [summary({ id: 1, status: 'processing', processedCount: 1, aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 } })], total: 1 });
+
+    // The header must NOT revert to Processing (single source = the hydrated detail),
+    // and the target is never rendered twice.
+    await waitFor(() => expect(screen.getByTestId('import-history-card-1')).toBeInTheDocument());
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(screen.queryByText('Processing')).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('import-history-card-1')).toHaveLength(1);
+    expect(listImportSubmissions.mock.calls.length).toBe(listCallsBefore); // no extra list fetch triggered
   });
 
   it('ignores a non-positive-integer run (all collapsed)', async () => {
@@ -209,38 +247,57 @@ describe('ImportHistorySection (#1894)', () => {
     expect(getImportSubmissionDetail.mock.calls.length).toBe(calls);
   });
 
-  it('an OFF-PAGE deep-linked card self-polls its OWN detail from processing → terminal rows, then stops (F35)', async () => {
+  it('an OFF-PAGE deep-linked card self-polls to terminal ROWS and HEADER, stays terminal across collapse/re-expand, and never refetches the list (F35/F46)', async () => {
     vi.useFakeTimers();
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 }); // page lacks id 9
     let phase: 'processing' | 'complete' = 'processing';
     getImportSubmissionDetail.mockImplementation(() => Promise.resolve(
       phase === 'processing'
-        ? { ...summary({ id: 9, status: 'processing' }), itemsIncluded: true, items: [{ disposition: 'pending', ordinal: 0, path: '/a', title: 'Pending Book' }] }
-        : { ...summary({ id: 9, status: 'complete', completedAt: new Date().toISOString() }), itemsIncluded: true, items: [{ disposition: 'held', ordinal: 0, path: '/a', title: 'Held Book', reason: 'recording-review-required' }] },
+        ? { ...summary({ id: 9, status: 'processing', processedCount: 0, aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 } }), itemsIncluded: true, items: [{ disposition: 'pending', ordinal: 0, path: '/a', title: 'Pending Book' }] }
+        : { ...summary({ id: 9, status: 'complete', processedCount: 1, aggregates: { accepted: 0, held: 1, skipped: 0, failed: 0 }, completedAt: new Date('2026-07-21T00:00:00.000Z').toISOString() }), itemsIncluded: true, items: [{ disposition: 'held', ordinal: 0, path: '/a', title: 'Held Book', reason: 'recording-review-required' }] },
     ));
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=9' });
     await vi.advanceTimersByTimeAsync(10);
-    // The off-page card renders from its OWN detail (no list summary) — still processing.
-    expect(screen.getByTestId('import-history-card-9')).toBeInTheDocument();
+    const card9 = () => screen.getByTestId('import-history-card-9'); // re-query (DOM re-renders)
+    expect(within(card9()).getByText('Processing')).toBeInTheDocument(); // header from the detail (processing)
     expect(screen.queryByText('Held Book')).not.toBeInTheDocument();
+    const listCalls = listImportSubmissions.mock.calls.length;
 
     phase = 'complete';
     await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10); // the detail's own poll advances
-    expect(screen.getByText('Held Book')).toBeInTheDocument(); // terminal rows replace pending
-    expect(screen.getAllByTestId('import-history-card-9')).toHaveLength(1); // still exactly one card
+    // Terminal ROWS and terminal HEADER (status + counts) both update from the detail.
+    expect(screen.getByText('Held Book')).toBeInTheDocument();
+    expect(within(card9()).getByText('Completed')).toBeInTheDocument();
+    expect(within(card9()).getByText('1 held')).toBeInTheDocument();
+    expect(within(card9()).queryByText('Processing')).not.toBeInTheDocument();
 
-    phase = 'processing'; // poll stopped at complete → flipping back has no effect
-    const calls = getImportSubmissionDetail.mock.calls.length;
+    // Collapse and re-expand — the header stays terminal (never reverts to Processing).
+    fireEvent.click(within(card9()).getAllByRole('button')[0]!);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(within(card9()).getByText('Completed')).toBeInTheDocument();
+    expect(screen.queryByText('Held Book')).not.toBeInTheDocument(); // rows collapsed
+    fireEvent.click(within(card9()).getAllByRole('button')[0]!);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(within(card9()).getByText('Completed')).toBeInTheDocument();
+    expect(screen.getByText('Held Book')).toBeInTheDocument();
+
+    // The detail poll STOPPED at complete, and the off-page path never refetched the list.
+    phase = 'processing';
+    const detailCalls = getImportSubmissionDetail.mock.calls.length;
     await vi.advanceTimersByTimeAsync(FAST_POLL_MS * 3);
-    expect(getImportSubmissionDetail.mock.calls.length).toBe(calls);
+    expect(getImportSubmissionDetail.mock.calls.length).toBe(detailCalls);
+    expect(listImportSubmissions.mock.calls.length).toBe(listCalls);
+    expect(screen.getAllByTestId('import-history-card-9')).toHaveLength(1);
   });
 
-  it('a malformed detail renders the error arm (effect-keyed warn) (F17)', async () => {
+  it('a deep-link target with a malformed detail is caught by the hydration authority before rendering a header (F29/F43)', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 });
     getImportSubmissionDetail.mockResolvedValue({ ...summary({ id: 1 }), itemsIncluded: true, items: [{ disposition: 'bogus', ordinal: 0 }] });
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=1' });
-    await screen.findByText('Import details were malformed.');
+    // The deep-link target (on- or off-page) renders through the single hydration
+    // authority, which validates the detail and shows its error before any header.
+    expect(await screen.findByTestId('import-run-malformed')).toBeInTheDocument();
     await waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining('Malformed'), expect.anything()));
     warn.mockRestore();
   });

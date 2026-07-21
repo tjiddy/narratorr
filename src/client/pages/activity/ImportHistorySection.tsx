@@ -21,10 +21,12 @@ function parseRun(value: string | null): number | null {
 }
 
 /**
- * Off-page deep-link hydration (#1894, F59/F64). A `run` outside the current page
- * is hydrated by a direct GET; a 404 degrades to a "no longer available"
- * placeholder (no retry), a transient failure to an error card WITH retry. Either
- * way the rest of the section stays usable.
+ * The SINGLE deep-link hydration authority for a `run` id (#1894, F59/F64/F43/F44).
+ * EVERY deep-linked id — on-page or off-page — renders through this card so there is
+ * exactly one 404-aware authority and one header source (the direct detail read),
+ * never the list row. A 404 degrades to a "no longer available" placeholder (no
+ * retry); a transient failure to an error card WITH retry; the header comes from the
+ * detail (so a late/stale list response for the same id can never revert it).
  */
 function HydratedDeepLinkCard({ id }: { id: number }) {
   const query = useImportSubmissionDetail(id, true);
@@ -78,13 +80,11 @@ export function ImportHistorySection() {
   const total = listQuery.data?.total ?? 0;
   useEffect(() => { clampToTotal(total); }, [total, clampToTotal]);
 
-  const onPage = runId != null && rows.some((r) => r.id === runId);
-  // The deep-link direct GET is INDEPENDENT of the list request (F28): render the
-  // hydrated card whenever the run is not already on the current page — INCLUDING
-  // while the list is loading or has failed. `onPage` only becomes true once list
-  // data actually contains the id, at which point the on-page auto-expanded card
-  // takes over (no duplication).
-  const showHydrated = runId != null && !onPage;
+  // The deep-link target is ALWAYS rendered by the single hydration authority (F43/F44),
+  // independent of the list request (F28). The list rows EXCLUDE that id so it is never
+  // rendered twice and its header can never be reverted by a stale list row.
+  const showHydrated = runId != null;
+  const listRows = runId != null ? rows.filter((r) => r.id !== runId) : rows;
 
   const heading = <h3 className="text-sm font-semibold text-muted-foreground">Import history</h3>;
 
@@ -107,8 +107,8 @@ export function ImportHistorySection() {
   } else {
     listBody = (
       <div className="space-y-2">
-        {rows.map((row) => (
-          <ImportHistoryCard key={row.id} row={row} defaultExpanded={row.id === runId} />
+        {listRows.map((row) => (
+          <ImportHistoryCard key={row.id} row={row} />
         ))}
       </div>
     );

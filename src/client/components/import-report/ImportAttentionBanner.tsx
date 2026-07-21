@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, type AttentionSubmission } from '@/lib/api';
+import { api, type AttentionResponse, type AttentionSubmission } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { useImportAttention } from '@/hooks/useImportReport';
 import { attentionCopy } from '@/lib/import-report/attentionCopy';
@@ -32,9 +32,16 @@ export function ImportAttentionBanner({
 
   const discardMutation = useMutation({
     mutationFn: (id: number) => api.discardImportSubmission(id),
-    onSuccess: () => {
+    onSuccess: (_result, discardedId) => {
       setDiscardError(null);
-      // Attention refetch clears the banner (never optimistically cleared).
+      // A successful DELETE is AUTHORITATIVE over stale cached attention (F45): drop
+      // the deleted submission from every cached attention entry BEFORE refetching,
+      // so its banner cannot linger (with a re-actionable Discard) if the subsequent
+      // attention read then fails. The refetch surfaces the next attention-worthy run.
+      queryClient.setQueriesData<AttentionResponse>(
+        { queryKey: ['importSubmissions', 'attention'] },
+        (old) => (old && old.data?.id === discardedId ? { ...old, data: null } : old),
+      );
       queryClient.invalidateQueries({ queryKey: ['importSubmissions'] });
     },
     onError: (error: unknown) => setDiscardError(getErrorMessage(error)),
