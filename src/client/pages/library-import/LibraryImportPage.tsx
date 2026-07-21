@@ -41,6 +41,7 @@ export function LibraryImportPage() {
     handleRetry,
     handleRestartMatch,
     handleResumeMatch,
+    handleDeselectPending,
     registerMutation,
     selectedCount,
     selectedUnmatchedCount,
@@ -190,6 +191,18 @@ export function LibraryImportPage() {
               <span className="text-xs font-medium text-muted-foreground">
                 {selectedCount} of {rows.filter(r => !isLibraryDbDuplicate(r.book)).length} new selected
               </span>
+              {/* Deselect-pending affordance (#1895) — page-local (NOT in MatchPausedBanner,
+                  which stays shared/unchanged). Only while paused with selected pending rows;
+                  clears them so the matched subset can import. */}
+              {paused && selectedPendingCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleDeselectPending}
+                  className="text-xs font-medium text-primary/80 hover:text-primary transition-colors focus-ring rounded"
+                >
+                  Deselect {selectedPendingCount} pending
+                </button>
+              )}
               {duplicateCount > 0 && (
                 <button
                   type="button"
@@ -211,6 +224,7 @@ export function LibraryImportPage() {
                   onEdit={() => setEditIndex(rowIndexMap.get(row) ?? -1)}
                   lockDuplicates
                   relativePath={makeRelativePath(row.book.path, libraryRoot ?? '')}
+                  paused={paused}
                 />
               ))}
             </div>
@@ -229,7 +243,12 @@ export function LibraryImportPage() {
               onImport={handleRegister}
               importing={registerMutation.isPending}
               hideMode
-              disabled={paused || recovering}
+              paused={paused}
+              // #1895: the paused gate is relaxed — the button's own selection gate
+              // (selectedUnmatchedCount/selectedPendingCount) supplies the clean-selection
+              // requirement while paused. `recovering` (automatic retry/remainder in flight)
+              // stays an unconditional disabler (#1864 fail-closed, unchanged).
+              disabled={recovering}
               registerLabel={
                 registerMutation.isPending
                   ? (chunkProgress && chunkProgress.chunks > 1

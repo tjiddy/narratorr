@@ -18,6 +18,28 @@ interface ImportSummaryBarBaseProps {
   registerLabel?: string;
   /** When true, disable the action button regardless of other state */
   disabled?: boolean;
+  /**
+   * When true (paused match run, #1895), the pending segment reads `{n} paused` with no
+   * spinner instead of the spinning `{n} matching`. Defaults to false so the non-paused
+   * path — and Manual Import — stay byte-identical.
+   */
+  paused?: boolean;
+}
+
+/** Pending count segment: spinning "{n} matching", or static "{n} paused" while the run is halted (#1895). */
+function PendingSegment({ pendingCount, paused }: { pendingCount: number; paused?: boolean | undefined }) {
+  return (
+    <span className="flex items-center gap-1.5 text-muted-foreground/50">
+      {paused ? (
+        `${pendingCount} paused`
+      ) : (
+        <>
+          <LoadingSpinner className="w-3 h-3" />
+          {pendingCount} matching
+        </>
+      )}
+    </span>
+  );
 }
 
 function pluralizeNeedsMatch(n: number): string {
@@ -62,6 +84,7 @@ export function ImportSummaryBar({
   hideMode,
   registerLabel,
   disabled,
+  paused,
 }: ImportSummaryBarProps) {
   const tooltip = buildDisabledTooltip(selectedUnmatchedCount, selectedPendingCount);
   return (
@@ -86,12 +109,7 @@ export function ImportSummaryBar({
             {noMatchCount} no match
           </span>
         )}
-        {pendingCount > 0 && (
-          <span className="flex items-center gap-1.5 text-muted-foreground/50">
-            <LoadingSpinner className="w-3 h-3" />
-            {pendingCount} matching
-          </span>
-        )}
+        {pendingCount > 0 && <PendingSegment pendingCount={pendingCount} paused={paused} />}
         {duplicateCount > 0 && (
           <span className="text-muted-foreground/40">
             {duplicateCount} already in library

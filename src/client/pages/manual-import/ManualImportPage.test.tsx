@@ -650,6 +650,24 @@ describe('ManualImportPage', () => {
       expect(screen.getByRole('button', { name: /Import/ })).toBeDisabled();
     });
 
+    // #1895 scope guard (F3): the paused-relaxation and paused-visual changes are Library-only.
+    // Manual passes no `paused` prop to the shared components, so a paused Manual pending row keeps
+    // the spinning "Matching" badge + "{n} matching" summary — never "Paused" — and no affordance.
+    it('paused Manual Import keeps the "Matching" pending badge/summary (no #1895 paused visual) and no deselect-pending affordance', async () => {
+      matchState.paused = true;
+      matchState.reason = 'run-expired';
+      matchState.total = 1;
+
+      await scanAndReview([makeDiscoveredBook({ path: '/a/B', parsedTitle: 'Book B' })]);
+
+      // The pending row and the summary both stay in the non-paused "matching" wording.
+      expect(screen.getByText('Matching')).toBeInTheDocument();
+      expect(screen.getByText('1 matching')).toBeInTheDocument();
+      expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+      expect(screen.queryByText('1 paused')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /deselect \d+ pending/i })).not.toBeInTheDocument();
+    });
+
     it('Import stays disabled while recovering (automatic retry/remainder) even after deselecting every pending row (F1)', async () => {
       // recovering=true WITHOUT paused models an automatic retry/remainder in flight.
       matchState.recovering = true;

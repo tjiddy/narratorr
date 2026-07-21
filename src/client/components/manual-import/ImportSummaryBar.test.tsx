@@ -48,6 +48,24 @@ describe('ImportSummaryBar', () => {
       expect(screen.getByText('4 matching')).toBeInTheDocument();
     });
 
+    // #1895 — the pending segment reads "{n} paused" with no spinner when paused=true.
+    it('paused=true: pending segment reads "{n} paused" with NO spinner', () => {
+      renderBar({ pendingCount: 4, paused: true });
+      const segment = screen.getByText('4 paused');
+      expect(segment).toBeInTheDocument();
+      expect(screen.queryByText('4 matching')).not.toBeInTheDocument();
+      // The spinner svg is removed from the pending segment while paused.
+      expect(segment.querySelector('svg')).not.toBeInTheDocument();
+    });
+
+    it('paused omitted (default false): pending segment keeps "{n} matching" + spinner', () => {
+      renderBar({ pendingCount: 4 });
+      const segment = screen.getByText('4 matching');
+      expect(segment).toBeInTheDocument();
+      expect(screen.queryByText('4 paused')).not.toBeInTheDocument();
+      expect(segment.querySelector('svg')).toBeInTheDocument();
+    });
+
     it('shows already-in-library count when duplicates present', () => {
       renderBar({ duplicateCount: 1 });
       expect(screen.getByText(/1 already in library/)).toBeInTheDocument();

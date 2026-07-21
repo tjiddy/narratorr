@@ -39,11 +39,28 @@ export interface UseStagedSubmissionParams {
   acceptedVerb: string;
   /** In-session clean completion → navigate away (the page passes `() => navigate('/library')`). */
   onCleanNavigate: () => void;
-  /** Deselect the accepted rows in place after a partial (server or local) outcome. */
-  onDeselectAccepted: (acceptedPaths: Set<string>) => void;
+  /**
+   * Deselect the accepted rows in place. Called in two cases: (1) a partial (server or
+   * local) outcome, with the item-derived accepted set (`acceptedItemPaths ∩ submitted`);
+   * (2) a clean completion when `shouldStayOnClean` snapshotted true (#1895), with the
+   * frozen submitted survivor paths (`submittedPathsRef` — the complete accepted set for a
+   * clean outcome, robust to an aggregates-only pruned terminal detail where `items` is
+   * undefined). The param is a `ReadonlySet` so the frozen ref passes without a copy; both
+   * production callers consume it only via `.has(...)`.
+   */
+  onDeselectAccepted: (acceptedPaths: ReadonlySet<string>) => void;
   /** Surface held rows for re-confirm; `mode` is the confirm-attempt snapshot. */
   captureHeld: (items: HeldReviewItem[], mode: ImportMode | undefined) => void;
   clearHeld: () => void;
+  /**
+   * Snapshotted (per-run, after preflight) to decide the CLEAN-completion terminal policy
+   * (#1895). When it returns true at submit time, a clean completion stays on the page and
+   * deselects the accepted rows in place instead of calling `onCleanNavigate`. Library
+   * Import passes `() => paused`; Manual Import and non-paused flows omit it (navigate as
+   * before). Read once at the accepted run's submit — a later value change (e.g. a Resume
+   * clearing `paused` mid-processing) does not retroactively alter the in-flight run.
+   */
+  shouldStayOnClean?: () => boolean;
 }
 
 export interface UseStagedSubmission {
@@ -70,7 +87,7 @@ function toHeldReviewItem(row: Extract<StagedItemResultDto, { disposition: 'held
 
 // eslint-disable-next-line max-lines-per-function -- one cohesive submit/poll/reconcile lifecycle; splitting it would scatter shared refs
 export function useStagedSubmission(params: UseStagedSubmissionParams): UseStagedSubmission {
-  const { source, acceptedVerb, onCleanNavigate, onDeselectAccepted, captureHeld, clearHeld } = params;
+  const { source, acceptedVerb, onCleanNavigate, onDeselectAccepted, captureHeld, clearHeld, shouldStayOnClean } = params;
   const queryClient = useQueryClient();
 
   const [isPending, setIsPending] = useState(false);
@@ -87,6 +104,13 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
   // The frozen in-session submitted paths (F4/F48): deselection is scoped to THIS session's
   // submitted rows, never a recovered receipt, and never applied to a remount projection.
   const submittedPathsRef = useRef<ReadonlySet<string>>(new Set());
+  // The accepted run's clean-completion terminal policy (#1895 F7/F8), snapshotted at the
+  // SAME post-preflight epoch boundary where `submittedPathsRef` is frozen — never at the
+  // top of `submit` before preflight. A later submit that fails preflight returns without
+  // bumping the epoch or touching this, so it cannot clobber the active run's policy; and
+  // because `projectOutcome` runs only for the current epoch, the value read at terminal is
+  // exactly the one captured at THIS run's submit (a mid-processing Resume flip is ignored).
+  const stayOnCleanRef = useRef(false);
   // Monotonic run epoch (F19). Every submit bumps it; the digest continuation, the transport
   // chain, and every poll/state callback are gated on "am I still the current epoch?" so a
   // superseded run (or one whose component unmounted mid-digest) can never publish state,
@@ -101,6 +125,24 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
     pollRef.current?.stop();
     pollRef.current = null;
   }, []);
+
+  // ── Clean/partial terminal selection policy (extracted to keep `projectOutcome` under the
+  //    complexity budget). Clean: stay+deselect the frozen submitted paths when this run
+  //    snapshotted "stay" (#1895), else navigate. Partial: deselect the item-derived accepted
+  //    set ∩ frozen submitted (today's behavior). ──
+  const applyTerminalSelection = useCallback(
+    (clean: boolean, items: readonly StagedItemResultDto[] | undefined) => {
+      if (clean) {
+        if (!stayOnCleanRef.current) return onCleanNavigate();
+        if (submittedPathsRef.current.size > 0) onDeselectAccepted(submittedPathsRef.current);
+        return;
+      }
+      const acceptedDto = items ? acceptedItemPaths(items) : new Set<string>();
+      const acceptedPaths = new Set([...acceptedDto].filter((p) => submittedPathsRef.current.has(p)));
+      if (acceptedPaths.size > 0) onDeselectAccepted(acceptedPaths);
+    },
+    [onCleanNavigate, onDeselectAccepted],
+  );
 
   // ── Terminal detail projection → count-driven outcome / navigation / deselect ──
   const projectOutcome = useCallback(
@@ -139,19 +181,14 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
       // Guarded evict: a newer submit may already own the single slot (F1).
       evictOutbox(source, clientSubmissionId);
 
-      // Clean AND in-session → navigate. A recovered projection NEVER navigates and NEVER
-      // mutates the current selection (F4): the displayed rows may differ after a remount, so
-      // deselection is scoped strictly to THIS session's frozen submitted paths.
+      // A recovered projection NEVER navigates and NEVER mutates the current selection (F4):
+      // the displayed rows may differ after a remount, so deselection is scoped strictly to THIS
+      // session's frozen submitted paths. Otherwise apply the clean/partial selection policy —
+      // clean stays+deselects when this run snapshotted "stay" (#1895), else navigates.
       if (recovered) return;
-      if (isCleanCompletion(agg, local)) {
-        onCleanNavigate();
-        return;
-      }
-      const acceptedDto = items ? acceptedItemPaths(items) : new Set<string>();
-      const acceptedPaths = new Set([...acceptedDto].filter((p) => submittedPathsRef.current.has(p)));
-      if (acceptedPaths.size > 0) onDeselectAccepted(acceptedPaths);
+      applyTerminalSelection(isCleanCompletion(agg, local), items);
     },
-    [acceptedVerb, captureHeld, clearHeld, invalidateReportReads, onCleanNavigate, onDeselectAccepted, queryClient, source],
+    [acceptedVerb, applyTerminalSelection, captureHeld, clearHeld, invalidateReportReads, queryClient, source],
   );
 
   const startPoll = useCallback(
@@ -353,6 +390,10 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
       const items$ = classified.survivors;
       // Freeze the submitted paths NOW (F4): deselection later is scoped to this exact set.
       submittedPathsRef.current = new Set(items$.map((i) => i.path));
+      // Snapshot the clean-completion terminal policy for THIS run at the same boundary (#1895
+      // F8): captured here — after preflight, alongside the epoch bump — so a later submit that
+      // fails preflight cannot overwrite it, and a mid-processing `paused` flip cannot either.
+      stayOnCleanRef.current = shouldStayOnClean ? shouldStayOnClean() : false;
       const digestInput = { source, ...(source === 'manual' && mode !== undefined ? { mode } : {}), items: [...items$] };
       let clientSubmissionId: string;
       try {
@@ -368,7 +409,7 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
         return runPipeline(items$, clientSubmissionId, payloadDigest, mode, epoch, abort);
       });
     },
-    [runPipeline, stopPoll, source],
+    [runPipeline, stopPoll, source, shouldStayOnClean],
   );
 
   const dismissBanner = useCallback(() => setBanner(null), []);

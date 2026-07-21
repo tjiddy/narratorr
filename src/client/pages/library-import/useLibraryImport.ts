@@ -47,6 +47,10 @@ export function useLibraryImport() {
     onDeselectAccepted: (paths) => setRows((prev) => prev.map((r) => (paths.has(r.book.path) ? { ...r, selected: false } : r))),
     captureHeld,
     clearHeld,
+    // Paused-subset import (#1895): a clean completion while the match run is paused must
+    // stay on the page and deselect the accepted rows in place — navigating to /library would
+    // unmount `useMatchJob` and dispose the paused engine, losing the resumable remainder.
+    shouldStayOnClean: () => paused,
   });
   const stagedSubmit = staged.submit;
   useEffect(() => {
@@ -207,6 +211,15 @@ export function useLibraryImport() {
     staged.submit(items, undefined);
   }, [rows, staged]);
 
+  // Deselect-pending affordance (#1895): while paused, clear `selected` on every pending row
+  // — result-less and NOT a DB duplicate — so the remaining matched selection can import. The
+  // predicate mirrors `selectedPendingCount` exactly (the canonical `isLibraryDbDuplicate`
+  // helper, not a bare `!isDuplicate`): a within-scan duplicate is actionable and gets cleared,
+  // a path/slug DB duplicate isn't selectable to begin with. Matched selections stay intact.
+  const handleDeselectPending = useCallback(() => {
+    setRows(prev => prev.map(r => (!r.matchResult && !isLibraryDbDuplicate(r.book)) ? { ...r, selected: false } : r));
+  }, []);
+
   const handleRetry = useCallback(() => {
     const libraryPath = settings?.library.path ?? '';
     if (!libraryPath) return;
@@ -285,6 +298,7 @@ export function useLibraryImport() {
     handleRetry,
     handleRestartMatch,
     handleResumeMatch,
+    handleDeselectPending,
 
     scanMutation,
     registerMutation,
