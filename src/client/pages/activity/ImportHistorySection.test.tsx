@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useSearchParams } from 'react-router-dom';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { FAST_POLL_MS } from '@/lib/import-report/polling';
 import { ImportHistorySection } from './ImportHistorySection';
@@ -131,6 +133,50 @@ describe('ImportHistorySection (#1894)', () => {
     expect(screen.queryByText('Processing')).not.toBeInTheDocument();
     expect(screen.getAllByTestId('import-history-card-1')).toHaveLength(1);
     expect(listImportSubmissions.mock.calls.length).toBe(listCallsBefore); // no extra list fetch triggered
+  });
+
+  it('after the deep link is REMOVED, the reconciled ordinary card stays terminal — no stale Processing revert, no extra fetch (F47)', async () => {
+    function Harness() {
+      const [, setParams] = useSearchParams();
+      return (
+        <>
+          <button onClick={() => setParams({ tab: 'history' })}>unfocus</button>
+          <ImportHistorySection />
+        </>
+      );
+    }
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let resolveList!: (v: { data: SubmissionSummary[]; total: number }) => void;
+    listImportSubmissions.mockReturnValue(new Promise((res) => { resolveList = res; }));
+    getImportSubmissionDetail.mockResolvedValue({
+      ...summary({ id: 1, status: 'complete', completedAt: new Date().toISOString(), processedCount: 3, aggregates: { accepted: 1, held: 1, skipped: 0, failed: 1 } }),
+      itemsIncluded: true, items: [{ disposition: 'failed', ordinal: 0, path: '/a', title: 'Failed Book', message: 'boom' }],
+    });
+    renderWithProviders(<Harness />, { route: '/activity?tab=history&run=1', queryClient: qc });
+    // The detail reaches complete while the list is still loading.
+    await screen.findByText('Failed Book');
+    expect(within(screen.getByTestId('import-history-card-1')).getByText('Completed')).toBeInTheDocument();
+
+    // The list resolves with a STALE processing row for the same id — the effect
+    // reconciles the terminal detail into the list cache.
+    resolveList({ data: [summary({ id: 1, status: 'processing', processedCount: 1, aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 } })], total: 1 });
+    // Wait for the reconciliation to promote the cached list row to terminal.
+    await waitFor(() => {
+      const lc = qc.getQueryData(['importSubmissions', 'list', { limit: 50, offset: 0 }]) as { data?: { status?: string }[] } | undefined;
+      expect(lc?.data?.[0]?.status).toBe('complete');
+    });
+    const listCalls = listImportSubmissions.mock.calls.length;
+    const detailCalls = getImportSubmissionDetail.mock.calls.length;
+
+    // Remove the deep link → the hydrated authority unmounts and the ordinary card
+    // (from the reconciled list cache) is revealed — it must be TERMINAL, not stale.
+    fireEvent.click(screen.getByRole('button', { name: 'unfocus' }));
+    await waitFor(() => expect(within(screen.getByTestId('import-history-card-1')).getByText('Completed')).toBeInTheDocument());
+    expect(within(screen.getByTestId('import-history-card-1')).queryByText('Processing')).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('import-history-card-1')).toHaveLength(1);
+    // No extra list or detail fetch was triggered by the unfocus.
+    expect(listImportSubmissions.mock.calls.length).toBe(listCalls);
+    expect(getImportSubmissionDetail.mock.calls.length).toBe(detailCalls);
   });
 
   it('ignores a non-positive-integer run (all collapsed)', async () => {

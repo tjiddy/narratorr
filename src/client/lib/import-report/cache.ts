@@ -35,7 +35,9 @@ export function patchImportHistoryCache(queryClient: QueryClient, detail: Submis
   for (const query of queries) {
     const cached = query.state.data as SubmissionListResponse | undefined;
     if (!cached || !Array.isArray(cached.data)) continue;
-    if (!cached.data.some((row) => row.id === header.id)) continue;
+    // Only write when a row ACTUALLY advances — a no-op write would churn the cache
+    // reference and (for the F47 re-patch-on-list-arrival effect) loop indefinitely.
+    if (!cached.data.some((row) => row.id === header.id && isMoreTerminal(header, row))) continue;
     queryClient.setQueryData<SubmissionListResponse>(query.queryKey, (old) => {
       if (!old?.data) return old;
       return {

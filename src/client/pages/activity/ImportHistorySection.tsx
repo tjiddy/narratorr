@@ -1,13 +1,14 @@
 import { useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { submissionResponseSchema } from '@core/import-staging/schemas.js';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, type SubmissionResponse } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { usePagination } from '@/hooks/usePagination';
 import { useImportSubmissionDetail } from '@/hooks/useImportReport';
 import { useDtoValid } from '@/lib/import-report/useDtoWarn';
 import { detailToSummary } from '@/lib/import-report/detailToSummary';
+import { patchImportHistoryCache } from '@/lib/import-report/cache';
 import { Pagination } from '@/components/Pagination';
 import { LoadingSpinner } from '@/components/icons';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
@@ -69,6 +70,7 @@ export function ImportHistorySection() {
   const runId = parseRun(searchParams.get('run'));
   const pagination = usePagination(DEFAULT_LIMITS.eventHistory);
   const { clampToTotal } = pagination;
+  const queryClient = useQueryClient();
 
   const listQuery = useQuery({
     queryKey: queryKeys.importSubmissions.list({ limit: pagination.limit, offset: pagination.offset }),
@@ -78,7 +80,20 @@ export function ImportHistorySection() {
 
   const rows = listQuery.data?.data ?? [];
   const total = listQuery.data?.total ?? 0;
+  const listData = listQuery.data;
   useEffect(() => { clampToTotal(total); }, [total, clampToTotal]);
+
+  // Reconcile the deep-link target's terminal detail into the list cache (F47). When
+  // the detail completed BEFORE the list arrived, the in-queryFn patch ran against an
+  // empty cache, so the arriving list stored a stale pre-terminal row. Re-patch once
+  // the list data is present (the patch is a no-op when nothing advances), so removing
+  // `run` — which unmounts the hydrated authority — reveals a TERMINAL ordinary card,
+  // never the stale processing header.
+  useEffect(() => {
+    if (runId == null || !listData) return;
+    const detail = queryClient.getQueryData<SubmissionResponse>(queryKeys.importSubmissions.detail(runId));
+    if (detail) patchImportHistoryCache(queryClient, detail);
+  }, [runId, listData, queryClient]);
 
   // The deep-link target is ALWAYS rendered by the single hydration authority (F43/F44),
   // independent of the list request (F28). The list rows EXCLUDE that id so it is never
