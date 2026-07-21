@@ -1,16 +1,24 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * Phase 2 critical path #2 — exercises the full manual-import flow:
+ * Phase 2 critical path #2 — exercises the full manual-import flow over the STAGED
+ * submission lane (#1902):
  *
  *   /library → Library Actions menu → "Import Files"
  *     → /import (path step)
  *     → enter sourcePath, click Scan
  *     → Review step: match completes with confidence 'none'
  *     → Edit Metadata: search, select result, save → confidence 'medium'
- *     → Import → success toast → /library
- *     → imported card visible (bg-emerald-500)
+ *     → Import → create → chunked PUT (KILLED once mid-flight, then retried) →
+ *       finalize → poll to complete → success toast → /library
+ *     → imported card visible (bg-emerald-500) — registered EXACTLY ONCE
  *     → book detail shows "Imported"
+ *
+ * The killed-middle-chunk step (#1902 F15) fails the first `PUT .../items` request
+ * with a 503, exercising the client's shared retry policy: the idempotent, ordinal-keyed
+ * chunk is re-PUT and the durable finalize + server-owned processing still drive the row
+ * to `imported` — with a single library card, proving exactly-once registration despite
+ * the transport failure.
  *
  * globalSetup boots the Audible fake on :4300 (empty for structured search,
  * one generic product for keyword search) and pre-populates sourcePath with
@@ -91,13 +99,30 @@ test.describe('Critical path: manual import', () => {
       await expect(importBtn).toBeEnabled({ timeout: 5_000 });
     });
 
-    // ── Confirm import ───────────────────────────────────────────────────
-    await test.step('click Import and verify success toast + navigation', async () => {
+    // ── Kill the first chunk PUT, then confirm the staged import recovers ─────
+    await test.step('kill the first chunk PUT once, then import recovers via retry → finalize → complete', async () => {
+      // Fail the FIRST inert chunk upload with a 503 (a retryable transport-class failure);
+      // let every subsequent request through. The client re-PUTs the idempotent chunk and the
+      // durable finalize + server processing still complete the run (#1902 F15).
+      let putKilled = false;
+      await page.route('**/api/import/submissions/*/items', async (route) => {
+        if (route.request().method() === 'PUT' && !putKilled) {
+          putKilled = true;
+          await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'e2e-killed-middle-chunk' }) });
+          return;
+        }
+        await route.continue();
+      });
+
       await page.getByRole('button', { name: /^Import 1/i }).click();
-      // Success toast from importMutation.onSuccess.
-      await expect(page.getByText(/queued for import/i)).toBeVisible({ timeout: 10_000 });
-      // Should navigate to /library.
+
+      // The polled record drives the success toast once processing completes...
+      await expect(page.getByText(/queued for import/i)).toBeVisible({ timeout: 20_000 });
+      // ...and a clean in-session completion navigates to /library.
       await page.waitForURL(/\/library/, { timeout: 10_000 });
+      // The chunk really was killed, so the retry path was exercised.
+      expect(putKilled).toBe(true);
+      await page.unroute('**/api/import/submissions/*/items');
     });
 
     // ── Library card shows imported status ────────────────────────────────
