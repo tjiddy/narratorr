@@ -125,16 +125,21 @@ test.describe('Critical path: manual import', () => {
       await page.unroute('**/api/import/submissions/*/items');
     });
 
-    // ── Library card shows imported status ────────────────────────────────
-    await test.step('library card shows imported status (bg-emerald-500)', async () => {
-      const bookCard = page.getByRole('link', { name: new RegExp(SEED_MANUAL_IMPORT_TITLE) }).first();
-      const statusBar = bookCard.getByTestId('status-bar');
-      await expect(statusBar).toHaveClass(/bg-emerald-500/, { timeout: 15_000 });
+    // ── Library card shows imported status, registered EXACTLY ONCE ───────
+    await test.step('exactly one imported card for the seed title (bg-emerald-500)', async () => {
+      const bookCards = page.getByRole('link', { name: new RegExp(SEED_MANUAL_IMPORT_TITLE) });
+      // Wait for the (single) card to reach imported/emerald status once processing settles.
+      await expect(bookCards.first().getByTestId('status-bar')).toHaveClass(/bg-emerald-500/, { timeout: 15_000 });
+      // Exactly-once (F20/F15): the killed-then-retried chunk is idempotent per ordinal, so the
+      // retry must NOT create a second registration — a duplicate card fails this assertion (the
+      // prior `.first()` masked it under Playwright's deletion heuristic).
+      await expect(bookCards).toHaveCount(1);
     });
 
     // ── Book detail page shows "Imported" ────────────────────────────────
     await test.step('book detail page shows Imported status', async () => {
-      await page.getByRole('link', { name: new RegExp(SEED_MANUAL_IMPORT_TITLE) }).first().click();
+      // Exactly one card exists (asserted above), so this navigates to the sole imported book.
+      await page.getByRole('link', { name: new RegExp(SEED_MANUAL_IMPORT_TITLE) }).click();
       await expect(page).toHaveURL(/\/books\/\d+$/);
       await expect(page.getByText('Imported', { exact: true })).toBeVisible({ timeout: 10_000 });
     });
