@@ -5,6 +5,7 @@ import { attentionCopy, pluralCount } from './attentionCopy.js';
 import { patchImportHistoryCache } from './cache.js';
 import {
   DISMISSAL_CAP,
+  DISMISSAL_STORAGE_KEY,
   dismissalKey,
   loadDismissedKeys,
   useAttentionDismissal,
@@ -82,6 +83,35 @@ describe('dismissal store (F55)', () => {
     const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
     expect(() => loadDismissedKeys()).not.toThrow();
     expect(loadDismissedKeys()).toEqual([]);
+    spy.mockRestore();
+  });
+
+  it('treats corrupt stored data as empty (no crash)', () => {
+    localStorage.setItem(DISMISSAL_STORAGE_KEY, '{not json');
+    expect(loadDismissedKeys()).toEqual([]);
+    localStorage.setItem(DISMISSAL_STORAGE_KEY, '{"not":"an array"}');
+    expect(loadDismissedKeys()).toEqual([]);
+  });
+
+  it('when localStorage.setItem throws, dismissals are RETAINED in the in-memory fallback', () => {
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+    const { result } = renderHook(() => useAttentionDismissal());
+    act(() => result.current.dismiss(dismissalKey(7, 'abandoned')));
+    // Hook state reflects it, AND the store-level read (in-memory fallback) retains it.
+    expect(result.current.isDismissed(dismissalKey(7, 'abandoned'))).toBe(true);
+    expect(loadDismissedKeys()).toContain('7:abandoned');
+    spy.mockRestore();
+  });
+
+  it('the in-memory fallback keeps the same 50-entry FIFO cap', () => {
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+    const { result } = renderHook(() => useAttentionDismissal());
+    act(() => {
+      for (let i = 0; i < 51; i++) result.current.dismiss(dismissalKey(i, 'abandoned'));
+    });
+    expect(loadDismissedKeys()).toHaveLength(50); // capped in memory too
+    expect(result.current.isDismissed(dismissalKey(0, 'abandoned'))).toBe(false); // oldest evicted
+    expect(result.current.isDismissed(dismissalKey(50, 'abandoned'))).toBe(true);
     spy.mockRestore();
   });
 });
