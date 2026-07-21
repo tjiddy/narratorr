@@ -5,6 +5,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { importSubmissions, importSubmissionItems } from '../../db/schema.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { isUniqueViolation } from '../../shared/error-message.js';
+import { buildHeaderFields } from './import-submission-dto.js';
 import {
   serializeSubmissionForDigest,
   aggregateDispositions,
@@ -17,7 +18,6 @@ import {
   type StagedImportItem,
   type SubmissionResponse,
   type StagedItemResultDto,
-  type SubmissionStatus,
   type SubmissionAggregates,
   type ItemDisposition,
   type FinalizeGaps,
@@ -28,6 +28,17 @@ type ItemRow = typeof importSubmissionItems.$inferSelect;
 
 /** A never-finalized 'receiving' header is GC-eligible after this long (F13 / Retention & GC). */
 const STALE_RECEIVING_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * A 'receiving' submission whose `updatedAt` is strictly older than this is an
+ * ABANDONED upload — inert, imported nothing, and surfaced by the attention read
+ * (#1894). Homed here beside `STALE_RECEIVING_MS`; a live upload bumps `updatedAt`
+ * on every PUT so an actively-arriving partial never qualifies. Invariant:
+ * `ABANDONED_UPLOAD_GRACE_MS` (15 min) ≪ `STALE_RECEIVING_MS` (48 h), so the
+ * abandoned banner is reachable for well over a day before the stale sweep deletes
+ * the header. The boundary is strict `<` (matching the `lt` retention convention).
+ */
+export const ABANDONED_UPLOAD_GRACE_MS = 15 * 60 * 1000;
 
 /** Matches the `client_submission_id` unique-index violation for race-safe create-or-return (F15). */
 const CLIENT_SUBMISSION_ID_UNIQUE = /UNIQUE constraint failed.*(?:import_submissions_client_submission_id_unique|import_submissions\.client_submission_id)/;
@@ -365,6 +376,29 @@ export class ImportStagingService {
     return includeItems ? this.buildDetail(header) : this.buildSummary(header);
   }
 
+  /**
+   * Discard a still-'receiving' submission (#1894). Runs on the write lane (same
+   * lane as PUT/finalize) as an ATOMIC `DELETE … WHERE id=? AND status='receiving'`
+   * so it can never race a concurrent finalize: a header that finalized first fails
+   * the status predicate and is never deleted. Zero rows affected → re-read the
+   * header to distinguish absent (404) from non-'receiving' (409). Cascades item rows.
+   */
+  async discardReceiving(id: number): Promise<{ success: true }> {
+    const affected = await this.serializeWrite(async () => {
+      const result = await this.db
+        .delete(importSubmissions)
+        .where(and(eq(importSubmissions.id, id), eq(importSubmissions.status, 'receiving')));
+      return getRowsAffected(result);
+    });
+    if (affected === 1) {
+      this.log.info({ submissionId: id }, 'Staged import submission discarded');
+      return { success: true };
+    }
+    const [header] = await this.db.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
+    if (!header) throw new SubmissionError('submission-not-found', 404, 'submission not found');
+    throw new SubmissionError(SUBMISSION_ERROR_CODES.submissionNotReceiving, 409, `submission is '${header.status}', not receiving`);
+  }
+
   // ── Retention & GC ────────────────────────────────────────────────────────
 
   /**
@@ -453,21 +487,8 @@ export class ImportStagingService {
   }
 
   private headerFields(header: SubmissionRow, progress: Awaited<ReturnType<ImportStagingService['computeProgress']>>) {
-    return {
-      id: header.id,
-      clientSubmissionId: header.clientSubmissionId,
-      source: header.source,
-      ...(header.mode ? { mode: header.mode } : {}),
-      status: header.status as SubmissionStatus,
-      expectedCount: header.expectedCount,
-      receivedCount: header.receivedCount,
-      processedCount: progress.processedCount,
-      aggregates: progress.aggregates,
-      detailsPruned: progress.detailsPruned,
-      createdAt: header.createdAt.toISOString(),
-      updatedAt: header.updatedAt.toISOString(),
-      ...(header.completedAt ? { completedAt: header.completedAt.toISOString() } : {}),
-    };
+    // Canonical header assembly lives once in the pure DTO module (F82/F85).
+    return buildHeaderFields(header, progress);
   }
 
   private async buildSummary(header: SubmissionRow): Promise<SubmissionResponse> {

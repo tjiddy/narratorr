@@ -19,6 +19,7 @@ const EVENT_SUBJECTS: Record<NotificationEvent, string> = {
   on_import: 'Narratorr — Import Complete',
   on_failure: 'Narratorr — Failure',
   on_health_issue: 'Narratorr — Health Issue',
+  import_run_finished: 'Narratorr — Import Run Finished',
 };
 
 export class EmailNotifier implements NotifierAdapter {

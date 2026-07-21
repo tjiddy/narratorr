@@ -12,9 +12,15 @@ import { BookImportService } from './book-import.service.js';
 import { ImportSubmissionRunner } from './import-submission-runner.js';
 import { ImportStagingService } from './import-staging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
+import type { NotifierService } from './notifier.service.js';
 import { serializeSubmissionForDigest, type StagedImportItem } from '../../core/import-staging/schemas.js';
 
 interface DrainSeam { drainOne(): Promise<boolean> }
+
+/** A notifier stub — an optional `notify` spy lets a test assert completion dispatch. */
+function stubNotifier(notify: unknown = () => Promise.resolve()): NotifierService {
+  return { notify } as unknown as NotifierService;
+}
 
 function acceptedItem(path: string, title: string): StagedImportItem {
   return { path, title, forceImport: true, metadata: { title, authors: [{ name: 'Author' }] } };
@@ -27,6 +33,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
   let runner: ImportSubmissionRunner;
   let nudge: ReturnType<typeof vi.fn>;
   let eventCreate: ReturnType<typeof vi.fn>;
+  let notifyStub: ReturnType<typeof vi.fn>;
   const log = createMockLogger();
 
   beforeEach(async () => {
@@ -36,6 +43,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
     db = createDb(dbFile);
     nudge = vi.fn();
     eventCreate = vi.fn().mockResolvedValue(undefined);
+    notifyStub = vi.fn().mockResolvedValue(undefined);
     const eventHistory = { create: eventCreate } as unknown as EventHistoryService;
     runner = new ImportSubmissionRunner({
       db,
@@ -43,6 +51,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       bookService: new BookService(db, inject(log)),
       bookImportService: new BookImportService(db, inject(log)),
       eventHistory,
+      notifier: stubNotifier(notifyStub),
       nudgeImportWorker: nudge as unknown as () => void,
     });
   });
@@ -90,6 +99,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       bookService,
       bookImportService: bookImportService ?? new BookImportService(db, inject(log)),
       eventHistory: { create: eventCreate } as unknown as EventHistoryService,
+      notifier: stubNotifier(notifyStub),
       nudgeImportWorker: nudge as unknown as () => void,
     });
   }
@@ -102,6 +112,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       bookService: new BookService(rdb, inject(log)),
       bookImportService: new BookImportService(rdb, inject(log)),
       eventHistory: { create: eventCreate } as unknown as EventHistoryService,
+      notifier: stubNotifier(notifyStub),
       nudgeImportWorker: nudge as unknown as () => void,
     });
   }
@@ -169,6 +180,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       bookService: new BookService(db, inject(log)),
       bookImportService: new BookImportService(db, inject(log)),
       eventHistory: { create: eventCreate } as unknown as EventHistoryService,
+      notifier: stubNotifier(notifyStub),
       nudgeImportWorker: nudge as unknown as () => void,
     });
     await drainAll();
