@@ -385,6 +385,31 @@ describe('SearchReleasesModal — book-change lifecycle (#1905)', () => {
     });
   });
 
+  // F6 — a raw punctuation-only query (which the SERVER sanitizer would empty) reaches
+  // the request verbatim: no client-side sanitizer rewrites it. The server 400s it
+  // pre-SSE (out of scope here); this proves the client submits it raw.
+  it('a raw punctuation-only edited query reaches the request unsanitized as q=?? (F6)', async () => {
+    const book = createMockBook({
+      id: 404,
+      title: 'Book Title',
+      authors: [{ id: 4, name: 'Some Author', slug: 'some-author' }],
+    });
+    renderModal(book, vi.fn());
+
+    await waitFor(() => expect(openInstances().length).toBeGreaterThan(0));
+    driveToResults(openInstances()[0]!, []);
+
+    const input = await screen.findByLabelText('Search query');
+    await userEvent.clear(input);
+    await userEvent.type(input, '??');
+    await userEvent.click(screen.getByRole('button', { name: /^Search$/ }));
+
+    await waitFor(() => {
+      const params = new URLSearchParams(openInstances().at(-1)!.url.split('?')[1]);
+      expect(params.get('q')).toBe('??'); // raw, not client-sanitized
+    });
+  });
+
   // F4 — prove the replace-grab generation is advanced on the SYNCHRONOUS layout seam.
   // The grab suppression itself is async (react-query awaits the mutationFn), so it can't
   // distinguish layout from passive on its own. Instead assert the ORDER of two markers in

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -2044,6 +2044,49 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
 
       expect(screen.getByRole('button', { name: /^Search$/ })).toBeDisabled();
       expect(screen.getByLabelText('Refresh results')).toBeDisabled();
+    });
+
+    // F6 — the inclusive lower boundary (length 2), doubling as the explicitly
+    // preserved "sanitizer-empty" case: a raw `??` must stay submit-eligible AND stay
+    // raw (no client-side punctuation filtering). A `> 2` mutation or an added client
+    // sanitizer would fail this.
+    it('a raw punctuation-only query (??) is submit-eligible and is not client-sanitized', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      const input = screen.getByLabelText(QUERY_LABEL) as HTMLInputElement;
+      await user.clear(input);
+      await user.type(input, '??');
+      vi.clearAllMocks();
+
+      expect(input.value).toBe('??'); // not client-sanitized
+      const searchBtn = screen.getByRole('button', { name: /^Search$/ });
+      expect(searchBtn).toBeEnabled();
+      await user.click(searchBtn);
+      expect(mockStreamActions.start).toHaveBeenCalledOnce();
+    });
+
+    // F6 — the inclusive UPPER boundary: exactly 500 characters remains eligible. A
+    // `< 500` mutation would fail this. (Set via fireEvent to avoid typing 500 chars;
+    // `maxLength={500}` already bars a 501st via user input — over-500 ineligibility is
+    // covered by the prefill test below.)
+    it('an exactly-500-character query is submit-eligible (inclusive upper boundary)', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      const input = screen.getByLabelText(QUERY_LABEL) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'a'.repeat(500) } });
+      vi.clearAllMocks();
+
+      expect(input.value).toHaveLength(500);
+      const searchBtn = screen.getByRole('button', { name: /^Search$/ });
+      expect(searchBtn).toBeEnabled();
+      await user.click(searchBtn);
+      expect(mockStreamActions.start).toHaveBeenCalledOnce();
     });
 
     it('does not auto-start when the prefill exceeds 500 chars, but keeps the input visible', () => {
