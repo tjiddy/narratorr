@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { StrictMode, type ReactNode } from 'react';
 import { useSearchStream } from './useSearchStream';
 import type { DownloadProtocol } from '../../core/indexers/types.js';
 
@@ -996,6 +996,218 @@ describe('useSearchStream', () => {
       expect(result.current.state.indexers[0]!.status).toBe('pending');
       expect(result.current.state.indexers[1]!.status).toBe('pending');
       expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
+  // Editable query — ranking-context clamp + search-session contract (#1905)
+  // ==========================================================================
+  describe('search-session contract & context clamp (#1905)', () => {
+    function createDeferred<T>() {
+      let resolve!: (value: T) => void;
+      let reject!: (reason?: unknown) => void;
+      const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+      return { promise, resolve, reject };
+    }
+
+    function urlParams(url: string): URLSearchParams {
+      return new URLSearchParams(url.split('?')[1] ?? '');
+    }
+
+    // F15 — a valid-but-pathological book (title > 500 / author > 200) must stay
+    // searchable: the client clamps the ranking context to the route maxima so the
+    // request is never 400-shaped, while leaving the editable q untouched.
+    it('clamps context title to 500 and author to 200 chars in the stream URL (F15)', async () => {
+      const longTitle = 'T'.repeat(600);
+      const longAuthor = 'A'.repeat(250);
+      const { result } = renderHook(
+        () => useSearchStream('valid query', { title: longTitle, author: longAuthor }),
+        { wrapper: createWrapper() },
+      );
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+
+      const params = urlParams(MockEventSource.instances[0]!.url);
+      expect(params.get('q')).toBe('valid query');
+      expect(params.get('title')).toHaveLength(500);
+      expect(params.get('author')).toHaveLength(200);
+      // Stream opened (searching), not rejected pre-open.
+      expect(result.current.state.phase).toBe('searching');
+    });
+
+    // AC5 — an edited query re-fires with the new q while the book-keyed context
+    // (title/author/bookDuration) is preserved unchanged.
+    it('re-fires start() with an edited query while keeping the book-keyed context', async () => {
+      const context = { title: 'Real Book', author: 'Real Author', bookDuration: 3600 };
+      const { result, rerender } = renderHook(
+        ({ q }: { q: string }) => useSearchStream(q, context),
+        { wrapper: createWrapper(), initialProps: { q: 'query A' } },
+      );
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+      expect(urlParams(MockEventSource.instances[0]!.url).get('q')).toBe('query A');
+
+      rerender({ q: 'query B' });
+      act(() => { result.current.actions.start(); });
+
+      const params = urlParams(MockEventSource.instances.at(-1)!.url);
+      expect(params.get('q')).toBe('query B');
+      expect(params.get('title')).toBe('Real Book');
+      expect(params.get('author')).toBe('Real Author');
+      expect(params.get('bookDuration')).toBe('3600');
+    });
+
+    // F14 — the token re-mint recovery reopens the query the search actually
+    // SUBMITTED, not a later edit to the persistent input.
+    it('recovery reopens the submitted session query, not a mid-search edit (F14)', async () => {
+      const deferred = createDeferred<{ token: string; expiresInMs: number }>();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 }) // query mount
+        .mockReturnValueOnce(deferred.promise); // remint (held)
+
+      const { result, rerender } = renderHook(
+        ({ q }: { q: string }) => useSearchStream(q),
+        { wrapper: createWrapper(), initialProps: { q: 'query A' } },
+      );
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+      expect(urlParams(MockEventSource.instances[0]!.url).get('q')).toBe('query A');
+
+      // Stream error schedules a remint; the promise is still pending.
+      await act(async () => { MockEventSource.instances[0]!.onerror?.(new Event('error')); });
+      // User edits the persistent input to B mid-search — but does NOT re-search.
+      rerender({ q: 'query B' });
+      // Remint resolves: recovery must reopen the SUBMITTED query (A), not B.
+      await act(async () => { deferred.resolve({ token: 'token-2', expiresInMs: 300_000 }); await deferred.promise; });
+      await waitFor(() => { expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(2); });
+      expect(urlParams(MockEventSource.instances.at(-1)!.url).get('q')).toBe('query A');
+
+      // Only a later explicit start() searches B.
+      act(() => { result.current.actions.start(); });
+      expect(urlParams(MockEventSource.instances.at(-1)!.url).get('q')).toBe('query B');
+    });
+
+    // F17 — a recovery whose session was superseded (reset / newer start / unmount)
+    // before the remint settles must open NO stream on fulfillment.
+    it('abandons a recovery fulfilled after reset() — no orphan stream (F17)', async () => {
+      const deferred = createDeferred<{ token: string; expiresInMs: number }>();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 })
+        .mockReturnValueOnce(deferred.promise);
+
+      const { result } = renderHook(() => useSearchStream('query A'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+      const countAfterStart = MockEventSource.instances.length;
+
+      await act(async () => { MockEventSource.instances[0]!.onerror?.(new Event('error')); });
+      act(() => { result.current.actions.reset(); }); // supersede the session
+
+      await act(async () => { deferred.resolve({ token: 'token-2', expiresInMs: 300_000 }); await deferred.promise; });
+      expect(MockEventSource.instances.length).toBe(countAfterStart); // no reopen
+      expect(result.current.state.phase).toBe('idle');
+    });
+
+    it('abandons a recovery fulfilled after a newer start() — no orphan stream (F17)', async () => {
+      const deferred = createDeferred<{ token: string; expiresInMs: number }>();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 })
+        .mockReturnValueOnce(deferred.promise);
+
+      const { result } = renderHook(() => useSearchStream('query A'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+
+      await act(async () => { MockEventSource.instances[0]!.onerror?.(new Event('error')); });
+      act(() => { result.current.actions.start(); }); // newer session
+      const countAfterNewStart = MockEventSource.instances.length;
+
+      await act(async () => { deferred.resolve({ token: 'token-2', expiresInMs: 300_000 }); await deferred.promise; });
+      expect(MockEventSource.instances.length).toBe(countAfterNewStart); // stale recovery opened nothing
+    });
+
+    it('abandons a recovery fulfilled after unmount — no orphan stream (F11)', async () => {
+      const deferred = createDeferred<{ token: string; expiresInMs: number }>();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 })
+        .mockReturnValueOnce(deferred.promise);
+
+      const { result, unmount } = renderHook(() => useSearchStream('query A'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+
+      await act(async () => { MockEventSource.instances[0]!.onerror?.(new Event('error')); });
+      const countBeforeUnmount = MockEventSource.instances.length;
+      unmount(); // advances the session generation synchronously
+
+      await act(async () => { deferred.resolve({ token: 'token-2', expiresInMs: 300_000 }); await deferred.promise; });
+      expect(MockEventSource.instances.length).toBe(countBeforeUnmount); // no orphan stream
+    });
+
+    // F18 — a stale remint REJECTION after the session advanced must not force
+    // `Search connection failed`/idle onto the newer state.
+    it('a stale remint rejection after reset() does not reintroduce a connection error (F18)', async () => {
+      const deferred = createDeferred<{ token: string; expiresInMs: number }>();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 })
+        .mockReturnValueOnce(deferred.promise);
+
+      const { result } = renderHook(() => useSearchStream('query A'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+
+      await act(async () => { MockEventSource.instances[0]!.onerror?.(new Event('error')); });
+      act(() => { result.current.actions.reset(); });
+
+      await act(async () => { deferred.reject(new Error('mint failed')); await deferred.promise.catch(() => {}); });
+      expect(result.current.state.error).toBeNull(); // reset cleared it; no 'Search connection failed'
+      expect(result.current.state.phase).toBe('idle');
+    });
+
+    // F18 — a rejection within the still-live session DOES reach the generic error.
+    it('a remint rejection within the live session reaches the generic error state (F18)', async () => {
+      (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 })
+        .mockRejectedValueOnce(new Error('mint failed')); // remint rejects, session still live
+
+      const { result } = renderHook(() => useSearchStream('query A'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+
+      await act(async () => { MockEventSource.instances[0]!.onerror?.(new Event('error')); });
+      await waitFor(() => { expect(result.current.state.error).toBe('Search connection failed'); });
+      expect(result.current.state.phase).toBe('idle');
+    });
+
+    // F17 — a valid recovery within the live session survives React.StrictMode's
+    // setup→cleanup→setup probe: the value-compared generation is not wedged by the
+    // dev double-invoke, so the reconnect still opens.
+    it('a valid recovery survives the StrictMode probe and reopens (F17)', async () => {
+      (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+      (api.mintStreamToken as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 })
+        .mockResolvedValueOnce({ token: 'token-2', expiresInMs: 300_000 });
+
+      const strictWrapper = ({ children }: { children: ReactNode }) => (
+        <StrictMode>{createWrapper()({ children })}</StrictMode>
+      );
+      const { result } = renderHook(() => useSearchStream('query A'), { wrapper: strictWrapper });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+
+      const openBefore = MockEventSource.instances.filter(es => !es.closed).length;
+      await act(async () => { MockEventSource.instances.at(-1)!.onerror?.(new Event('error')); });
+      await waitFor(() => {
+        expect(MockEventSource.instances.some(es => es.url.includes('token=token-2') && !es.closed)).toBe(true);
+      });
+      // Exactly one live stream after recovery (the reconnect), no orphan pile-up.
+      expect(MockEventSource.instances.filter(es => !es.closed).length).toBe(openBefore);
     });
   });
 });
