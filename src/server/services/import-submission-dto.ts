@@ -1,9 +1,11 @@
 import type { importSubmissions, importSubmissionItems } from '../../db/schema.js';
-import type {
-  StagedItemResultDto,
-  SubmissionAggregates,
-  SubmissionStatus,
-  SubmissionSummary,
+import {
+  aggregateDispositions,
+  type ItemDisposition,
+  type StagedItemResultDto,
+  type SubmissionAggregates,
+  type SubmissionStatus,
+  type SubmissionSummary,
 } from '../../core/import-staging/schemas.js';
 
 type SubmissionRow = typeof importSubmissions.$inferSelect;
@@ -22,6 +24,31 @@ export interface SubmissionProgress {
   aggregates: SubmissionAggregates;
   processedCount: number;
   detailsPruned: boolean;
+}
+
+/** The canonical processed-count decision — sum of terminal dispositions (F6). */
+export function sumAggregates(a: SubmissionAggregates): number {
+  return a.accepted + a.held + a.skipped + a.failed;
+}
+
+/**
+ * Progress for a `complete` header (F6). The frozen aggregate columns are the
+ * durable record; `detailsPruned` is the ONE canonical decision
+ * `expectedCount > 0 && !hasItems` — the caller supplies the existence result it
+ * already loaded (single-record probe or a set-based batch), never re-derived here.
+ */
+export function completeProgress(counts: SubmissionAggregates, expectedCount: number, hasItems: boolean): SubmissionProgress {
+  return { aggregates: counts, processedCount: sumAggregates(counts), detailsPruned: expectedCount > 0 && !hasItems };
+}
+
+/** Progress for a non-`complete` header from already-summed live aggregates (F6). */
+export function liveProgressFromAggregates(aggregates: SubmissionAggregates): SubmissionProgress {
+  return { aggregates, processedCount: sumAggregates(aggregates), detailsPruned: false };
+}
+
+/** Progress for a non-`complete` header from a raw disposition list (F6). */
+export function liveProgress(dispositions: readonly ItemDisposition[]): SubmissionProgress {
+  return liveProgressFromAggregates(aggregateDispositions(dispositions));
 }
 
 /** header row + precomputed progress → the canonical summary header field object. */

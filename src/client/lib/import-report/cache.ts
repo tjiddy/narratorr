@@ -1,5 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query';
 import type { SubmissionListResponse, SubmissionResponse, SubmissionSummary } from '@/lib/api';
+import { detailToSummary } from './detailToSummary';
 
 /**
  * Cache patch that promotes a self-polled report-detail's canonical header back
@@ -28,14 +29,8 @@ function isMoreTerminal(detail: SubmissionSummary, existing: SubmissionSummary):
   return detail.processedCount > existing.processedCount;
 }
 
-/** Strip `items` and force the summary arm — the list holds header-only rows. */
-function toSummaryHeader(detail: SubmissionResponse): SubmissionSummary {
-  const { items: _items, ...rest } = detail as SubmissionResponse & { items?: unknown };
-  return { ...rest, itemsIncluded: false } as SubmissionSummary;
-}
-
 export function patchImportHistoryCache(queryClient: QueryClient, detail: SubmissionResponse): void {
-  const header = toSummaryHeader(detail);
+  const header = detailToSummary(detail);
   const queries = queryClient.getQueryCache().findAll({ queryKey: ['importSubmissions', 'list'] });
   for (const query of queries) {
     const cached = query.state.data as SubmissionListResponse | undefined;

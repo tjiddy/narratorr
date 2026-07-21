@@ -129,13 +129,23 @@ describe('ImportHistorySection (#1894)', () => {
     await screen.findByText('Failed Book');
   });
 
-  it('renders a pruned card as "details expired" on expand', async () => {
+  it('a pruned card still issues the mandatory direct GET and renders "details expired" (F4)', async () => {
     const user = userEvent.setup();
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1, detailsPruned: true })], total: 1 });
+    // The direct GET returns the pruned summary arm (itemsIncluded:false, detailsPruned:true).
+    getImportSubmissionDetail.mockResolvedValue(summary({ id: 1, detailsPruned: true }));
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history' });
     await screen.findByTestId('import-history-card-1');
     await user.click(screen.getByTestId('import-history-card-1').querySelector('button')!);
     expect(await screen.findByTestId('import-details-expired')).toBeInTheDocument();
-    expect(getImportSubmissionDetail).not.toHaveBeenCalled(); // pruned short-circuits the fetch
+    expect(getImportSubmissionDetail).toHaveBeenCalledWith(1); // F4 — never skips the GET
+  });
+
+  it('auto-expands a pruned deep-link run via the direct GET (F4)', async () => {
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 3, detailsPruned: true })], total: 1 });
+    getImportSubmissionDetail.mockResolvedValue(summary({ id: 3, detailsPruned: true }));
+    renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=3' });
+    expect(await screen.findByTestId('import-details-expired')).toBeInTheDocument();
+    expect(getImportSubmissionDetail).toHaveBeenCalledWith(3);
   });
 });

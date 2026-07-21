@@ -1,10 +1,11 @@
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { api, ApiError, type SubmissionResponse, type SubmissionSummary } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { usePagination } from '@/hooks/usePagination';
 import { useImportSubmissionDetail } from '@/hooks/useImportReport';
+import { detailToSummary } from '@/lib/import-report/detailToSummary';
 import { Pagination } from '@/components/Pagination';
 import { LoadingSpinner } from '@/components/icons';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
@@ -15,12 +16,6 @@ function parseRun(value: string | null): number | null {
   if (value == null || !/^\d+$/.test(value)) return null;
   const n = Number(value);
   return Number.isInteger(n) && n > 0 ? n : null;
-}
-
-/** Strip `items` and force the summary arm — cards render header-only. */
-function toSummary(detail: SubmissionResponse): SubmissionSummary {
-  const { items: _items, ...rest } = detail as SubmissionResponse & { items?: unknown };
-  return { ...rest, itemsIncluded: false } as SubmissionSummary;
 }
 
 /**
@@ -50,7 +45,7 @@ function HydratedDeepLinkCard({ id }: { id: number }) {
   if (!query.data) {
     return <div className="rounded-lg border border-border p-3 text-sm text-muted-foreground">Loading import run…</div>;
   }
-  return <ImportHistoryCard row={toSummary(query.data)} defaultExpanded />;
+  return <ImportHistoryCard row={detailToSummary(query.data)} defaultExpanded />;
 }
 
 /**

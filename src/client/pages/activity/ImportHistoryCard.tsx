@@ -36,11 +36,10 @@ export function ImportHistoryCard({ row, defaultExpanded = false }: { row: Submi
       </button>
       {expanded && (
         <div className="border-t border-border/50 px-3 pb-2">
-          {row.detailsPruned ? (
-            <div className="py-2 text-sm text-muted-foreground" data-testid="import-details-expired">Details expired.</div>
-          ) : (
-            <ImportDetailExpansion id={row.id} enabled={expanded} />
-          )}
+          {/* Always mount the detail query on expand — the deep-link contract requires
+              a direct GET /:id?includeItems=true even for a pruned run (F4); the
+              expansion renders the returned pruned arm as "Details expired". */}
+          <ImportDetailExpansion id={row.id} enabled={expanded} />
         </div>
       )}
     </div>

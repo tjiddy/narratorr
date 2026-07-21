@@ -73,7 +73,10 @@ export function useImportSubmissionDetail(id: number | null, enabled = true) {
     refetchOnMount: 'always',
     // A deep-linked 404 is gone — fail fast (no retry); transient errors retry twice.
     retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 2,
-    placeholderData: (prev) => prev,
+    // Retain the previous snapshot ONLY for the same id (F3): on an id transition
+    // (panel discovers a new latest id while expanded, or a deep-link id changes)
+    // the prior run's rows/status must NOT render under the new header.
+    placeholderData: (prev) => (prev != null && prev.id === id ? prev : undefined),
     refetchInterval: (query) => (query.state.data?.status === 'complete' ? false : FAST_POLL_MS),
   });
 }

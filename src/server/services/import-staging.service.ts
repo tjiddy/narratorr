@@ -5,10 +5,9 @@ import type { FastifyBaseLogger } from 'fastify';
 import { importSubmissions, importSubmissionItems } from '../../db/schema.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { isUniqueViolation } from '../../shared/error-message.js';
-import { buildHeaderFields } from './import-submission-dto.js';
+import { buildHeaderFields, reportRowToDto, completeProgress, liveProgress } from './import-submission-dto.js';
 import {
   serializeSubmissionForDigest,
-  aggregateDispositions,
   stagedImportItemSchema,
   SUBMISSION_ERROR_CODES,
   MAX_SUBMISSION_BYTES,
@@ -459,8 +458,9 @@ export class ImportStagingService {
       : [];
 
     if (header.status === 'complete') {
-      // Frozen aggregate columns survive item pruning (the durable record).
-      const aggregates: SubmissionAggregates = {
+      // Frozen aggregate columns survive item pruning (the durable record). The
+      // progress/pruning DECISION lives once in the pure DTO layer (F6).
+      const counts: SubmissionAggregates = {
         accepted: header.acceptedCount,
         held: header.heldCount,
         skipped: header.skippedCount,
@@ -471,8 +471,7 @@ export class ImportStagingService {
         .from(importSubmissionItems)
         .where(eq(importSubmissionItems.submissionId, header.id))
         .limit(1);
-      const detailsPruned = !anyItem && header.expectedCount > 0;
-      return { aggregates, processedCount: aggregates.accepted + aggregates.held + aggregates.skipped + aggregates.failed, detailsPruned, itemRows };
+      return { ...completeProgress(counts, header.expectedCount, !!anyItem), itemRows };
     }
 
     // Live counts during receiving/processing (0 during receiving) from a
@@ -481,9 +480,7 @@ export class ImportStagingService {
       .select({ disposition: importSubmissionItems.disposition })
       .from(importSubmissionItems)
       .where(eq(importSubmissionItems.submissionId, header.id));
-    const aggregates = aggregateDispositions(dispositionRows.map((r) => r.disposition as ItemDisposition));
-    const processedCount = aggregates.accepted + aggregates.held + aggregates.skipped + aggregates.failed;
-    return { aggregates, processedCount, detailsPruned: false, itemRows };
+    return { ...liveProgress(dispositionRows.map((r) => r.disposition as ItemDisposition)), itemRows };
   }
 
   private headerFields(header: SubmissionRow, progress: Awaited<ReturnType<ImportStagingService['computeProgress']>>) {
@@ -542,28 +539,14 @@ export class ImportStagingService {
   }
 
   private toItemDto(row: ItemRow): StagedItemResultDto {
-    const base = { ordinal: row.ordinal, path: row.path, title: row.title };
-    switch (row.disposition) {
-      case 'accepted': {
-        const item = this.projectAcceptedItem(row);
-        // `undefined` → omit (payload nulled); `null` → explicit malformed signal; object → valid.
-        return { disposition: 'accepted', ...base, bookId: row.bookId, ...(item !== undefined ? { item } : {}) };
-      }
-      case 'held':
-        return { disposition: 'held', ...base, reason: 'recording-review-required', ...(row.existingBookId != null ? { existingBookId: row.existingBookId } : {}) };
-      case 'skipped':
-        return {
-          disposition: 'skipped',
-          ...base,
-          reason: (row.reason === 'already-importing' ? 'already-importing' : 'already-in-library'),
-          ...(row.existingBookId != null ? { existingBookId: row.existingBookId } : {}),
-          ...(row.existingTitle != null ? { existingTitle: row.existingTitle } : {}),
-        };
-      case 'failed':
-        return { disposition: 'failed', ...base, message: row.reason ?? 'Import failed — see server logs for details.' };
-      case 'pending':
-      default:
-        return { disposition: 'pending', ...base };
+    // Accepted is the ONLY staging-specific arm — it validates + projects the stored
+    // `itemPayload`. Every other arm (held/skipped/failed/pending) shares the canonical
+    // projected-row mapper so the two DTO paths cannot drift (F7).
+    if (row.disposition === 'accepted') {
+      const item = this.projectAcceptedItem(row);
+      // `undefined` → omit (payload nulled); `null` → explicit malformed signal; object → valid.
+      return { disposition: 'accepted', ordinal: row.ordinal, path: row.path, title: row.title, bookId: row.bookId, ...(item !== undefined ? { item } : {}) };
     }
+    return reportRowToDto(row);
   }
 }

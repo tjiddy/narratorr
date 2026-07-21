@@ -11,6 +11,7 @@ import { PageLoading } from '@/components/PageLoading';
 import { Tabs, type TabItem } from '@/components/Tabs.js';
 import { EventHistorySection } from './EventHistorySection.js';
 import { ImportHistorySection } from './ImportHistorySection.js';
+import { SectionErrorBoundary } from '@/components/import-report/SectionErrorBoundary';
 import { ActiveTabSection } from './ActiveTabSection.js';
 import { useActivity } from './useActivity.js';
 import { useMergeActivityCards } from '@/hooks/useMergeProgress.js';
@@ -120,8 +121,18 @@ export function ActivityPage() {
 
       {tab === 'history' && (
         <div role="tabpanel" id="tabpanel-history" aria-labelledby="tab-history" className="animate-fade-in-up stagger-2 space-y-10">
-          {/* Durable import-history cards (#1894) render above the event-history list. */}
-          <ImportHistorySection />
+          {/* Durable import-history cards (#1894) render above the event-history list,
+              isolated by a section boundary so a render failure here can't take the
+              event-history list down with it (F5). */}
+          <SectionErrorBoundary
+            fallback={
+              <div className="rounded-lg border border-border p-3 text-sm text-muted-foreground" data-testid="import-history-boundary-fallback">
+                Import history is unavailable right now.
+              </div>
+            }
+          >
+            <ImportHistorySection />
+          </SectionErrorBoundary>
           <EventHistorySection
             urlFilter={filterParam}
             onFilterChange={(value) => {

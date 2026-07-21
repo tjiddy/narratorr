@@ -3,7 +3,6 @@ import type { Db } from '../../db/index.js';
 import type { ImportMode } from '../../shared/schemas/library-scan.js';
 import { importSubmissions, importSubmissionItems } from '../../db/schema.js';
 import {
-  aggregateDispositions,
   type AttentionResponse,
   type AttentionSubmission,
   type ItemDisposition,
@@ -19,6 +18,9 @@ import {
 import { ABANDONED_UPLOAD_GRACE_MS, SubmissionError } from './import-staging.service.js';
 import {
   buildHeaderFields,
+  completeProgress,
+  liveProgress,
+  liveProgressFromAggregates,
   reportRowToDto,
   toSummaryDto,
   type ReportItemRow,
@@ -69,7 +71,6 @@ interface AttentionQueryRow {
 }
 
 const emptyAggregates = (): SubmissionAggregates => ({ accepted: 0, held: 0, skipped: 0, failed: 0 });
-const sumAggregates = (a: SubmissionAggregates): number => a.accepted + a.held + a.skipped + a.failed;
 
 /**
  * Read-side over the #1893 staged-submission substrate (#1894). Owns the list,
@@ -151,20 +152,10 @@ export class ImportSubmissionReportService {
     const map = new Map<number, SubmissionProgress>();
     for (const h of headers) {
       if (h.status === 'complete') {
-        const aggregates: SubmissionAggregates = {
-          accepted: h.acceptedCount,
-          held: h.heldCount,
-          skipped: h.skippedCount,
-          failed: h.failedCount,
-        };
-        map.set(h.id, {
-          aggregates,
-          processedCount: sumAggregates(aggregates),
-          detailsPruned: h.expectedCount > 0 && !hasItems.has(h.id),
-        });
+        const counts: SubmissionAggregates = { accepted: h.acceptedCount, held: h.heldCount, skipped: h.skippedCount, failed: h.failedCount };
+        map.set(h.id, completeProgress(counts, h.expectedCount, hasItems.has(h.id)));
       } else {
-        const aggregates = liveAgg.get(h.id) ?? emptyAggregates();
-        map.set(h.id, { aggregates, processedCount: sumAggregates(aggregates), detailsPruned: false });
+        map.set(h.id, liveProgressFromAggregates(liveAgg.get(h.id) ?? emptyAggregates()));
       }
     }
     return map;
@@ -223,17 +214,18 @@ export class ImportSubmissionReportService {
   private attentionRowToDto(row: AttentionQueryRow): AttentionSubmission {
     const toIso = (s: number) => new Date(s * 1000).toISOString();
     const isComplete = row.status === 'complete';
-    const aggregates: SubmissionAggregates = isComplete
-      ? {
-          accepted: Number(row.acceptedCount),
-          held: Number(row.heldCount),
-          skipped: Number(row.skippedCount),
-          failed: Number(row.failedCount),
-        }
-      : emptyAggregates();
-    const detailsPruned = isComplete && Number(row.expectedCount) > 0 && Number(row.hasItems) !== 1;
+    // Progress/pruning DECISIONS come from the shared pure builders (F6).
+    const counts: SubmissionAggregates = {
+      accepted: Number(row.acceptedCount),
+      held: Number(row.heldCount),
+      skipped: Number(row.skippedCount),
+      failed: Number(row.failedCount),
+    };
+    const progress = isComplete
+      ? completeProgress(counts, Number(row.expectedCount), Number(row.hasItems) === 1)
+      : liveProgressFromAggregates(emptyAggregates());
     const attention: SubmissionAttention = isComplete
-      ? { kind: 'completed-attention', held: aggregates.held, failed: aggregates.failed }
+      ? { kind: 'completed-attention', held: progress.aggregates.held, failed: progress.aggregates.failed }
       : { kind: 'abandoned' };
     return {
       id: Number(row.id),
@@ -243,9 +235,9 @@ export class ImportSubmissionReportService {
       status: row.status as SubmissionStatus,
       expectedCount: Number(row.expectedCount),
       receivedCount: Number(row.receivedCount),
-      processedCount: sumAggregates(aggregates),
-      aggregates,
-      detailsPruned,
+      processedCount: progress.processedCount,
+      aggregates: progress.aggregates,
+      detailsPruned: progress.detailsPruned,
       itemsIncluded: false,
       createdAt: toIso(Number(row.createdAt)),
       updatedAt: toIso(Number(row.updatedAt)),
@@ -276,10 +268,10 @@ export class ImportSubmissionReportService {
     return { ...buildHeaderFields(header, progress), itemsIncluded: true, items };
   }
 
-  /** Single-record progress for report-detail — mirrors the staging loader's decisions. */
+  /** Single-record progress for report-detail — the shared pure builders decide (F6). */
   private async recordProgress(header: SubmissionRow): Promise<SubmissionProgress> {
     if (header.status === 'complete') {
-      const aggregates: SubmissionAggregates = {
+      const counts: SubmissionAggregates = {
         accepted: header.acceptedCount,
         held: header.heldCount,
         skipped: header.skippedCount,
@@ -290,17 +282,12 @@ export class ImportSubmissionReportService {
         .from(importSubmissionItems)
         .where(eq(importSubmissionItems.submissionId, header.id))
         .limit(1);
-      return {
-        aggregates,
-        processedCount: sumAggregates(aggregates),
-        detailsPruned: !anyItem && header.expectedCount > 0,
-      };
+      return completeProgress(counts, header.expectedCount, !!anyItem);
     }
     const dispositionRows = await this.db
       .select({ disposition: importSubmissionItems.disposition })
       .from(importSubmissionItems)
       .where(eq(importSubmissionItems.submissionId, header.id));
-    const aggregates = aggregateDispositions(dispositionRows.map((r) => r.disposition as ItemDisposition));
-    return { aggregates, processedCount: sumAggregates(aggregates), detailsPruned: false };
+    return liveProgress(dispositionRows.map((r) => r.disposition as ItemDisposition));
   }
 }

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { submissionSummarySchema } from '@core/import-staging/schemas.js';
 import { useLatestImport } from '@/hooks/useImportReport';
+import { useDtoValid } from '@/lib/import-report/useDtoWarn';
 import { StatusChip, DispositionCounts } from './ImportReportBits';
 import { relativeWhen } from '@/lib/import-report/rowDisplay';
 import { ImportDetailExpansion } from './ImportDetailExpansion';
@@ -18,10 +20,23 @@ export function LastImportPanel({ source }: { source: 'library' | 'manual' }) {
   const [expanded, setExpanded] = useState(false);
   const query = useLatestImport(source);
   const latest = query.data;
+  // Validate the latest summary before it reaches StatusChip/DispositionCounts (F2):
+  // a malformed DTO must produce the inline error + effect-keyed warn, not a crash.
+  const latestValid = useDtoValid(submissionSummarySchema, latest, 'latest import summary');
 
   // Cold first load (no cached data yet) → skeleton.
   if (query.isLoading) {
     return <div className="mb-4 h-16 animate-pulse rounded-lg border border-border bg-muted/30" data-testid="last-import-skeleton" />;
+  }
+
+  // Malformed latest DTO → inline error (the effect-keyed warn fires from useDtoValid).
+  if (latest && !latestValid) {
+    return (
+      <div className="mb-4 flex items-center gap-3 rounded-lg border border-border p-3 text-sm text-destructive" data-testid="last-import-malformed">
+        <span>The last import couldn’t be displayed.</span>
+        <button type="button" className="underline" onClick={() => query.refetch()}>Retry</button>
+      </div>
+    );
   }
 
   // Fetch failed with nothing to show → inline error + retry (never hidden).

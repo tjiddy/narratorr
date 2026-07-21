@@ -25,7 +25,7 @@ export function ManualImportPage() {
 
   const { state, actions, mutations, counts } = useManualImport({ onScanSuccess: folderHistory.addRecent, libraryPath });
   const { step, scanPath, setScanPath, scanError, setScanError, rows, mode, setMode, editIndex, setEditIndex, isMatching, progress, chunkProgress, heldReview, recovering, paused, pausedReason, matchRemaining, matchTotal } = state;
-  const { handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack, handleReconfirmHeld, handleRestartMatch, handleResumeMatch } = actions;
+  const { handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack, resetToPath, handleReconfirmHeld, handleRestartMatch, handleResumeMatch } = actions;
   const { scanMutation, importMutation } = mutations;
   const { selectedCount, selectedUnmatchedCount, readyCount, reviewCount, noMatchCount, pendingCount, selectedPendingCount, duplicateCount, allSelected } = counts;
 
@@ -60,7 +60,7 @@ export function ManualImportPage() {
 
       {/* Durable last-import panel + attention banner (#1894) */}
       <LastImportPanel source="manual" />
-      <ImportAttentionBanner source="manual" onImportAgain={() => handleBack()} />
+      <ImportAttentionBanner source="manual" onImportAgain={() => resetToPath()} />
 
       {/* Step 1: Path Input */}
       {step === 'path' && (
