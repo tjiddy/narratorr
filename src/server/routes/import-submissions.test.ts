@@ -341,4 +341,27 @@ describe('import-submissions routes (#1893)', () => {
       expect(reportList()).not.toHaveBeenCalled();
     });
   });
+
+  // F25 — the new read/discard routes must serialize + log an unexpected (non-typed)
+  // rejection before rethrowing to the generic 500 handler.
+  describe('#1894 read/discard route error diagnostics (F25)', () => {
+    const cases = [
+      { name: 'list', setup: () => reportList().mockRejectedValue(new Error('list boom')), op: () => app.inject({ method: 'GET', url: '/api/import/submissions' }), msg: 'list', boom: 'list boom' },
+      { name: 'attention', setup: () => reportAttention().mockRejectedValue(new Error('attention boom')), op: () => app.inject({ method: 'GET', url: '/api/import/submissions/attention' }), msg: 'attention', boom: 'attention boom' },
+      { name: 'discard', setup: () => stagingDiscard().mockRejectedValue(new Error('discard boom')), op: () => app.inject({ method: 'DELETE', url: '/api/import/submissions/5' }), msg: 'discard', boom: 'discard boom' },
+    ];
+    for (const c of cases) {
+      it(`${c.name}: an unexpected rejection returns 500 and logs the serialized error`, async () => {
+        const { spies, restore } = installMockAppLog(app);
+        c.setup();
+        const res = await c.op();
+        expect(res.statusCode).toBe(500); // rethrown to the generic handler
+        expect(spies.error).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.objectContaining({ message: c.boom }) }),
+          expect.stringContaining(c.msg),
+        );
+        restore();
+      });
+    }
+  });
 });

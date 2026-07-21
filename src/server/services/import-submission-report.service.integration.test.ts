@@ -139,14 +139,42 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       expect(data.find((d) => d.id === retained)!.detailsPruned).toBe(false);
     });
 
-    it('issues at most two item-table queries per page (N+1 guard, F52/F84)', async () => {
-      const complete = await seed({ status: 'complete', expectedCount: 1, counts: { accepted: 1 } });
-      await seedItem(complete, 0, 'accepted');
-      await seed({ status: 'processing', expectedCount: 1 });
-      const itemQueries = countItemQueries(db);
+    it('uses a CONSTANT two-query item budget regardless of row count (N+1 guard, F9/F52/F84)', async () => {
+      // Several complete AND several non-complete rows — a per-header loader would
+      // scale the item-query count with the page size; the set-based loader must not.
+      for (let i = 0; i < 4; i++) {
+        const c = await seed({ status: 'complete', expectedCount: 2, counts: { accepted: 1, held: 1 } });
+        await seedItem(c, 0, 'accepted');
+        await seedItem(c, 1, 'held', { reason: 'recording-review-required' });
+        const p = await seed({ status: 'processing', expectedCount: 2 });
+        await seedItem(p, 0, 'accepted');
+        await seedItem(p, 1, 'pending');
+      }
+      const spy = spyItemQueries(db);
+      const { data } = await service.list({ limit: 20, offset: 0 });
+      // Exactly two item-table statements: the grouped disposition count (non-complete)
+      // + the DISTINCT existence probe (complete). Not one-per-header.
+      expect(spy.count).toBe(2);
+      expect(spy.statements.some((s) => /group by/i.test(s))).toBe(true); // grouped counts
+      expect(spy.statements.some((s) => /distinct/i.test(s))).toBe(true); // existence probe
+      // …and the assembled counts are still correct.
+      const complete = data.find((d) => d.status === 'complete')!;
+      expect(complete.aggregates).toEqual({ accepted: 1, held: 1, skipped: 0, failed: 0 });
+      const processing = data.find((d) => d.status === 'processing')!;
+      expect(processing.aggregates).toEqual({ accepted: 1, held: 0, skipped: 0, failed: 0 });
+      spy.restore();
+    });
+
+    it('is set-based even with only complete rows — one DISTINCT existence probe, no per-header queries', async () => {
+      for (let i = 0; i < 5; i++) {
+        const c = await seed({ status: 'complete', expectedCount: 1, counts: { accepted: 1 } });
+        await seedItem(c, 0, 'accepted');
+      }
+      const spy = spyItemQueries(db);
       await service.list({ limit: 20, offset: 0 });
-      expect(itemQueries.count).toBeLessThanOrEqual(2);
-      itemQueries.restore();
+      expect(spy.count).toBe(1); // only the batch existence probe (no non-complete rows)
+      expect(spy.statements[0]).toMatch(/distinct/i);
+      spy.restore();
     });
   });
 
@@ -162,11 +190,33 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       expect(watch).toBe(false); // all complete
     });
 
-    it('watch is true whenever a receiving OR processing row exists, even past grace', async () => {
-      const processingOnly = await service.attention({});
-      expect(processingOnly).toEqual({ data: null, watch: false });
+    it('watch is true for a processing row (no attention data yet)', async () => {
+      expect(await service.attention({})).toEqual({ data: null, watch: false }); // empty scope
       await seed({ status: 'processing' });
       expect(await service.attention({})).toEqual({ data: null, watch: true });
+    });
+
+    it('a FRESH receiving row (within grace) → data:null but watch:true (F12)', async () => {
+      const now = new Date('2026-07-21T00:00:00.000Z');
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+      // updatedAt 5 min ago (< 15 min grace) — actively arriving, not abandoned.
+      await seed({ status: 'receiving', expectedCount: 3, receivedCount: 1, updatedAt: new Date(now.getTime() - 5 * 60 * 1000) });
+      expect(await service.attention({})).toEqual({ data: null, watch: true });
+    });
+
+    it('a PAST-GRACE receiving row → abandoned with watch:true, including the fully-received case (F12/F67)', async () => {
+      const now = new Date('2026-07-21T00:00:00.000Z');
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+      // Fully received (receivedCount === expectedCount) but never finalized, past grace.
+      const id = await seed({ status: 'receiving', expectedCount: 3, receivedCount: 3, updatedAt: new Date(now.getTime() - ABANDONED_UPLOAD_GRACE_MS - 60_000) });
+      const res = await service.attention({});
+      expect(res.data?.id).toBe(id);
+      expect(res.data?.attention).toEqual({ kind: 'abandoned' });
+      expect(res.data?.receivedCount).toBe(3);
+      expect(res.data?.expectedCount).toBe(3);
+      expect(res.watch).toBe(true); // still receiving → keep polling for a later finalize
     });
 
     it('a healthy processing run does not mask an older attention run (data=attention, watch=true)', async () => {
@@ -222,6 +272,40 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       expect(m.data?.id).toBe(manual);
       expect(m.data?.attention).toEqual({ kind: 'completed-attention', held: 0, failed: 1 });
     });
+
+    // ── one-atomic-snapshot coherence (F11/F68/F71) — CTE-appropriate proofs ──
+    it('a processing→completed-attention commit is seen entirely before OR after the read (never a split state)', async () => {
+      const id = await seed({ status: 'processing', expectedCount: 2, createdAt: new Date('2026-06-01T00:00:00.000Z') });
+      // Read while still processing: no attention data, but watch true.
+      expect(await service.attention({})).toEqual({ data: null, watch: true });
+      // Commit the terminal transition wholly, then read: sees completed-attention, watch false.
+      await db.update(importSubmissions)
+        .set({ status: 'complete', heldCount: 1, completedAt: new Date('2026-06-01T00:00:00.000Z') })
+        .where(eq(importSubmissions.id, id));
+      const after = await service.attention({});
+      expect(after.data?.id).toBe(id);
+      expect(after.data?.attention).toEqual({ kind: 'completed-attention', held: 1, failed: 0 });
+      expect(after.watch).toBe(false);
+    });
+
+    it('{data:null, watch:false} is UNREACHABLE while a durable attention row exists', async () => {
+      await seed({ status: 'complete', completedAt: new Date('2026-06-01T00:00:00.000Z'), counts: { failed: 1 } });
+      const res = await service.attention({});
+      expect(res.data).not.toBeNull();
+      expect(res).not.toEqual({ data: null, watch: false });
+    });
+
+    it('{data:null, watch:false} is UNREACHABLE while a non-terminal row exists', async () => {
+      await seed({ status: 'processing' });
+      const res = await service.attention({});
+      expect(res.watch).toBe(true);
+      expect(res).not.toEqual({ data: null, watch: false });
+    });
+
+    it('{data:null, watch:false} is reachable ONLY when neither attention nor non-terminal work exists', async () => {
+      await seed({ status: 'complete', completedAt: new Date('2026-06-01T00:00:00.000Z'), counts: { accepted: 3 } }); // healthy
+      expect(await service.attention({})).toEqual({ data: null, watch: false });
+    });
   });
 
   // ── reportDetail (projection) ────────────────────────────────────────────────
@@ -231,6 +315,23 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       expect(Object.keys(reportItemProjection())).toEqual([...REPORT_ITEM_COLUMNS]);
       expect(Object.keys(reportItemProjection())).not.toContain('itemPayload');
       expect(Object.keys(reportItemProjection())).not.toContain('message');
+    });
+
+    it('the ACTUAL executed reportDetail SELECT never references item_payload (F10)', async () => {
+      // A regression to `.select()` (all columns) would show item_payload in the SQL
+      // even though the isolated projection helper stayed unchanged.
+      const id = await seed({ status: 'complete', expectedCount: 3, completedAt: new Date(), counts: { accepted: 1, held: 1, failed: 1 } });
+      await seedItem(id, 0, 'accepted');
+      await seedItem(id, 1, 'held', { reason: 'recording-review-required' });
+      await seedItem(id, 2, 'failed', { reason: 'boom' });
+      const spy = spyItemQueries(db);
+      const detail = await service.reportDetail(id);
+      // The item-row SELECT (the one projecting path/title/disposition) must not read the payload.
+      const selects = spy.statements.filter((s) => /\bfrom\b\s+"?import_submission_items"?/i.test(s) && /\bselect\b/i.test(s));
+      expect(selects.length).toBeGreaterThan(0);
+      for (const s of selects) expect(s).not.toMatch(/item_payload/i);
+      expect(detail.itemsIncluded).toBe(true);
+      spy.restore();
     });
 
     it('maps arms correctly — accepted without item, failed message from reason', async () => {
@@ -254,6 +355,45 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       expect(skipped.disposition === 'skipped' && skipped.existingTitle).toBe('Dune');
     });
 
+    it('covers every remaining mapper branch — pending, already-importing, independent optional fields, failed reason=null (F26)', async () => {
+      const idOnlyBook = await seedBook('Id Only Book');
+      // A processing submission's detail still maps all its item rows.
+      const id = await seed({ status: 'processing', expectedCount: 6 });
+      await seedItem(id, 0, 'pending');
+      await seedItem(id, 1, 'skipped', { reason: 'already-importing' }); // neither collision field
+      await seedItem(id, 2, 'skipped', { reason: 'already-in-library', existingBookId: idOnlyBook }); // id-only
+      await seedItem(id, 3, 'skipped', { reason: 'already-in-library', existingTitle: 'Ghost Title' }); // title-only (FK null)
+      await seedItem(id, 4, 'skipped', { reason: 'already-in-library' }); // neither
+      await seedItem(id, 5, 'failed'); // reason=null → fallback message
+      const detail = await service.reportDetail(id);
+      if (!detail.itemsIncluded) throw new Error('expected items');
+      const at = (ord: number) => detail.items.find((i) => i.ordinal === ord)!;
+
+      expect(at(0)).toEqual({ disposition: 'pending', ordinal: 0, path: '/p0', title: 'T0' });
+
+      const importing = at(1);
+      expect(importing.disposition).toBe('skipped');
+      expect(importing.disposition === 'skipped' && importing.reason).toBe('already-importing');
+      expect('existingBookId' in importing).toBe(false);
+      expect('existingTitle' in importing).toBe(false);
+
+      const idOnly = at(2);
+      expect(idOnly.disposition === 'skipped' && idOnly.existingBookId).toBe(idOnlyBook);
+      expect('existingTitle' in idOnly).toBe(false);
+
+      const titleOnly = at(3);
+      expect(titleOnly.disposition === 'skipped' && titleOnly.existingTitle).toBe('Ghost Title');
+      expect('existingBookId' in titleOnly).toBe(false);
+
+      const neither = at(4);
+      expect(neither.disposition === 'skipped' && neither.reason).toBe('already-in-library');
+      expect('existingBookId' in neither).toBe(false);
+      expect('existingTitle' in neither).toBe(false);
+
+      const failed = at(5);
+      expect(failed.disposition === 'failed' && failed.message).toBe('Import failed — see server logs for details.');
+    });
+
     it('a pruned record collapses to the summary arm', async () => {
       const id = await seed({ status: 'complete', expectedCount: 2, completedAt: new Date(), counts: { accepted: 2 } });
       const detail = await service.reportDetail(id);
@@ -263,15 +403,19 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
   });
 });
 
-/** Spy on the libSQL client to count statements touching `import_submission_items`. */
-function countItemQueries(db: Db): { count: number; restore: () => void } {
+/** Spy on the libSQL client, capturing every executed SQL string touching the items table. */
+function spyItemQueries(db: Db): { statements: string[]; get count(): number; restore: () => void } {
   const client = db.$client as unknown as { execute: (...a: unknown[]) => unknown };
   const original = client.execute.bind(client);
-  const state = { count: 0, restore: () => { client.execute = original as typeof client.execute; } };
+  const statements: string[] = [];
   client.execute = ((stmt: unknown, ...rest: unknown[]) => {
     const sql = typeof stmt === 'string' ? stmt : (stmt as { sql?: string })?.sql ?? '';
-    if (/import_submission_items/.test(sql)) state.count++;
+    if (/import_submission_items/.test(sql)) statements.push(sql);
     return original(stmt as never, ...(rest as never[]));
   }) as typeof client.execute;
-  return state;
+  return {
+    statements,
+    get count() { return statements.length; },
+    restore: () => { client.execute = original as typeof client.execute; },
+  };
 }
