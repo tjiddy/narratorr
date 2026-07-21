@@ -209,18 +209,30 @@ describe('ImportHistorySection (#1894)', () => {
     expect(getImportSubmissionDetail.mock.calls.length).toBe(calls);
   });
 
-  it('an OFF-PAGE deep-linked card reaches its terminal rows from its own detail, with no list summary (F17/F81)', async () => {
-    // The off-page card has no list-summary header — it renders entirely from the
-    // direct detail read. (The processing→complete poll timing is covered by the
-    // on-page test above; here the hydrator + expansion both observe the same detail.)
+  it('an OFF-PAGE deep-linked card self-polls its OWN detail from processing → terminal rows, then stops (F35)', async () => {
+    vi.useFakeTimers();
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 }); // page lacks id 9
-    getImportSubmissionDetail.mockResolvedValue({
-      ...summary({ id: 9, status: 'complete' }), itemsIncluded: true,
-      items: [{ disposition: 'held', ordinal: 0, path: '/a', title: 'Held Book', reason: 'recording-review-required' }],
-    });
+    let phase: 'processing' | 'complete' = 'processing';
+    getImportSubmissionDetail.mockImplementation(() => Promise.resolve(
+      phase === 'processing'
+        ? { ...summary({ id: 9, status: 'processing' }), itemsIncluded: true, items: [{ disposition: 'pending', ordinal: 0, path: '/a', title: 'Pending Book' }] }
+        : { ...summary({ id: 9, status: 'complete', completedAt: new Date().toISOString() }), itemsIncluded: true, items: [{ disposition: 'held', ordinal: 0, path: '/a', title: 'Held Book', reason: 'recording-review-required' }] },
+    ));
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=9' });
-    await screen.findByText('Held Book');
-    expect(screen.getAllByTestId('import-history-card-9')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(10);
+    // The off-page card renders from its OWN detail (no list summary) — still processing.
+    expect(screen.getByTestId('import-history-card-9')).toBeInTheDocument();
+    expect(screen.queryByText('Held Book')).not.toBeInTheDocument();
+
+    phase = 'complete';
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10); // the detail's own poll advances
+    expect(screen.getByText('Held Book')).toBeInTheDocument(); // terminal rows replace pending
+    expect(screen.getAllByTestId('import-history-card-9')).toHaveLength(1); // still exactly one card
+
+    phase = 'processing'; // poll stopped at complete → flipping back has no effect
+    const calls = getImportSubmissionDetail.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS * 3);
+    expect(getImportSubmissionDetail.mock.calls.length).toBe(calls);
   });
 
   it('a malformed detail renders the error arm (effect-keyed warn) (F17)', async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
@@ -199,5 +199,49 @@ describe('LastImportPanel (#1894)', () => {
     // A later baseline poll discovers the newly-started run without a remount.
     await vi.advanceTimersByTimeAsync(BASELINE_POLL_MS + 10);
     expect(screen.getByText('Receiving')).toBeInTheDocument();
+  });
+
+  it('discovers a NEW run after an already-complete run via a baseline poll (old-complete discovery, F34)', async () => {
+    vi.useFakeTimers();
+    const completedAt = new Date('2026-07-21T00:00:00.000Z').toISOString();
+    // Starts on an already-complete run (id 1)…
+    listImportSubmissions.mockResolvedValueOnce({ data: [summary({ id: 1, status: 'complete', completedAt })], total: 1 });
+    // …then a later run (a DIFFERENT receiving id) appears on a baseline poll.
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 2, status: 'receiving' })], total: 1 });
+
+    renderWithProviders(<LastImportPanel source="library" />);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(screen.getByText('Completed')).toBeInTheDocument(); // old-complete run shown
+    // A complete run polls at baseline (never stops) → discovers + switches to the new run.
+    await vi.advanceTimersByTimeAsync(BASELINE_POLL_MS + 10);
+    expect(screen.getByText('Receiving')).toBeInTheDocument(); // replaced by the new run
+    expect(screen.queryByText('Completed')).not.toBeInTheDocument();
+  });
+
+  it('the expanded panel detail self-polls processing → terminal rows, then STOPS at complete (F35)', async () => {
+    vi.useFakeTimers();
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1, status: 'processing' })], total: 1 });
+    let phase: 'processing' | 'complete' = 'processing';
+    getImportSubmissionDetail.mockImplementation(() => Promise.resolve(
+      phase === 'processing'
+        ? { ...summary({ id: 1, status: 'processing' }), itemsIncluded: true, items: [{ disposition: 'pending', ordinal: 0, path: '/a', title: 'Pending Book' }] }
+        : { ...summary({ id: 1, status: 'complete', completedAt: new Date().toISOString() }), itemsIncluded: true, items: [{ disposition: 'failed', ordinal: 0, path: '/a', title: 'Failed Book', message: 'boom' }] },
+    ));
+
+    renderWithProviders(<LastImportPanel source="library" />);
+    await vi.advanceTimersByTimeAsync(10);
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(screen.queryByText('Failed Book')).not.toBeInTheDocument(); // pending → no attention rows yet
+
+    phase = 'complete';
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10); // the detail's OWN poll advances
+    expect(screen.getByText('Failed Book')).toBeInTheDocument();
+
+    phase = 'processing'; // flipping back has no effect — the detail poll stopped at complete
+    const calls = getImportSubmissionDetail.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS * 3);
+    expect(getImportSubmissionDetail.mock.calls.length).toBe(calls);
+    expect(screen.getByText('Failed Book')).toBeInTheDocument();
   });
 });
