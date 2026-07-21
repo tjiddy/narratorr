@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { CoverImage } from '@/components/CoverImage';
 import { AddBookPopover } from '@/components/AddBookPopover';
 import { InLibraryBadge } from '@/components/InLibraryBadge';
+import { Badge } from '@/components/Badge';
 import { useMutation, type useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type BookMetadata, type BookWithAuthor } from '@/lib/api';
 import { toast } from 'sonner';
@@ -33,7 +34,12 @@ export function SearchBookCard({
   // on Audible can be a broader universe entry rather than the real book series.
   const seriesInfo = pickPrimarySeries(book);
   const libraryMatch = findLibraryMatch(book, libraryBooks);
-  const inLibraryBookId = libraryMatch?.id ?? justAddedBookId;
+  // Derived linked-"In Library" id (derived-state-over-copied): a completed add/409
+  // id always wins; only an exact-ASIN match contributes a pre-existing linked id.
+  // A title-identity match links to nothing until an add/409 completes, so the
+  // related-edition state keeps its Add control and never links to the incumbent
+  // edition (#1907 AC5).
+  const inLibraryBookId = justAddedBookId ?? (libraryMatch?.kind === 'exact-asin' ? libraryMatch.entry.id : null);
 
   const addMutation = useMutation({
     mutationFn: (overrides?: { searchImmediately: boolean }) =>
@@ -116,14 +122,24 @@ export function SearchBookCard({
         </div>
 
         {/* Add Button */}
-        <div className="shrink-0 flex items-center">
+        {/* Three-way ownership read-out (#1907): an exact-ASIN match (or a
+            completed add/409) links to the owned book with no Add control; a
+            title-identity match against a different/absent-ASIN edition shows a
+            related-edition badge but KEEPS Add available — the server's
+            recording-verdict decides create-vs-409; no match is plain Add. */}
+        <div className="shrink-0 flex items-center gap-2">
           {inLibraryBookId !== null ? (
             <InLibraryBadge bookId={inLibraryBookId} />
           ) : (
-            <AddBookPopover
-              onAdd={(overrides) => addMutation.mutate(overrides)}
-              isPending={addMutation.isPending}
-            />
+            <>
+              {libraryMatch?.kind === 'title-identity' && (
+                <Badge variant="muted">Edition in library</Badge>
+              )}
+              <AddBookPopover
+                onAdd={(overrides) => addMutation.mutate(overrides)}
+                isPending={addMutation.isPending}
+              />
+            </>
           )}
         </div>
       </div>
