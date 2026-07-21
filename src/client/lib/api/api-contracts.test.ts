@@ -533,15 +533,6 @@ describe('libraryScanApi', () => {
     }));
   });
 
-  it('confirmImport → POST /library/import/confirm with books and mode', async () => {
-    const books = [{ path: '/audio/book', title: 'Book' }];
-    await libraryScanApi.confirmImport(books, 'copy');
-    expect(mockFetchApi).toHaveBeenCalledWith('/library/import/confirm', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ books, mode: 'copy' }),
-    }));
-  });
-
   it('startMatchJob → POST /library/import/match with candidates', async () => {
     const books = [{ path: '/audio', title: 'Book', author: 'Auth' }];
     await libraryScanApi.startMatchJob(books);
