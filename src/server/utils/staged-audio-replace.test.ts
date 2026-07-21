@@ -557,7 +557,7 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
     await writeFile(join(backup, 'book.m4b'), staleBytes);
 
     const log = makeLog();
-    await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot, log });
+    await prepareImportSiblings({ targetPath: target, libraryRoot, log });
 
     // Backup strict-cleared, committed target audio untouched, no recovery log.
     expect(await pathExists(backup)).toBe(false);
