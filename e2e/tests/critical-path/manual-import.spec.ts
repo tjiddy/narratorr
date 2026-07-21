@@ -100,15 +100,23 @@ test.describe('Critical path: manual import', () => {
     });
 
     // ── Kill the first chunk PUT, then confirm the staged import recovers ─────
-    await test.step('kill the first chunk PUT once, then import recovers via retry → finalize → complete', async () => {
-      // Fail the FIRST inert chunk upload with a 503 (a retryable transport-class failure);
-      // let every subsequent request through. The client re-PUTs the idempotent chunk and the
-      // durable finalize + server processing still complete the run (#1902 F15).
-      let putKilled = false;
+    await test.step('lose the first chunk PUT response AFTER the server persists it, then recover via retry → finalize → complete', async () => {
+      // The first inert chunk upload actually REACHES and persists on the staged server via
+      // `route.fetch()`; we then hide its successful response from the client behind a synthetic
+      // 503 ("lost response"). The client's retry re-PUTs the SAME ordinal against a server that
+      // already stored it — so this exercises real server replay idempotency (#1902 F15/F25), not
+      // a request that never landed. Every later request passes through untouched.
+      let putLostOnce = false;
+      let serverAcceptedFirstPut = false;
       await page.route('**/api/import/submissions/*/items', async (route) => {
-        if (route.request().method() === 'PUT' && !putKilled) {
-          putKilled = true;
-          await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'e2e-killed-middle-chunk' }) });
+        if (route.request().method() === 'PUT' && !putLostOnce) {
+          putLostOnce = true;
+          // Forward to the real server so the ordinal is durably persisted...
+          const serverResponse = await route.fetch();
+          serverAcceptedFirstPut = serverResponse.ok();
+          // ...then drop its success on the client side as a lost response, forcing a retry of
+          // the already-landed ordinal.
+          await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'e2e-lost-put-response' }) });
           return;
         }
         await route.continue();
@@ -120,8 +128,9 @@ test.describe('Critical path: manual import', () => {
       await expect(page.getByText(/queued for import/i)).toBeVisible({ timeout: 20_000 });
       // ...and a clean in-session completion navigates to /library.
       await page.waitForURL(/\/library/, { timeout: 10_000 });
-      // The chunk really was killed, so the retry path was exercised.
-      expect(putKilled).toBe(true);
+      // The first PUT genuinely landed on the server, and the client saw a lost response → retried.
+      expect(putLostOnce).toBe(true);
+      expect(serverAcceptedFirstPut).toBe(true);
       await page.unroute('**/api/import/submissions/*/items');
     });
 

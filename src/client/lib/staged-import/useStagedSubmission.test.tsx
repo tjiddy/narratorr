@@ -3,8 +3,8 @@ import { renderHook, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import { useStagedSubmission } from './useStagedSubmission.js';
-import { wireStagedComplete, acceptedRow, type StagedMockFns } from './__tests__/staged-fixtures.js';
-import { __resetOutboxCache } from './outbox.js';
+import { summaryResponse } from './__tests__/staged-fixtures.js';
+import { __resetOutboxCache, readOutbox } from './outbox.js';
 
 /**
  * Focused unit tests for the run-supersession / abort / epoch guards (#1902 F19). The
@@ -35,7 +35,6 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   },
 }));
 
-const stagedMocks: StagedMockFns = { create: mockCreate, put: mockPut, finalize: mockFinalize, get: mockGet, byClient: mockByClient };
 const DIGEST = 'a'.repeat(64);
 const wrapper = ({ children }: { children: ReactNode }) =>
   createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }, children);
@@ -60,9 +59,18 @@ beforeEach(() => {
   __resetOutboxCache();
 });
 
+/** Wire run B's transport to land through finalize and then hold the poll at `processing`
+ *  (so B's `finalized` hint persists in the outbox rather than being evicted on completion). */
+function wireBProcessing(id: number): void {
+  mockCreate.mockResolvedValue(summaryResponse({ id, source: 'library', status: 'receiving', expectedCount: 1 }));
+  mockPut.mockResolvedValue(summaryResponse({ id, source: 'library', status: 'receiving', expectedCount: 1 }));
+  mockFinalize.mockResolvedValue(summaryResponse({ id, source: 'library', status: 'processing', expectedCount: 1 }));
+  mockGet.mockResolvedValue(summaryResponse({ id, source: 'library', status: 'processing', expectedCount: 1, processedCount: 0 }));
+}
+
 describe('useStagedSubmission — run supersession (F19)', () => {
-  it('a run superseded during its digest starts NO network chain; only the newer run creates', async () => {
-    wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, '/b', 'B')] });
+  it('a run superseded during its digest starts no chain AND leaves the outbox owned by the newer run (F19/F23)', async () => {
+    wireBProcessing(200);
     const { result } = renderStaged();
 
     // Run A (3 items) starts and blocks on its digest; run B (1 item) supersedes it.
@@ -70,16 +78,22 @@ describe('useStagedSubmission — run supersession (F19)', () => {
     act(() => { result.current.submit([{ path: '/b', title: 'B' }], undefined); });
     expect(digestResolvers).toHaveLength(2);
 
-    // Resolve B first → B runs its pipeline. Then resolve A's (now superseded) digest.
-    await act(async () => { digestResolvers[1]!(DIGEST); await Promise.resolve(); await Promise.resolve(); });
+    // Resolve B first → B runs its pipeline to `finalized`. Then resolve A's (superseded) digest.
+    await act(async () => { digestResolvers[1]!(DIGEST); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
     await act(async () => { digestResolvers[0]!(DIGEST); await Promise.resolve(); await Promise.resolve(); });
 
-    // Exactly one create — run B (expectedCount 1). Run A (expectedCount 3) never touched the network.
+    // Exactly one create — run B (expectedCount 1); run A (expectedCount 3) never touched the network.
     expect(mockCreate).toHaveBeenCalledTimes(1);
     expect(mockCreate.mock.calls[0]![0]).toMatchObject({ expectedCount: 1 });
+    // The single-slot outbox is OWNED by B — A's stale continuation did not overwrite the hint
+    // (this deletion-tests the digest-continuation guard, which the create count alone cannot).
+    const bClientId = (mockCreate.mock.calls[0]![0] as { clientSubmissionId: string }).clientSubmissionId;
+    const hint = readOutbox('library');
+    expect(hint).not.toBeNull();
+    expect(hint).toMatchObject({ clientSubmissionId: bClientId, status: 'finalized', submissionId: 200 });
   });
 
-  it('an unmount during the digest aborts the run — the continuation starts no create', async () => {
+  it('an unmount during the digest starts no create AND leaves NO outbox record (F19/F23)', async () => {
     const { result, unmount } = renderStaged();
 
     act(() => { result.current.submit([{ path: '/a', title: 'A' }], undefined); });
@@ -89,7 +103,47 @@ describe('useStagedSubmission — run supersession (F19)', () => {
     unmount();
     await act(async () => { digestResolvers[0]!(DIGEST); await Promise.resolve(); await Promise.resolve(); });
 
-    // The digest continuation saw the aborted signal and bailed — no network chain started.
+    // The digest continuation saw the aborted signal and bailed — no network chain, no hint
+    // resurrected after cleanup (the create count alone would miss a post-unmount putOutbox).
     expect(mockCreate).not.toHaveBeenCalled();
+    expect(readOutbox('library')).toBeNull();
+  });
+
+  it('a run superseded AFTER it has entered the transport pipeline cannot advance, publish, or own the hint/poll (F19/F24)', async () => {
+    // Run A's create is held pending so A is genuinely IN create/PUT/finalize when B supersedes;
+    // B then runs to `finalized`. Resolving A's create afterwards must not let A advance a stage,
+    // rewrite the hint, or take poll ownership — the epoch/abort guards past `runPipeline` start.
+    let resolveCreateA: (v: { id: number }) => void = () => {};
+    mockCreate.mockImplementationOnce(() => new Promise<{ id: number }>((r) => { resolveCreateA = r; })); // run A
+    mockCreate.mockResolvedValue(summaryResponse({ id: 200, source: 'library', status: 'receiving', expectedCount: 1 })); // run B
+    mockPut.mockResolvedValue(summaryResponse({ id: 200, source: 'library', status: 'receiving', expectedCount: 1 }));
+    mockFinalize.mockResolvedValue(summaryResponse({ id: 200, source: 'library', status: 'processing', expectedCount: 1 }));
+    mockGet.mockResolvedValue(summaryResponse({ id: 200, source: 'library', status: 'processing', expectedCount: 1, processedCount: 0 }));
+
+    const { result, params } = renderStaged();
+
+    // Run A: submit → resolve its digest → A enters createStep and blocks on the pending create.
+    act(() => { result.current.submit([{ path: '/a', title: 'A' }], undefined); });
+    await act(async () => { digestResolvers[0]!(DIGEST); await Promise.resolve(); await Promise.resolve(); });
+    expect(mockCreate).toHaveBeenCalledTimes(1); // A is mid-create
+
+    // Run B supersedes (aborts A's controller, bumps the epoch), then runs to `finalized`.
+    act(() => { result.current.submit([{ path: '/b', title: 'B' }], undefined); });
+    await act(async () => { digestResolvers[1]!(DIGEST); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    // Now let A's already-superseded create resolve; A must not proceed to PUT/finalize.
+    await act(async () => { resolveCreateA({ id: 100 }); await Promise.resolve(); await Promise.resolve(); });
+
+    // Both createStep calls ran (A entered create before supersession; B created).
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    // A never advanced: every PUT/finalize belongs to B's submission (id 200), never A's (id 100).
+    expect(mockPut).toHaveBeenCalled();
+    expect(mockPut.mock.calls.every((c) => c[0] === 200)).toBe(true);
+    expect(mockFinalize.mock.calls.every((c) => c[0] === 200)).toBe(true);
+    // The hint is owned by B; A did not rewrite it or start/complete a projection.
+    const bClientId = (mockCreate.mock.calls[1]![0] as { clientSubmissionId: string }).clientSubmissionId;
+    expect(readOutbox('library')).toMatchObject({ clientSubmissionId: bClientId, status: 'finalized', submissionId: 200 });
+    expect(params.onCleanNavigate).not.toHaveBeenCalled();
+    expect(params.onDeselectAccepted).not.toHaveBeenCalled();
   });
 });
