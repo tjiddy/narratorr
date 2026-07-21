@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { LibraryImportPage } from './LibraryImportPage';
+import { wireStagedComplete, summaryResponse, acceptedRow, heldRow, type StagedMockFns } from '@/lib/staged-import/__tests__/staged-fixtures';
+import { __resetOutboxCache } from '@/lib/staged-import/outbox';
 
 // Deterministic engine clock (#1864 F13): the MatchEngine's poll timer is routed through
 // `@/hooks/match-timer`; mocking it advances polling without real-time waits or a raised
@@ -24,7 +26,6 @@ vi.mock('@/lib/api', async (importOriginal) => {
     ...actual,
     api: {
       scanDirectory: vi.fn(),
-      confirmImport: vi.fn(),
       startMatchJob: vi.fn(),
       getMatchJob: vi.fn(),
       cancelMatchJob: vi.fn(),
@@ -35,12 +36,25 @@ vi.mock('@/lib/api', async (importOriginal) => {
       getImportSubmissionAttention: vi.fn().mockResolvedValue({ data: null, watch: false }),
       getImportSubmissionDetail: vi.fn(),
       discardImportSubmission: vi.fn(),
+      // #1902 staged write + poll lane.
+      createImportSubmission: vi.fn(),
+      putImportSubmissionItems: vi.fn(),
+      finalizeImportSubmission: vi.fn(),
+      getImportSubmission: vi.fn(),
+      getImportSubmissionByClientId: vi.fn(),
     },
   };
 });
 
 const { api } = await import('@/lib/api');
 const mockApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
+const stagedMocks = {
+  create: mockApi.createImportSubmission!, put: mockApi.putImportSubmissionItems!, finalize: mockApi.finalizeImportSubmission!,
+  get: mockApi.getImportSubmission!, byClient: mockApi.getImportSubmissionByClientId!,
+} as unknown as StagedMockFns;
+/** The staged items actually PUT to the server, flattened across chunks. */
+const submittedItems = () =>
+  mockApi.putImportSubmissionItems!.mock.calls.flatMap(c => (c[1] as { items: { ordinal: number; item: Record<string, unknown> }[] }).items.map(r => r.item));
 
 const matchTimer = await import('@/hooks/match-timer');
 const engineClock = matchTimer as unknown as import('@/__tests__/match-timer-mock').MatchTimerMock;
@@ -67,6 +81,11 @@ describe('LibraryImportPage (#133)', () => {
     mockApi.startMatchJob!.mockResolvedValue({ jobId: 'job-1' });
     mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'matching', total: 0, matched: 0, results: [] });
     mockApi.cancelMatchJob!.mockResolvedValue({ cancelled: true });
+    // Staged pipeline (#1902): reset the source-scoped hint and wire a clean submit → poll →
+    // detail chain. Tests that assert other outcomes re-wire.
+    localStorage.clear();
+    __resetOutboxCache();
+    wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, '/audiobooks/New Book', 'New Book')] });
   });
 
   it('renders page heading', async () => {
@@ -578,8 +597,8 @@ describe('LibraryImportPage (#133)', () => {
 
     it('import button shows "Importing..." when registerMutation.isPending', async () => {
 
-      // confirmImport never resolves (keeps isPending=true)
-      mockApi.confirmImport!.mockReturnValue(new Promise(() => {}));
+      // create never resolves (keeps isPending=true)
+      mockApi.createImportSubmission!.mockReturnValue(new Promise(() => {}));
       mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 1, matched: 1,
         results: [{ path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Book 1', authors: [{ name: 'A' }], asin: 'B001' }, alternatives: [] }],
@@ -615,7 +634,7 @@ describe('LibraryImportPage (#133)', () => {
   describe('manual edit → import flow (#201)', () => {
     it('edited metadata persists through import confirm call', async () => {
 
-      mockApi.confirmImport!.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
+      wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, '/audiobooks/A/B1', 'Custom Title')] });
       mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 1, matched: 1,
         results: [{ path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Match Title', authors: [{ name: 'Match Author' }], asin: 'ASIN1', coverUrl: 'http://cover.jpg' }, alternatives: [] }],
@@ -662,15 +681,12 @@ describe('LibraryImportPage (#133)', () => {
       // Click import
       await userEvent.click(screen.getByRole('button', { name: /import/i }));
 
-      // Verify the confirmImport was called with the edited metadata
-      await waitFor(() => {
-        expect(mockApi.confirmImport).toHaveBeenCalledWith(
-          expect.arrayContaining([
-            expect.objectContaining({ title: 'Custom Title' }),
-          ]),
-          undefined,
-        );
-      });
+      // Verify the staged submission carried the edited metadata (library → no mode).
+      await waitFor(() => { expect(mockApi.createImportSubmission).toHaveBeenCalled(); });
+      expect(mockApi.createImportSubmission!.mock.calls[0]![0]).not.toHaveProperty('mode');
+      expect(submittedItems()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ title: 'Custom Title' }),
+      ]));
 
     });
   });
@@ -693,11 +709,7 @@ describe('LibraryImportPage (#133)', () => {
         id: 'job-1', status: 'completed', total: 1, matched: 1,
         results: [{ path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Held Book', authors: [{ name: 'Author' }], asin: 'ASIN1' }, alternatives: [] }],
       });
-      mockApi.confirmImport!.mockResolvedValueOnce({
-        accepted: 0,
-        heldReview: [{ path: '/audiobooks/A/B1', title: 'Held Book', reason: 'recording-review-required', existingBookId: 7 }],
-        skipped: [], failed: [],
-      });
+      wireStagedComplete(stagedMocks, { source: 'library', items: [heldRow(0, '/audiobooks/A/B1', 'Held Book')] });
 
       renderWithProviders(<LibraryImportPage />);
       await waitFor(() => expect(screen.getByText('Held Book')).toBeInTheDocument());
@@ -713,16 +725,14 @@ describe('LibraryImportPage (#133)', () => {
       const reconfirmBtn = within(panel).getByRole('button', { name: /re-confirm and import/i });
 
       // Re-confirm resubmits the held row with forceImport bypassing the safety-net.
-      mockApi.confirmImport!.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
+      mockApi.putImportSubmissionItems!.mockClear();
+      wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, '/audiobooks/A/B1', 'Held Book')] });
       await user.click(reconfirmBtn);
 
       await waitFor(() => {
-        expect(mockApi.confirmImport).toHaveBeenLastCalledWith(
-          expect.arrayContaining([
-            expect.objectContaining({ path: '/audiobooks/A/B1', forceImport: true }),
-          ]),
-          undefined,
-        );
+        expect(submittedItems()).toEqual(expect.arrayContaining([
+          expect.objectContaining({ path: '/audiobooks/A/B1', forceImport: true }),
+        ]));
       });
 
     });
@@ -901,7 +911,7 @@ describe('LibraryImportPage (#133)', () => {
     // the mocked `@/hooks/match-timer`, so `firePoll()` advances the poll deterministically
     // (no real-time wait), while TanStack Query's own timers stay real.
     it('Import button enabled after poll resolves with completed job', async () => {
-      mockApi.confirmImport!.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
+      wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, '/audiobooks/AuthorA/Book1', 'Book One')] });
       // Completed match job — return a high-confidence result so the row is no longer pending.
       mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 1, matched: 1,
@@ -928,17 +938,15 @@ describe('LibraryImportPage (#133)', () => {
       await userEvent.click(screen.getByRole('button', { name: /import/i }));
 
       await waitFor(() => {
-        expect(mockApi.confirmImport).toHaveBeenCalled();
+        expect(mockApi.createImportSubmission).toHaveBeenCalled();
       });
     });
   });
 
-  describe('chunked register progress label (#1833)', () => {
-    it('renders a non-zero first-chunk progress label during a multi-chunk register', async () => {
-      // Big metadata blobs push each confirm item over half the chunk budget, so the runner
-      // splits the register into 2 chunks (1 book each). The first chunk must render
-      // "Registering 1 of 2" while POSTing — never "Registering 0 of 2".
-      const bigDesc = 'x'.repeat(300 * 1024);
+  describe('processing progress label (#1902)', () => {
+    it('a still-processing poll renders a non-zero "Registering X of Y" label', async () => {
+      // The staged upload chunks are small (bounded items), so the live registration progress
+      // is driven by the processing poll: expectedCount=2, processedCount=1 → "Registering 1 of 2".
       mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/A/B1', parsedTitle: 'Book 1', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
@@ -949,12 +957,16 @@ describe('LibraryImportPage (#133)', () => {
       mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 2, matched: 2,
         results: [
-          { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Book 1', authors: [{ name: 'A' }], asin: 'A1', description: bigDesc }, alternatives: [] },
-          { path: '/audiobooks/A/B2', confidence: 'high', bestMatch: { title: 'Book 2', authors: [{ name: 'A' }], asin: 'A2', description: bigDesc }, alternatives: [] },
+          { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Book 1', authors: [{ name: 'A' }], asin: 'A1' }, alternatives: [] },
+          { path: '/audiobooks/A/B2', confidence: 'high', bestMatch: { title: 'Book 2', authors: [{ name: 'A' }], asin: 'A2' }, alternatives: [] },
         ],
       });
-      // Deferred confirm — chunk 1 stays in-flight so the pending progress label is observable.
-      mockApi.confirmImport!.mockReturnValue(new Promise(() => {}));
+      // create/PUT/finalize resolve, then the summary poll stays in `processing` (never completes)
+      // with 1 of 2 processed — the first immediate tick paints the label.
+      mockApi.createImportSubmission!.mockResolvedValue(summaryResponse({ id: 9, source: 'library', status: 'receiving', expectedCount: 2 }));
+      mockApi.putImportSubmissionItems!.mockResolvedValue(summaryResponse({ id: 9, source: 'library', status: 'receiving', expectedCount: 2 }));
+      mockApi.finalizeImportSubmission!.mockResolvedValue(summaryResponse({ id: 9, source: 'library', status: 'processing', expectedCount: 2, processedCount: 0 }));
+      mockApi.getImportSubmission!.mockResolvedValue(summaryResponse({ id: 9, source: 'library', status: 'processing', expectedCount: 2, processedCount: 1 }));
 
       renderWithProviders(<LibraryImportPage />);
       await waitFor(() => { expect(screen.getByText('Book 1')).toBeInTheDocument(); });

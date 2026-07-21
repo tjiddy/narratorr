@@ -7,6 +7,8 @@ import { ManualImportPage } from './ManualImportPage';
 import type { MatchResult, DiscoveredBook, ScanResult } from '@/lib/api';
 import type { PausedReason } from '@/hooks/match-recovery';
 import type { FolderEntry } from './useFolderHistory.js';
+import { wireStagedComplete, summaryResponse, acceptedRow, heldRow, type StagedMockFns } from '@/lib/staged-import/__tests__/staged-fixtures';
+import { __resetOutboxCache } from '@/lib/staged-import/outbox';
 
 // Track match job state for controlled polling — fresh per test via makeMatchState().
 // Widened to the #1864 paused/recovery contract (paused/reason/remaining/recovering + restart/resume).
@@ -67,12 +69,17 @@ vi.mock('react-router-dom', async () => {
 });
 
 const mockScanDirectory = vi.fn();
-const mockConfirmImport = vi.fn();
 
 const mockBrowseDirectory = vi.fn();
 const mockGetSettings = vi.fn();
 const mockGetImportSubmissionAttention = vi.fn();
 const mockListImportSubmissions = vi.fn();
+// Staged submit + poll pipeline (#1902).
+const mockCreateSubmission = vi.fn();
+const mockPutSubmissionItems = vi.fn();
+const mockFinalizeSubmission = vi.fn();
+const mockGetSubmission = vi.fn();
+const mockGetSubmissionByClientId = vi.fn();
 
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual('@/lib/api');
@@ -80,7 +87,6 @@ vi.mock('@/lib/api', async () => {
     ...actual,
     api: {
       scanDirectory: (...args: unknown[]) => mockScanDirectory(...args),
-      confirmImport: (...args: unknown[]) => mockConfirmImport(...args),
       searchMetadata: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }),
       browseDirectory: (...args: unknown[]) => mockBrowseDirectory(...args),
       getSettings: (...args: unknown[]) => mockGetSettings(...args),
@@ -89,10 +95,24 @@ vi.mock('@/lib/api', async () => {
       getImportSubmissionAttention: (...args: unknown[]) => mockGetImportSubmissionAttention(...args),
       getImportSubmissionDetail: vi.fn(),
       discardImportSubmission: vi.fn(),
+      // #1902 staged write + poll lane.
+      createImportSubmission: (...args: unknown[]) => mockCreateSubmission(...args),
+      putImportSubmissionItems: (...args: unknown[]) => mockPutSubmissionItems(...args),
+      finalizeImportSubmission: (...args: unknown[]) => mockFinalizeSubmission(...args),
+      getImportSubmission: (...args: unknown[]) => mockGetSubmission(...args),
+      getImportSubmissionByClientId: (...args: unknown[]) => mockGetSubmissionByClientId(...args),
     },
     formatBytes: (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`,
   };
 });
+
+const stagedMocks: StagedMockFns = {
+  create: mockCreateSubmission, put: mockPutSubmissionItems, finalize: mockFinalizeSubmission,
+  get: mockGetSubmission, byClient: mockGetSubmissionByClientId,
+};
+/** The staged items actually PUT to the server, flattened across chunks. */
+const submittedItems = () =>
+  mockPutSubmissionItems.mock.calls.flatMap(c => (c[1] as { items: { ordinal: number; item: Record<string, unknown> }[] }).items.map(r => r.item));
 
 vi.mock('@/hooks/useEscapeKey', () => ({
   useEscapeKey: vi.fn(),
@@ -212,6 +232,11 @@ describe('ManualImportPage', () => {
     mockBrowseDirectory.mockResolvedValue({ dirs: ['audiobooks', 'media'], parent: '/' });
     mockGetImportSubmissionAttention.mockResolvedValue({ data: null, watch: false });
     mockListImportSubmissions.mockResolvedValue({ data: [], total: 0 });
+    // Staged pipeline (#1902): reset the source-scoped hint and wire a clean submit → poll →
+    // detail chain for the standard review book. Tests that assert other outcomes re-wire.
+    localStorage.clear();
+    __resetOutboxCache();
+    wireStagedComplete(stagedMocks, { source: 'manual', mode: 'copy', items: [acceptedRow(0, '/media/audiobooks/Author/Book Title', 'Book Title')] });
   });
 
   describe('scan step', () => {
@@ -683,8 +708,7 @@ describe('ManualImportPage', () => {
   });
 
   describe('import execution', () => {
-    it('calls confirmImport with selected rows and copy mode', async () => {
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
+    it('creates a staged submission with the selected rows and copy mode', async () => {
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
 
@@ -694,16 +718,15 @@ describe('ManualImportPage', () => {
       const btn = screen.getByRole('button', { name: /Import 1/ });
       await userEvent.click(btn);
 
-      expect(mockConfirmImport).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({ path: '/media/audiobooks/Author/Book Title' }),
-        ]),
-        'copy',
-      );
+      await waitFor(() => { expect(mockCreateSubmission).toHaveBeenCalled(); });
+      expect(mockCreateSubmission.mock.calls[0]![0]).toMatchObject({ source: 'manual', mode: 'copy' });
+      expect(submittedItems()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: '/media/audiobooks/Author/Book Title' }),
+      ]));
     });
 
     it('sends move mode when user switches to Move', async () => {
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
+      wireStagedComplete(stagedMocks, { source: 'manual', mode: 'move', items: [acceptedRow(0, '/media/audiobooks/Author/Book Title', 'Book Title')] });
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
 
@@ -714,14 +737,11 @@ describe('ManualImportPage', () => {
 
       await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
 
-      expect(mockConfirmImport).toHaveBeenCalledWith(
-        expect.anything(),
-        'move',
-      );
+      await waitFor(() => { expect(mockCreateSubmission).toHaveBeenCalled(); });
+      expect(mockCreateSubmission.mock.calls[0]![0]).toMatchObject({ mode: 'move' });
     });
 
     it('passes metadata through from match (no redundant provider lookups)', async () => {
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       const book = makeDiscoveredBook();
       const bestMatch = {
         title: 'Book Title',
@@ -736,50 +756,51 @@ describe('ManualImportPage', () => {
 
       await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
 
-      expect(mockConfirmImport).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({
-            asin: 'B001',
-            coverUrl: 'https://example.com/cover.jpg',
-            metadata: bestMatch,
-          }),
-        ]),
-        'copy',
-      );
+      await waitFor(() => { expect(mockCreateSubmission).toHaveBeenCalled(); });
+      expect(submittedItems()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          asin: 'B001',
+          coverUrl: 'https://example.com/cover.jpg',
+          metadata: bestMatch,
+        }),
+      ]));
     });
   });
 
-  describe('chunked register progress label (#1833)', () => {
-    it('multi-chunk register renders a non-zero first-chunk progress label', async () => {
-      // Big metadata blobs split the confirm run into 2 chunks (1 book each). The first chunk
-      // must render "Registering 1 of 2" while POSTing, never "Registering 0 of 2".
-      const bigDesc = 'x'.repeat(300 * 1024);
+  describe('processing progress label (#1902)', () => {
+    it('a still-processing poll renders a non-zero "Registering X of Y" label', async () => {
+      // The staged upload chunks are small (bounded items), so the live registration progress
+      // is driven by the processing poll: expectedCount=2, processedCount=1 → "Registering 1 of 2".
       const books = [
         makeDiscoveredBook({ path: '/a/B1', parsedTitle: 'B1' }),
         makeDiscoveredBook({ path: '/a/B2', parsedTitle: 'B2' }),
       ];
       const { rerender } = await scanAndReview(books);
       await simulateMatchResults(rerender, [
-        makeMatchResult({ path: '/a/B1', bestMatch: { title: 'B1', authors: [{ name: 'A' }], asin: 'A1', description: bigDesc } }),
-        makeMatchResult({ path: '/a/B2', bestMatch: { title: 'B2', authors: [{ name: 'A' }], asin: 'A2', description: bigDesc } }),
+        makeMatchResult({ path: '/a/B1', bestMatch: { title: 'B1', authors: [{ name: 'A' }], asin: 'A1' } }),
+        makeMatchResult({ path: '/a/B2', bestMatch: { title: 'B2', authors: [{ name: 'A' }], asin: 'A2' } }),
       ]);
 
-      // Deferred confirm — chunk 1 stays in-flight so the pending progress label is observable.
-      mockConfirmImport.mockReturnValue(new Promise(() => {}));
+      // create/PUT/finalize resolve, then the summary poll stays in `processing` (never completes)
+      // with 1 of 2 processed — the first immediate tick paints the label.
+      mockCreateSubmission.mockResolvedValue(summaryResponse({ id: 7, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
+      mockPutSubmissionItems.mockResolvedValue(summaryResponse({ id: 7, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
+      mockFinalizeSubmission.mockResolvedValue(summaryResponse({ id: 7, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 2, processedCount: 0 }));
+      mockGetSubmission.mockResolvedValue(summaryResponse({ id: 7, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 2, processedCount: 1 }));
+
       await userEvent.click(screen.getByRole('button', { name: /Import 2/ }));
 
       expect(await screen.findByText(/Registering 1 of 2/)).toBeInTheDocument();
       expect(screen.queryByText(/Registering 0 of 2/)).not.toBeInTheDocument();
     });
 
-    it('single-chunk register keeps the plain "Importing…" pending label', async () => {
+    it('an in-flight create before any progress keeps the plain "Importing…" pending label', async () => {
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
       await simulateMatchResults(rerender, [makeMatchResult()]);
 
-      // A single small item packs into one chunk — the multi-chunk "Registering X of Y" label
-      // is gated on chunks > 1, so the summary bar shows its default pending label instead.
-      mockConfirmImport.mockReturnValue(new Promise(() => {}));
+      // Deferred create — no chunk/poll progress yet, so the summary bar shows its default label.
+      mockCreateSubmission.mockReturnValue(new Promise(() => {}));
       await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
 
       expect(await screen.findByText(/Importing\.\.\./)).toBeInTheDocument();
@@ -789,11 +810,7 @@ describe('ManualImportPage', () => {
 
   describe('held-review panel (#1732)', () => {
     it('renders held titles and a re-confirm button instead of navigating away', async () => {
-      mockConfirmImport.mockResolvedValueOnce({
-        accepted: 0,
-        heldReview: [{ path: '/media/audiobooks/Author/Book Title', title: 'Book Title', reason: 'recording-review-required' }],
-        skipped: [], failed: [],
-      });
+      wireStagedComplete(stagedMocks, { source: 'manual', mode: 'copy', items: [heldRow(0, '/media/audiobooks/Author/Book Title', 'Book Title')] });
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
       await simulateMatchResults(rerender, [makeMatchResult()]);
@@ -816,11 +833,7 @@ describe('ManualImportPage', () => {
     });
 
     it('re-confirm resubmits the held row with forceImport=true', async () => {
-      mockConfirmImport.mockResolvedValueOnce({
-        accepted: 0,
-        heldReview: [{ path: '/media/audiobooks/Author/Book Title', title: 'Book Title', reason: 'recording-review-required' }],
-        skipped: [], failed: [],
-      });
+      wireStagedComplete(stagedMocks, { source: 'manual', mode: 'copy', items: [heldRow(0, '/media/audiobooks/Author/Book Title', 'Book Title')] });
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
       await simulateMatchResults(rerender, [makeMatchResult()]);
@@ -828,17 +841,46 @@ describe('ManualImportPage', () => {
       await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
       const panel = await screen.findByTestId('held-review-panel');
 
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
+      mockPutSubmissionItems.mockClear();
+      wireStagedComplete(stagedMocks, { source: 'manual', mode: 'copy', items: [acceptedRow(0, '/media/audiobooks/Author/Book Title', 'Book Title')] });
       await userEvent.click(within(panel).getByRole('button', { name: /re-confirm and import/i }));
 
       await waitFor(() => {
-        expect(mockConfirmImport).toHaveBeenLastCalledWith(
-          expect.arrayContaining([
-            expect.objectContaining({ path: '/media/audiobooks/Author/Book Title', forceImport: true }),
-          ]),
-          'copy',
-        );
+        expect(submittedItems()).toEqual(expect.arrayContaining([
+          expect.objectContaining({ path: '/media/audiobooks/Author/Book Title', forceImport: true }),
+        ]));
       });
+    });
+  });
+
+  describe('post-prune-safe outcome projection (#1902 F6/F29)', () => {
+    it('a mixed completion pruned before the detail fetch stays non-green, with held/skip detail actions unavailable', async () => {
+      // A detail fetch on a pruned record can carry NO items (the schema forbids it), so the
+      // page must fall back to count-driven severity: accepted+held+skipped+failed with a
+      // non-null failed count → error severity (never a green success), and — because the per-row
+      // detail is gone — the actionable held-review panel must NOT render.
+      const agg = { accepted: 1, held: 1, skipped: 1, failed: 1 };
+      const prunedSummary = summaryResponse({ id: 12, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 4, aggregates: agg, detailsPruned: true, processedCount: 4 });
+      mockCreateSubmission.mockResolvedValue(summaryResponse({ id: 12, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 4 }));
+      mockPutSubmissionItems.mockResolvedValue(summaryResponse({ id: 12, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 4 }));
+      mockFinalizeSubmission.mockResolvedValue(summaryResponse({ id: 12, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 4 }));
+      // Both the summary poll and the terminal detail fetch return the pruned summary (no items).
+      mockGetSubmission.mockResolvedValue(prunedSummary);
+
+      const book = makeDiscoveredBook();
+      const { rerender } = await scanAndReview([book]);
+      await simulateMatchResults(rerender, [makeMatchResult()]);
+
+      await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
+
+      // Wait for the terminal projection to run (the poll reaches complete and fetches detail).
+      await waitFor(() => expect(mockGetSubmission).toHaveBeenCalledWith(12, true));
+      // Detail is pruned, so the actionable held-review panel does NOT render (detail actions
+      // unavailable), and a partial (non-clean) outcome stays on the page — no green navigation.
+      expect(screen.queryByTestId('held-review-panel')).not.toBeInTheDocument();
+      expect(mockNavigate).not.toHaveBeenCalled();
+      // (Count-driven non-green severity for this same pruned mix is asserted in the hook test,
+      // where the toast channel is observable — see useManualImport.test.ts F6.)
     });
   });
 

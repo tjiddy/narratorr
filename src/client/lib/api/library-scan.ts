@@ -1,8 +1,8 @@
 import { fetchApi } from './client.js';
 import type { BookMetadata } from './books.js';
 
-export type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem, ImportResult, ImportSkippedItem, ImportFailedItem } from '../../../shared/schemas/library-scan.js';
-import type { DiscoveredBook, DuplicateReason, ImportMode, ImportResult } from '../../../shared/schemas/library-scan.js';
+export type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem } from '../../../shared/schemas/library-scan.js';
+import type { DiscoveredBook, DuplicateReason } from '../../../shared/schemas/library-scan.js';
 import type { RecordingVerdict } from '../../../shared/schemas/recording-verdict.js';
 
 export interface ImportConfirmItem {
@@ -88,11 +88,6 @@ export const libraryScanApi = {
     fetchApi<ScanResult>('/library/import/scan', {
       method: 'POST',
       body: JSON.stringify({ path }),
-    }),
-  confirmImport: (books: ImportConfirmItem[], mode?: ImportMode) =>
-    fetchApi<ImportResult>('/library/import/confirm', {
-      method: 'POST',
-      body: JSON.stringify({ books, mode }),
     }),
   startMatchJob: (books: MatchCandidate[]) =>
     fetchApi<{ jobId: string }>('/library/import/match', {

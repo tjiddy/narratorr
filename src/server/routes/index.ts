@@ -205,7 +205,6 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.wire({ retrySearchDeps, indexerService: indexer });
   eventHistory.wire({ retrySearchDeps });
   importOrchestrator.wire({ bookImportService: bookImport, blacklistService, retrySearchDeps, nudgeImportWorker });
-  libraryScan.wire({ nudgeImportWorker });
   qualityGateOrchestrator.wire({ nudgeImportWorker, bookImportService: bookImport });
 
   // Register import adapters after libraryScan/importOrchestrator are fully wired

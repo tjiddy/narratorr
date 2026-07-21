@@ -1,6 +1,5 @@
 import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import type { LibraryScanService } from '../services/library-scan.service.js';
-import type { ImportConfirmItem } from '../services/library-scan.service.js';
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
 import type { MatchJobService } from '../services/match-job.service.js';
 import type { BookService } from '../services/book.service.js';
@@ -12,7 +11,6 @@ import { type z } from 'zod';
 import {
   scanDirectoryBodySchema,
   scanResultSchema,
-  importConfirmBodySchema,
   matchStartBodySchema,
   jobIdParamSchema,
   scanDebugBodySchema,
@@ -34,7 +32,6 @@ import { mintPreviewToken } from '../services/preview-token.js';
 const CONFIRM_MATCH_BODY_LIMIT = 10 * 1024 * 1024; // 10 MiB
 
 type ScanDirectoryBody = z.infer<typeof scanDirectoryBodySchema>;
-type ImportConfirmBody = z.infer<typeof importConfirmBodySchema>;
 type MatchStartBody = z.infer<typeof matchStartBodySchema>;
 type JobIdParam = z.infer<typeof jobIdParamSchema>;
 
@@ -101,28 +98,6 @@ export async function libraryScanRoutes(
         return scanResultSchema.parse(decorated);
       } catch (error: unknown) {
         request.log.error({ error: serializeError(error) }, 'Directory scan failed');
-        return reply.status(500).send({
-          error: getErrorMessage(error),
-        });
-      }
-    },
-  );
-
-  // Bulk confirm import. Returns 200 — `{ accepted, heldReview }` is a partial-
-  // success outcome (#1711): some items enqueued, some held for recording review.
-  app.post<{ Body: ImportConfirmBody }>(
-    '/api/library/import/confirm',
-    { schema: { body: importConfirmBodySchema }, bodyLimit: CONFIRM_MATCH_BODY_LIMIT },
-    async (request, reply) => {
-      const { books: items, mode } = request.body;
-
-      request.log.info({ count: items.length, mode }, 'Confirming library import');
-
-      try {
-        const result = await libraryScan.confirmImport(items as ImportConfirmItem[], mode);
-        return await reply.status(200).send(result);
-      } catch (error: unknown) {
-        request.log.error({ error: serializeError(error) }, 'Import confirmation failed');
         return reply.status(500).send({
           error: getErrorMessage(error),
         });

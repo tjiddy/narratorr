@@ -5,12 +5,11 @@ import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { useLibraryImport } from './useLibraryImport';
 import { ApiError } from '@/lib/api';
-import type { BookMetadata, ScanResult } from '@/lib/api';
+import type { ScanResult } from '@/lib/api';
 import { createMockSettings } from '@/__tests__/factories';
 import { toast } from 'sonner';
-
-/** A metadata blob padded so a confirm item serializes to roughly `bytes`. */
-const bigMetadata = (bytes: number): BookMetadata => ({ blob: 'x'.repeat(bytes) } as unknown as BookMetadata);
+import { wireStagedComplete, acceptedRow, heldRow, skippedRow, failedRow, type StagedMockFns } from '@/lib/staged-import/__tests__/staged-fixtures';
+import { __resetOutboxCache } from '@/lib/staged-import/outbox';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -19,27 +18,41 @@ vi.mock('react-router-dom', async () => {
 });
 
 const mockScanDirectory = vi.fn();
-const mockConfirmImport = vi.fn();
 const mockStartMatchJob = vi.fn();
 const mockGetMatchJob = vi.fn();
 const mockCancelMatchJob = vi.fn();
 const mockGetSettings = vi.fn();
 const mockGetBookIdentifiers = vi.fn();
+// Staged submit + poll pipeline (#1902) replaces the direct confirm.
+const mockCreateSubmission = vi.fn();
+const mockPutSubmissionItems = vi.fn();
+const mockFinalizeSubmission = vi.fn();
+const mockGetSubmission = vi.fn();
+const mockGetSubmissionByClientId = vi.fn();
+const stagedMocks: StagedMockFns = {
+  create: mockCreateSubmission, put: mockPutSubmissionItems, finalize: mockFinalizeSubmission,
+  get: mockGetSubmission, byClient: mockGetSubmissionByClientId,
+};
+/** The staged items actually PUT to the server, flattened across chunks. */
+const submittedItems = () =>
+  mockPutSubmissionItems.mock.calls.flatMap(c => (c[1] as { items: { ordinal: number; item: Record<string, unknown> }[] }).items.map(r => r.item));
 
-// Preserve the real runtime exports (notably `ApiError`, imported at runtime by the
-// 413 mapping in confirmErrorMessage — #1831) and override only `api`. Replacing the
-// barrel wholesale would drop ApiError and break the confirm error path
-// (vimock-barrel-replace-drops-named-exports).
+// Preserve the real runtime exports (notably `ApiError`) and override only `api`. Replacing
+// the barrel wholesale would drop ApiError (vimock-barrel-replace-drops-named-exports).
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   api: {
     scanDirectory: (...args: unknown[]) => mockScanDirectory(...args),
-    confirmImport: (...args: unknown[]) => mockConfirmImport(...args),
     startMatchJob: (...args: unknown[]) => mockStartMatchJob(...args),
     getMatchJob: (...args: unknown[]) => mockGetMatchJob(...args),
     cancelMatchJob: (...args: unknown[]) => mockCancelMatchJob(...args),
     getSettings: (...args: unknown[]) => mockGetSettings(...args),
     getBookIdentifiers: (...args: unknown[]) => mockGetBookIdentifiers(...args),
+    createImportSubmission: (...args: unknown[]) => mockCreateSubmission(...args),
+    putImportSubmissionItems: (...args: unknown[]) => mockPutSubmissionItems(...args),
+    finalizeImportSubmission: (...args: unknown[]) => mockFinalizeSubmission(...args),
+    getImportSubmission: (...args: unknown[]) => mockGetSubmission(...args),
+    getImportSubmissionByClientId: (...args: unknown[]) => mockGetSubmissionByClientId(...args),
   },
 }));
 
@@ -75,9 +88,14 @@ describe('useLibraryImport hook (#133)', () => {
     mockStartMatchJob.mockResolvedValue({ jobId: 'job-1' });
     mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
     mockCancelMatchJob.mockResolvedValue({ cancelled: true });
-    // Chunked confirm runner (#1831) expects each chunk POST to resolve with an ImportResult;
-    // tests that assert on outcomes override this.
-    mockConfirmImport.mockResolvedValue({ accepted: 0, heldReview: [], skipped: [], failed: [] });
+    // Staged pipeline (#1902): reset the source-scoped outbox hint and wire a clean
+    // create→PUT→finalize→poll(complete)→detail chain. The poll's first tick fires
+    // immediately, so a summary that already reads `complete` resolves the terminal
+    // chain via microtasks — no fake timers needed. Tests that assert other outcomes
+    // re-wire with their own `wireStagedComplete(...)`.
+    localStorage.clear();
+    __resetOutboxCache();
+    wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, '/audiobooks/AuthorA/Book1', 'Book One')] });
   });
 
   it('on mount with library path configured: calls api.scanDirectory, starts match job, transitions to review state', async () => {
@@ -198,12 +216,12 @@ describe('useLibraryImport hook (#133)', () => {
       expect(row?.selected).toBe(false);
     }, { timeout: 5000 });
 
-    // It is therefore absent from the confirm payload (which still carries the sibling).
+    // It is therefore absent from the staged submission (which still carries the sibling).
     act(() => result.current.handleRegister());
-    await waitFor(() => expect(mockConfirmImport).toHaveBeenCalled());
-    const items = mockConfirmImport.mock.calls.flatMap(c => c[0] as Array<{ path: string }>);
-    expect(items.some(i => i.path === '/audiobooks/AuthorD/Book4')).toBe(true);
-    expect(items.some(i => i.path === '/audiobooks/AuthorA/Book1')).toBe(false);
+    await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
+    const paths = submittedItems().map(i => i.path);
+    expect(paths).toContain('/audiobooks/AuthorD/Book4');
+    expect(paths).not.toContain('/audiobooks/AuthorA/Book1');
   });
 
   it('match results merge: confidence=medium (Review) deselects non-duplicate row; reviewCount increments, selectedCount excludes it', async () => {
@@ -471,34 +489,24 @@ describe('useLibraryImport hook (#133)', () => {
     });
   });
 
-  it('Register call: confirmImport called with correct items payload and no mode', async () => {
-    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
-
+  // ── Staged submit + poll flow (#1902) ──────────────────────────────────────
+  it('Register: createImportSubmission called with source=library, no mode, and the shaped items', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-
     await waitFor(() => expect(result.current.step).toBe('review'));
 
     await act(async () => { result.current.handleRegister(); });
+    await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
 
-    expect(mockConfirmImport).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({
-          path: '/audiobooks/AuthorA/Book1',
-          title: 'Book One',
-          authorName: 'Author A',
-        }),
-      ]),
-      undefined,
-    );
+    expect(mockCreateSubmission.mock.calls[0]![0]).toMatchObject({ source: 'library' });
+    expect(mockCreateSubmission.mock.calls[0]![0]).not.toHaveProperty('mode');
+    expect(submittedItems()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: '/audiobooks/AuthorA/Book1', title: 'Book One', authorName: 'Author A' }),
+    ]));
   });
 
-  it('register returning heldReview stores the held items, stays on the page, and warns (#1711 F1)', async () => {
+  it('poll surfacing heldReview stores the held items, stays on the page, and warns (#1711 F1)', async () => {
     const heldPath = '/audiobooks/AuthorA/Book1';
-    mockConfirmImport.mockResolvedValueOnce({
-      accepted: 0,
-      heldReview: [{ path: heldPath, title: 'Book One', reason: 'recording-review-required', existingBookId: 9 }],
-      skipped: [], failed: [],
-    });
+    wireStagedComplete(stagedMocks, { source: 'library', items: [heldRow(0, heldPath, 'Book One')] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
@@ -508,18 +516,13 @@ describe('useLibraryImport hook (#133)', () => {
     await waitFor(() => expect(result.current.heldReview).toHaveLength(1));
     expect(result.current.heldReview[0]!.path).toBe(heldPath);
     expect(result.current.heldReview[0]!.reason).toBe('recording-review-required');
-    // Partial success keeps the user on the import page (does not navigate away).
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(toast.warning).toHaveBeenCalled();
   });
 
   it('handleReconfirmHeld re-submits the held rows with forceImport=true (#1711 F1)', async () => {
     const heldPath = '/audiobooks/AuthorA/Book1';
-    mockConfirmImport.mockResolvedValueOnce({
-      accepted: 0,
-      heldReview: [{ path: heldPath, title: 'Book One', reason: 'recording-review-required' }],
-      skipped: [], failed: [],
-    });
+    wireStagedComplete(stagedMocks, { source: 'library', items: [heldRow(0, heldPath, 'Book One')] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
@@ -527,196 +530,109 @@ describe('useLibraryImport hook (#133)', () => {
     await act(async () => { result.current.handleRegister(); });
     await waitFor(() => expect(result.current.heldReview).toHaveLength(1));
 
-    // Re-confirm: the held row is resubmitted with forceImport bypassing the safety-net.
-    mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
+    // Re-confirm resubmits the held row with forceImport bypassing the safety-net.
+    mockPutSubmissionItems.mockClear();
+    wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, heldPath, 'Book One')] });
     await act(async () => { result.current.handleReconfirmHeld(); });
 
-    const lastCall = mockConfirmImport.mock.calls.at(-1)!;
-    expect(lastCall[0]).toEqual(expect.arrayContaining([
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/library'));
+    expect(submittedItems()).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: heldPath, forceImport: true }),
     ]));
-    // The re-confirm with nothing held navigates to the library.
-    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/library'));
   });
 
   it('handleRegister forwards edited.narrators and seriesPosition (#1028)', async () => {
-    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
-
     act(() => {
-      result.current.handleEdit(nonDupIdx, {
-        title: 'Book One',
-        author: 'Author A',
-        series: 'Discworld',
-        narrators: ['Jim Dale'],
-        seriesPosition: 27,
-      });
+      result.current.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: 'Discworld', narrators: ['Jim Dale'], seriesPosition: 27 });
     });
 
     await act(async () => { result.current.handleRegister(); });
+    await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
 
-    expect(mockConfirmImport).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({
-          narrators: ['Jim Dale'],
-          seriesPosition: 27,
-        }),
-      ]),
-      undefined,
-    );
+    expect(submittedItems()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ narrators: ['Jim Dale'], seriesPosition: 27 }),
+    ]));
   });
 
   it('handleRegister forwards seriesPosition: 0 (regression guard) (#1028)', async () => {
-    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
-
     act(() => {
-      result.current.handleEdit(nonDupIdx, {
-        title: 'Book One',
-        author: 'Author A',
-        series: 'Series',
-        seriesPosition: 0,
-      });
+      result.current.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: 'Series', seriesPosition: 0 });
     });
 
     await act(async () => { result.current.handleRegister(); });
-
-    const items = (mockConfirmImport.mock.calls[0]![0]) as Array<Record<string, unknown>>;
-    const found = items.find((b) => b.path === '/audiobooks/AuthorA/Book1');
+    await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
+    const found = submittedItems().find(b => b.path === '/audiobooks/AuthorA/Book1');
     expect(found?.seriesPosition).toBe(0);
   });
 
-  it('parser-seeded parsedSeriesPosition flows from scan to register payload (#1042)', async () => {
+  it('parser-seeded parsedSeriesPosition flows from scan to the staged payload (#1042)', async () => {
     mockScanDirectory.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/Author/Series/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: 'Series', parsedSeriesPosition: 2.5, fileCount: 1, totalSize: 1000, isDuplicate: false },
       ],
       totalFolders: 1,
     });
-    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
-
     expect(result.current.rows[0]!.edited.seriesPosition).toBe(2.5);
 
     await act(async () => { result.current.handleRegister(); });
-
-    const items = (mockConfirmImport.mock.calls[0]![0]) as Array<Record<string, unknown>>;
-    expect(items[0]!.seriesPosition).toBe(2.5);
-  });
-
-  it('parser-seeded parsedSeriesPosition survives a no-position best match merge (#1042)', async () => {
-    mockScanDirectory.mockResolvedValue({
-      discoveries: [
-        { path: '/audiobooks/Author/Series/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: 'Series', parsedSeriesPosition: 3, fileCount: 1, totalSize: 1000, isDuplicate: false },
-      ],
-      totalFolders: 1,
-    });
-    // Best match arrives without a series position — fallback to parser-seeded value must hold.
-    mockGetMatchJob.mockResolvedValue({
-      id: 'job-1',
-      status: 'completed',
-      total: 1,
-      matched: 1,
-      results: [
-        {
-          path: '/audiobooks/Author/Series/Book',
-          confidence: 'high',
-          bestMatch: { title: 'Book', authors: [{ name: 'Author' }], series: [{ name: 'Series' }] },
-          alternatives: [],
-        },
-      ],
-    });
-    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
-
-    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.step).toBe('review'));
-
-    await waitFor(() => {
-      expect(result.current.rows[0]!.edited.metadata).toBeDefined();
-    }, { timeout: 5000 });
-
-    expect(result.current.rows[0]!.edited.seriesPosition).toBe(3);
-
-    await act(async () => { result.current.handleRegister(); });
-    const items = (mockConfirmImport.mock.calls[0]![0]) as Array<Record<string, unknown>>;
-    expect(items[0]!.seriesPosition).toBe(3);
+    await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
+    expect(submittedItems()[0]!.seriesPosition).toBe(2.5);
   });
 
   it('handleRegister does not forward narrators when empty array (#1028)', async () => {
-    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
-
     act(() => {
-      result.current.handleEdit(nonDupIdx, {
-        title: 'Book One',
-        author: 'Author A',
-        series: '',
-        narrators: [],
-      });
+      result.current.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: '', narrators: [] });
     });
 
     await act(async () => { result.current.handleRegister(); });
-
-    const items = (mockConfirmImport.mock.calls[0]![0]) as Array<Record<string, unknown>>;
-    const found = items.find((b) => b.path === '/audiobooks/AuthorA/Book1');
+    await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
+    const found = submittedItems().find(b => b.path === '/audiobooks/AuthorA/Book1');
     expect(found).not.toHaveProperty('narrators');
   });
 
-  it('all-skipped register shows amber, no green, no navigate (#1822)', async () => {
-    mockConfirmImport.mockResolvedValue({
-      accepted: 0,
-      heldReview: [],
-      skipped: [{ path: '/audiobooks/AuthorA/Book1', title: 'Book One', reason: 'already-in-library', existingBookId: 4, existingTitle: 'Book One' }],
-      failed: [],
-    });
+  it('all-skipped completion shows amber, no green, no navigate (#1822)', async () => {
+    wireStagedComplete(stagedMocks, { source: 'library', items: [skippedRow(0, '/audiobooks/AuthorA/Book1', 'Book One')] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
     await act(async () => { result.current.handleRegister(); });
-    await waitFor(() => expect(mockConfirmImport).toHaveBeenCalled());
-
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('1 already in your library'));
     expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.warning).toHaveBeenCalledWith("already in your library as 'Book One'");
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  it('all-failed register shows red, no green, no navigate (#1822)', async () => {
-    mockConfirmImport.mockResolvedValue({
-      accepted: 0,
-      heldReview: [],
-      skipped: [],
-      failed: [{ path: '/audiobooks/AuthorA/Book1', title: 'Book One', message: 'Import failed — see server logs for details.' }],
-    });
+  it('all-failed completion shows red, no green, no navigate (#1822)', async () => {
+    wireStagedComplete(stagedMocks, { source: 'library', items: [failedRow(0, '/audiobooks/AuthorA/Book1', 'Book One')] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
     await act(async () => { result.current.handleRegister(); });
-    await waitFor(() => expect(mockConfirmImport).toHaveBeenCalled());
-
-    expect(toast.error).toHaveBeenCalledWith('1 failed');
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('1 failed'));
     expect(toast.success).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  it('held + failed register surfaces the failure (regression pin for the early-return swallow) (#1822)', async () => {
-    mockConfirmImport.mockResolvedValue({
-      accepted: 0,
-      heldReview: [{ path: '/audiobooks/AuthorA/Book1', title: 'Book One', reason: 'recording-review-required' }],
-      skipped: [],
-      failed: [{ path: '/audiobooks/AuthorA/Book1b', title: 'Book One B', message: 'Import failed — see server logs for details.' }],
+  it('held + failed completion surfaces the failure (regression pin for the early-return swallow) (#1822)', async () => {
+    wireStagedComplete(stagedMocks, {
+      source: 'library',
+      items: [heldRow(0, '/audiobooks/AuthorA/Book1', 'Book One'), failedRow(1, '/audiobooks/AuthorA/Book1b', 'Book One B')],
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
@@ -730,7 +646,7 @@ describe('useLibraryImport hook (#133)', () => {
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  it('partial success (accepted + skipped) stays on the page and deselects the accepted rows (#1822)', async () => {
+  it('partial completion (accepted + skipped) stays on the page and deselects the accepted rows (#1822)', async () => {
     mockScanDirectory.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
@@ -738,11 +654,9 @@ describe('useLibraryImport hook (#133)', () => {
       ],
       totalFolders: 2,
     });
-    mockConfirmImport.mockResolvedValue({
-      accepted: 1,
-      heldReview: [],
-      skipped: [{ path: '/audiobooks/AuthorB/Book2', title: 'Book Two', reason: 'already-in-library' }],
-      failed: [],
+    wireStagedComplete(stagedMocks, {
+      source: 'library',
+      items: [acceptedRow(0, '/audiobooks/AuthorA/Book1', 'Book One'), skippedRow(1, '/audiobooks/AuthorB/Book2', 'Book Two')],
     });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
@@ -750,124 +664,54 @@ describe('useLibraryImport hook (#133)', () => {
     await waitFor(() => expect(result.current.rows).toHaveLength(2));
 
     await act(async () => { result.current.handleRegister(); });
-    await waitFor(() => expect(mockConfirmImport).toHaveBeenCalled());
-
-    expect(toast.warning).toHaveBeenCalledWith('1 registered · 1 already in your library');
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('1 registered · 1 already in your library'));
     expect(mockNavigate).not.toHaveBeenCalled();
-    // The accepted row (Book1) is deselected; the skipped row (Book2) is left as-is.
-    const book1 = result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')!;
-    expect(book1.selected).toBe(false);
+    // The accepted row (Book1) is deselected; the skipped row (Book2) stays as-is.
+    await waitFor(() => expect(result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(false));
   });
 
-  it('Register error path: toast.error shown when confirmImport rejects', async () => {
-    mockConfirmImport.mockRejectedValue(new Error('network failure'));
-
-    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-
-    await waitFor(() => expect(result.current.step).toBe('review'));
-
-    await act(async () => { result.current.handleRegister(); });
-
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Import failed: network failure');
-    });
-  });
-
-  it('413 confirm failure maps to import-domain wording (#1831)', async () => {
-    mockConfirmImport.mockRejectedValue(new ApiError(413, { error: 'Payload Too Large' }));
+  it('create failure surfaces a recoverable banner and does not navigate (F9)', async () => {
+    // A non-retryable typed 4xx fails fast (no backoff) and surfaces its banner.
+    mockCreateSubmission.mockRejectedValue(new ApiError(400, { error: 'invalid-body' }));
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
     await act(async () => { result.current.handleRegister(); });
 
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        'Import failed: The import request was too large to send. Select fewer books and try again.',
-      );
-    });
+    await waitFor(() => expect(result.current.banner).toBeTruthy());
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it('self-oversize confirm item is diverted to tooLarge — never sent, row stays selected, no navigation (#1831)', async () => {
+  it('permanent PUT failure stops the upload, keeps rows selected, does not finalize or navigate (F10)', async () => {
+    mockPutSubmissionItems.mockRejectedValue(new ApiError(409, { error: 'submission-not-receiving' }));
+
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
+    await act(async () => { result.current.handleRegister(); });
 
-    // Edit Book1 to carry a metadata blob above the per-item transport ceiling (~900 KiB).
-    const idx = result.current.rows.findIndex(r => r.book.path === '/audiobooks/AuthorA/Book1');
-    act(() => result.current.handleEdit(idx, { title: 'Book One', author: 'Author A', series: '', metadata: bigMetadata(950 * 1024) }));
-
-    act(() => result.current.handleRegister());
-
-    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('too large to submit')));
-    // No POST leaves the client, and nothing navigates.
-    expect(mockConfirmImport).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.banner).toBeTruthy());
+    expect(mockFinalizeSubmission).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
-    // The too-large row stays selected (fail-open — nothing landed).
     expect(result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(true);
   });
 
-  it('mid-sequence chunk failure applies completed chunks and keeps the remainder selected, no navigation (#1831)', async () => {
-    // Two selectable rows, each edited above the chunk byte budget → two separate chunks.
-    mockScanDirectory.mockResolvedValue({
-      ...mockScanResult,
-      discoveries: [
-        { path: '/audiobooks/X/B1', parsedTitle: 'B1', parsedAuthor: 'X', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
-        { path: '/audiobooks/Y/B2', parsedTitle: 'B2', parsedAuthor: 'Y', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
-      ],
-    });
-    mockConfirmImport
-      .mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] })
-      .mockRejectedValueOnce(new Error('connection reset'));
-
+  it('an all-oversize selection is refused pre-create with the too-large banner, rows stay selected (F17/F39)', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.rows.length).toBe(2));
+    await waitFor(() => expect(result.current.step).toBe('review'));
 
-    act(() => result.current.handleEdit(0, { title: 'B1', author: 'X', series: '', metadata: bigMetadata(500 * 1024) }));
-    act(() => result.current.handleEdit(1, { title: 'B2', author: 'Y', series: '', metadata: bigMetadata(500 * 1024) }));
+    // A metadata author name over the 512-char bound is a pure `too_big` exclusion →
+    // oversize (not invalid), so the batch trips the zero-survivor too-large refusal.
+    const idx = result.current.rows.findIndex(r => r.book.path === '/audiobooks/AuthorA/Book1');
+    const oversizeMeta = { title: 'Book One', authors: [{ name: 'x'.repeat(513) }] } as unknown as import('@/lib/api').BookMetadata;
+    act(() => result.current.handleEdit(idx, { title: 'Book One', author: 'Author A', series: '', metadata: oversizeMeta }));
+
     act(() => result.current.handleRegister());
 
-    await waitFor(() => expect(mockConfirmImport).toHaveBeenCalledTimes(2));
-    // Completed chunk's row is deselected; the failing/never-sent row stays selected.
-    await waitFor(() => expect(result.current.rows.find(r => r.book.path === '/audiobooks/X/B1')?.selected).toBe(false));
-    expect(result.current.rows.find(r => r.book.path === '/audiobooks/Y/B2')?.selected).toBe(true);
+    await waitFor(() => expect(result.current.banner).toMatch(/too large/i));
+    expect(mockCreateSubmission).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('not confirmed'));
-  });
-
-  it('held item from an early chunk survives a later chunk failure (#1831)', async () => {
-    // captureHeld REPLACES held state, so it must run once over the aggregate at run end —
-    // a per-chunk capture (or an onError that skips it) would drop chunk 1's held item.
-    mockScanDirectory.mockResolvedValue({
-      ...mockScanResult,
-      discoveries: [
-        { path: '/audiobooks/X/B1', parsedTitle: 'B1', parsedAuthor: 'X', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
-        { path: '/audiobooks/Y/B2', parsedTitle: 'B2', parsedAuthor: 'Y', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
-      ],
-    });
-    mockConfirmImport
-      .mockResolvedValueOnce({
-        accepted: 0,
-        heldReview: [{ path: '/audiobooks/X/B1', title: 'B1', reason: 'recording-review-required' }],
-        skipped: [],
-        failed: [],
-      })
-      .mockRejectedValueOnce(new Error('connection reset'));
-
-    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.rows.length).toBe(2));
-
-    // Push each row over the chunk byte budget → two separate chunks.
-    act(() => result.current.handleEdit(0, { title: 'B1', author: 'X', series: '', metadata: bigMetadata(500 * 1024) }));
-    act(() => result.current.handleEdit(1, { title: 'B2', author: 'Y', series: '', metadata: bigMetadata(500 * 1024) }));
-    act(() => result.current.handleRegister());
-
-    await waitFor(() => expect(mockConfirmImport).toHaveBeenCalledTimes(2));
-    // Chunk 1's held item is captured despite chunk 2's failure.
-    await waitFor(() => expect(result.current.heldReview).toHaveLength(1));
-    expect(result.current.heldReview[0]!.path).toBe('/audiobooks/X/B1');
-    expect(toast.warning).toHaveBeenCalledWith('1 held for recording review');
-    // The run failure still surfaces, and nothing navigates.
-    expect(toast.error).toHaveBeenCalled();
-    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(true);
   });
 
   // AC3: empty state (#141)
@@ -1846,7 +1690,10 @@ describe('empty result edge case', () => {
         totalFolders: 2,
       };
       mockScanDirectory.mockResolvedValue(scanResult);
-      mockConfirmImport.mockResolvedValue({ accepted: 2, heldReview: [], skipped: [], failed: [] });
+      wireStagedComplete(stagedMocks, {
+        source: 'library',
+        items: [acceptedRow(0, '/audiobooks/Author/Book', 'Book'), acceptedRow(1, '/audiobooks/Copy/Author/Book', 'Book')],
+      });
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
       await waitFor(() => { expect(result.current.step).toBe('review'); });
@@ -1855,9 +1702,9 @@ describe('empty result edge case', () => {
       act(() => { result.current.handleSelectAll(); });
       act(() => { result.current.handleRegister(); });
 
-      await waitFor(() => { expect(mockConfirmImport).toHaveBeenCalled(); });
+      await waitFor(() => { expect(mockCreateSubmission).toHaveBeenCalled(); });
 
-      const items = mockConfirmImport.mock.calls[0]![0] as Array<{ path: string; forceImport?: boolean }>;
+      const items = submittedItems() as Array<{ path: string; forceImport?: boolean }>;
       const nonDup = items.find(i => i.path === '/audiobooks/Author/Book');
       const withinScanDup = items.find(i => i.path === '/audiobooks/Copy/Author/Book');
       expect(nonDup?.forceImport).toBeUndefined();

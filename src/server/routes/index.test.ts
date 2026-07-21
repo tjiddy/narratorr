@@ -298,7 +298,6 @@ describe('createServices', () => {
   it('calls wire() once on each required-wiring service with the correct cyclic deps', async () => {
     const { SettingsService, BlacklistService, DownloadService, EventHistoryService } = await import('../services/index.js');
     const { ImportOrchestrator } = await import('../services/import-orchestrator.js');
-    const { LibraryScanService } = await import('../services/library-scan.service.js');
     const { QualityGateOrchestrator } = await import('../services/quality-gate-orchestrator.js');
     const { createRetrySearchDeps } = await import('../services/retry-search.js');
 
@@ -341,10 +340,9 @@ describe('createServices', () => {
     expect(importWireArg.retrySearchDeps).toBe(retrySearchDepsResult);
     expect(typeof importWireArg.nudgeImportWorker).toBe('function');
 
-    const libraryScanInstance = vi.mocked(LibraryScanService).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
-    expect(libraryScanInstance.wire).toHaveBeenCalledOnce();
-    expect(typeof libraryScanInstance.wire.mock.calls[0]![0].nudgeImportWorker).toBe('function');
-
+    // LibraryScanService no longer has a wire() seam — its direct-confirm path was removed
+    // (#1902), so the composition root no longer calls libraryScan.wire(...). The adjacent
+    // QualityGateOrchestrator wiring below is unaffected and still asserted.
     const qgoInstance = vi.mocked(QualityGateOrchestrator).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
     expect(qgoInstance.wire).toHaveBeenCalledOnce();
     expect(typeof qgoInstance.wire.mock.calls[0]![0].nudgeImportWorker).toBe('function');

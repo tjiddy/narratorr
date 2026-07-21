@@ -1,35 +1,20 @@
 /**
- * Per-item confirm/import processing (#1711/#1822). Extracted from
- * `import-orchestration.helpers.ts` to keep that file under the line cap and to keep
- * `confirmImport` a thin bucket-collecting loop. Each confirm item resolves to exactly
- * one outcome — accepted / held / skipped / failed — so a no-op import (everything
- * refused or errored) is a reported disposition, never a silent drop.
+ * Recording-identity classification for a confirm/staged item (#1711/#1893).
+ * Reused by the staged submission runner — the dedup/hold/skip decision lives here
+ * once, never duplicated. Reads only (safe to call before opening a per-item
+ * transaction). The legacy direct-confirm per-item processor was removed with the
+ * direct-commit path (#1902); only the shared classifier remains.
  */
 import type { FastifyBaseLogger } from 'fastify';
-import { OwnedRecordingError, type BookService } from './book.service.js';
-import type { HeldReviewItem, ImportSkippedItem, ImportFailedItem } from '../../shared/schemas/library-scan.js';
+import { type BookService } from './book.service.js';
+import type { HeldReviewItem } from '../../shared/schemas/library-scan.js';
 import { normalizeProductionType } from '../../core/metadata/production-type.js';
-import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
-import { snapshotBookForEvent } from '../utils/event-helpers.js';
-import type { ImportConfirmItem, ImportMode } from './library-scan.service.js';
-import { serializeError } from '../utils/serialize-error.js';
-import type { ManualImportJobPayload } from './import-adapters/types.js';
-import type { ImportPipelineDeps } from './import-orchestration.helpers.js';
+import type { ImportConfirmItem } from './library-scan.service.js';
 
 /** The confirm dedup ASIN (#1662): the explicit top-level `asin`, else the matched metadata's. */
 function resolveDedupeAsin(item: ImportConfirmItem): string | undefined {
   return item.asin ?? item.metadata?.asin;
 }
-
-/**
- * The outcome of processing a single confirm item — the caller pushes it into the
- * matching `ImportResult` bucket. Exactly one variant per item (conservation).
- */
-export type ConfirmItemOutcome =
-  | { kind: 'accepted'; bookId: number; item: ImportConfirmItem }
-  | { kind: 'held'; held: HeldReviewItem }
-  | { kind: 'skipped'; skipped: ImportSkippedItem }
-  | { kind: 'failed'; failed: ImportFailedItem };
 
 /**
  * Pre-copy recording-identity classification for a confirm item (#1711). Threads
@@ -88,86 +73,4 @@ export async function classifyConfirmItem(
     };
   }
   return 'proceed';
-}
-
-/** Map a `same-recording` skip classification onto a reported `already-in-library` skip. */
-function ownedSkip(item: ImportConfirmItem, c: SkipClassification): ConfirmItemOutcome {
-  return {
-    kind: 'skipped',
-    skipped: {
-      path: item.path,
-      title: item.title,
-      reason: 'already-in-library',
-      ...(c.existingBookId !== undefined && { existingBookId: c.existingBookId }),
-      ...(c.existingTitle !== undefined && { existingTitle: c.existingTitle }),
-    },
-  };
-}
-
-/**
- * Process a single confirm item into exactly one bucket outcome (#1822). Creates the
- * import placeholder + enqueues the job for a proceeding item, and cleans up the
- * placeholder on any created-but-not-accepted exit so no orphaned `importing` row is
- * stranded. Failure messages are user-facing — the raw error stays in the logs.
- */
-export async function processConfirmItem(
-  item: ImportConfirmItem,
-  deps: ImportPipelineDeps,
-  mode: ImportMode | undefined,
-): Promise<ConfirmItemOutcome> {
-  const { log, bookService, bookImportService, eventHistory } = deps;
-  // Track a placeholder created below so any created-but-not-accepted exit cleans it up.
-  let createdBookId: number | undefined;
-  try {
-    const classification = await classifyConfirmItem(item, bookService, log);
-    if (classification !== 'proceed' && 'skip' in classification) return ownedSkip(item, classification);
-    if (classification !== 'proceed') return { kind: 'held', held: classification };
-
-    log.debug(
-      { title: item.title, author: item.authorName, hasMetadata: !!item.metadata, asin: item.asin || item.metadata?.asin },
-      'Creating import placeholder',
-    );
-
-    const book = await bookService.create(buildBookCreatePayload(item, item.metadata ?? null, 'importing'));
-    createdBookId = book.id;
-
-    // Build the persisted payload — mode omitted for pointer mode
-    const payload: ManualImportJobPayload = { ...item };
-    if (mode) payload.mode = mode;
-
-    const enqueued = await bookImportService.enqueue({ bookId: book.id, type: 'manual', metadata: JSON.stringify(payload) });
-
-    if ('error' in enqueued) {
-      // Rare/defensive: the freshly-created placeholder bookId already has an active job.
-      // Report an already-importing skip and delete the orphaned placeholder.
-      log.warn({ bookId: book.id, title: item.title }, 'Manual import skipped — active job already exists for book');
-      await bookService.delete(book.id).catch(err =>
-        log.warn({ error: serializeError(err), bookId: book.id }, 'Failed to delete orphaned placeholder after enqueue conflict'));
-      return { kind: 'skipped', skipped: { path: item.path, title: item.title, reason: 'already-importing' } };
-    }
-
-    eventHistory.create({ bookId: book.id, ...snapshotBookForEvent(book), eventType: 'book_added', source: 'manual' })
-      .catch(err => log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
-
-    return { kind: 'accepted', bookId: book.id, item };
-  } catch (error: unknown) {
-    // Same-ASIN create-time race (#1711): the recording is already owned — a plain
-    // not-accepted skip carrying the incumbent (#1822), NOT a hard failure. The create
-    // threw, so no placeholder exists to clean up here.
-    if (error instanceof OwnedRecordingError) {
-      log.debug({ title: item.title, existingBookId: error.existingBookId }, 'Skipping owned duplicate during import (ASIN race)');
-      return {
-        kind: 'skipped',
-        skipped: { path: item.path, title: item.title, reason: 'already-in-library', existingBookId: error.existingBookId, existingTitle: error.bookTitle },
-      };
-    }
-    log.error({ error: serializeError(error), title: item.title }, 'Failed to create placeholder for import');
-    // A non-`active-job-exists` throw after the placeholder was created leaves it orphaned
-    // in `importing` — delete it (#1822). Best-effort; the failure is reported regardless.
-    if (createdBookId !== undefined) {
-      await bookService.delete(createdBookId).catch(err =>
-        log.warn({ error: serializeError(err), bookId: createdBookId }, 'Failed to delete orphaned placeholder after import failure'));
-    }
-    return { kind: 'failed', failed: { path: item.path, title: item.title, message: 'Import failed — see server logs for details.' } };
-  }
 }

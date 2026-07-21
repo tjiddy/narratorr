@@ -1,6 +1,8 @@
 import { fetchApi } from './client.js';
 import type {
   AttentionResponse,
+  CreateSubmissionBody,
+  PutItemsBody,
   SubmissionListResponse,
   SubmissionResponse,
   SubmissionSource,
@@ -10,10 +12,14 @@ export type {
   AttentionResponse,
   AttentionSubmission,
   SubmissionAttention,
+  CreateSubmissionBody,
+  PutItemsBody,
+  PutItemRow,
   SubmissionListResponse,
   SubmissionResponse,
   SubmissionSummary,
   StagedItemResultDto,
+  StagedImportItem,
   SubmissionAggregates,
 } from '../../../core/import-staging/schemas.js';
 
@@ -47,4 +53,27 @@ export const submissionsApi = {
     fetchApi<SubmissionResponse>(`/import/submissions/${id}?includeItems=true`),
   discardImportSubmission: (id: number) =>
     fetchApi<{ success: true }>(`/import/submissions/${id}`, { method: 'DELETE' }),
+
+  // ── Staged write + poll lane (#1902) ──────────────────────────────────────
+  /** create-or-return by clientSubmissionId → the durable header (`receiving`). */
+  createImportSubmission: (body: CreateSubmissionBody) =>
+    fetchApi<SubmissionResponse>('/import/submissions', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /** Inert chunked upload of `{ items: [{ ordinal, item }] }` (idempotent per ordinal). */
+  putImportSubmissionItems: (id: number, body: PutItemsBody) =>
+    fetchApi<SubmissionResponse>(`/import/submissions/${id}/items`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  /** Digest-verified finalize; CAS-flips `receiving` → `processing`. */
+  finalizeImportSubmission: (id: number) =>
+    fetchApi<SubmissionResponse>(`/import/submissions/${id}/finalize`, { method: 'POST' }),
+  /** Query-selected read by id — summary (`includeItems=false`) or one-time detail. */
+  getImportSubmission: (id: number, includeItems = false) =>
+    fetchApi<SubmissionResponse>(`/import/submissions/${id}?includeItems=${includeItems}`),
+  /** by-client recovery lookup — same summary/detail arms as `getImportSubmission`. */
+  getImportSubmissionByClientId: (clientSubmissionId: string, includeItems = false) =>
+    fetchApi<SubmissionResponse>(`/import/submissions/by-client/${clientSubmissionId}?includeItems=${includeItems}`),
 };

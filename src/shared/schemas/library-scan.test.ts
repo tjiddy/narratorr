@@ -5,12 +5,14 @@ import {
   matchCandidateSchema,
   scanDirectoryBodySchema,
   heldReviewItemSchema,
-  importResultSchema,
-  importSkippedItemSchema,
-  importFailedItemSchema,
+  importSkipReasonSchema,
 } from './library-scan.js';
 
-describe('heldReviewItemSchema / importResultSchema (#1711)', () => {
+// The direct-confirm result contracts (importResultSchema / importSkippedItemSchema /
+// importFailedItemSchema) were removed with the direct-commit path (#1902) — the staged
+// DTO carries its own disposition rows. heldReviewItemSchema, importConfirmItemSchema, and
+// importSkipReasonSchema stay live (held panel / staged DTO / manual job payload).
+describe('heldReviewItemSchema (#1711, retained)', () => {
   it('round-trips a held-review item with an optional existingBookId', () => {
     const item = { path: '/lib/Author/Title', title: 'Title', reason: 'recording-review-required' as const, existingBookId: 42 };
     const result = heldReviewItemSchema.safeParse(item);
@@ -27,52 +29,16 @@ describe('heldReviewItemSchema / importResultSchema (#1711)', () => {
     const result = heldReviewItemSchema.safeParse({ path: '/lib/x', title: 'X', reason: 'something-else' });
     expect(result.success).toBe(false);
   });
+});
 
-  it('round-trips an importResult with accepted + heldReview/skipped/failed arrays (#1822)', () => {
-    const payload = {
-      accepted: 2,
-      heldReview: [{ path: '/lib/x', title: 'X', reason: 'recording-review-required' as const }],
-      skipped: [{ path: '/lib/y', title: 'Y', reason: 'already-in-library' as const, existingBookId: 9, existingTitle: 'Y Owned' }],
-      failed: [{ path: '/lib/z', title: 'Z', message: 'Import failed — see server logs for details.' }],
-    };
-    const result = importResultSchema.safeParse(payload);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.heldReview).toHaveLength(1);
-      expect(result.data.skipped).toHaveLength(1);
-      expect(result.data.failed).toHaveLength(1);
-    }
+describe('importSkipReasonSchema (#1822, retained — consumed by the staged DTO)', () => {
+  it('accepts the two live skip reasons', () => {
+    expect(importSkipReasonSchema.safeParse('already-in-library').success).toBe(true);
+    expect(importSkipReasonSchema.safeParse('already-importing').success).toBe(true);
   });
 
-  it('accepts empty held/skipped/failed arrays (nothing but accepted) (#1822)', () => {
-    const result = importResultSchema.safeParse({ accepted: 5, heldReview: [], skipped: [], failed: [] });
-    expect(result.success).toBe(true);
-  });
-
-  it('requires skipped and failed arrays to be present (#1822)', () => {
-    const result = importResultSchema.safeParse({ accepted: 1, heldReview: [] });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects an unknown skip reason enum value (#1822)', () => {
-    const result = importSkippedItemSchema.safeParse({ path: '/lib/x', title: 'X', reason: 'not-a-reason' });
-    expect(result.success).toBe(false);
-  });
-
-  it('accepts a skipped item with the already-importing reason and no incumbent (#1822)', () => {
-    const result = importSkippedItemSchema.safeParse({ path: '/lib/x', title: 'X', reason: 'already-importing' });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.existingBookId).toBeUndefined();
-      expect(result.data.existingTitle).toBeUndefined();
-    }
-  });
-
-  it('round-trips a failed item with a user-facing message (#1822)', () => {
-    const item = { path: '/lib/x', title: 'X', message: 'Import failed — see server logs for details.' };
-    const result = importFailedItemSchema.safeParse(item);
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data).toEqual(item);
+  it('rejects an unknown skip reason', () => {
+    expect(importSkipReasonSchema.safeParse('not-a-reason').success).toBe(false);
   });
 });
 

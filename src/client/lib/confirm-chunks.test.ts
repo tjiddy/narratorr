@@ -1,119 +1,71 @@
 import { describe, it, expect } from 'vitest';
 import {
-  packConfirmChunks,
-  serializedItemBytes,
   CHUNK_BYTE_BUDGET,
-  MAX_SINGLE_ITEM_BYTES,
   MAX_CHUNK_ITEMS,
+  packStagedChunks,
+  stagedRequestBytes,
+  type StagedPutRow,
 } from './confirm-chunks.js';
-import type { ImportConfirmItem } from '@/lib/api';
+import type { StagedImportItem } from '../../core/import-staging/schemas.js';
 
-/** A confirm item whose metadata blob pads it to roughly `bytes` serialized. */
-function itemOfSize(path: string, bytes: number): ImportConfirmItem {
-  const base: ImportConfirmItem = { path, title: 'T', metadata: { blob: '' } as never };
-  const overhead = serializedItemBytes(base);
+/** A staged PUT row whose serialized `item` is padded to roughly `bytes`. */
+function stagedRowOfSize(ordinal: number, bytes: number): StagedPutRow {
+  const base: StagedImportItem = { path: `/b/${ordinal}`, title: 'T' };
+  const overhead = new TextEncoder().encode(JSON.stringify(base)).length;
   const pad = Math.max(0, bytes - overhead);
-  return { path, title: 'T', metadata: { blob: 'x'.repeat(pad) } as never };
+  return { ordinal, item: { path: `/b/${ordinal}`, title: 'T'.repeat(pad || 1) } };
 }
 
-describe('packConfirmChunks (#1831)', () => {
-  it('packs small items into as few chunks as possible, each under budget', () => {
-    // 20 items each ~50 KiB → 8 fit per 400 KiB chunk → 3 chunks.
-    const items = Array.from({ length: 20 }, (_, i) => itemOfSize(`/b/${i}`, 50 * 1024));
-    const { chunks, tooLarge } = packConfirmChunks(items);
-
-    expect(tooLarge).toHaveLength(0);
-    expect(chunks.flat()).toHaveLength(20);
+describe('packStagedChunks — {ordinal,item} envelope byte accounting (#1902, F70)', () => {
+  it('keeps every full request body under CHUNK_BYTE_BUDGET', () => {
+    const rows: StagedPutRow[] = Array.from({ length: 40 }, (_, i) => stagedRowOfSize(i, 40 * 1024));
+    const chunks = packStagedChunks(rows);
+    expect(chunks.flat()).toHaveLength(40);
     for (const chunk of chunks) {
-      const bytes = chunk.reduce((n, it) => n + serializedItemBytes(it), 0);
-      expect(bytes).toBeLessThanOrEqual(CHUNK_BYTE_BUDGET);
+      expect(stagedRequestBytes(chunk)).toBeLessThanOrEqual(CHUNK_BYTE_BUDGET);
     }
-    // Order is preserved across the flattened chunks.
-    expect(chunks.flat().map(i => i.path)).toEqual(items.map(i => i.path));
   });
 
-  it('ships an item above the chunk budget but under the ceiling alone in its own chunk', () => {
-    const big = itemOfSize('/big', 600 * 1024); // > 400 KiB budget, < 900 KiB ceiling
-    const small = itemOfSize('/small', 10 * 1024);
-    const { chunks, tooLarge } = packConfirmChunks([small, big, small]);
-
-    expect(tooLarge).toHaveLength(0);
-    const bigChunk = chunks.find(c => c.some(i => i.path === '/big'));
-    expect(bigChunk).toHaveLength(1); // ships alone
-    // The lone big-item chunk is still under 1 MiB.
-    expect(serializedItemBytes(bigChunk![0]!)).toBeLessThan(1024 * 1024);
+  it('preserves ordinal ordering across chunks', () => {
+    const rows: StagedPutRow[] = Array.from({ length: 30 }, (_, i) => stagedRowOfSize(i, 30 * 1024));
+    const flat = packStagedChunks(rows).flat();
+    expect(flat.map((r) => r.ordinal)).toEqual(rows.map((r) => r.ordinal));
   });
 
-  it('diverts a self-oversize item to tooLarge and never emits it in any chunk', () => {
-    const huge = itemOfSize('/huge', MAX_SINGLE_ITEM_BYTES + 50 * 1024);
-    const ok = itemOfSize('/ok', 20 * 1024);
-    const { chunks, tooLarge } = packConfirmChunks([ok, huge, ok]);
-
-    expect(tooLarge.map(i => i.path)).toEqual(['/huge']);
-    expect(chunks.flat().map(i => i.path)).toEqual(['/ok', '/ok']);
-    expect(chunks.flat().some(i => i.path === '/huge')).toBe(false);
+  it('ships a single large row alone in its own request', () => {
+    const big = stagedRowOfSize(0, CHUNK_BYTE_BUDGET + 50 * 1024);
+    const chunks = packStagedChunks([big]);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toEqual([big]);
   });
 
-  it('respects the max-count secondary bound even when byte budget is not reached', () => {
-    // Tiny items — byte budget never trips, so only the count bound splits them.
-    const items = Array.from({ length: MAX_CHUNK_ITEMS + 5 }, (_, i) => ({ path: `/b/${i}`, title: 'T' }));
-    const { chunks } = packConfirmChunks(items);
-
+  it('bounds a run of tiny rows by MAX_CHUNK_ITEMS', () => {
+    const rows: StagedPutRow[] = Array.from({ length: MAX_CHUNK_ITEMS + 5 }, (_, i) => ({ ordinal: i, item: { path: `/${i}`, title: 'T' } }));
+    const chunks = packStagedChunks(rows);
     expect(chunks[0]).toHaveLength(MAX_CHUNK_ITEMS);
-    expect(chunks[1]).toHaveLength(5);
+    expect(chunks.flat()).toHaveLength(MAX_CHUNK_ITEMS + 5);
   });
 
-  it('carries review-step edits through into the packed items verbatim', () => {
-    const edited: ImportConfirmItem = { path: '/b', title: 'Edited Title', authorName: 'Edited Author', forceImport: true };
-    const { chunks } = packConfirmChunks([edited]);
-    expect(chunks[0]![0]).toEqual(edited);
+  it('accounts multibyte item bytes in the request measure', () => {
+    const rows: StagedPutRow[] = [{ ordinal: 0, item: { path: '/日本語', title: '📚' } }];
+    expect(stagedRequestBytes(rows)).toBe(Buffer.byteLength(JSON.stringify({ items: rows }), 'utf8'));
   });
 
-  it('returns no chunks when every item is self-oversize', () => {
-    const huge = itemOfSize('/huge', MAX_SINGLE_ITEM_BYTES + 1024);
-    const { chunks, tooLarge } = packConfirmChunks([huge]);
-    expect(chunks).toHaveLength(0);
-    expect(tooLarge).toHaveLength(1);
+  it('emits no chunks for an empty row set', () => {
+    expect(packStagedChunks([])).toEqual([]);
   });
 
-  // Byte-vs-character accounting: every fixture above is ASCII (chars == bytes), so a
-  // TextEncoder → .length regression would pass the whole suite while undercounting
-  // multi-byte metadata up to 4× and breaching the 1 MiB floor. 'あ' is 1 JS char / 3 UTF-8 bytes.
-  it('diverts a multi-byte item whose UTF-8 bytes exceed the ceiling even though its char count does not', () => {
-    // 310k chars ≈ 930 KiB serialized > 900 KiB ceiling; a char-count accounting would pass it.
-    const item = { path: '/utf8', title: 'T', metadata: { blob: 'あ'.repeat(310 * 1024) } as never };
-    expect(serializedItemBytes(item)).toBeGreaterThan(MAX_SINGLE_ITEM_BYTES);
-    const { chunks, tooLarge } = packConfirmChunks([item]);
-    expect(tooLarge).toHaveLength(1);
-    expect(chunks).toHaveLength(0);
-  });
-
-  it('splits multi-byte items by UTF-8 byte budget even when combined char count is under it', () => {
-    // Two items each ~240 KiB serialized (80k 3-byte chars) → 480 KiB > 400 KiB budget → 2 chunks.
-    // Char-count accounting (~160k total) would pack them together.
-    const mk = (p: string) => ({ path: p, title: 'T', metadata: { blob: 'あ'.repeat(80 * 1024) } as never });
-    const { chunks } = packConfirmChunks([mk('/a'), mk('/b')]);
+  // Boundary: a full request body measured at exactly CHUNK_BYTE_BUDGET stays one chunk;
+  // one more row that tips the whole `{items:[...]}` envelope over the budget splits.
+  it('keeps a request at/under budget in one chunk; the row that tips the envelope over splits', () => {
+    // Pad row 0 so [row0] alone sits just under the budget, then a tiny row 1 tips it over.
+    const under = stagedRowOfSize(0, CHUNK_BYTE_BUDGET - 4 * 1024);
+    expect(stagedRequestBytes([under])).toBeLessThanOrEqual(CHUNK_BYTE_BUDGET);
+    const tiny: StagedPutRow = { ordinal: 1, item: { path: '/t', title: 'x'.repeat(8 * 1024) } };
+    expect(stagedRequestBytes([under, tiny])).toBeGreaterThan(CHUNK_BYTE_BUDGET);
+    const chunks = packStagedChunks([under, tiny]);
     expect(chunks).toHaveLength(2);
-  });
-
-  // Exactly-at-threshold boundaries: a flipped > vs >= would silently ship.
-  it('ships an item at exactly MAX_SINGLE_ITEM_BYTES; one byte over diverts (ceiling is inclusive)', () => {
-    const exact = itemOfSize('/exact', MAX_SINGLE_ITEM_BYTES);
-    expect(serializedItemBytes(exact)).toBe(MAX_SINGLE_ITEM_BYTES);
-    const atCeiling = packConfirmChunks([exact]);
-    expect(atCeiling.tooLarge).toHaveLength(0);
-    expect(atCeiling.chunks).toEqual([[exact]]);
-
-    const over = itemOfSize('/over', MAX_SINGLE_ITEM_BYTES + 1);
-    const overCeiling = packConfirmChunks([over]);
-    expect(overCeiling.tooLarge).toHaveLength(1);
-    expect(overCeiling.chunks).toHaveLength(0);
-  });
-
-  it('packs items summing to exactly CHUNK_BYTE_BUDGET into one chunk; one byte more splits', () => {
-    const half = itemOfSize('/h1', CHUNK_BYTE_BUDGET / 2);
-    expect(serializedItemBytes(half)).toBe(CHUNK_BYTE_BUDGET / 2);
-    expect(packConfirmChunks([half, itemOfSize('/h2', CHUNK_BYTE_BUDGET / 2)]).chunks).toHaveLength(1);
-    expect(packConfirmChunks([half, itemOfSize('/h3', CHUNK_BYTE_BUDGET / 2 + 1)]).chunks).toHaveLength(2);
+    expect(chunks[0]).toEqual([under]);
+    expect(chunks[1]).toEqual([tiny]);
   });
 });

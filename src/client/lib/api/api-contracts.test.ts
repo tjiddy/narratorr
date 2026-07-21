@@ -533,15 +533,6 @@ describe('libraryScanApi', () => {
     }));
   });
 
-  it('confirmImport → POST /library/import/confirm with books and mode', async () => {
-    const books = [{ path: '/audio/book', title: 'Book' }];
-    await libraryScanApi.confirmImport(books, 'copy');
-    expect(mockFetchApi).toHaveBeenCalledWith('/library/import/confirm', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ books, mode: 'copy' }),
-    }));
-  });
-
   it('startMatchJob → POST /library/import/match with candidates', async () => {
     const books = [{ path: '/audio', title: 'Book', author: 'Auth' }];
     await libraryScanApi.startMatchJob(books);
@@ -855,5 +846,43 @@ describe('submissionsApi', () => {
   it('discardImportSubmission → DELETE /import/submissions/:id', async () => {
     await submissionsApi.discardImportSubmission(9);
     expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/9', { method: 'DELETE' });
+  });
+
+  // ── Staged write + poll lane (#1902) ──────────────────────────────────────
+  it('createImportSubmission → POST /import/submissions with the create body', async () => {
+    const body = { source: 'library', clientSubmissionId: 'u', payloadDigest: 'd', expectedCount: 2 } as never;
+    await submissionsApi.createImportSubmission(body);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions', { method: 'POST', body: JSON.stringify(body) });
+  });
+
+  it('putImportSubmissionItems → PUT /import/submissions/:id/items with the {items} envelope', async () => {
+    const body = { items: [{ ordinal: 0, item: { path: '/a', title: 'A' } }] } as never;
+    await submissionsApi.putImportSubmissionItems(5, body);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/5/items', { method: 'PUT', body: JSON.stringify(body) });
+  });
+
+  it('finalizeImportSubmission → POST /import/submissions/:id/finalize', async () => {
+    await submissionsApi.finalizeImportSubmission(5);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/5/finalize', { method: 'POST' });
+  });
+
+  it('getImportSubmission (summary) → GET /import/submissions/:id?includeItems=false', async () => {
+    await submissionsApi.getImportSubmission(5);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/5?includeItems=false');
+  });
+
+  it('getImportSubmission (detail) → GET /import/submissions/:id?includeItems=true', async () => {
+    await submissionsApi.getImportSubmission(5, true);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/5?includeItems=true');
+  });
+
+  it('getImportSubmissionByClientId (summary) → GET /import/submissions/by-client/:uuid?includeItems=false', async () => {
+    await submissionsApi.getImportSubmissionByClientId('abc');
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/by-client/abc?includeItems=false');
+  });
+
+  it('getImportSubmissionByClientId (detail) → GET /import/submissions/by-client/:uuid?includeItems=true', async () => {
+    await submissionsApi.getImportSubmissionByClientId('abc', true);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/by-client/abc?includeItems=true');
   });
 });

@@ -13,7 +13,7 @@ import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
-import { confirmImport as confirmImportHelper, type ImportPipelineDeps } from './import-orchestration.helpers.js';
+import { type ImportPipelineDeps } from './import-orchestration.helpers.js';
 import { buildDiscoveredBook } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -22,8 +22,7 @@ import type { ConnectorImportItem } from '../../core/connectors/index.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
 import { buildTitleShape, titlesMatchForDedup, type TitleShape } from '../../shared/dedup.js';
-import type { DiscoveredBook, ImportResult } from '../../shared/schemas/library-scan.js';
-import { WireOnce } from './wire-helpers.js';
+import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
 
 
 export type { DiscoveredBook };
@@ -82,13 +81,8 @@ export interface RescanResult {
   restored: number;
 }
 
-export interface LibraryScanServiceWireDeps {
-  nudgeImportWorker: () => void;
-}
-
 export class LibraryScanService {
   private scanning = false;
-  private wired = new WireOnce<LibraryScanServiceWireDeps>('LibraryScanService');
 
   constructor(
     private db: Db,
@@ -101,11 +95,6 @@ export class LibraryScanService {
     private eventBroadcaster?: EventBroadcasterService,
     private connectorService?: ConnectorService,
   ) {}
-
-  /** Wire cyclic / late-bound deps after construction. Call once during composition. */
-  wire(deps: LibraryScanServiceWireDeps): void {
-    this.wired.set(deps);
-  }
 
   private get enrichmentDeps(): EnrichmentDeps {
     return { db: this.db, log: this.log, settingsService: this.settingsService, bookService: this.bookService, metadataService: this.metadataService };
@@ -383,11 +372,6 @@ export class LibraryScanService {
       'Discovered book folder',
     );
     return buildDiscoveredBook(...base, { isDuplicate: false, reviewReason });
-  }
-
-  async confirmImport(items: ImportConfirmItem[], mode?: ImportMode): Promise<ImportResult> {
-    const { nudgeImportWorker } = this.wired.require();
-    return confirmImportHelper(items, this.importDeps, mode, nudgeImportWorker);
   }
 
 }
