@@ -94,4 +94,18 @@ describe('SeriesSection', () => {
     expect(screen.getByText('Book One')).toBeInTheDocument();
     expect(screen.getByText('Book Two')).toBeInTheDocument();
   });
+
+  // #1907 consumer-audit lock: SeriesSection deliberately keeps COARSE ownership
+  // semantics — a title-identity (non-ASIN-equal) match still counts as "in
+  // library". This surface is intentionally NOT switched to the edition-aware
+  // branch that the Add-Book search card uses.
+  it('treats a title-identity (different-ASIN) match as in-library (coarse semantics)', () => {
+    const book = createMockBookMetadata(); // asin B003P2WO5E
+    // Same title + author, DIFFERENT ASIN → title-identity, not exact-asin.
+    const libraryBooks = [createMockBook({ asin: 'B00DIFFEDN' })];
+    renderSection({ books: [book], libraryBooks });
+    // Per-row inLibrary badge shows, and the whole series counts as owned.
+    expect(screen.getByLabelText('In library')).toBeInTheDocument();
+    expect(screen.queryByText(/Add All/)).not.toBeInTheDocument();
+  });
 });

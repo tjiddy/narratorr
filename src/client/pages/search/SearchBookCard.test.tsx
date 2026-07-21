@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { SearchBookCard } from './SearchBookCard';
+import { mapBookMetadataToPayload } from '@/lib/helpers';
 import { createMockBookMetadata, createMockBook } from '@/__tests__/factories';
 
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -111,11 +112,13 @@ describe('SearchBookCard', () => {
     expect(screen.getByRole('button')).toBeInTheDocument();
   });
 
-  it('shows In Library badge when book is in library', () => {
+  it('shows In Library badge (no Add) on an exact-ASIN library match', () => {
     const book = createMockBookMetadata();
     const libraryBooks = [createMockBook(book.asin !== undefined ? { asin: book.asin } : {})];
     renderCard({}, libraryBooks);
     expect(screen.getByText('In Library')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add book/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Edition in library')).not.toBeInTheDocument();
   });
 
   it('renders In Library badge as a link to the matched library book detail page', () => {
@@ -126,10 +129,111 @@ describe('SearchBookCard', () => {
     expect(link).toHaveAttribute('href', '/books/42');
   });
 
+  // #1907 — a title-identity match against a different-ASIN edition must KEEP Add.
+  it('shows the related-edition badge AND a working Add on a title-identity match', async () => {
+    vi.mocked(api.addBook).mockResolvedValue({ id: 1, title: 'The Way of Kings' } as never);
+    // Same title+author as the searched book, but a DIFFERENT ASIN → title-identity.
+    const libraryBooks = [createMockBook({ id: 1, asin: 'B00DIFFEDN' })];
+    const user = userEvent.setup();
+    renderCard({}, libraryBooks);
+
+    expect(screen.getByText('Edition in library')).toBeInTheDocument();
+    // No linked "In Library" state — the related edition is not linked.
+    expect(screen.queryByRole('link', { name: /view this book in your library/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
+    // AC4 — Add must submit the SEARCHED edition's payload, not the owned
+    // incumbent. Assert the exact mapped payload: the searched ASIN (B003P2WO5E,
+    // NOT the incumbent's B00DIFFEDN), the searched authors, and the resolved
+    // searchImmediately (false, from the mocked quality defaults).
+    await waitFor(() => {
+      expect(api.addBook).toHaveBeenCalledWith(
+        mapBookMetadataToPayload(createMockBookMetadata(), { searchImmediately: false }),
+      );
+    });
+    expect(api.addBook).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.addBook).mock.calls[0]![0]!.asin).toBe('B003P2WO5E');
+  });
+
+  // AC1a — array order must not re-enable Add for an exact-ASIN-owned recording.
+  it('links to the exact-ASIN incumbent (no Add) even when a title-identity entry is listed first', () => {
+    const book = createMockBookMetadata();
+    const libraryBooks = [
+      // title-identity (different ASIN) placed FIRST — the failing order under naive Array.find
+      createMockBook({ id: 1, asin: 'B00OTHERED' }),
+      // exact-ASIN incumbent
+      createMockBook({ id: 42, ...(book.asin !== undefined ? { asin: book.asin } : {}) }),
+    ];
+    renderCard({}, libraryBooks);
+    expect(screen.getByRole('link', { name: /view this book in your library/i }))
+      .toHaveAttribute('href', '/books/42');
+    expect(screen.queryByText('Edition in library')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add book/i })).not.toBeInTheDocument();
+  });
+
+  // Live specimen from the issue: plain vs Booktrack edition of "The Lovely Bones".
+  it('shows the Booktrack edition in the related-edition state with a working Add (specimen)', () => {
+    const libraryBooks = [
+      createMockBook({
+        id: 3,
+        title: 'The Lovely Bones',
+        asin: 'B002V1A380',
+        authors: [{ id: 1, name: 'Alice Sebold', slug: 'alice-sebold' }],
+      }),
+    ];
+    renderCard(
+      { title: 'The Lovely Bones: Booktrack Edition', asin: 'B00BOOKTRK', authors: [{ name: 'Alice Sebold' }] },
+      libraryBooks,
+    );
+    expect(screen.getByText('Edition in library')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add book/i })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /view this book in your library/i })).not.toBeInTheDocument();
+  });
+
+  it('flips the related-edition state to linked In Library at the created id after a successful add', async () => {
+    vi.mocked(api.addBook).mockResolvedValue({ id: 99, title: 'The Way of Kings' } as never);
+    const libraryBooks = [createMockBook({ id: 1, asin: 'B00DIFFEDN' })];
+    const user = userEvent.setup();
+    renderCard({}, libraryBooks);
+
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
+
+    await waitFor(() => {
+      expect(screen.getByText('In Library')).toBeInTheDocument();
+    });
+    // justAddedBookId wins over the original title-identity match (AC5).
+    expect(screen.getByRole('link', { name: /view this book in your library/i }))
+      .toHaveAttribute('href', '/books/99');
+    expect(screen.queryByText('Edition in library')).not.toBeInTheDocument();
+  });
+
+  it('flips the related-edition state to the 409 incumbent id when the server rejects the add', async () => {
+    vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, { id: 7 }));
+    const libraryBooks = [createMockBook({ id: 1, asin: 'B00DIFFEDN' })];
+    const user = userEvent.setup();
+    renderCard({}, libraryBooks);
+
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
+
+    await waitFor(() => {
+      expect(toast.info).toHaveBeenCalledWith('Already in library');
+      expect(screen.getByText('In Library')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('link', { name: /view this book in your library/i }))
+      .toHaveAttribute('href', '/books/7');
+  });
+
   it('renders AddBookPopover with no /books link when no library match', () => {
     renderCard({}, []);
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
     expect(screen.getByRole('button')).toBeInTheDocument();
+    expect(screen.queryByText('Edition in library')).not.toBeInTheDocument();
   });
 
   it('calls addBook via popover flow', async () => {

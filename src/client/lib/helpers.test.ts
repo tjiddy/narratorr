@@ -308,14 +308,14 @@ describe('isBookInLibrary — array author matching (#71)', () => {
   });
 });
 
-describe('findLibraryMatch (#1150)', () => {
+describe('findLibraryMatch (#1150, #1907)', () => {
   it('returns null for empty/undefined libraryBooks', () => {
     const book: BookMetadata = { title: 'Test', authors: [{ name: 'Author' }] };
     expect(findLibraryMatch(book, undefined)).toBeNull();
     expect(findLibraryMatch(book, [])).toBeNull();
   });
 
-  it('returns the matched BookWithAuthor entry by ASIN (preserves .id)', () => {
+  it('returns the matched BookWithAuthor entry by ASIN with kind exact-asin (preserves .id)', () => {
     const libBook: BookWithAuthor = { ...createMockBook({ id: 42 }), asin: 'MATCH_ASIN' };
     const book: BookMetadata = {
       title: 'Different Title',
@@ -324,10 +324,19 @@ describe('findLibraryMatch (#1150)', () => {
     };
     const match = findLibraryMatch(book, [libBook]);
     expect(match).not.toBeNull();
-    expect(match!.id).toBe(42);
+    expect(match!.kind).toBe('exact-asin');
+    expect(match!.entry.id).toBe(42);
   });
 
-  it('returns the matched BookWithAuthor entry by case-insensitive title+author fallback', () => {
+  it('classifies a case-drifted ASIN match as exact-asin (canonicalizeAsin)', () => {
+    const libBook: BookWithAuthor = { ...createMockBook({ id: 3 }), asin: 'B01G9EPERE' };
+    const book: BookMetadata = { title: 'Whatever', asin: 'b01g9epere', authors: [{ name: 'Nobody' }] };
+    const match = findLibraryMatch(book, [libBook]);
+    expect(match!.kind).toBe('exact-asin');
+    expect(match!.entry.id).toBe(3);
+  });
+
+  it('returns kind title-identity for a case-insensitive title+author fallback', () => {
     const libBook: BookWithAuthor = {
       ...createMockBook({ id: 7 }),
       asin: null,
@@ -340,13 +349,113 @@ describe('findLibraryMatch (#1150)', () => {
     };
     const match = findLibraryMatch(book, [libBook]);
     expect(match).not.toBeNull();
-    expect(match!.id).toBe(7);
+    expect(match!.kind).toBe('title-identity');
+    expect(match!.entry.id).toBe(7);
+  });
+
+  it('returns kind title-identity when a title match has a DIFFERENT ASIN', () => {
+    const libBook: BookWithAuthor = {
+      ...createMockBook({ id: 5 }),
+      asin: 'B00OWNEDXX',
+      title: 'The Way of Kings',
+      authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
+    };
+    const book: BookMetadata = {
+      title: 'The Way of Kings',
+      asin: 'B00SEARCHY',
+      authors: [{ name: 'Brandon Sanderson' }],
+    };
+    const match = findLibraryMatch(book, [libBook]);
+    expect(match!.kind).toBe('title-identity');
+    expect(match!.entry.id).toBe(5);
+  });
+
+  it('returns kind title-identity when the owned entry has asin: null (the #1537 null-ASIN book)', () => {
+    const libBook: BookWithAuthor = {
+      ...createMockBook({ id: 8 }),
+      asin: null,
+      title: 'The Way of Kings',
+      authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
+    };
+    const book: BookMetadata = {
+      title: 'The Way of Kings',
+      asin: 'B00SEARCHY',
+      authors: [{ name: 'Brandon Sanderson' }],
+    };
+    const match = findLibraryMatch(book, [libBook]);
+    expect(match!.kind).toBe('title-identity');
+  });
+
+  it('returns kind title-identity when the CANDIDATE omits asin but the owned entry has one (F7)', () => {
+    const libBook: BookWithAuthor = {
+      ...createMockBook({ id: 9 }),
+      asin: 'B00OWNEDXX',
+      title: 'The Way of Kings',
+      authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
+    };
+    const book: BookMetadata = {
+      title: 'The Way of Kings',
+      authors: [{ name: 'Brandon Sanderson' }],
+    };
+    const match = findLibraryMatch(book, [libBook]);
+    expect(match!.kind).toBe('title-identity');
+    expect(match!.entry.id).toBe(9);
+  });
+
+  it('returns kind title-identity for an author-less exact-title match', () => {
+    const libBook: BookWithAuthor = {
+      ...createMockBook({ id: 11 }),
+      asin: null,
+      title: 'Shogun',
+      authors: [],
+    };
+    const book: BookMetadata = { title: 'Shogun', authors: [] };
+    const match = findLibraryMatch(book, [libBook]);
+    expect(match!.kind).toBe('title-identity');
+    expect(match!.entry.id).toBe(11);
   });
 
   it('returns null when no library entry matches', () => {
     const libBook: BookWithAuthor = { ...createMockBook(), asin: null, title: 'Other' };
     const book: BookMetadata = { title: 'Test', authors: [{ name: 'Author' }] };
     expect(findLibraryMatch(book, [libBook])).toBeNull();
+  });
+
+  // AC1a — exact-ASIN precedence is order-independent.
+  it('prefers the exact-ASIN entry over a title-identity entry when the title-identity is FIRST', () => {
+    const titleIdentity: BookWithAuthor = {
+      ...createMockBook({ id: 1 }),
+      asin: 'B00OTHERED',
+      title: 'The Way of Kings',
+      authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
+    };
+    const exactAsin: BookWithAuthor = { ...createMockBook({ id: 42 }), asin: 'B003P2WO5E' };
+    const book: BookMetadata = {
+      title: 'The Way of Kings',
+      asin: 'B003P2WO5E',
+      authors: [{ name: 'Brandon Sanderson' }],
+    };
+    const match = findLibraryMatch(book, [titleIdentity, exactAsin]);
+    expect(match!.kind).toBe('exact-asin');
+    expect(match!.entry.id).toBe(42);
+  });
+
+  it('prefers the exact-ASIN entry over a title-identity entry when the exact-ASIN is FIRST', () => {
+    const exactAsin: BookWithAuthor = { ...createMockBook({ id: 42 }), asin: 'B003P2WO5E' };
+    const titleIdentity: BookWithAuthor = {
+      ...createMockBook({ id: 1 }),
+      asin: 'B00OTHERED',
+      title: 'The Way of Kings',
+      authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
+    };
+    const book: BookMetadata = {
+      title: 'The Way of Kings',
+      asin: 'B003P2WO5E',
+      authors: [{ name: 'Brandon Sanderson' }],
+    };
+    const match = findLibraryMatch(book, [exactAsin, titleIdentity]);
+    expect(match!.kind).toBe('exact-asin');
+    expect(match!.entry.id).toBe(42);
   });
 
   it('generic preserves the BookIdentifier branch of the LibraryEntry union', () => {
@@ -364,6 +473,6 @@ describe('findLibraryMatch (#1150)', () => {
     const match = findLibraryMatch(book, [bookId]);
     expect(match).not.toBeNull();
     // Narrowed back to BookIdentifier — exposes authorName, not authors array.
-    expect(match!.authorName).toBe('Brandon Sanderson');
+    expect(match!.entry.authorName).toBe('Brandon Sanderson');
   });
 });
