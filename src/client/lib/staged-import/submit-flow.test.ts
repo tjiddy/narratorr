@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ApiError } from '@/lib/api';
+import { ApiError, type Api } from '@/lib/api';
 import { SUBMISSION_ERROR_CODES, type StagedImportItem } from '../../../core/import-staging/schemas.js';
 import { runSubmit, SubmitError, type SubmitDisposition } from './submit-flow.js';
 
@@ -12,7 +12,7 @@ function makeApi(overrides: Partial<Record<'createSubmission' | 'putSubmissionIt
     putSubmissionItems: vi.fn(() => Promise.resolve({ id: 10 } as never)),
     finalizeSubmission: vi.fn(() => Promise.resolve({ id: 10 } as never)),
     ...overrides,
-  } as never;
+  } as unknown as Pick<Api, 'createSubmission' | 'putSubmissionItems' | 'finalizeSubmission'>;
 }
 
 async function expectDisposition(promise: Promise<unknown>, disposition: SubmitDisposition) {

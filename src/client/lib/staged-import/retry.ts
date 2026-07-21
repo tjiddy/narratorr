@@ -43,6 +43,11 @@ export function retryDelayMs(retryIndex: number, error: unknown, random: () => n
   return random() * cap;
 }
 
+/** Merge a possibly-undefined signal into retry options without an explicit `signal: undefined` key. */
+export function withSignal(options: RetryOptions | undefined, signal: AbortSignal | undefined): RetryOptions {
+  return { ...options, ...(signal ? { signal } : {}) };
+}
+
 export interface RetryOptions {
   /** Aborts an in-flight backoff sleep and stops further attempts. */
   signal?: AbortSignal;

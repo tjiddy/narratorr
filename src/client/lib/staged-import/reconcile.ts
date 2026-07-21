@@ -1,5 +1,5 @@
 import { ApiError, type Api } from '@/lib/api';
-import { runWithRetry, type RetryOptions } from './retry.js';
+import { runWithRetry, withSignal, type RetryOptions } from './retry.js';
 
 /**
  * Mount by-client reconciliation (#1902, F18/F25/F69). The stored outbox hint is a
@@ -35,7 +35,7 @@ export async function reconcileByClient(params: ReconcileParams): Promise<Reconc
   const { api, clientSubmissionId, retry, signal } = params;
   let summary;
   try {
-    summary = await runWithRetry(() => api.getSubmissionByClientId(clientSubmissionId, false), { ...retry, signal });
+    summary = await runWithRetry(() => api.getSubmissionByClientId(clientSubmissionId, false), withSignal(retry, signal));
   } catch (error) {
     if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) return { action: 'aborted' };
     // 404 is the lifecycle signal (never-landed / expired) — evict, not a lookup failure.

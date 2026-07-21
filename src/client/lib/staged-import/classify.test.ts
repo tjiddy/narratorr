@@ -6,14 +6,14 @@ import { classifySubmission } from './classify.js';
 const valid = (path: string, title = 'T'): ImportConfirmItem => ({
   path,
   title,
-  metadata: { title, authors: [{ name: 'Author' }] } as ImportConfirmItem['metadata'],
+  metadata: { title, authors: [{ name: 'Author' }] } as unknown as NonNullable<ImportConfirmItem['metadata']>,
 });
 
 /** Attach an out-of-bound metadata field to a valid row to force a specific parse failure. */
 const withMeta = (path: string, meta: Record<string, unknown>): ImportConfirmItem => ({
   path,
   title: 'T',
-  metadata: { title: 'T', authors: [{ name: 'Author' }], ...meta } as ImportConfirmItem['metadata'],
+  metadata: { title: 'T', authors: [{ name: 'Author' }], ...meta } as unknown as NonNullable<ImportConfirmItem['metadata']>,
 });
 
 describe('classifySubmission — oversize (purely too large)', () => {
@@ -55,7 +55,7 @@ describe('classifySubmission — invalid (structurally wrong)', () => {
     expect(r.invalidCount).toBe(1);
   });
   it('classifies empty-after-trim title as invalid (too_small)', () => {
-    const r = classifySubmission([{ path: '/a', title: '   ', metadata: { title: 'T', authors: [{ name: 'A' }] } as ImportConfirmItem['metadata'] }]);
+    const r = classifySubmission([{ path: '/a', title: '   ', metadata: { title: 'T', authors: [{ name: 'A' }] } as unknown as NonNullable<ImportConfirmItem['metadata']> }]);
     expect(r.invalidCount).toBe(1);
   });
   it('classifies an unknown metadata key as invalid (unrecognized_keys)', () => {
@@ -74,7 +74,7 @@ describe('classifySubmission — survivors, compaction, normalization', () => {
     const r = classifySubmission([{
       path: '  /a  ',
       title: '  Title  ',
-      metadata: { title: '  Title  ', authors: [{ name: '  Author  ' }] } as ImportConfirmItem['metadata'],
+      metadata: { title: '  Title  ', authors: [{ name: '  Author  ' }] } as unknown as NonNullable<ImportConfirmItem['metadata']>,
     }]);
     expect(r.survivors).toHaveLength(1);
     expect(r.survivors[0]!.path).toBe('/a');

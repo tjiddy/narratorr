@@ -1,7 +1,7 @@
-import { ApiError, type Api } from '@/lib/api';
-import { SUBMISSION_ERROR_CODES, type ImportMode, type StagedImportItem, type SubmissionSource } from '../../../core/import-staging/schemas.js';
+import { ApiError, type Api, type ImportMode } from '@/lib/api';
+import { SUBMISSION_ERROR_CODES, type StagedImportItem, type SubmissionSource } from '../../../core/import-staging/schemas.js';
 import { packStagedChunks } from '@/lib/confirm-chunks.js';
-import { runWithRetry, isRetryableError, type RetryOptions } from './retry.js';
+import { runWithRetry, isRetryableError, withSignal, type RetryOptions } from './retry.js';
 
 /**
  * The staged submit pipeline (#1902, F9/F10/F11): create → inert chunked PUT →
@@ -61,7 +61,7 @@ async function createStep(params: SubmitParams): Promise<number> {
       ? ({ source, mode: mode!, clientSubmissionId, payloadDigest, expectedCount: items.length } as const)
       : ({ source, clientSubmissionId, payloadDigest, expectedCount: items.length } as const);
   try {
-    return (await runWithRetry(() => api.createSubmission(body), { ...retry, signal })).id;
+    return (await runWithRetry(() => api.createSubmission(body), withSignal(retry, signal))).id;
   } catch (error) {
     if (isAbort(error, signal)) throw new SubmitError('aborted', error);
     if (error instanceof ApiError && error.status === 409 && errorCode(error) === SUBMISSION_ERROR_CODES.digestConflict) {
@@ -80,7 +80,7 @@ async function putStep(params: SubmitParams, submissionId: number): Promise<void
   for (const chunk of chunks) {
     onChunkProgress?.({ current: sent + chunk.length, total: rows.length, chunks: chunks.length });
     try {
-      await runWithRetry(() => api.putSubmissionItems(submissionId, { items: chunk }), { ...retry, signal });
+      await runWithRetry(() => api.putSubmissionItems(submissionId, { items: chunk }), withSignal(retry, signal));
     } catch (error) {
       if (isAbort(error, signal)) throw new SubmitError('aborted', error);
       // Permanent (400/409/413) or exhausted transport → stop; the receiving header is inert.
@@ -108,7 +108,7 @@ export async function runSubmit(params: SubmitParams): Promise<{ submissionId: n
   const submissionId = await createStep(params);
   await putStep(params, submissionId);
   try {
-    await runWithRetry(() => api.finalizeSubmission(submissionId), { ...retry, signal });
+    await runWithRetry(() => api.finalizeSubmission(submissionId), withSignal(retry, signal));
   } catch (error) {
     throw mapFinalizeError(error, signal);
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ApiError, type SubmissionResponse } from '@/lib/api';
+import { ApiError, type SubmissionResponse, type Api } from '@/lib/api';
 import { createPollController, POLL_INTERVAL_MS } from './poll.js';
 
 const retry = { sleep: () => Promise.resolve(), random: () => 0 };
@@ -14,7 +14,7 @@ afterEach(() => vi.useRealTimers());
 
 function baseDeps() {
   return {
-    api: { getSubmission: vi.fn() } as never,
+    api: { getSubmission: vi.fn() } as unknown as Pick<Api, 'getSubmission'>,
     submissionId: 10,
     retry,
     onSummary: vi.fn(),
