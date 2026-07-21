@@ -81,7 +81,7 @@ describe('createPollController — failure contracts', () => {
     expect(deps.onEvictHint).toHaveBeenCalledTimes(1);
   });
 
-  it('terminal-detail exhaustion → detailLoadFailed, no onComplete (hint retained)', async () => {
+  it('terminal-detail transport exhaustion → detailLoadFailed, no onComplete (hint retained)', async () => {
     const deps = baseDeps();
     deps.api.getImportSubmission = vi.fn((_id: number, includeItems: boolean) =>
       includeItems ? Promise.reject(new ApiError(503, { error: 'x' })) : Promise.resolve(summary('complete')),
@@ -91,6 +91,24 @@ describe('createPollController — failure contracts', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(deps.onComplete).not.toHaveBeenCalled();
     expect(deps.onBanner).toHaveBeenCalledWith('detailLoadFailed');
+    expect(deps.onEvictHint).not.toHaveBeenCalled();
+  });
+
+  it('terminal-detail 404 is finalized data loss → finalizedMissing + evict (NOT detailLoadFailed) (F3)', async () => {
+    // Summary is `complete`, but the one-time detail fetch 404s. A finalized header can never
+    // be GC'd, so this is the SAME invariant/data-loss signal as a summary 404 — surface
+    // `finalizedMissing` once and evict the dead hint, rather than a retryable results-load failure.
+    const deps = baseDeps();
+    deps.api.getImportSubmission = vi.fn((_id: number, includeItems: boolean) =>
+      includeItems ? Promise.reject(new ApiError(404, { error: 'not-found' })) : Promise.resolve(summary('complete')),
+    ) as never;
+    const c = createPollController(deps);
+    c.start();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deps.onComplete).not.toHaveBeenCalled();
+    expect(deps.onBanner).toHaveBeenCalledWith('finalizedMissing');
+    expect(deps.onBanner).not.toHaveBeenCalledWith('detailLoadFailed');
+    expect(deps.onEvictHint).toHaveBeenCalledTimes(1);
   });
 
   it('stop() before a poll resolves discards the late result (no onSummary/onComplete)', async () => {

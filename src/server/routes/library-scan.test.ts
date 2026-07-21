@@ -199,6 +199,22 @@ describe('library-scan routes', () => {
       });
       expect(res.statusCode).toBe(404);
     });
+
+    // #1902 — the direct-confirm commit path was atomically removed in favour of the staged
+    // submissions lane. Reintroducing this route (or a service path behind it) must fail CI,
+    // so pin that it is gone: the request 404s and no direct-confirm service method is invoked.
+    it('POST /api/library/import/confirm returns 404 (direct-confirm path removed)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/confirm',
+        payload: { books: [{ path: '/audiobooks/Anywhere', title: 'X' }], mode: 'copy' },
+      });
+      expect(res.statusCode).toBe(404);
+      // Even with the mock harness still stubbing a confirmImport method, the removed route
+      // must never route to a direct-confirm service path.
+      const confirmMock = (services.libraryScan as unknown as { confirmImport?: ReturnType<typeof vi.fn> }).confirmImport;
+      expect(confirmMock).not.toHaveBeenCalled();
+    });
   });
 
   describe('POST /api/library/import/match', () => {

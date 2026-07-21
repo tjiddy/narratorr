@@ -13,6 +13,21 @@ const enc = new TextEncoder();
 
 const item = (path: string, title: string): StagedImportItem => ({ path, title, metadata: { title, authors: [{ name: 'A' }] } });
 
+/**
+ * A deterministic secure-context `SubtleCrypto` stub (#1902 F16). Crypto capability is
+ * the behavior under test and varies by runtime/secure context, so the secure-path tests
+ * inject THIS fake (a real SHA-256 via node:crypto) instead of relying on the ambient
+ * global `crypto.subtle`, which could be undefined on CI and silently select the fallback.
+ */
+function makeSecureSubtle() {
+  const digest = vi.fn(async (_alg: string, data: BufferSource): Promise<ArrayBuffer> => {
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data as ArrayBuffer);
+    const out = createHash('sha256').update(Buffer.from(bytes)).digest();
+    return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
+  });
+  return { digest } as unknown as SubtleCrypto & { digest: ReturnType<typeof vi.fn> };
+}
+
 describe('sha256Hex — known vectors', () => {
   it('hashes the empty string', () => {
     expect(sha256Hex(enc.encode(''))).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
@@ -42,16 +57,21 @@ describe('computeSubmissionDigest — agreement with the server oracle', () => {
     ['manual move', manualMove],
     ['multibyte data', multibyte],
   ])('secure path agrees with the server vector — %s', async (_label, input) => {
-    const digest = await computeSubmissionDigest(input);
+    // Inject the deterministic secure stub so the secure `crypto.subtle.digest` branch is
+    // provably the one exercised, not left to the ambient runtime (F16).
+    const secure = makeSecureSubtle();
+    const digest = await computeSubmissionDigest(input, secure);
+    expect(secure.digest).toHaveBeenCalledOnce();
     expect(digest).toBe(serverDigest(input));
     expect(digest).toMatch(/^[0-9a-f]{64}$/); // lowercase hex
   });
 
   it('is independent of key insertion order (same digest)', async () => {
+    const secure = makeSecureSubtle();
     const a: StagedImportItem = { path: '/a', title: 'A', metadata: { title: 'A', authors: [{ name: 'X' }] } };
     const b: StagedImportItem = { title: 'A', path: '/a', metadata: { authors: [{ name: 'X' }], title: 'A' } };
-    expect(await computeSubmissionDigest({ source: 'library', items: [a] }))
-      .toBe(await computeSubmissionDigest({ source: 'library', items: [b] }));
+    expect(await computeSubmissionDigest({ source: 'library', items: [a] }, secure))
+      .toBe(await computeSubmissionDigest({ source: 'library', items: [b] }, secure));
   });
 
   it('is sensitive to item order (different digest)', async () => {
@@ -73,8 +93,10 @@ describe('computeSubmissionDigest — agreement with the server oracle', () => {
   });
 
   it('secure and fallback paths yield byte-for-byte equal digests', async () => {
-    const secure = await computeSubmissionDigest(manualCopy);
+    const secureStub = makeSecureSubtle();
+    const secure = await computeSubmissionDigest(manualCopy, secureStub);
     const fallback = await computeSubmissionDigest(manualCopy, undefined);
+    expect(secureStub.digest).toHaveBeenCalledOnce(); // the secure branch really ran
     expect(secure).toBe(fallback);
   });
 });

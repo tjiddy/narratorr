@@ -54,6 +54,42 @@ describe('outbox — round-trip and lifecycle', () => {
   });
 });
 
+describe('outbox — supersession guard by clientSubmissionId (F1)', () => {
+  const NEWER = '99999999-8888-4777-8666-555555555555';
+
+  it('evictOutbox with a stale clientId does NOT delete a newer submission’s hint', () => {
+    // A new submit has already replaced the single slot with NEWER; a late callback from the
+    // old run must not evict it.
+    putOutbox(record({ clientSubmissionId: NEWER }));
+    evictOutbox('library', UUID); // stale id from the superseded run
+    expect(readOutbox('library')).toEqual(record({ clientSubmissionId: NEWER })); // untouched
+  });
+
+  it('evictOutbox with the matching clientId evicts', () => {
+    putOutbox(record());
+    evictOutbox('library', UUID);
+    expect(readOutbox('library')).toBeNull();
+  });
+
+  it('an unguarded evictOutbox always clears the slot (mount receiving/never-landed arm)', () => {
+    putOutbox(record({ clientSubmissionId: NEWER }));
+    evictOutbox('library'); // no expected id → owns whatever it read
+    expect(readOutbox('library')).toBeNull();
+  });
+
+  it('markOutboxFinalized with a stale clientId does NOT rewrite a newer hint', () => {
+    putOutbox(record({ clientSubmissionId: NEWER }));
+    markOutboxFinalized('library', 42, UUID); // stale id
+    expect(readOutbox('library')).toEqual(record({ clientSubmissionId: NEWER })); // still 'submitting', not stamped
+  });
+
+  it('markOutboxFinalized with the matching clientId advances the hint', () => {
+    putOutbox(record());
+    markOutboxFinalized('library', 42, UUID);
+    expect(readOutbox('library')).toEqual(record({ status: 'finalized', submissionId: 42 }));
+  });
+});
+
 describe('outbox — source isolation (F69)', () => {
   it('a Manual record is not consumed by the Library page', () => {
     putOutbox(record({ source: 'manual' }));
