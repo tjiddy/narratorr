@@ -48,7 +48,10 @@ export function useLibraryImport() {
     captureHeld,
     clearHeld,
   });
-  submitRef.current = (items) => staged.submit(items, undefined);
+  const stagedSubmit = staged.submit;
+  useEffect(() => {
+    submitRef.current = (items) => stagedSubmit(items, undefined);
+  }, [stagedSubmit]);
   const chunkProgress = staged.chunkProgress;
   const registerMutation = { isPending: staged.isPending };
 

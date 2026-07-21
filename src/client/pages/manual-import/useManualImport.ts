@@ -51,7 +51,10 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
     captureHeld,
     clearHeld,
   });
-  submitRef.current = (items, confirmMode) => staged.submit(items, confirmMode);
+  const stagedSubmit = staged.submit;
+  useEffect(() => {
+    submitRef.current = (items, confirmMode) => stagedSubmit(items, confirmMode);
+  }, [stagedSubmit]);
   const chunkProgress = staged.chunkProgress;
   const importMutation = { isPending: staged.isPending };
 
