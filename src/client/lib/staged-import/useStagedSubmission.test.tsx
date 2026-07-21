@@ -53,7 +53,13 @@ function renderStaged() {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // The active-transport supersession test queues `mockCreate.mockImplementationOnce(...)`, so
+  // these API mocks MUST be reset (not merely cleared) between tests — `vi.clearAllMocks()` clears
+  // call history but leaves an unconsumed `*Once()` implementation queued into the next test, per
+  // the `vitest-clearallmocks-once-queue` learning. `mockReset()` drains the queue AND restores a
+  // bare implementation; each test then re-establishes its own defaults. The digest mock is left
+  // intact (it has no `*Once` queue and relies on its persistent pending-promise implementation).
+  for (const m of [mockCreate, mockPut, mockFinalize, mockGet, mockByClient]) m.mockReset();
   digestResolvers.length = 0;
   localStorage.clear();
   __resetOutboxCache();
