@@ -87,6 +87,11 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
   // The frozen in-session submitted paths (F4/F48): deselection is scoped to THIS session's
   // submitted rows, never a recovered receipt, and never applied to a remount projection.
   const submittedPathsRef = useRef<ReadonlySet<string>>(new Set());
+  // Monotonic run epoch (F19). Every submit bumps it; the digest continuation, the transport
+  // chain, and every poll/state callback are gated on "am I still the current epoch?" so a
+  // superseded run (or one whose component unmounted mid-digest) can never publish state,
+  // start a poll, or stop the newer run's poll.
+  const runEpochRef = useRef(0);
 
   const invalidateReportReads = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.importSubmissions.root() });
@@ -150,18 +155,26 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
   );
 
   const startPoll = useCallback(
-    (submissionId: number, recovered: boolean, clientSubmissionId: string) => {
+    (submissionId: number, recovered: boolean, clientSubmissionId: string, epoch: number) => {
+      // Ignore a start request from a superseded run — it must not stop the newer poll (F19).
+      if (epoch !== runEpochRef.current) return;
+      const isCurrent = () => epoch === runEpochRef.current;
       stopPoll();
       const controller = createPollController({
         api,
         submissionId,
         onSummary: (summary) => {
+          if (!isCurrent()) return;
           if (summary.expectedCount > 0) {
             setChunkProgress({ current: summary.processedCount, total: summary.expectedCount, chunks: Math.max(2, chunkCountRef.current) });
           }
         },
-        onComplete: (detail) => projectOutcome(detail, recovered, clientSubmissionId),
+        onComplete: (detail) => {
+          if (!isCurrent()) return;
+          projectOutcome(detail, recovered, clientSubmissionId);
+        },
         onBanner: (key: StagedBannerKey) => {
+          if (!isCurrent()) return;
           setBanner(STAGED_COPY[key]);
           setIsPending(false);
           setChunkProgress(null);
@@ -178,12 +191,13 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
   // A finalize whose response is lost / exhausts retries may still have landed, so probe
   // by-client and rejoin the poll rather than waiting for a future remount.
   const recoverInSessionByClient = useCallback(
-    async (clientSubmissionId: string, signal: AbortSignal) => {
+    async (clientSubmissionId: string, signal: AbortSignal, epoch: number) => {
       const result = await reconcileByClient({ api, clientSubmissionId, signal });
-      if (signal.aborted) return;
+      // Discard the recovery of a superseded/aborted run (F19) — no poll rejoin, no state.
+      if (signal.aborted || epoch !== runEpochRef.current) return;
       switch (result.action) {
         case 'rejoin':
-          startPoll(result.submissionId, false, clientSubmissionId); // in-session: outcome/navigation still apply
+          startPoll(result.submissionId, false, clientSubmissionId, epoch); // in-session: outcome/navigation still apply
           return;
         case 'evict': // receiving (finalize never landed) / never-landed → safe re-run
           setIsPending(false);
@@ -242,13 +256,10 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
   );
 
   const runPipeline = useCallback(
-    async (survivorItems: Parameters<typeof runSubmit>[0]['items'], clientSubmissionId: string, payloadDigest: string, mode: ImportMode | undefined) => {
-      // A fresh submit SUPERSEDES any in-flight poll or mount lookup (F1): stop/abort them so
-      // their late callbacks can't rewrite or evict the new hint we're about to store.
-      stopPoll();
-      mountAbortRef.current?.abort();
-      const abort = new AbortController();
-      abortRef.current = abort;
+    async (survivorItems: Parameters<typeof runSubmit>[0]['items'], clientSubmissionId: string, payloadDigest: string, mode: ImportMode | undefined, epoch: number, abort: AbortController) => {
+      // "Am I still the run the hook is committed to?" — false once a newer submit bumps the
+      // epoch, or the component unmounts (which aborts this controller) (F19).
+      const isCurrent = () => epoch === runEpochRef.current && !abort.signal.aborted;
       const outboxRecord: OutboxRecord = {
         version: 1,
         clientSubmissionId,
@@ -269,19 +280,25 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
           payloadDigest,
           signal: abort.signal,
           onChunkProgress: (p) => {
+            if (!isCurrent()) return;
             chunkCountRef.current = p.chunks;
             setChunkProgress(p);
           },
-          onCreated: () => invalidateReportReads(),
+          onCreated: () => {
+            if (isCurrent()) invalidateReportReads();
+          },
         });
+        if (!isCurrent()) return; // superseded/unmounted mid-flight → do not publish or start a poll
         markOutboxFinalized(source, submissionId, clientSubmissionId);
-        startPoll(submissionId, false, clientSubmissionId);
+        startPoll(submissionId, false, clientSubmissionId, epoch);
       } catch (error: unknown) {
+        // A superseded or aborted run surfaces nothing — the newer run (or unmount) owns state.
+        if (!isCurrent()) return;
         if (error instanceof SubmitError) {
           // A finalize that exhausted retries / lost its response may already have landed —
           // probe by-client in-session and rejoin, rather than parking until a remount (F2).
           if (error.disposition === 'finalize-unreachable') {
-            await recoverInSessionByClient(clientSubmissionId, abort.signal);
+            await recoverInSessionByClient(clientSubmissionId, abort.signal, epoch);
             return;
           }
           handleSubmitError(error, clientSubmissionId);
@@ -291,7 +308,7 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
         }
       }
     },
-    [handleSubmitError, invalidateReportReads, recoverInSessionByClient, source, startPoll, stopPoll],
+    [handleSubmitError, invalidateReportReads, recoverInSessionByClient, source, startPoll],
   );
 
   const submit = useCallback(
@@ -318,6 +335,18 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
         return;
       }
 
+      // Supersede any prior run BEFORE starting this one (F19): abort its in-flight
+      // create/PUT/finalize (or pending digest), stop its poll, and abort a mount lookup, so
+      // none of their late callbacks can publish state or take over poll ownership.
+      abortRef.current?.abort();
+      stopPoll();
+      mountAbortRef.current?.abort();
+      const epoch = ++runEpochRef.current;
+      // Create the controller NOW, before the async digest — so an unmount during digest aborts
+      // it and the continuation below bails out instead of starting the network chain (F19).
+      const abort = new AbortController();
+      abortRef.current = abort;
+
       setIsPending(true);
       setChunkProgress(null);
       chunkCountRef.current = 1;
@@ -333,9 +362,13 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
         setBanner(error instanceof EntropyUnavailableError ? error.message : STAGED_COPY.createUnreachable);
         return;
       }
-      void computeSubmissionDigest(digestInput).then((payloadDigest) => runPipeline(items$, clientSubmissionId, payloadDigest, mode));
+      void computeSubmissionDigest(digestInput).then((payloadDigest) => {
+        // Superseded by a newer submit, or unmounted, while the digest was computing → bail (F19).
+        if (abort.signal.aborted || epoch !== runEpochRef.current) return;
+        return runPipeline(items$, clientSubmissionId, payloadDigest, mode, epoch, abort);
+      });
     },
-    [runPipeline, source],
+    [runPipeline, stopPoll, source],
   );
 
   const dismissBanner = useCallback(() => setBanner(null), []);
@@ -345,16 +378,18 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
     const record = readOutbox(source);
     if (!record) return;
     const recordClientId = record.clientSubmissionId;
+    // The mount recovery is itself an epoch'd run so a subsequent submit supersedes it (F19).
+    const epoch = ++runEpochRef.current;
     const abort = new AbortController();
     mountAbortRef.current = abort;
     void (async () => {
       const result = await reconcileByClient({ api, clientSubmissionId: recordClientId, signal: abort.signal });
-      // A submit that started mid-lookup aborts this controller (F1); its late result must not
-      // rejoin the old poll or evict the newer hint.
-      if (abort.signal.aborted) return;
+      // A submit that started mid-lookup aborts this controller (F1) and bumps the epoch (F19);
+      // its late result must not rejoin the old poll or evict the newer hint.
+      if (abort.signal.aborted || epoch !== runEpochRef.current) return;
       switch (result.action) {
         case 'rejoin':
-          startPoll(result.submissionId, true, recordClientId);
+          startPoll(result.submissionId, true, recordClientId, epoch);
           break;
         case 'evict':
           evictOutbox(source, recordClientId); // only if the slot still holds this hint
