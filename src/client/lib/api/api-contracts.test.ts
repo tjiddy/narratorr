@@ -41,6 +41,7 @@ import { searchApi } from './search.js';
 import { settingsApi } from './settings.js';
 import { eventHistoryApi } from './event-history.js';
 import { systemApi } from './system.js';
+import { submissionsApi } from './submissions.js';
 
 beforeEach(() => {
   mockFetchApi.mockClear();
@@ -822,4 +823,37 @@ describe('response pass-through', () => {
     expect(result).toBe(data);
   });
 
+});
+
+// #1894 F63 — durable import-report wrapper (relevant to the #1902 migration).
+describe('submissionsApi', () => {
+  it('listImportSubmissions with no params → GET /import/submissions (no stray query keys)', async () => {
+    await submissionsApi.listImportSubmissions();
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions');
+  });
+
+  it('listImportSubmissions with source/limit/offset → threads exactly those keys', async () => {
+    await submissionsApi.listImportSubmissions({ source: 'library', limit: 1, offset: 20 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions?source=library&limit=1&offset=20');
+  });
+
+  it('getImportSubmissionAttention without source → GET /import/submissions/attention', async () => {
+    await submissionsApi.getImportSubmissionAttention();
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/attention');
+  });
+
+  it('getImportSubmissionAttention with source → GET /import/submissions/attention?source=manual', async () => {
+    await submissionsApi.getImportSubmissionAttention({ source: 'manual' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/attention?source=manual');
+  });
+
+  it('getImportSubmissionDetail → GET /import/submissions/:id?includeItems=true', async () => {
+    await submissionsApi.getImportSubmissionDetail(7);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/7?includeItems=true');
+  });
+
+  it('discardImportSubmission → DELETE /import/submissions/:id', async () => {
+    await submissionsApi.discardImportSubmission(9);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/9', { method: 'DELETE' });
+  });
 });
