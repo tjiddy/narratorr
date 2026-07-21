@@ -12,11 +12,27 @@ import type { SubmissionResponse, SubmissionAggregates, StagedItemResultDto } fr
 
 export const zeroAgg: SubmissionAggregates = { accepted: 0, held: 0, skipped: 0, failed: 0 };
 
+interface HeaderOverrides {
+  id?: number;
+  clientSubmissionId?: string;
+  source?: 'library' | 'manual';
+  mode?: 'copy' | 'move';
+  status?: 'receiving' | 'processing' | 'complete';
+  expectedCount?: number;
+  receivedCount?: number;
+  processedCount?: number;
+  aggregates?: SubmissionAggregates;
+  detailsPruned?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
+}
+
 const HEADER_BASE = {
   id: 5,
   clientSubmissionId: '00000000-0000-4000-8000-000000000000',
-  source: 'library' as const,
-  status: 'receiving' as const,
+  source: 'library',
+  status: 'receiving',
   expectedCount: 1,
   receivedCount: 0,
   processedCount: 0,
@@ -26,11 +42,11 @@ const HEADER_BASE = {
   updatedAt: '2026-07-21T00:00:00.000Z',
 };
 
-export function summaryResponse(over: Partial<typeof HEADER_BASE> = {}): SubmissionResponse {
+export function summaryResponse(over: HeaderOverrides = {}): SubmissionResponse {
   return { ...HEADER_BASE, ...over, itemsIncluded: false } as SubmissionResponse;
 }
 
-export function detailResponse(items: StagedItemResultDto[], over: Partial<typeof HEADER_BASE> = {}): SubmissionResponse {
+export function detailResponse(items: StagedItemResultDto[], over: HeaderOverrides = {}): SubmissionResponse {
   return { ...HEADER_BASE, ...over, itemsIncluded: true, items } as SubmissionResponse;
 }
 
