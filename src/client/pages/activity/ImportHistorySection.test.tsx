@@ -357,6 +357,52 @@ describe('ImportHistorySection (#1894)', () => {
     warn.mockRestore();
   });
 
+  it('a MALFORMED terminal detail never poisons a valid late Processing list row during reconciliation (F50)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    function Harness() {
+      const [, setParams] = useSearchParams();
+      return (
+        <>
+          <button onClick={() => setParams({ tab: 'history' })}>unfocus</button>
+          <ImportHistorySection />
+        </>
+      );
+    }
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let resolveList!: (v: { data: SubmissionSummary[]; total: number }) => void;
+    listImportSubmissions.mockReturnValue(new Promise((res) => { resolveList = res; }));
+    // A "terminal" (status:complete) detail but with an INVALID header — missing
+    // `aggregates`. The hook leaves it in query data for the hydrator's error arm.
+    const malformedTerminal = {
+      ...summary({ id: 1, status: 'complete', completedAt: new Date().toISOString() }),
+      aggregates: undefined,
+      itemsIncluded: true,
+      items: [{ disposition: 'held', ordinal: 0, path: '/a', title: 'Held Book', reason: 'recording-review-required' }],
+    } as unknown as SubmissionResponse;
+    getImportSubmissionDetail.mockResolvedValue(malformedTerminal);
+
+    renderWithProviders(<Harness />, { route: '/activity?tab=history&run=1', queryClient: qc });
+    // The malformed deep-link target shows the malformed placeholder, not a header.
+    await screen.findByTestId('import-run-malformed');
+
+    // The list resolves with a VALID Processing row for the same id.
+    resolveList({ data: [summary({ id: 1, status: 'processing', processedCount: 1, aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 } })], total: 1 });
+    await waitFor(() => expect(listImportSubmissions).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50)); // let the reconciliation effect run (and SKIP the malformed detail)
+
+    // The list cache row stays VALID (Processing, aggregates intact) — never promoted
+    // to the malformed terminal header.
+    const lc = qc.getQueryData(['importSubmissions', 'list', { limit: 50, offset: 0 }]) as { data?: { status?: string; aggregates?: unknown }[] } | undefined;
+    expect(lc?.data?.[0]?.status).toBe('processing');
+    expect(lc?.data?.[0]?.aggregates).toBeDefined();
+
+    // Removing the deep link reveals the ordinary card from the valid row — it renders
+    // (Processing) without crashing on a poisoned header.
+    fireEvent.click(screen.getByRole('button', { name: 'unfocus' }));
+    await waitFor(() => expect(within(screen.getByTestId('import-history-card-1')).getByText('Processing')).toBeInTheDocument());
+    warn.mockRestore();
+  });
+
   // ── F23: transient deep-link + per-card detail failure isolation ────────────
   it('a transient (non-404) deep-link failure renders a focused retry card while other cards remain (F23)', async () => {
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 }); // id 1 on page

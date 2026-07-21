@@ -88,11 +88,16 @@ export function ImportHistorySection() {
   // empty cache, so the arriving list stored a stale pre-terminal row. Re-patch once
   // the list data is present (the patch is a no-op when nothing advances), so removing
   // `run` — which unmounts the hydrated authority — reveals a TERMINAL ordinary card,
-  // never the stale processing header.
+  // never the stale processing header. Like the hook's own patch (F29), VALIDATE the
+  // cached detail before mutating the list cache (F50): the hook deliberately leaves a
+  // malformed response in query data for the hydrator's error arm, so a raw terminal
+  // header must never be promoted into a valid list page.
   useEffect(() => {
     if (runId == null || !listData) return;
     const detail = queryClient.getQueryData<SubmissionResponse>(queryKeys.importSubmissions.detail(runId));
-    if (detail) patchImportHistoryCache(queryClient, detail);
+    if (!detail) return;
+    const parsed = submissionResponseSchema.safeParse(detail);
+    if (parsed.success) patchImportHistoryCache(queryClient, parsed.data);
   }, [runId, listData, queryClient]);
 
   // The deep-link target is ALWAYS rendered by the single hydration authority (F43/F44),
