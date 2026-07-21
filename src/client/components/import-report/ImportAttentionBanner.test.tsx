@@ -179,6 +179,38 @@ describe('ImportAttentionBanner (#1894)', () => {
     expect(screen.getByText('Import finished with 2 failures')).toBeInTheDocument();
   });
 
+  // ── F42: cached-envelope poll failure (both retained-envelope branches) ──────
+  it('after a cached {data:null,watch} response, a POLL rejection surfaces the retryable error — not silent (F37/F42)', async () => {
+    vi.useFakeTimers();
+    getImportSubmissionAttention.mockResolvedValueOnce(resp(null, true)); // cached null + watch → fast poll
+    getImportSubmissionAttention.mockRejectedValue(new Error('boom'));
+    renderWithProviders(<ImportAttentionBanner source="library" onImportAgain={vi.fn()} />);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(screen.queryByTestId('import-attention-banner')).not.toBeInTheDocument(); // no banner (data null)
+    expect(screen.queryByTestId('attention-error')).not.toBeInTheDocument(); // and no error yet
+
+    // The fast poll fails (retry:2 backoff) → the failure is OBSERVABLE, not silent null.
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 5000);
+    expect(screen.getByTestId('attention-error')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('after a VISIBLE banner, a POLL rejection retains the banner + a refresh-error retry (F37/F42)', async () => {
+    vi.useFakeTimers();
+    // completed-attention with watch:true (another non-terminal run in scope) → fast poll.
+    getImportSubmissionAttention.mockResolvedValueOnce(resp(completed(5, 2, 0), true));
+    getImportSubmissionAttention.mockRejectedValue(new Error('boom'));
+    renderWithProviders(<ImportAttentionBanner source="library" onImportAgain={vi.fn()} />);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(screen.getByText('Import finished with 2 holds')).toBeInTheDocument();
+
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 5000); // poll (+retries) fails
+    // The last-good banner is RETAINED and a refresh-error retry appears.
+    expect(screen.getByTestId('import-attention-banner')).toBeInTheDocument();
+    expect(screen.getByText('Import finished with 2 holds')).toBeInTheDocument();
+    expect(screen.getByTestId('attention-refresh-error')).toBeInTheDocument();
+  });
+
   // ── F18: discard/view-details mutation & navigation lifecycle ────────────────
   it('discard success clears the banner (attention refetches to null)', async () => {
     getImportSubmissionAttention.mockResolvedValueOnce(resp(abandoned(3), true));
@@ -189,6 +221,28 @@ describe('ImportAttentionBanner (#1894)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
     await waitFor(() => expect(screen.queryByTestId('import-attention-banner')).not.toBeInTheDocument());
     expect(discardImportSubmission).toHaveBeenCalledWith(3);
+  });
+
+  it('a successful discard is AUTHORITATIVE — the deleted banner clears even if the following attention refetch fails (F45)', async () => {
+    vi.useFakeTimers();
+    getImportSubmissionAttention.mockResolvedValueOnce(resp(abandoned(3), true)); // banner for id 3
+    getImportSubmissionAttention.mockRejectedValue(new Error('refetch boom')); // the post-discard refetch fails
+    discardImportSubmission.mockResolvedValue({ success: true });
+    renderWithProviders(<ImportAttentionBanner source="library" onImportAgain={vi.fn()} />);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(screen.getByText(/nothing was imported/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    await vi.advanceTimersByTimeAsync(10); // discard resolves → deleted id cleared from cache
+    // The deleted submission's banner is GONE — no re-actionable Discard for id 3.
+    expect(screen.queryByText(/nothing was imported/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Discard' })).not.toBeInTheDocument();
+
+    // Even after the refetch exhausts and fails, the deleted banner stays cleared;
+    // the failure is surfaced as the observable/retryable attention error, not the old banner.
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 5000);
+    expect(screen.queryByText(/nothing was imported/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('attention-error')).toBeInTheDocument();
   });
 
   it('Discard is disabled while the mutation is pending', async () => {

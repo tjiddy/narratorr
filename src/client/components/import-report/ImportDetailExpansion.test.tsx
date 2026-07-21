@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { FAST_POLL_MS } from '@/lib/import-report/polling';
-import * as importReportHooks from '@/hooks/useImportReport';
 import { ImportDetailExpansion } from './ImportDetailExpansion';
 import type { SubmissionResponse } from '@/lib/api';
 
@@ -13,8 +12,6 @@ vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
   return { ...actual, api: { getImportSubmissionDetail: (...a: unknown[]) => getImportSubmissionDetail(...a) } };
 });
-
-type DetailQuery = ReturnType<typeof importReportHooks.useImportSubmissionDetail>;
 
 function detail(id: number, title: string, status: SubmissionResponse['status'] = 'complete', disposition: 'failed' | 'pending' = 'failed'): SubmissionResponse {
   return {
@@ -89,30 +86,27 @@ describe('ImportDetailExpansion (#1894)', () => {
     expect(screen.getByText('Failed Book')).toBeInTheDocument();
   });
 
-  it('retains last-good rows on a background poll failure and surfaces a retry — cold failure replaces (F30)', () => {
-    // Component-level render decision (the F30 fix reordered `isError` vs `detail`):
-    // isError WITH retained data → keep the rows + a retry affordance; isError with
-    // NO data → the cold replacement error. Driving the shared hook to an
-    // {isError, data} state through real polling fights TanStack's rejection timing,
-    // so the render branch is asserted directly here.
-    const refetch = vi.fn();
-    const spy = vi.spyOn(importReportHooks, 'useImportSubmissionDetail');
-
-    // Background failure WITH retained data → rows retained + refresh retry, not cold error.
-    spy.mockReturnValue({ data: detail(1, 'Held Later'), isError: true, refetch } as unknown as DetailQuery);
-    const { unmount } = renderWithProviders(<ImportDetailExpansion id={1} />);
-    expect(screen.getByText('Held Later')).toBeInTheDocument();
-    expect(screen.getByTestId('import-detail-refresh-error')).toBeInTheDocument();
-    expect(screen.queryByTestId('import-detail-error')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(refetch).toHaveBeenCalled();
-    unmount();
-
-    // COLD failure (no retained data) → the replacement error block.
-    spy.mockReturnValue({ data: undefined, isError: true, refetch } as unknown as DetailQuery);
+  it('drives the REAL hook: a timed poll failure retains last-good rows + refresh retry, and Retry re-hits the API with the same id (F30/F41)', async () => {
+    const { ApiError } = await import('@/lib/api');
+    // Real hook, real API mock, REAL timers. First fetch: processing detail with rows,
+    // so the shared hook keeps polling. (Fake timers fight TanStack's rejection timing.)
+    getImportSubmissionDetail.mockResolvedValueOnce(detail(1, 'Held Later', 'processing', 'failed'));
     renderWithProviders(<ImportDetailExpansion id={1} />);
-    expect(screen.getByTestId('import-detail-error')).toBeInTheDocument();
-    expect(screen.queryByTestId('import-detail-refresh-error')).not.toBeInTheDocument();
-    spy.mockRestore();
-  });
+    await screen.findByText('Held Later');
+
+    // The next timed poll fails FAST (404 → the hook does not retry).
+    getImportSubmissionDetail.mockRejectedValue(new ApiError(404, { error: 'gone' }));
+    await screen.findByTestId('import-detail-refresh-error', {}, { timeout: 8000 }); // the real 3s poll fires + fails
+    expect(screen.getByText('Held Later')).toBeInTheDocument(); // last-good rows RETAINED
+    expect(screen.queryByTestId('import-detail-error')).not.toBeInTheDocument(); // NOT the cold replacement
+
+    // Retry reaches the API again with the SAME id, and the rows update on success.
+    getImportSubmissionDetail.mockReset();
+    getImportSubmissionDetail.mockResolvedValue(detail(1, 'Held Now', 'complete', 'failed'));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(getImportSubmissionDetail).toHaveBeenCalledWith(1));
+    await screen.findByText('Held Now');
+    // The cold-failure replacement error (no retained data → `import-detail-error`) is
+    // covered by the section's per-card cold-failure test (F23).
+  }, 15000);
 });
