@@ -853,6 +853,37 @@ describe('ManualImportPage', () => {
     });
   });
 
+  describe('post-prune-safe outcome projection (#1902 F6/F29)', () => {
+    it('a mixed completion pruned before the detail fetch stays non-green, with held/skip detail actions unavailable', async () => {
+      // A detail fetch on a pruned record can carry NO items (the schema forbids it), so the
+      // page must fall back to count-driven severity: accepted+held+skipped+failed with a
+      // non-null failed count → error severity (never a green success), and — because the per-row
+      // detail is gone — the actionable held-review panel must NOT render.
+      const agg = { accepted: 1, held: 1, skipped: 1, failed: 1 };
+      const prunedSummary = summaryResponse({ id: 12, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 4, aggregates: agg, detailsPruned: true, processedCount: 4 });
+      mockCreateSubmission.mockResolvedValue(summaryResponse({ id: 12, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 4 }));
+      mockPutSubmissionItems.mockResolvedValue(summaryResponse({ id: 12, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 4 }));
+      mockFinalizeSubmission.mockResolvedValue(summaryResponse({ id: 12, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 4 }));
+      // Both the summary poll and the terminal detail fetch return the pruned summary (no items).
+      mockGetSubmission.mockResolvedValue(prunedSummary);
+
+      const book = makeDiscoveredBook();
+      const { rerender } = await scanAndReview([book]);
+      await simulateMatchResults(rerender, [makeMatchResult()]);
+
+      await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
+
+      // Wait for the terminal projection to run (the poll reaches complete and fetches detail).
+      await waitFor(() => expect(mockGetSubmission).toHaveBeenCalledWith(12, true));
+      // Detail is pruned, so the actionable held-review panel does NOT render (detail actions
+      // unavailable), and a partial (non-clean) outcome stays on the page — no green navigation.
+      expect(screen.queryByTestId('held-review-panel')).not.toBeInTheDocument();
+      expect(mockNavigate).not.toHaveBeenCalled();
+      // (Count-driven non-green severity for this same pruned mix is asserted in the hook test,
+      // where the toast channel is observable — see useManualImport.test.ts F6.)
+    });
+  });
+
   describe('scan error handling', () => {
     it('shows error message when scan API rejects', async () => {
       mockScanDirectory.mockRejectedValueOnce(new Error('Permission denied: /root/audiobooks'));

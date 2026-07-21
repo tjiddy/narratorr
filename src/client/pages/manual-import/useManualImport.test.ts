@@ -50,8 +50,21 @@ import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import * as matchTimer from '@/hooks/match-timer';
 import type { MatchTimerMock } from '@/__tests__/match-timer-mock';
-import { wireStagedComplete, acceptedRow, heldRow, skippedRow, failedRow, type StagedMockFns } from '@/lib/staged-import/__tests__/staged-fixtures';
-import { __resetOutboxCache } from '@/lib/staged-import/outbox';
+import { wireStagedComplete, acceptedRow, heldRow, skippedRow, failedRow, summaryResponse, detailResponse, type StagedMockFns } from '@/lib/staged-import/__tests__/staged-fixtures';
+import { __resetOutboxCache, readOutbox, putOutbox } from '@/lib/staged-import/outbox';
+import { STAGED_COPY } from '@/lib/staged-import/messages';
+import { PREFLIGHT_COPY } from '@/lib/staged-import/preflight';
+
+/** A wrapper whose QueryClient is spied so tests can observe invalidation timing (F8). */
+function createSpyWrapper() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+  const wrapper = ({ children }: { children: React.ReactNode }) => createElement(QueryClientProvider, { client: queryClient }, children);
+  return { wrapper, invalidateSpy };
+}
+/** The first segment of each invalidated query key, e.g. 'books' / 'importSubmissions'. */
+const invalidatedRoots = (spy: ReturnType<typeof vi.spyOn>): string[] =>
+  spy.mock.calls.map((c: unknown[]) => ((c[0] as { queryKey?: unknown[] }).queryKey?.[0]) as string);
 
 /** Adapter so the staged fixtures can drive the mocked `api` staged methods. */
 const stagedMocks: StagedMockFns = {
@@ -803,6 +816,249 @@ describe('useManualImport', () => {
     // The oversize row stays selected (fail-open — nothing landed).
     expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.selected).toBe(true);
   });
+
+  // ── Zero-survivor category mixes through the submit hook (F14/F39) ────────────
+  const INVALID_META = { title: 'X', authors: [{ name: 'A' }], bogusUnknownKey: 1 } as unknown as BookMetadata; // unknown key → invalid
+  const OVERSIZE_META = { title: 'X', authors: [{ name: 'x'.repeat(513) }] } as unknown as BookMetadata; // too_big → oversize
+
+  async function scanTwo() {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+    return result;
+  }
+
+  it('all-invalid zero-survivor: no create/hint/digest, rows stay selected, truthful invalid count (F14/F39)', async () => {
+    const result = await scanTwo();
+    act(() => { result.current.actions.handleEdit(0, { title: 'Book A', author: 'A', series: '', metadata: INVALID_META }); });
+    act(() => { result.current.actions.handleEdit(1, { title: 'Book B', author: 'B', series: '', metadata: INVALID_META }); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+
+    await waitFor(() => expect(result.current.state.banner).toMatch(/couldn.t be prepared/i));
+    expect(result.current.state.banner).toContain('2'); // truthful invalid count
+    expect(api.createImportSubmission).not.toHaveBeenCalled();
+    expect(api.putImportSubmissionItems).not.toHaveBeenCalled();
+    expect(readOutbox('manual')).toBeNull(); // no hint stored
+    expect(result.current.state.rows.every(r => r.selected)).toBe(true); // selection unchanged
+  });
+
+  it('mixed invalid + oversize with no valid row: no create/hint, BOTH counts truthful, selection unchanged (F14/F39)', async () => {
+    const result = await scanTwo();
+    act(() => { result.current.actions.handleEdit(0, { title: 'Book A', author: 'A', series: '', metadata: INVALID_META }); });
+    act(() => { result.current.actions.handleEdit(1, { title: 'Book B', author: 'B', series: '', metadata: OVERSIZE_META }); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+
+    await waitFor(() => expect(result.current.state.banner).toMatch(/couldn.t be prepared/i));
+    expect(result.current.state.banner).toMatch(/too large/i); // both categories named
+    expect(api.createImportSubmission).not.toHaveBeenCalled();
+    expect(readOutbox('manual')).toBeNull();
+    expect(result.current.state.rows.every(r => r.selected)).toBe(true);
+  });
+
+  // ── Cache invalidation timing (F8) ────────────────────────────────────────────
+  it('a clean completion invalidates books AND import-report reads, with books BEFORE navigation (F8)', async () => {
+    const { wrapper, invalidateSpy } = createSpyWrapper();
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    wireStagedComplete(stagedMocks, { source: 'manual', mode: 'copy', items: [acceptedRow(0, '/audiobooks/Book A', 'Book A'), acceptedRow(1, '/audiobooks/Book B', 'Book B')] });
+    const { result } = renderHook(() => useManualImport(), { wrapper });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/library'));
+
+    const roots = invalidatedRoots(invalidateSpy);
+    expect(roots).toContain('books');
+    expect(roots).toContain('importSubmissions');
+    // books() invalidation runs before the /library navigation so the list isn't stale.
+    const booksIdx = invalidateSpy.mock.calls.findIndex((c) => (c[0] as { queryKey?: unknown[] }).queryKey?.[0] === 'books');
+    expect(invalidateSpy.mock.invocationCallOrder[booksIdx]!).toBeLessThan(mockNavigate.mock.invocationCallOrder[0]!);
+  });
+
+  it('a create failure does NOT invalidate books (F8)', async () => {
+    const { wrapper, invalidateSpy } = createSpyWrapper();
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    vi.mocked(api.createImportSubmission).mockRejectedValue(new ApiError(400, { error: 'invalid-body' }));
+    const { result } = renderHook(() => useManualImport(), { wrapper });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+    await waitFor(() => expect(result.current.state.banner).toBeTruthy());
+
+    expect(invalidatedRoots(invalidateSpy)).not.toContain('books');
+  });
+
+  it('create invalidates import-report reads but NOT books until a successful terminal detail (F8)', async () => {
+    const { wrapper, invalidateSpy } = createSpyWrapper();
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    // create/PUT/finalize resolve, then the poll stays processing (no terminal detail yet).
+    vi.mocked(api.createImportSubmission).mockResolvedValue(summaryResponse({ id: 3, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
+    vi.mocked(api.putImportSubmissionItems).mockResolvedValue(summaryResponse({ id: 3, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
+    vi.mocked(api.finalizeImportSubmission).mockResolvedValue(summaryResponse({ id: 3, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 2 }));
+    vi.mocked(api.getImportSubmission).mockResolvedValue(summaryResponse({ id: 3, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 2, processedCount: 1 }));
+    const { result } = renderHook(() => useManualImport(), { wrapper });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+    await waitFor(() => expect(invalidatedRoots(invalidateSpy)).toContain('importSubmissions'));
+
+    expect(invalidatedRoots(invalidateSpy)).not.toContain('books'); // no terminal detail → no books refresh
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  // ── Distinct permanent-failure dispositions (F7) ──────────────────────────────
+  it('a permanent PUT failure shows the distinct upload-failure copy and RETAINS the hint (F7)', async () => {
+    const result = await scanTwo();
+    vi.mocked(api.putImportSubmissionItems).mockRejectedValue(new ApiError(409, { error: 'submission-not-receiving' }));
+    await act(async () => { result.current.actions.handleImport(); });
+
+    await waitFor(() => expect(result.current.state.banner).toBe(STAGED_COPY.putFailed));
+    expect(result.current.state.banner).not.toBe(STAGED_COPY.createUnreachable); // NOT connectivity copy
+    expect(api.finalizeImportSubmission).not.toHaveBeenCalled();
+    expect(readOutbox('manual')).not.toBeNull(); // receiving hint left for reconcile
+  });
+
+  it('an invalid-body create shows the validation copy and EVICTS the hint (F7)', async () => {
+    const result = await scanTwo();
+    vi.mocked(api.createImportSubmission).mockRejectedValue(new ApiError(400, { error: 'invalid-body' }));
+    await act(async () => { result.current.actions.handleImport(); });
+
+    await waitFor(() => expect(result.current.state.banner).toBe(STAGED_COPY.createInvalid));
+    expect(readOutbox('manual')).toBeNull();
+  });
+
+  it('a finalize 409 (gaps/digest-mismatch) shows the finalization-failure copy and EVICTS (F7)', async () => {
+    const result = await scanTwo();
+    vi.mocked(api.createImportSubmission).mockResolvedValue(summaryResponse({ id: 4, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
+    vi.mocked(api.putImportSubmissionItems).mockResolvedValue(summaryResponse({ id: 4, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
+    vi.mocked(api.finalizeImportSubmission).mockRejectedValue(new ApiError(409, { error: 'finalize-gaps' }));
+    await act(async () => { result.current.actions.handleImport(); });
+
+    await waitFor(() => expect(result.current.state.banner).toBe(STAGED_COPY.finalizeFailed));
+    expect(readOutbox('manual')).toBeNull();
+  });
+
+  // ── Recovered-on-remount projections are read-only / non-navigating (F4/F5) ───
+  const RECOVER_UUID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const RECOVER_DIGEST = 'b'.repeat(64);
+
+  it('a completion recovered on remount keeps held detail READ-ONLY (no live re-confirm) (F5)', async () => {
+    putOutbox({ version: 1, clientSubmissionId: RECOVER_UUID, source: 'manual', status: 'finalized', payloadDigest: RECOVER_DIGEST, expectedCount: 1, submissionId: 7 });
+    vi.mocked(api.getImportSubmissionByClientId).mockResolvedValue(summaryResponse({ id: 7, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 1, aggregates: { accepted: 0, held: 1, skipped: 0, failed: 0 } }));
+    vi.mocked(api.getImportSubmission).mockImplementation((_id: number, includeItems?: boolean) =>
+      Promise.resolve(includeItems
+        ? detailResponse([heldRow(0, '/audiobooks/Held', 'Held Book')], { id: 7, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 1, aggregates: { accepted: 0, held: 1, skipped: 0, failed: 0 } })
+        : summaryResponse({ id: 7, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 1, aggregates: { accepted: 0, held: 1, skipped: 0, failed: 0 } })) as never);
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('1 held for recording review'));
+    expect(result.current.state.heldReview).toHaveLength(0); // NOT captured into the live actionable panel
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('a clean completion recovered on remount surfaces in place and NEVER navigates (F4)', async () => {
+    putOutbox({ version: 1, clientSubmissionId: RECOVER_UUID, source: 'manual', status: 'finalized', payloadDigest: RECOVER_DIGEST, expectedCount: 1, submissionId: 8 });
+    vi.mocked(api.getImportSubmissionByClientId).mockResolvedValue(summaryResponse({ id: 8, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 1, aggregates: { accepted: 1, held: 0, skipped: 0, failed: 0 } }));
+    vi.mocked(api.getImportSubmission).mockImplementation((_id: number, includeItems?: boolean) =>
+      Promise.resolve(includeItems
+        ? detailResponse([acceptedRow(0, '/audiobooks/Book A', 'Book A')], { id: 8, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 1, aggregates: { accepted: 1, held: 0, skipped: 0, failed: 0 } })
+        : summaryResponse({ id: 8, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 1, aggregates: { accepted: 1, held: 0, skipped: 0, failed: 0 } })) as never);
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+
+    // A clean IN-SESSION completion would navigate; a recovered one must NOT (it only surfaces).
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('1 book queued for import'));
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(result.current.state.step).not.toBe('review'); // stayed on its recovered mount, no scan
+  });
+
+  // ── Post-prune-safe outcome projection (F6/F29) ───────────────────────────────
+  it('a mixed completion pruned before detail stays count-driven non-green with held actions unavailable (F6/F29)', async () => {
+    const result = await scanTwo();
+    // A pruned record's detail fetch carries NO items; severity must fall back to COUNTS:
+    // accepted+held+skipped+failed with failed>0 ⇒ error (never green), and the actionable
+    // held panel is not populated because the per-row detail is gone.
+    const agg = { accepted: 1, held: 1, skipped: 1, failed: 1 };
+    const pruned = summaryResponse({ id: 11, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 4, aggregates: agg, detailsPruned: true, processedCount: 4 });
+    vi.mocked(api.createImportSubmission).mockResolvedValue(summaryResponse({ id: 11, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 4 }));
+    vi.mocked(api.putImportSubmissionItems).mockResolvedValue(summaryResponse({ id: 11, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 4 }));
+    vi.mocked(api.finalizeImportSubmission).mockResolvedValue(summaryResponse({ id: 11, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 4 }));
+    vi.mocked(api.getImportSubmission).mockResolvedValue(pruned); // both summary + detail arms → pruned summary
+
+    await act(async () => { result.current.actions.handleImport(); });
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled()); // failed>0 ⇒ error severity
+    expect(toast.success).not.toHaveBeenCalled(); // never a false green post-prune
+    expect(result.current.state.heldReview).toHaveLength(0); // detail pruned ⇒ no live held actions
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  // ── Finalize exhaustion recovers in-session via by-client (F2) ────────────────
+  it('finalize exhaustion probes by-client in-session and rejoins the poll to surface completion (F2)', async () => {
+    const result = await scanTwo();
+    // create/PUT resolve; finalize 5xx EXHAUSTS → finalize-unreachable. The header actually
+    // landed, so the in-session by-client probe finds it complete and the rejoined poll surfaces
+    // the outcome — rather than parking behind a banner until a future remount.
+    const agg = { accepted: 2, held: 0, skipped: 0, failed: 0 };
+    vi.mocked(api.createImportSubmission).mockResolvedValue(summaryResponse({ id: 9, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
+    vi.mocked(api.putImportSubmissionItems).mockResolvedValue(summaryResponse({ id: 9, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
+    vi.mocked(api.finalizeImportSubmission).mockRejectedValue(new ApiError(503, { error: 'x' }));
+    vi.mocked(api.getImportSubmissionByClientId).mockResolvedValue(summaryResponse({ id: 9, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 2, aggregates: agg }));
+    vi.mocked(api.getImportSubmission).mockImplementation((_id: number, incl?: boolean) =>
+      Promise.resolve(incl
+        ? detailResponse([acceptedRow(0, '/audiobooks/Book A', 'Book A'), acceptedRow(1, '/audiobooks/Book B', 'Book B')], { id: 9, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 2, aggregates: agg })
+        : summaryResponse({ id: 9, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 2, aggregates: agg })) as never);
+
+    await act(async () => { result.current.actions.handleImport(); });
+
+    // The by-client probe is the in-session recovery (not a passive banner); the rejoined
+    // poll then reaches the clean completion and navigates. (Real finalize backoff runs here.)
+    await waitFor(() => expect(api.getImportSubmissionByClientId).toHaveBeenCalled(), { timeout: 12_000 });
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/library'), { timeout: 12_000 });
+  }, 15_000);
+
+  // ── Cumulative byte-budget refusal through the submit hook (F13) ───────────────
+  it('a cumulative byte-budget overflow is refused pre-create — no create/hint, rows stay selected (F13/F30)', async () => {
+    // Each item is a valid survivor just under the per-item ceiling; together they exceed the
+    // 64 MiB cumulative cap, so the byte-budget gate refuses the whole batch before any create.
+    const perItem = 920_000; // < MAX_SINGLE_ITEM_BYTES (900 KiB) → survives classification
+    const count = 74; // 74 × 920,000 ≈ 68 MiB > 64 MiB cap
+    const discoveries = Array.from({ length: count }, (_, i) => ({
+      path: `/audiobooks/B${i}`, parsedTitle: 'x'.repeat(perItem), parsedAuthor: 'A', parsedSeries: null,
+      fileCount: 1, totalSize: 1, isDuplicate: false,
+    }));
+    vi.mocked(api.scanDirectory).mockResolvedValue({ discoveries, totalFolders: count } as unknown as ScanResult);
+    // Leave the match job in the default 'matching' state (never flushed) so the rows stay
+    // selected/pending — this test is about the byte gate, not match-driven deselection.
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(count); });
+    // Force every row selected (Select-all when not all-selected) so the whole batch is submitted.
+    if (!result.current.state.rows.every(r => r.selected)) {
+      act(() => { result.current.actions.handleToggleAll(); });
+    }
+    await waitFor(() => { expect(result.current.counts.selectedCount).toBe(count); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+
+    await waitFor(() => expect(result.current.state.banner).toBe(PREFLIGHT_COPY.byteBudget));
+    expect(api.createImportSubmission).not.toHaveBeenCalled();
+    expect(api.putImportSubmissionItems).not.toHaveBeenCalled();
+    expect(readOutbox('manual')).toBeNull(); // no hint stored
+    expect(result.current.state.rows.every(r => r.selected)).toBe(true); // selection unchanged
+  }, 20_000);
 
   it('handleBack from review resets to path step', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
