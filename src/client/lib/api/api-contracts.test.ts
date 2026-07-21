@@ -849,40 +849,40 @@ describe('submissionsApi', () => {
   });
 
   // ── Staged write + poll lane (#1902) ──────────────────────────────────────
-  it('createSubmission → POST /import/submissions with the create body', async () => {
+  it('createImportSubmission → POST /import/submissions with the create body', async () => {
     const body = { source: 'library', clientSubmissionId: 'u', payloadDigest: 'd', expectedCount: 2 } as never;
-    await submissionsApi.createSubmission(body);
+    await submissionsApi.createImportSubmission(body);
     expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions', { method: 'POST', body: JSON.stringify(body) });
   });
 
-  it('putSubmissionItems → PUT /import/submissions/:id/items with the {items} envelope', async () => {
+  it('putImportSubmissionItems → PUT /import/submissions/:id/items with the {items} envelope', async () => {
     const body = { items: [{ ordinal: 0, item: { path: '/a', title: 'A' } }] } as never;
-    await submissionsApi.putSubmissionItems(5, body);
+    await submissionsApi.putImportSubmissionItems(5, body);
     expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/5/items', { method: 'PUT', body: JSON.stringify(body) });
   });
 
-  it('finalizeSubmission → POST /import/submissions/:id/finalize', async () => {
-    await submissionsApi.finalizeSubmission(5);
+  it('finalizeImportSubmission → POST /import/submissions/:id/finalize', async () => {
+    await submissionsApi.finalizeImportSubmission(5);
     expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/5/finalize', { method: 'POST' });
   });
 
-  it('getSubmission (summary) → GET /import/submissions/:id?includeItems=false', async () => {
-    await submissionsApi.getSubmission(5);
+  it('getImportSubmission (summary) → GET /import/submissions/:id?includeItems=false', async () => {
+    await submissionsApi.getImportSubmission(5);
     expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/5?includeItems=false');
   });
 
-  it('getSubmission (detail) → GET /import/submissions/:id?includeItems=true', async () => {
-    await submissionsApi.getSubmission(5, true);
+  it('getImportSubmission (detail) → GET /import/submissions/:id?includeItems=true', async () => {
+    await submissionsApi.getImportSubmission(5, true);
     expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/5?includeItems=true');
   });
 
-  it('getSubmissionByClientId (summary) → GET /import/submissions/by-client/:uuid?includeItems=false', async () => {
-    await submissionsApi.getSubmissionByClientId('abc');
+  it('getImportSubmissionByClientId (summary) → GET /import/submissions/by-client/:uuid?includeItems=false', async () => {
+    await submissionsApi.getImportSubmissionByClientId('abc');
     expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/by-client/abc?includeItems=false');
   });
 
-  it('getSubmissionByClientId (detail) → GET /import/submissions/by-client/:uuid?includeItems=true', async () => {
-    await submissionsApi.getSubmissionByClientId('abc', true);
+  it('getImportSubmissionByClientId (detail) → GET /import/submissions/by-client/:uuid?includeItems=true', async () => {
+    await submissionsApi.getImportSubmissionByClientId('abc', true);
     expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/by-client/abc?includeItems=true');
   });
 });

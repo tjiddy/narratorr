@@ -96,11 +96,11 @@ vi.mock('@/lib/api', async () => {
       getImportSubmissionDetail: vi.fn(),
       discardImportSubmission: vi.fn(),
       // #1902 staged write + poll lane.
-      createSubmission: (...args: unknown[]) => mockCreateSubmission(...args),
-      putSubmissionItems: (...args: unknown[]) => mockPutSubmissionItems(...args),
-      finalizeSubmission: (...args: unknown[]) => mockFinalizeSubmission(...args),
-      getSubmission: (...args: unknown[]) => mockGetSubmission(...args),
-      getSubmissionByClientId: (...args: unknown[]) => mockGetSubmissionByClientId(...args),
+      createImportSubmission: (...args: unknown[]) => mockCreateSubmission(...args),
+      putImportSubmissionItems: (...args: unknown[]) => mockPutSubmissionItems(...args),
+      finalizeImportSubmission: (...args: unknown[]) => mockFinalizeSubmission(...args),
+      getImportSubmission: (...args: unknown[]) => mockGetSubmission(...args),
+      getImportSubmissionByClientId: (...args: unknown[]) => mockGetSubmissionByClientId(...args),
     },
     formatBytes: (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`,
   };

@@ -119,15 +119,31 @@ export function putOutbox(record: OutboxRecord): void {
   notify();
 }
 
-/** Advance the hint to `finalized`, optionally stamping the now-known durable id. No-op if absent. */
-export function markOutboxFinalized(source: SubmissionSource, submissionId?: number): void {
+/**
+ * Advance the hint to `finalized`, optionally stamping the now-known durable id. No-op
+ * if absent OR if `expectedClientId` is passed and no longer matches the stored hint —
+ * a newer submission has already replaced the single slot, so an older callback must
+ * not rewrite it (#1902 F1: source-scoped supersession guard).
+ */
+export function markOutboxFinalized(source: SubmissionSource, submissionId?: number, expectedClientId?: string): void {
   const current = readOutbox(source);
   if (!current) return;
+  if (expectedClientId !== undefined && current.clientSubmissionId !== expectedClientId) return;
   putOutbox({ ...current, status: 'finalized', ...(submissionId !== undefined ? { submissionId } : {}) });
 }
 
-/** Evict the hint. The in-memory snapshot is nulled BEFORE the (guarded) storage write. */
-export function evictOutbox(source: SubmissionSource): void {
+/**
+ * Evict the hint. The in-memory snapshot is nulled BEFORE the (guarded) storage write.
+ * When `expectedClientId` is passed, evict ONLY if the stored hint still belongs to that
+ * submission — a late poll/lookup/finalize callback from a superseded run must not delete
+ * the newer submission's hint (#1902 F1). An unguarded call (no `expectedClientId`) always
+ * evicts — used by the mount receiving/never-landed arms that own the slot they read.
+ */
+export function evictOutbox(source: SubmissionSource, expectedClientId?: string): void {
+  if (expectedClientId !== undefined) {
+    const current = readOutbox(source);
+    if (current && current.clientSubmissionId !== expectedClientId) return;
+  }
   cache.set(source, null);
   safeRemoveItem(keyFor(source));
   notify();

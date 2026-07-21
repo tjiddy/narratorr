@@ -23,7 +23,7 @@ import type { StagedBannerKey } from './messages.js';
 
 export const POLL_INTERVAL_MS = 2_000;
 
-type PollApi = Pick<Api, 'getSubmission'>;
+type PollApi = Pick<Api, 'getImportSubmission'>;
 
 export interface PollControllerDeps {
   api: PollApi;
@@ -68,12 +68,21 @@ export function createPollController(deps: PollControllerDeps): PollController {
 
   async function runTerminalDetail(): Promise<void> {
     try {
-      const detail = await runWithRetry(() => api.getSubmission(submissionId, true), { ...retry, signal: abort.signal });
+      const detail = await runWithRetry(() => api.getImportSubmission(submissionId, true), { ...retry, signal: abort.signal });
       if (stopped) return;
       await onComplete(detail);
-    } catch {
+    } catch (error: unknown) {
       if (stopped) return;
-      // Import IS done; only its results failed to load. Hint retained, reattempt on remount.
+      // A finalized header is never GC'd, so a 404 on the terminal-detail arm is the SAME
+      // invariant/data-loss signal as a summary-poll 404 (F3): surface `finalizedMissing`
+      // once, evict the now-dead hint, and stop — not a retryable results-load failure.
+      if (error instanceof ApiError && error.status === 404) {
+        onBanner('finalizedMissing');
+        onEvictHint?.();
+        stop();
+        return;
+      }
+      // Otherwise the import IS done; only its results failed to load. Hint retained, reattempt on remount.
       onBanner('detailLoadFailed');
     }
   }
@@ -82,7 +91,7 @@ export function createPollController(deps: PollControllerDeps): PollController {
     if (stopped || busy || completeHandled) return;
     busy = true;
     try {
-      const summary = await runWithRetry(() => api.getSubmission(submissionId, false), { ...retry, signal: abort.signal });
+      const summary = await runWithRetry(() => api.getImportSubmission(submissionId, false), { ...retry, signal: abort.signal });
       if (stopped) return;
       onSummary?.(summary);
       if (summary.status === 'complete' && !completeHandled) {
@@ -90,7 +99,7 @@ export function createPollController(deps: PollControllerDeps): PollController {
         clearTimer(); // the detail chain supersedes polling
         await runTerminalDetail();
       }
-    } catch (error) {
+    } catch (error: unknown) {
       if (stopped) return;
       if (error instanceof ApiError && error.status === 404) {
         // A finalized header is never GC'd → a 404 is invariant/data-loss. Surface once, evict.

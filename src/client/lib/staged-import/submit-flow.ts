@@ -38,7 +38,7 @@ function isAbort(error: unknown, signal?: AbortSignal): boolean {
   return !!signal?.aborted || (error instanceof DOMException && error.name === 'AbortError');
 }
 
-type StagedApi = Pick<Api, 'createSubmission' | 'putSubmissionItems' | 'finalizeSubmission'>;
+type StagedApi = Pick<Api, 'createImportSubmission' | 'putImportSubmissionItems' | 'finalizeImportSubmission'>;
 
 export interface SubmitParams {
   api: StagedApi;
@@ -63,8 +63,8 @@ async function createStep(params: SubmitParams): Promise<number> {
       ? ({ source, mode: mode!, clientSubmissionId, payloadDigest, expectedCount: items.length } as const)
       : ({ source, clientSubmissionId, payloadDigest, expectedCount: items.length } as const);
   try {
-    return (await runWithRetry(() => api.createSubmission(body), withSignal(retry, signal))).id;
-  } catch (error) {
+    return (await runWithRetry(() => api.createImportSubmission(body), withSignal(retry, signal))).id;
+  } catch (error: unknown) {
     if (isAbort(error, signal)) throw new SubmitError('aborted', error);
     if (error instanceof ApiError && error.status === 409 && errorCode(error) === SUBMISSION_ERROR_CODES.digestConflict) {
       throw new SubmitError('digest-conflict', error);
@@ -82,8 +82,8 @@ async function putStep(params: SubmitParams, submissionId: number): Promise<void
   for (const chunk of chunks) {
     onChunkProgress?.({ current: sent + chunk.length, total: rows.length, chunks: chunks.length });
     try {
-      await runWithRetry(() => api.putSubmissionItems(submissionId, { items: chunk }), withSignal(retry, signal));
-    } catch (error) {
+      await runWithRetry(() => api.putImportSubmissionItems(submissionId, { items: chunk }), withSignal(retry, signal));
+    } catch (error: unknown) {
       if (isAbort(error, signal)) throw new SubmitError('aborted', error);
       // Permanent (400/409/413) or exhausted transport → stop; the receiving header is inert.
       throw new SubmitError('put-failed', error);
@@ -111,8 +111,8 @@ export async function runSubmit(params: SubmitParams): Promise<{ submissionId: n
   params.onCreated?.(submissionId);
   await putStep(params, submissionId);
   try {
-    await runWithRetry(() => api.finalizeSubmission(submissionId), withSignal(retry, signal));
-  } catch (error) {
+    await runWithRetry(() => api.finalizeImportSubmission(submissionId), withSignal(retry, signal));
+  } catch (error: unknown) {
     throw mapFinalizeError(error, signal);
   }
   return { submissionId };

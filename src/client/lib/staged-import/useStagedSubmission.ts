@@ -79,10 +79,14 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
 
   // Per-submission scratch that must survive re-renders without re-triggering effects.
   const abortRef = useRef<AbortController | null>(null);
+  const mountAbortRef = useRef<AbortController | null>(null);
   const pollRef = useRef<PollController | null>(null);
   const localExclusionsRef = useRef<LocalExclusions>({ invalid: 0, oversize: 0 });
   const modeRef = useRef<ImportMode | undefined>(undefined);
   const chunkCountRef = useRef(1);
+  // The frozen in-session submitted paths (F4/F48): deselection is scoped to THIS session's
+  // submitted rows, never a recovered receipt, and never applied to a remount projection.
+  const submittedPathsRef = useRef<ReadonlySet<string>>(new Set());
 
   const invalidateReportReads = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.importSubmissions.root() });
@@ -95,47 +99,58 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
 
   // ── Terminal detail projection → count-driven outcome / navigation / deselect ──
   const projectOutcome = useCallback(
-    (detail: SubmissionResponse, recovered: boolean) => {
+    (detail: SubmissionResponse, recovered: boolean, clientSubmissionId: string) => {
       setIsPending(false);
       setChunkProgress(null);
       // A completion recovered on remount has no surviving in-session summary (F29).
       const local: LocalExclusions = recovered ? { invalid: 0, oversize: 0 } : localExclusionsRef.current;
       const agg = detail.aggregates;
+      const items = !detail.detailsPruned && 'items' in detail && detail.items ? detail.items : undefined;
 
-      // Held rows drive their own recovery panel — only when the per-row detail survived (F29).
-      if (!detail.detailsPruned && 'items' in detail && detail.items) {
-        const held = detail.items.filter((i): i is Extract<StagedItemResultDto, { disposition: 'held' }> => i.disposition === 'held');
+      // Held rows: capture into the LIVE re-confirm panel only in-session — a completion
+      // recovered on remount keeps held detail read-only (F5/F66), because the captured mode
+      // is gone and cross-reload re-confirm is unsupported. The warning toast still informs.
+      if (items) {
+        const held = items.filter((i): i is Extract<StagedItemResultDto, { disposition: 'held' }> => i.disposition === 'held');
         if (held.length > 0) {
-          captureHeld(held.map(toHeldReviewItem), recovered ? undefined : modeRef.current);
+          if (!recovered) captureHeld(held.map(toHeldReviewItem), modeRef.current);
           toast.warning(`${held.length} held for recording review`);
         } else if (!recovered) {
           clearHeld();
         }
       }
 
-      const outcome = buildStagedOutcomeToast(agg, local, acceptedVerb);
+      // Skip clause names the reason/incumbent title while the detail survives (F9).
+      const skippedRows = items
+        ?.filter((i): i is Extract<StagedItemResultDto, { disposition: 'skipped' }> => i.disposition === 'skipped')
+        .map((i) => ({ reason: i.reason, ...(i.existingTitle !== undefined ? { existingTitle: i.existingTitle } : {}) }));
+      const outcome = buildStagedOutcomeToast(agg, local, acceptedVerb, skippedRows);
       if (outcome) toast[outcome.severity](outcome.message);
 
       // The accepted rows changed the library — refresh books + the #1894 report reads.
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       invalidateReportReads();
 
-      evictOutbox(source);
+      // Guarded evict: a newer submit may already own the single slot (F1).
+      evictOutbox(source, clientSubmissionId);
 
-      // Clean AND in-session → navigate; any partial (server or local), or a recovered
-      // completion, stays in place and deselects the accepted rows.
-      if (!recovered && isCleanCompletion(agg, local)) {
+      // Clean AND in-session → navigate. A recovered projection NEVER navigates and NEVER
+      // mutates the current selection (F4): the displayed rows may differ after a remount, so
+      // deselection is scoped strictly to THIS session's frozen submitted paths.
+      if (recovered) return;
+      if (isCleanCompletion(agg, local)) {
         onCleanNavigate();
         return;
       }
-      const acceptedPaths = 'items' in detail && detail.items ? acceptedItemPaths(detail.items) : new Set<string>();
+      const acceptedDto = items ? acceptedItemPaths(items) : new Set<string>();
+      const acceptedPaths = new Set([...acceptedDto].filter((p) => submittedPathsRef.current.has(p)));
       if (acceptedPaths.size > 0) onDeselectAccepted(acceptedPaths);
     },
     [acceptedVerb, captureHeld, clearHeld, invalidateReportReads, onCleanNavigate, onDeselectAccepted, queryClient, source],
   );
 
   const startPoll = useCallback(
-    (submissionId: number, recovered: boolean) => {
+    (submissionId: number, recovered: boolean, clientSubmissionId: string) => {
       stopPoll();
       const controller = createPollController({
         api,
@@ -145,13 +160,13 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
             setChunkProgress({ current: summary.processedCount, total: summary.expectedCount, chunks: Math.max(2, chunkCountRef.current) });
           }
         },
-        onComplete: (detail) => projectOutcome(detail, recovered),
+        onComplete: (detail) => projectOutcome(detail, recovered, clientSubmissionId),
         onBanner: (key: StagedBannerKey) => {
           setBanner(STAGED_COPY[key]);
           setIsPending(false);
           setChunkProgress(null);
         },
-        onEvictHint: () => evictOutbox(source),
+        onEvictHint: () => evictOutbox(source, clientSubmissionId),
       });
       pollRef.current = controller;
       controller.start();
@@ -159,36 +174,68 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
     [projectOutcome, source, stopPoll],
   );
 
-  // ── SubmitError disposition → banner + outbox transition ──────────────────────
+  // ── In-session by-client recovery (F2) ────────────────────────────────────────
+  // A finalize whose response is lost / exhausts retries may still have landed, so probe
+  // by-client and rejoin the poll rather than waiting for a future remount.
+  const recoverInSessionByClient = useCallback(
+    async (clientSubmissionId: string, signal: AbortSignal) => {
+      const result = await reconcileByClient({ api, clientSubmissionId, signal });
+      if (signal.aborted) return;
+      switch (result.action) {
+        case 'rejoin':
+          startPoll(result.submissionId, false, clientSubmissionId); // in-session: outcome/navigation still apply
+          return;
+        case 'evict': // receiving (finalize never landed) / never-landed → safe re-run
+          setIsPending(false);
+          evictOutbox(source, clientSubmissionId);
+          return;
+        case 'lookup-failed':
+          setIsPending(false);
+          setBanner(STAGED_COPY.createUnreachable); // hint retained → later remount re-probes
+          return;
+        case 'aborted':
+          return;
+      }
+    },
+    [source, startPoll],
+  );
+
+  // ── SubmitError disposition → banner + outbox transition (F1 guarded, F7 distinct copy) ──
   const handleSubmitError = useCallback(
-    (error: SubmitError) => {
+    (error: SubmitError, clientSubmissionId: string) => {
       setIsPending(false);
       setChunkProgress(null);
       switch (error.disposition) {
         case 'aborted':
           return; // unmount/navigation — surface nothing
         case 'create-unreachable':
-        case 'finalize-unreachable':
           setBanner(STAGED_COPY.createUnreachable); // hint retained → next mount probes by-client
           return;
         case 'digest-conflict':
           setBanner(STAGED_COPY.digestConflict); // durable header left recoverable; fresh UUID on retry
           return;
         case 'put-failed':
-          setBanner(STAGED_COPY.createUnreachable); // upload stopped; receiving header inert, hint left for reconcile
+          // Permanent PUT (400/409/413): NOT connectivity — the upload stopped, nothing imported.
+          // Leave the `receiving` hint for the next mount's receiving/404 reconcile arm.
+          setBanner(STAGED_COPY.putFailed);
           return;
         case 'create-invalid':
+          setBanner(STAGED_COPY.createInvalid); // validation failure → evict, nothing landed
+          evictOutbox(source, clientSubmissionId);
+          return;
         case 'finalize-failed':
-          setBanner(STAGED_COPY.createUnreachable);
-          evictOutbox(source);
+          setBanner(STAGED_COPY.finalizeFailed); // 409 gaps/digest-mismatch → cannot complete, evict
+          evictOutbox(source, clientSubmissionId);
           return;
         case 'finalize-invariant':
           setBanner(STAGED_COPY.finalizeInvariant);
-          evictOutbox(source);
+          evictOutbox(source, clientSubmissionId);
           return;
         case 'finalize-missing':
-          evictOutbox(source); // never landed — safe re-run, no error banner
+          evictOutbox(source, clientSubmissionId); // never landed — safe re-run, no error banner
           return;
+        case 'finalize-unreachable':
+          return; // handled by the in-session by-client recovery path (F2)
       }
     },
     [source],
@@ -196,6 +243,10 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
 
   const runPipeline = useCallback(
     async (survivorItems: Parameters<typeof runSubmit>[0]['items'], clientSubmissionId: string, payloadDigest: string, mode: ImportMode | undefined) => {
+      // A fresh submit SUPERSEDES any in-flight poll or mount lookup (F1): stop/abort them so
+      // their late callbacks can't rewrite or evict the new hint we're about to store.
+      stopPoll();
+      mountAbortRef.current?.abort();
       const abort = new AbortController();
       abortRef.current = abort;
       const outboxRecord: OutboxRecord = {
@@ -223,14 +274,24 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
           },
           onCreated: () => invalidateReportReads(),
         });
-        markOutboxFinalized(source, submissionId);
-        startPoll(submissionId, false);
-      } catch (error) {
-        if (error instanceof SubmitError) handleSubmitError(error);
-        else setBanner(STAGED_COPY.createUnreachable);
+        markOutboxFinalized(source, submissionId, clientSubmissionId);
+        startPoll(submissionId, false, clientSubmissionId);
+      } catch (error: unknown) {
+        if (error instanceof SubmitError) {
+          // A finalize that exhausted retries / lost its response may already have landed —
+          // probe by-client in-session and rejoin, rather than parking until a remount (F2).
+          if (error.disposition === 'finalize-unreachable') {
+            await recoverInSessionByClient(clientSubmissionId, abort.signal);
+            return;
+          }
+          handleSubmitError(error, clientSubmissionId);
+        } else {
+          setIsPending(false);
+          setBanner(STAGED_COPY.createUnreachable);
+        }
       }
     },
-    [handleSubmitError, invalidateReportReads, source, startPoll],
+    [handleSubmitError, invalidateReportReads, recoverInSessionByClient, source, startPoll, stopPoll],
   );
 
   const submit = useCallback(
@@ -261,11 +322,13 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
       setChunkProgress(null);
       chunkCountRef.current = 1;
       const items$ = classified.survivors;
+      // Freeze the submitted paths NOW (F4): deselection later is scoped to this exact set.
+      submittedPathsRef.current = new Set(items$.map((i) => i.path));
       const digestInput = { source, ...(source === 'manual' && mode !== undefined ? { mode } : {}), items: [...items$] };
       let clientSubmissionId: string;
       try {
         clientSubmissionId = generateClientSubmissionId();
-      } catch (error) {
+      } catch (error: unknown) {
         setIsPending(false);
         setBanner(error instanceof EntropyUnavailableError ? error.message : STAGED_COPY.createUnreachable);
         return;
@@ -281,16 +344,20 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
   useEffect(() => {
     const record = readOutbox(source);
     if (!record) return;
+    const recordClientId = record.clientSubmissionId;
     const abort = new AbortController();
+    mountAbortRef.current = abort;
     void (async () => {
-      const result = await reconcileByClient({ api, clientSubmissionId: record.clientSubmissionId, signal: abort.signal });
+      const result = await reconcileByClient({ api, clientSubmissionId: recordClientId, signal: abort.signal });
+      // A submit that started mid-lookup aborts this controller (F1); its late result must not
+      // rejoin the old poll or evict the newer hint.
       if (abort.signal.aborted) return;
       switch (result.action) {
         case 'rejoin':
-          startPoll(result.submissionId, true);
+          startPoll(result.submissionId, true, recordClientId);
           break;
         case 'evict':
-          evictOutbox(source);
+          evictOutbox(source, recordClientId); // only if the slot still holds this hint
           break;
         case 'lookup-failed':
           setBanner(STAGED_COPY.createUnreachable); // pointer retained
@@ -304,10 +371,11 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source]);
 
-  // Abort any in-flight submit + stop polling on unmount.
+  // Abort any in-flight submit/lookup + stop polling on unmount.
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      mountAbortRef.current?.abort();
       pollRef.current?.stop();
     };
   }, []);

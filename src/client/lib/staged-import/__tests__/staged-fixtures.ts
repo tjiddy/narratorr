@@ -3,8 +3,9 @@ import type { SubmissionResponse, SubmissionAggregates, StagedItemResultDto } fr
 
 /**
  * Shared fixtures/mocks for the staged submit + poll flow (#1902). The hook/page tests
- * mock `@/lib/api` and drive the pipeline through `createSubmission` → `putSubmissionItems`
- * → `finalizeSubmission` → `getSubmission` (summary + one-time detail). Because the poll
+ * mock `@/lib/api` and drive the pipeline through `createImportSubmission` →
+ * `putImportSubmissionItems` → `finalizeImportSubmission` → `getImportSubmission`
+ * (summary + one-time detail). Because the poll
  * controller fires its FIRST tick immediately (not after the interval), a summary that
  * already reads `complete` resolves the whole terminal chain via microtasks — no fake
  * timers needed for terminal-outcome tests.

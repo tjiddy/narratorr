@@ -48,11 +48,11 @@ vi.mock('@/lib/api', async (importOriginal) => ({
     cancelMatchJob: (...args: unknown[]) => mockCancelMatchJob(...args),
     getSettings: (...args: unknown[]) => mockGetSettings(...args),
     getBookIdentifiers: (...args: unknown[]) => mockGetBookIdentifiers(...args),
-    createSubmission: (...args: unknown[]) => mockCreateSubmission(...args),
-    putSubmissionItems: (...args: unknown[]) => mockPutSubmissionItems(...args),
-    finalizeSubmission: (...args: unknown[]) => mockFinalizeSubmission(...args),
-    getSubmission: (...args: unknown[]) => mockGetSubmission(...args),
-    getSubmissionByClientId: (...args: unknown[]) => mockGetSubmissionByClientId(...args),
+    createImportSubmission: (...args: unknown[]) => mockCreateSubmission(...args),
+    putImportSubmissionItems: (...args: unknown[]) => mockPutSubmissionItems(...args),
+    finalizeImportSubmission: (...args: unknown[]) => mockFinalizeSubmission(...args),
+    getImportSubmission: (...args: unknown[]) => mockGetSubmission(...args),
+    getImportSubmissionByClientId: (...args: unknown[]) => mockGetSubmissionByClientId(...args),
   },
 }));
 
@@ -490,7 +490,7 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   // ── Staged submit + poll flow (#1902) ──────────────────────────────────────
-  it('Register: createSubmission called with source=library, no mode, and the shaped items', async () => {
+  it('Register: createImportSubmission called with source=library, no mode, and the shaped items', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
@@ -612,7 +612,7 @@ describe('useLibraryImport hook (#133)', () => {
     await waitFor(() => expect(result.current.step).toBe('review'));
 
     await act(async () => { result.current.handleRegister(); });
-    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('1 skipped'));
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('1 already in your library'));
     expect(toast.success).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
   });
@@ -664,7 +664,7 @@ describe('useLibraryImport hook (#133)', () => {
     await waitFor(() => expect(result.current.rows).toHaveLength(2));
 
     await act(async () => { result.current.handleRegister(); });
-    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('1 registered · 1 skipped'));
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('1 registered · 1 already in your library'));
     expect(mockNavigate).not.toHaveBeenCalled();
     // The accepted row (Book1) is deselected; the skipped row (Book2) stays as-is.
     await waitFor(() => expect(result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(false));

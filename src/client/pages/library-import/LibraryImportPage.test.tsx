@@ -37,11 +37,11 @@ vi.mock('@/lib/api', async (importOriginal) => {
       getImportSubmissionDetail: vi.fn(),
       discardImportSubmission: vi.fn(),
       // #1902 staged write + poll lane.
-      createSubmission: vi.fn(),
-      putSubmissionItems: vi.fn(),
-      finalizeSubmission: vi.fn(),
-      getSubmission: vi.fn(),
-      getSubmissionByClientId: vi.fn(),
+      createImportSubmission: vi.fn(),
+      putImportSubmissionItems: vi.fn(),
+      finalizeImportSubmission: vi.fn(),
+      getImportSubmission: vi.fn(),
+      getImportSubmissionByClientId: vi.fn(),
     },
   };
 });
@@ -49,12 +49,12 @@ vi.mock('@/lib/api', async (importOriginal) => {
 const { api } = await import('@/lib/api');
 const mockApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const stagedMocks = {
-  create: mockApi.createSubmission!, put: mockApi.putSubmissionItems!, finalize: mockApi.finalizeSubmission!,
-  get: mockApi.getSubmission!, byClient: mockApi.getSubmissionByClientId!,
+  create: mockApi.createImportSubmission!, put: mockApi.putImportSubmissionItems!, finalize: mockApi.finalizeImportSubmission!,
+  get: mockApi.getImportSubmission!, byClient: mockApi.getImportSubmissionByClientId!,
 } as unknown as StagedMockFns;
 /** The staged items actually PUT to the server, flattened across chunks. */
 const submittedItems = () =>
-  mockApi.putSubmissionItems!.mock.calls.flatMap(c => (c[1] as { items: { ordinal: number; item: Record<string, unknown> }[] }).items.map(r => r.item));
+  mockApi.putImportSubmissionItems!.mock.calls.flatMap(c => (c[1] as { items: { ordinal: number; item: Record<string, unknown> }[] }).items.map(r => r.item));
 
 const matchTimer = await import('@/hooks/match-timer');
 const engineClock = matchTimer as unknown as import('@/__tests__/match-timer-mock').MatchTimerMock;
@@ -598,7 +598,7 @@ describe('LibraryImportPage (#133)', () => {
     it('import button shows "Importing..." when registerMutation.isPending', async () => {
 
       // create never resolves (keeps isPending=true)
-      mockApi.createSubmission!.mockReturnValue(new Promise(() => {}));
+      mockApi.createImportSubmission!.mockReturnValue(new Promise(() => {}));
       mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 1, matched: 1,
         results: [{ path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Book 1', authors: [{ name: 'A' }], asin: 'B001' }, alternatives: [] }],
@@ -682,8 +682,8 @@ describe('LibraryImportPage (#133)', () => {
       await userEvent.click(screen.getByRole('button', { name: /import/i }));
 
       // Verify the staged submission carried the edited metadata (library → no mode).
-      await waitFor(() => { expect(mockApi.createSubmission).toHaveBeenCalled(); });
-      expect(mockApi.createSubmission!.mock.calls[0]![0]).not.toHaveProperty('mode');
+      await waitFor(() => { expect(mockApi.createImportSubmission).toHaveBeenCalled(); });
+      expect(mockApi.createImportSubmission!.mock.calls[0]![0]).not.toHaveProperty('mode');
       expect(submittedItems()).toEqual(expect.arrayContaining([
         expect.objectContaining({ title: 'Custom Title' }),
       ]));
@@ -725,7 +725,7 @@ describe('LibraryImportPage (#133)', () => {
       const reconfirmBtn = within(panel).getByRole('button', { name: /re-confirm and import/i });
 
       // Re-confirm resubmits the held row with forceImport bypassing the safety-net.
-      mockApi.putSubmissionItems!.mockClear();
+      mockApi.putImportSubmissionItems!.mockClear();
       wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, '/audiobooks/A/B1', 'Held Book')] });
       await user.click(reconfirmBtn);
 
@@ -938,7 +938,7 @@ describe('LibraryImportPage (#133)', () => {
       await userEvent.click(screen.getByRole('button', { name: /import/i }));
 
       await waitFor(() => {
-        expect(mockApi.createSubmission).toHaveBeenCalled();
+        expect(mockApi.createImportSubmission).toHaveBeenCalled();
       });
     });
   });
@@ -963,10 +963,10 @@ describe('LibraryImportPage (#133)', () => {
       });
       // create/PUT/finalize resolve, then the summary poll stays in `processing` (never completes)
       // with 1 of 2 processed — the first immediate tick paints the label.
-      mockApi.createSubmission!.mockResolvedValue(summaryResponse({ id: 9, source: 'library', status: 'receiving', expectedCount: 2 }));
-      mockApi.putSubmissionItems!.mockResolvedValue(summaryResponse({ id: 9, source: 'library', status: 'receiving', expectedCount: 2 }));
-      mockApi.finalizeSubmission!.mockResolvedValue(summaryResponse({ id: 9, source: 'library', status: 'processing', expectedCount: 2, processedCount: 0 }));
-      mockApi.getSubmission!.mockResolvedValue(summaryResponse({ id: 9, source: 'library', status: 'processing', expectedCount: 2, processedCount: 1 }));
+      mockApi.createImportSubmission!.mockResolvedValue(summaryResponse({ id: 9, source: 'library', status: 'receiving', expectedCount: 2 }));
+      mockApi.putImportSubmissionItems!.mockResolvedValue(summaryResponse({ id: 9, source: 'library', status: 'receiving', expectedCount: 2 }));
+      mockApi.finalizeImportSubmission!.mockResolvedValue(summaryResponse({ id: 9, source: 'library', status: 'processing', expectedCount: 2, processedCount: 0 }));
+      mockApi.getImportSubmission!.mockResolvedValue(summaryResponse({ id: 9, source: 'library', status: 'processing', expectedCount: 2, processedCount: 1 }));
 
       renderWithProviders(<LibraryImportPage />);
       await waitFor(() => { expect(screen.getByText('Book 1')).toBeInTheDocument(); });

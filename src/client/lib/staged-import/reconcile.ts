@@ -25,7 +25,7 @@ export type ReconcileResult =
   | { action: 'aborted' };
 
 export interface ReconcileParams {
-  api: Pick<Api, 'getSubmissionByClientId'>;
+  api: Pick<Api, 'getImportSubmissionByClientId'>;
   clientSubmissionId: string;
   retry?: RetryOptions;
   signal?: AbortSignal;
@@ -35,8 +35,8 @@ export async function reconcileByClient(params: ReconcileParams): Promise<Reconc
   const { api, clientSubmissionId, retry, signal } = params;
   let summary;
   try {
-    summary = await runWithRetry(() => api.getSubmissionByClientId(clientSubmissionId, false), withSignal(retry, signal));
-  } catch (error) {
+    summary = await runWithRetry(() => api.getImportSubmissionByClientId(clientSubmissionId, false), withSignal(retry, signal));
+  } catch (error: unknown) {
     if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) return { action: 'aborted' };
     // 404 is the lifecycle signal (never-landed / expired) — evict, not a lookup failure.
     if (error instanceof ApiError && error.status === 404) return { action: 'evict', reason: 'never-landed' };

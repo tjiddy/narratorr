@@ -1,5 +1,5 @@
 import type { SubmissionAggregates } from '@/lib/api';
-import type { OutcomeToast } from '@/lib/import-outcome.js';
+import { isCleanImport, importSkipSummary, type OutcomeToast, type SkipSummaryRow } from '@/lib/import-outcome.js';
 
 /**
  * Count-driven outcome projection for the staged flow (#1902, F4/F7/F8/F29).
@@ -21,10 +21,13 @@ export interface LocalExclusions {
 
 export const NO_LOCAL_EXCLUSIONS: LocalExclusions = { invalid: 0, oversize: 0 };
 
-/** The server aggregate is clean when nothing was held, skipped, or failed. */
-export function isServerAggregateClean(agg: SubmissionAggregates): boolean {
-  return agg.held === 0 && agg.skipped === 0 && agg.failed === 0;
-}
+/**
+ * The server aggregate is clean when nothing was held/skipped/failed. This is the ONE
+ * canonical clean predicate — it delegates to `isCleanImport` in `import-outcome.ts`
+ * rather than re-implementing the same count check, so severity/navigation decisions
+ * can never drift between the two modules (#1902 F11 / DRY-2/DRY-3).
+ */
+export const isServerAggregateClean = isCleanImport;
 
 /** A completion is clean only when the server aggregate is clean AND no in-session rows were excluded. */
 export function isCleanCompletion(agg: SubmissionAggregates, local: LocalExclusions = NO_LOCAL_EXCLUSIONS): boolean {
@@ -32,12 +35,25 @@ export function isCleanCompletion(agg: SubmissionAggregates, local: LocalExclusi
 }
 
 /**
- * Build the consolidated accepted/skipped/failed + local-exclusion toast, purely from
- * counts (F29). Held rows are surfaced by their own warning/recovery panel, so a
- * held-only outcome with no local exclusions returns `null` here (this channel stays
- * silent). ANY local exclusion forces a non-null, non-green toast.
+ * Build the consolidated accepted/skipped/failed + local-exclusion toast (F29). Severity
+ * is count-driven, but the SKIP clause names the reason/incumbent-title from the retained
+ * per-row detail when it survived (`skippedRows` present) via `importSkipSummary`, falling
+ * back to the count-only `"N skipped"` wording only after pruning drops the detail (F9).
+ * Held rows are surfaced by their own warning/recovery panel, so a held-only outcome with
+ * no local exclusions returns `null` here (this channel stays silent). ANY local exclusion
+ * forces a non-null, non-green toast.
  */
-export function buildStagedOutcomeToast(agg: SubmissionAggregates, local: LocalExclusions, acceptedVerb: string): OutcomeToast | null {
+/** Reason/title-named skip clause while detail survives; count-only after prune (F9). */
+function skipClause(skippedCount: number, skippedRows?: readonly SkipSummaryRow[]): string {
+  return skippedRows && skippedRows.length > 0 ? importSkipSummary(skippedRows) : `${skippedCount} skipped`;
+}
+
+export function buildStagedOutcomeToast(
+  agg: SubmissionAggregates,
+  local: LocalExclusions,
+  acceptedVerb: string,
+  skippedRows?: readonly SkipSummaryRow[],
+): OutcomeToast | null {
   const hasLocal = local.invalid > 0 || local.oversize > 0;
 
   if (isCleanCompletion(agg, local)) {
@@ -49,7 +65,7 @@ export function buildStagedOutcomeToast(agg: SubmissionAggregates, local: LocalE
 
   const parts: string[] = [];
   if (agg.accepted > 0) parts.push(`${agg.accepted} ${acceptedVerb}`);
-  if (agg.skipped > 0) parts.push(`${agg.skipped} skipped`);
+  if (agg.skipped > 0) parts.push(skipClause(agg.skipped, skippedRows));
   if (agg.failed > 0) parts.push(`${agg.failed} failed`);
   if (local.invalid > 0) parts.push(`${local.invalid} couldn’t be prepared — check their details`);
   if (local.oversize > 0) parts.push(`${local.oversize} too large to submit — remove or re-scan`);

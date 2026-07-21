@@ -56,24 +56,24 @@ export const submissionsApi = {
 
   // ── Staged write + poll lane (#1902) ──────────────────────────────────────
   /** create-or-return by clientSubmissionId → the durable header (`receiving`). */
-  createSubmission: (body: CreateSubmissionBody) =>
+  createImportSubmission: (body: CreateSubmissionBody) =>
     fetchApi<SubmissionResponse>('/import/submissions', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
   /** Inert chunked upload of `{ items: [{ ordinal, item }] }` (idempotent per ordinal). */
-  putSubmissionItems: (id: number, body: PutItemsBody) =>
+  putImportSubmissionItems: (id: number, body: PutItemsBody) =>
     fetchApi<SubmissionResponse>(`/import/submissions/${id}/items`, {
       method: 'PUT',
       body: JSON.stringify(body),
     }),
   /** Digest-verified finalize; CAS-flips `receiving` → `processing`. */
-  finalizeSubmission: (id: number) =>
+  finalizeImportSubmission: (id: number) =>
     fetchApi<SubmissionResponse>(`/import/submissions/${id}/finalize`, { method: 'POST' }),
   /** Query-selected read by id — summary (`includeItems=false`) or one-time detail. */
-  getSubmission: (id: number, includeItems = false) =>
+  getImportSubmission: (id: number, includeItems = false) =>
     fetchApi<SubmissionResponse>(`/import/submissions/${id}?includeItems=${includeItems}`),
-  /** by-client recovery lookup — same summary/detail arms as `getSubmission`. */
-  getSubmissionByClientId: (clientSubmissionId: string, includeItems = false) =>
+  /** by-client recovery lookup — same summary/detail arms as `getImportSubmission`. */
+  getImportSubmissionByClientId: (clientSubmissionId: string, includeItems = false) =>
     fetchApi<SubmissionResponse>(`/import/submissions/by-client/${clientSubmissionId}?includeItems=${includeItems}`),
 };
