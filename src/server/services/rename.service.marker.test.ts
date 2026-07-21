@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { createMockLogger, createMockDb, mockDbChain, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { RenameService } from './rename.service.js';
-import { findCommitPendingMarkers } from '../utils/import-staging.js';
+import { findCommitPendingMarkers } from '../utils/import-marker-sweep.js';
+import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { Db } from '../../db/index.js';
@@ -107,6 +108,27 @@ describe('RenameService marker convergence (#1418, real tmpdir)', () => {
     // `target` is a native tmpdir path, so normalize before matching on a Windows dev box.
     expect(bookService.update).toHaveBeenCalledWith(1, { path: target.split('\\').join('/') });
     // A subsequent boot sweep finds nothing to recover at the old path.
+    expect(await findCommitPendingMarkers(libraryRoot)).toEqual([]);
+  });
+
+  it('#1911: recovery through the unified seam consumes an ACTIVE `.import-backup` before the folder move', async () => {
+    buildService('');
+    const oldPath = join(libraryRoot, 'Wrong Author', 'Old Title');
+    const target = join(libraryRoot, 'Brandon Sanderson', 'The Way of Kings');
+    await mkdir(oldPath, { recursive: true });
+    // Arm the ACTIVE born-hidden backup convention (#1911) + the un-dotted marker.
+    const activeBackup = deriveImportSiblings(oldPath).backupPath;
+    await mkdir(activeBackup, { recursive: true });
+    await writeFile(join(activeBackup, 'original.mp3'), Buffer.alloc(200, 7));
+    await writeFile(`${oldPath}.import-commit-pending`, '');
+    bookService.getById.mockResolvedValue(bookAt(oldPath));
+
+    await service.renameBook(1);
+
+    expect(await pathExists(`${oldPath}.import-commit-pending`)).toBe(false);
+    expect(await pathExists(activeBackup)).toBe(false);
+    expect(await pathExists(oldPath)).toBe(false);
+    expect(await listFiles(target)).toContain('original.mp3');
     expect(await findCommitPendingMarkers(libraryRoot)).toEqual([]);
   });
 

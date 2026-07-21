@@ -7,7 +7,8 @@ import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 import { createMockLogger, createMockDb, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { MergeService } from './merge.service.js';
-import { findCommitPendingMarkers } from '../utils/import-staging.js';
+import { findCommitPendingMarkers } from '../utils/import-marker-sweep.js';
+import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
@@ -152,6 +153,26 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
     // Only the merged output remains — all originals (incl. the recovery-restored one) deleted.
     expect(await listFiles(bookPath)).toEqual([OUTPUT]);
     // No marker survives, so a subsequent import/boot recovery cannot revert the merge.
+    expect(await findCommitPendingMarkers(libraryRoot)).toEqual([]);
+    expect(emit).toHaveBeenCalledWith('merge_complete', expect.objectContaining({ book_id: 42, success: true }));
+  });
+
+  it('#1911: recovery through the unified seam consumes an ACTIVE `.import-backup` before committing the merge', async () => {
+    await mkdir(bookPath, { recursive: true });
+    await writeFile(join(bookPath, '01.mp3'), Buffer.alloc(300, 1));
+    await writeFile(join(bookPath, '02.mp3'), Buffer.alloc(300, 2));
+    // Arm the ACTIVE born-hidden backup convention (#1911) + the un-dotted marker.
+    const activeBackup = deriveImportSiblings(bookPath).backupPath;
+    await mkdir(activeBackup, { recursive: true });
+    await writeFile(join(activeBackup, 'orig.mp3'), Buffer.alloc(150, 3));
+    await writeFile(`${bookPath}.import-commit-pending`, '');
+
+    await buildService().enqueueMerge(42);
+    await waitForMergeSettled(emit);
+
+    expect(await pathExists(`${bookPath}.import-commit-pending`)).toBe(false);
+    expect(await pathExists(activeBackup)).toBe(false);
+    expect(await listFiles(bookPath)).toEqual([OUTPUT]);
     expect(await findCommitPendingMarkers(libraryRoot)).toEqual([]);
     expect(emit).toHaveBeenCalledWith('merge_complete', expect.objectContaining({ book_id: 42, success: true }));
   });

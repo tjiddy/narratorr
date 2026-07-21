@@ -34,6 +34,10 @@ describe('sanitizePath', () => {
       expect(sanitizePath('The Way of Kings.import-bak')).toBe('The Way of Kings');
       expect(sanitizePath('Draft.import-tmp')).toBe('Draft');
       expect(sanitizePath('X.import-commit-pending')).toBe('X');
+      // #1911: the active born-hidden scratch suffixes are reserved too, so no metadata-derived
+      // final folder can ever end in one (same #1341 mechanism as the legacy pair).
+      expect(sanitizePath('Royal Assassin.import-staging')).toBe('Royal Assassin');
+      expect(sanitizePath('Royal Assassin.import-backup')).toBe('Royal Assassin');
     });
 
     it('unwinds a doubled reserved suffix', () => {
@@ -429,6 +433,9 @@ describe('sanitizeEditionDiscriminator (#1739)', () => {
   it('does not retain a reserved import-sibling suffix', () => {
     expect(sanitizeEditionDiscriminator('Full Cast.import-bak')).toBe('Full Cast');
     expect(sanitizeEditionDiscriminator('.import-tmp')).toBeNull();
+    // #1911: active scratch suffixes reserved on the edition discriminator too.
+    expect(sanitizeEditionDiscriminator('Full Cast.import-staging')).toBe('Full Cast');
+    expect(sanitizeEditionDiscriminator('.import-backup')).toBeNull();
   });
 });
 

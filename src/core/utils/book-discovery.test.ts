@@ -235,6 +235,30 @@ describe('discoverBooks', () => {
       expect(result[0]!.totalSize).toBe(5000);
     });
 
+    it('#1911: skips the active born-hidden staging/backup dirs (via isHiddenName) and a legacy un-dotted staging', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Author', isFile: false }],
+        '/audiobooks/Author': [
+          { name: 'Real Book', isFile: false },
+          // Active born-hidden scratch — dot-led, so skipped by isHiddenName from birth, not
+          // merely via the reserved-suffix endsWith fallback.
+          { name: '.Real Book.import-staging', isFile: false },
+          { name: '.Real Book.import-backup', isFile: false },
+          // A legacy un-dotted staging still excluded via the reserved-suffix path.
+          { name: 'Real Book.import-tmp', isFile: false },
+        ],
+        '/audiobooks/Author/Real Book': [{ name: 'ch1.mp3', isFile: true, size: 5000 }],
+        '/audiobooks/Author/.Real Book.import-staging': [{ name: 'staged.mp3', isFile: true, size: 3000 }],
+        '/audiobooks/Author/.Real Book.import-backup': [{ name: 'old.mp3', isFile: true, size: 4000 }],
+        '/audiobooks/Author/Real Book.import-tmp': [{ name: 'legacy.mp3', isFile: true, size: 2000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.folderParts).toEqual(['Author', 'Real Book']);
+      expect(result[0]!.totalSize).toBe(5000);
+    });
+
     it('excludes a directory named like the marker-collision dir (Real Book.import-commit-pending)', async () => {
       setupFs({
         '/audiobooks': [{ name: 'Author', isFile: false }],

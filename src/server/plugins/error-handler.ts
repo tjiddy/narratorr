@@ -16,7 +16,7 @@ import { PathOutsideLibraryError } from '../utils/paths.js';
 import { CoverUploadError } from '../services/cover-upload.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../core/download-clients/errors.js';
 import { SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
-import { BackupRecoveryError, MarkerPathConflictError } from '../utils/import-staging.js';
+import { BackupRecoveryError, BackupAmbiguityError, MarkerPathConflictError } from '../utils/import-staging.js';
 
 // ---------------------------------------------------------------------------
 // Error → HTTP status registry
@@ -56,6 +56,10 @@ const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   // these via merge_failed (already 202'd), not the global handler.
   [BackupRecoveryError, { type: 'coded', codes: { BACKUP_RECOVERY_FAILED: 503 } }],
   [MarkerPathConflictError, { type: 'coded', codes: { MARKER_PATH_CONFLICT: 409 } }],
+  // Structural, non-retryable (#1911): both conventions' backups are populated and recovery
+  // cannot choose safely — the operator must remove/quarantine one backup. Mirrors the
+  // structural 409 of MarkerPathConflictError, NOT the transient 503 of BackupRecoveryError.
+  [BackupAmbiguityError, { type: 'coded', codes: { BACKUP_AMBIGUOUS: 409 } }],
 ]);
 
 /** Maps typed error codes to HTTP status codes. */

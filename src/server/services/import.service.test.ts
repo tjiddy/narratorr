@@ -7,6 +7,7 @@ vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { ImportService } from './import.service.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
+import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
 import { sanitizePath } from '../../core/utils/index.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
@@ -895,12 +896,14 @@ describe('ImportService', () => {
       await service.importDownload(1);
 
       const base = '/audiobooks/Brandon Sanderson/The Way of Kings';
+      // #1911: active born-hidden scratch (`.<name>.import-staging` / `.import-backup`).
+      const { stagingPath: STAGING, backupPath: BACKUP } = deriveImportSiblings(base);
       const renameMock = vi.mocked(rename);
       // Old audio is moved (backed up) out of the target — not destroyed in place...
-      expect(renameMock).toHaveBeenCalledWith(join(base, 'old - 001.mp3'), join(`${base}.import-bak`, 'old - 001.mp3'));
-      expect(renameMock).toHaveBeenCalledWith(join(base, 'old - 002.mp3'), join(`${base}.import-bak`, 'old - 002.mp3'));
+      expect(renameMock).toHaveBeenCalledWith(join(base, 'old - 001.mp3'), join(BACKUP, 'old - 001.mp3'));
+      expect(renameMock).toHaveBeenCalledWith(join(base, 'old - 002.mp3'), join(BACKUP, 'old - 002.mp3'));
       // ...the cover is never moved out of the target (non-audio preserved)...
-      expect(renameMock).not.toHaveBeenCalledWith(join(base, 'cover.jpg'), join(`${base}.import-bak`, 'cover.jpg'));
+      expect(renameMock).not.toHaveBeenCalledWith(join(base, 'cover.jpg'), join(BACKUP, 'cover.jpg'));
 
       const rmMock = vi.mocked(rm);
       // ...old audio is not individually force-deleted (it is moved, then the backup dir cleaned)...
@@ -908,8 +911,8 @@ describe('ImportService', () => {
       // ...the target folder itself is never wholesale-deleted...
       expect(rmMock).not.toHaveBeenCalledWith(base, expect.objectContaining({ recursive: true }));
       // ...and the staging + backup siblings are removed on success.
-      expect(rmMock).toHaveBeenCalledWith(`${base}.import-bak`, { recursive: true, force: true });
-      expect(rmMock).toHaveBeenCalledWith(`${base}.import-tmp`, { recursive: true, force: true });
+      expect(rmMock).toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
+      expect(rmMock).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
     });
 
     it('continues when old file deletion fails (EACCES)', async () => {
@@ -970,8 +973,8 @@ describe('ImportService', () => {
 
   describe('atomic staged re-import — data-loss prevention (#1255)', () => {
     const SAME_PATH = '/audiobooks/Brandon Sanderson/The Way of Kings';
-    const STAGING = `${SAME_PATH}.import-tmp`;
-    const BACKUP = `${SAME_PATH}.import-bak`;
+    // #1911: active born-hidden scratch derived through the shared helper.
+    const { stagingPath: STAGING, backupPath: BACKUP } = deriveImportSiblings(SAME_PATH);
 
     function useSamePathSettings() {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
@@ -1023,7 +1026,7 @@ describe('ImportService', () => {
       // Backup move + in-staging renames succeed; the staged-file move INTO the target fails.
       vi.mocked(rename).mockImplementation(async (src: unknown, dst: unknown) => {
         const s = String(src); const d = String(dst);
-        if (s.includes('.import-tmp') && !d.includes('.import-tmp') && !d.includes('.import-bak')) {
+        if (s.includes('.import-staging') && !d.includes('.import-staging') && !d.includes('.import-backup')) {
           throw new Error('EIO during swap');
         }
       });
@@ -1139,11 +1142,11 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // The leftover .import-tmp cannot be cleared. Because commitStagedImport
+      // The leftover .import-staging cannot be cleared. Because commitStagedImport
       // enumerates whatever is in staging and moves it into the target, the import
-      // MUST abort here rather than copy + commit over the stale staging dir.
+      // MUST abort here rather than copy + commit over the stale staging dir (#1911).
       vi.mocked(rm).mockImplementation(async (p: unknown) =>
-        String(p).endsWith('.import-tmp')
+        String(p).endsWith('.import-staging')
           ? Promise.reject(Object.assign(new Error('EACCES'), { code: 'EACCES' }))
           : undefined,
       );
@@ -1165,7 +1168,7 @@ describe('ImportService', () => {
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');
 
       // The staging sibling (the partial copy) is removed during failure cleanup.
-      const stagingCleanup = vi.mocked(rm).mock.calls.find(([p]) => String(p).endsWith('.import-tmp'));
+      const stagingCleanup = vi.mocked(rm).mock.calls.find(([p]) => String(p).endsWith('.import-staging'));
       expect(stagingCleanup).toBeDefined();
     });
   });
@@ -1175,8 +1178,7 @@ describe('ImportService', () => {
     // '{author}/{title}', book='The Way of Kings', author='Brandon Sanderson').
     const NEW_TARGET = '/audiobooks/Brandon Sanderson/The Way of Kings';
     const OLD_PATH = '/audiobooks/Brandon Sanderson/Old Title';
-    const STAGING = `${NEW_TARGET}.import-tmp`;
-    const BACKUP = `${NEW_TARGET}.import-bak`;
+    const { stagingPath: STAGING, backupPath: BACKUP } = deriveImportSiblings(NEW_TARGET);
 
     /** Collect every `.set({...})` payload across all db.update() calls. */
     function collectSetArgs(database: typeof db): Record<string, unknown>[] {
@@ -1394,9 +1396,9 @@ describe('ImportService', () => {
         '/audiobooks/Brandon Sanderson/The Way of Kings',
         { recursive: true, force: true },
       );
-      // Transient siblings are still cleaned.
+      // Transient siblings are still cleaned (active born-hidden staging, #1911).
       expect(rmMock).toHaveBeenCalledWith(
-        '/audiobooks/Brandon Sanderson/The Way of Kings.import-tmp',
+        '/audiobooks/Brandon Sanderson/.The Way of Kings.import-staging',
         { recursive: true, force: true },
       );
 
