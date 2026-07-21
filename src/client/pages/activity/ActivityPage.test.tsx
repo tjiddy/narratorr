@@ -81,6 +81,9 @@ vi.mock('@/lib/api', async () => {
       markEventFailed: vi.fn(),
       deleteEvent: vi.fn(),
       deleteEvents: vi.fn(),
+      // #1894 — the import-history section renders in the History tab.
+      listImportSubmissions: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+      getImportSubmissionDetail: vi.fn(),
     },
   };
 });

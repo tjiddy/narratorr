@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import type { ZodTypeAny } from 'zod';
 
 /**
@@ -6,23 +6,19 @@ import type { ZodTypeAny } from 'zod';
  * validation-failure log from a component must be a `console.warn` inside a
  * `useEffect` keyed on the data identity (not a render-body `console.debug`, and
  * not a `useRef` once-guard read during render) — see the
- * `render-body-logging-lint-constraints` learning. Returns whether the current
- * `data` is valid so the caller can render an error state on a malformed payload.
+ * `render-body-logging-lint-constraints` learning. The `safeParse` itself is pure,
+ * so it runs in render (`useMemo`); only the warn lives in the effect. Returns
+ * whether the current `data` is valid so the caller can render an error state.
  */
 export function useDtoValid(schema: ZodTypeAny, data: unknown, label: string): boolean {
-  const [valid, setValid] = useState(true);
+  const result = useMemo(
+    () => (data == null ? { success: true as const } : schema.safeParse(data)),
+    [schema, data],
+  );
   useEffect(() => {
-    if (data == null) {
-      setValid(true);
-      return;
-    }
-    const result = schema.safeParse(data);
     if (!result.success) {
       console.warn(`Malformed ${label} DTO — rendering error state`, result.error);
-      setValid(false);
-    } else {
-      setValid(true);
     }
-  }, [schema, data, label]);
-  return valid;
+  }, [result, label]);
+  return result.success;
 }

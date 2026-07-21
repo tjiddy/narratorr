@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type AttentionResponse, type SubmissionResponse, type SubmissionSummary } from '@/lib/api';
+import { api, ApiError, type AttentionResponse, type SubmissionResponse, type SubmissionSummary } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { pollCadence, FAST_POLL_MS } from '@/lib/import-report/polling';
 import { patchImportHistoryCache } from '@/lib/import-report/cache';
@@ -71,7 +71,8 @@ export function useImportSubmissionDetail(id: number | null, enabled = true) {
     enabled: id != null && enabled,
     staleTime: 0,
     refetchOnMount: 'always',
-    retry: 2,
+    // A deep-linked 404 is gone — fail fast (no retry); transient errors retry twice.
+    retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 2,
     placeholderData: (prev) => prev,
     refetchInterval: (query) => (query.state.data?.status === 'complete' ? false : FAST_POLL_MS),
   });

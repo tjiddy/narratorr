@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useLatestImport } from '@/hooks/useImportReport';
-import { StatusChip, DispositionCounts, relativeWhen } from './ImportReportBits';
+import { StatusChip, DispositionCounts } from './ImportReportBits';
+import { relativeWhen } from '@/lib/import-report/rowDisplay';
 import { ImportDetailExpansion } from './ImportDetailExpansion';
 
 /**

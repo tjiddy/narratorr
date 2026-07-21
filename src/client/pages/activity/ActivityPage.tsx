@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/PageHeader.js';
 import { PageLoading } from '@/components/PageLoading';
 import { Tabs, type TabItem } from '@/components/Tabs.js';
 import { EventHistorySection } from './EventHistorySection.js';
+import { ImportHistorySection } from './ImportHistorySection.js';
 import { ActiveTabSection } from './ActiveTabSection.js';
 import { useActivity } from './useActivity.js';
 import { useMergeActivityCards } from '@/hooks/useMergeProgress.js';
@@ -118,7 +119,9 @@ export function ActivityPage() {
       )}
 
       {tab === 'history' && (
-        <div role="tabpanel" id="tabpanel-history" aria-labelledby="tab-history" className="animate-fade-in-up stagger-2">
+        <div role="tabpanel" id="tabpanel-history" aria-labelledby="tab-history" className="animate-fade-in-up stagger-2 space-y-10">
+          {/* Durable import-history cards (#1894) render above the event-history list. */}
+          <ImportHistorySection />
           <EventHistorySection
             urlFilter={filterParam}
             onFilterChange={(value) => {
