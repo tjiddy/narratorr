@@ -585,6 +585,44 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
   });
 
   // ── F12: retention method behavior ───────────────────────────────────────
+  describe('discardReceiving (#1894 DELETE)', () => {
+    async function putAll(id: number): Promise<void> {
+      await service.putItems(id, { items: items.map((it, i) => ({ ordinal: i, item: it })) });
+    }
+
+    it('deletes a receiving header and cascades its items → {success:true}', async () => {
+      const created = await service.createSubmission(createBody);
+      await putAll(created.id);
+      expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, created.id))).toHaveLength(2);
+      expect(await service.discardReceiving(created.id)).toEqual({ success: true });
+      expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, created.id))).toHaveLength(0);
+      expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, created.id))).toHaveLength(0);
+    });
+
+    it('a finalized (non-receiving) header is never deleted → 409 submission-not-receiving', async () => {
+      const created = await service.createSubmission(createBody);
+      await putAll(created.id);
+      await service.finalize(created.id); // → processing
+      await expect(service.discardReceiving(created.id)).rejects.toMatchObject({ httpStatus: 409, code: 'submission-not-receiving' });
+      expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, created.id))).toHaveLength(1);
+    });
+
+    it('an unknown id → 404 submission-not-found', async () => {
+      await expect(service.discardReceiving(9999)).rejects.toMatchObject({ httpStatus: 404, code: 'submission-not-found' });
+    });
+
+    it('discard racing finalize on the write lane: the finalized header survives, discard 409s (atomic WHERE status=receiving)', async () => {
+      const created = await service.createSubmission(createBody);
+      await putAll(created.id);
+      // Both serialize on the write lane in call order → finalize first, discard second.
+      const [fin, disc] = await Promise.allSettled([service.finalize(created.id), service.discardReceiving(created.id)]);
+      expect(fin.status).toBe('fulfilled');
+      expect(disc.status).toBe('rejected');
+      const [hdr] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, created.id));
+      expect(hdr!.status).toBe('processing'); // never deleted after finalize won
+    });
+  });
+
   describe('retention & GC (F12)', () => {
     const hoursAgo = (h: number): Date => new Date(Date.now() - h * 60 * 60 * 1000);
     const daysAgo = (d: number): Date => new Date(Date.now() - d * 24 * 60 * 60 * 1000);

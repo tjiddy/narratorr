@@ -537,6 +537,31 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
     });
   });
 
+  // ── #1894: import_run_finished dispatch on the winning terminal CAS ───────
+  describe('completion notification (#1894)', () => {
+    it('dispatches import_run_finished exactly once with source + terminal counts on completion', async () => {
+      // Two null payloads → both fail validation → terminal 'failed' → completes.
+      const subId = await seedProcessing([null, null], { source: 'library' });
+      await drainAll();
+      const [hdr] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
+      expect(hdr!.status).toBe('complete');
+      expect(notifyStub).toHaveBeenCalledTimes(1);
+      expect(notifyStub).toHaveBeenCalledWith('import_run_finished', {
+        event: 'import_run_finished',
+        submission: { source: 'library', status: 'complete', counts: { accepted: 0, held: 0, skipped: 0, failed: 2 } },
+      });
+    });
+
+    it('does not re-fire on a redundant re-drain of an already-complete submission', async () => {
+      await seedProcessing([null], { source: 'manual', mode: 'move' });
+      await drainAll();
+      expect(notifyStub).toHaveBeenCalledTimes(1);
+      notifyStub.mockClear();
+      await drainAll(); // nothing 'processing' remains → no completion, no re-fire
+      expect(notifyStub).not.toHaveBeenCalled();
+    });
+  });
+
   // ── F10: public runner lifecycle & concurrency ───────────────────────────
   describe('lifecycle & concurrency (F10)', () => {
     it('start() boot-resumes a processing submission to completion via the public drain loop', async () => {

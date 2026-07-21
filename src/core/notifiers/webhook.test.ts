@@ -41,6 +41,26 @@ describe('WebhookNotifier', () => {
     });
   });
 
+  it('resolves submission.* tokens for import_run_finished incl. a required 0 (F79)', async () => {
+    let capturedBody = '';
+    server.use(
+      http.post('https://example.com/hook', async ({ request }) => {
+        capturedBody = await request.text();
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    const notifier = new WebhookNotifier({
+      url: 'https://example.com/hook',
+      bodyTemplate: '{submission.source}|{submission.status}|{submission.counts.accepted}|{submission.counts.held}|{submission.counts.skipped}|{submission.counts.failed}',
+    });
+    const result = await notifier.send('import_run_finished', {
+      event: 'import_run_finished',
+      submission: { source: 'manual', status: 'complete', counts: { accepted: 0, held: 1, skipped: 0, failed: 0 } },
+    });
+    expect(result.success).toBe(true);
+    expect(capturedBody).toBe('manual|complete|0|1|0|0');
+  });
+
   it('sends with custom method and headers', async () => {
     let capturedMethod = '';
     let capturedHeaders: Record<string, string> = {};

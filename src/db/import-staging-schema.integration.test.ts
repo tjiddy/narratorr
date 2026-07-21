@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { createDb, runMigrations, type Db } from './index.js';
 import { books, importSubmissions, importSubmissionItems } from './schema.js';
 import { generatePublicId } from '../server/utils/public-id.js';
@@ -107,5 +107,17 @@ describe('import-staging schema — FK delete actions (DB-backed, #1893)', () =>
     await expect(
       db.insert(importSubmissionItems).values({ submissionId, ordinal: 0, path: '/p2', title: 'T2' }),
     ).rejects.toThrow();
+  });
+
+  // #1894 — the two additive newest-order indexes must survive migrate-from-scratch
+  // with the correct ordered columns (this repo's failure mode is a SQL file omitted
+  // from _journal.json that ordinary service tests miss).
+  it('creates both newest-order indexes on import_submissions with correct ordered columns (F77)', async () => {
+    async function indexColumns(indexName: string): Promise<string[]> {
+      const res = await db.run(sql`SELECT name FROM pragma_index_info(${indexName}) ORDER BY seqno`);
+      return res.rows.map((r) => r[0] as string);
+    }
+    expect(await indexColumns('idx_import_submissions_source_created_id')).toEqual(['source', 'created_at', 'id']);
+    expect(await indexColumns('idx_import_submissions_created_id')).toEqual(['created_at', 'id']);
   });
 });

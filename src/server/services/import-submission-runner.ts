@@ -250,7 +250,9 @@ export class ImportSubmissionRunner {
   private async acceptItem(sub: SubmissionRow, row: ItemRow, item: ImportConfirmItem): Promise<void> {
     const resolved = await this.bookService.resolveCreateInput(buildBookCreatePayload(item, item.metadata ?? null, 'importing'));
     let createdBookId: number | undefined;
-    let notice: CompletionNotice | null = null;
+    // Every catch branch returns, so `notice` is only read on the success path where
+    // the tx assigned it — no initializer (avoids a useless-assignment).
+    let notice: CompletionNotice | null;
     try {
       notice = await this.db.transaction(async (tx) => {
         const bookId = await this.bookService.createResolved(resolved, tx);
@@ -266,7 +268,7 @@ export class ImportSubmissionRunner {
         if (getRowsAffected(claim) !== 1) throw new AlreadyDispositioned();
 
         createdBookId = bookId;
-        return await this.maybeComplete(tx, sub);
+        return this.maybeComplete(tx, sub);
       });
     } catch (error: unknown) {
       // Same-ASIN create-time race (F2). `createResolved(resolved, tx)` runs on our
@@ -343,7 +345,7 @@ export class ImportSubmissionRunner {
         })
         .where(and(eq(importSubmissionItems.id, row.id), eq(importSubmissionItems.disposition, 'pending')));
       if (getRowsAffected(claim) !== 1) return null; // already dispositioned by another pass
-      return await this.maybeComplete(tx, sub);
+      return this.maybeComplete(tx, sub);
     });
     // Post-commit: this terminal write completed the submission → dispatch once.
     if (notice) this.dispatchCompletion(notice);
