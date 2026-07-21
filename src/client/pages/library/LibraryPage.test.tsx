@@ -28,6 +28,9 @@ vi.mock('@/lib/api', async () => {
       retryBookImport: vi.fn(),
       getActiveBulkJob: vi.fn().mockResolvedValue(null),
       checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
+      // #1894 — the cross-source attention banner mounts above the branch switch.
+      getImportSubmissionAttention: vi.fn().mockResolvedValue({ data: null, watch: false }),
+      discardImportSubmission: vi.fn(),
       getIndexers: vi.fn().mockResolvedValue([
         { id: 1, name: 'Indexer A', enabled: true },
         { id: 2, name: 'Indexer B', enabled: true },
