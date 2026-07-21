@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, type ImportConfirmItem, type MatchResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
@@ -11,8 +10,7 @@ import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import type { DiscoveredBook } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
-import { acceptedItemPaths, buildChunkedOutcomeToast, isChunkedCleanImport, confirmErrorMessage } from '@/lib/import-outcome.js';
-import { runChunkedConfirm } from '@/lib/confirm-chunk-runner.js';
+import { useStagedSubmission } from '@/lib/staged-import/useStagedSubmission.js';
 import { isLibraryDbDuplicate } from './isLibraryDbDuplicate.js';
 
 export type Step = 'scanning' | 'review' | 'error';
@@ -20,7 +18,6 @@ export type Step = 'scanning' | 'review' | 'error';
 // eslint-disable-next-line max-lines-per-function -- orchestrates scan, match job, and slug-duplicate recheck
 export function useLibraryImport() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const {
     results: matchResults, progress, isMatching, recovering,
     paused, reason: pausedReason, remaining: matchRemaining, matchedCount: _matchedCount, total: matchTotal,
@@ -32,14 +29,28 @@ export function useLibraryImport() {
   const [emptyResult, setEmptyResult] = useState(false);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [editIndex, setEditIndex] = useState<number | null>(null);
-  // Progress across the sequential chunked confirm run (#1831) — drives "Registering X of Y…".
-  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number; chunks: number } | null>(null);
+  // Held re-confirm (#1711) resubmits through the same staged pipeline. Library always
+  // registers with mode `undefined`, so the snapshot is unused here. `submitRef` breaks
+  // the cycle: held-review's `confirm` needs `staged.submit`, which needs `captureHeld`.
+  const submitRef = useRef<(items: ImportConfirmItem[], mode: undefined) => void>(() => {});
   // Items the server held for recording review (#1711) — surfaced for re-confirm.
-  // Library always registers with mode `undefined`, so the snapshot is unused here.
   const { heldReview, captureHeld, clearHeld, handleReconfirmHeld } = useHeldReview({
     rows,
-    confirm: (items) => registerMutation.mutate(items),
+    confirm: (items) => submitRef.current(items, undefined),
   });
+
+  // Staged submit + poll pipeline (#1902) — replaces the direct chunked confirm.
+  const staged = useStagedSubmission({
+    source: 'library',
+    acceptedVerb: 'registered',
+    onCleanNavigate: () => navigate('/library'),
+    onDeselectAccepted: (paths) => setRows((prev) => prev.map((r) => (paths.has(r.book.path) ? { ...r, selected: false } : r))),
+    captureHeld,
+    clearHeld,
+  });
+  submitRef.current = (items) => staged.submit(items, undefined);
+  const chunkProgress = staged.chunkProgress;
+  const registerMutation = { isPending: staged.isPending };
 
   // Settings query to get library path
   const { data: settings, isError: settingsError } = useQuery({
@@ -127,52 +138,6 @@ export function useLibraryImport() {
     },
   });
 
-  const registerMutation = useMutation({
-    // Byte-budgeted chunked confirm (#1831). A large library exceeds the 1 MiB body
-    // limit in one request, so the runner packs the selection into sub-1-MiB chunks and
-    // POSTs them sequentially, resolving with the aggregate + the actually-submitted items.
-    mutationFn: (items: ImportConfirmItem[]) =>
-      runChunkedConfirm({ items, mode: undefined, confirm: api.confirmImport, onProgress: setChunkProgress }),
-    onSuccess: (res) => {
-      const { aggregateResult, submittedItems } = res;
-      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-
-      // Held items (#1711): keep the user on the page so they can re-confirm them, instead
-      // of navigating. Captured ONCE over the aggregate (#1831) — a per-chunk call would
-      // clobber earlier chunks' held items. Surfaced separately from the outcome toast so a
-      // held + skipped/failed batch is never swallowed by an early return (#1822).
-      if (aggregateResult.heldReview.length > 0) {
-        captureHeld(aggregateResult.heldReview, undefined);
-        toast.warning(`${aggregateResult.heldReview.length} held for recording review`);
-      } else {
-        clearHeld();
-      }
-
-      // Report accepted/skipped/failed + the chunked transport splits (unsubmitted / too
-      // large). Green fires ONLY on a fully-clean, fully-submitted outcome (#1822/#1831).
-      const outcome = buildChunkedOutcomeToast(res, 'registered');
-      if (outcome) toast[outcome.severity](outcome.message);
-
-      // Navigate only when the ENTIRE selection landed accepted (nothing held/skipped/
-      // failed/unsubmitted/too-large); otherwise stay and deselect the accepted rows over
-      // submittedItems — NOT the full selection — so the never-sent remainder stays selected.
-      if (isChunkedCleanImport(res)) {
-        navigate('/library');
-        return;
-      }
-      const acceptedPaths = acceptedItemPaths(submittedItems, aggregateResult);
-      if (acceptedPaths.size > 0) {
-        setRows(prev => prev.map(r => acceptedPaths.has(r.book.path) ? { ...r, selected: false } : r));
-      }
-    },
-    onError: (error: Error) => {
-      // First-chunk failure (nothing submitted) rejects here, exactly as a single-request
-      // failure did. 413 (Fastify or the proxy hop) maps to import-domain wording (#1831).
-      toast.error(`Import failed: ${confirmErrorMessage(error)}`);
-    },
-    onSettled: () => setChunkProgress(null),
-  });
-
   // Auto-scan on mount once settings are loaded and we have a library path.
   const didScanRef = useRef(false);
   useEffect(() => {
@@ -236,8 +201,8 @@ export function useLibraryImport() {
 
   const handleRegister = useCallback(() => {
     const items = rows.filter(r => r.selected).map(r => toConfirmItem(r, false));
-    registerMutation.mutate(items);
-  }, [rows, registerMutation]);
+    staged.submit(items, undefined);
+  }, [rows, staged]);
 
   const handleRetry = useCallback(() => {
     const libraryPath = settings?.library.path ?? '';
@@ -299,6 +264,8 @@ export function useLibraryImport() {
     chunkProgress,
     libraryRoot,
     heldReview,
+    banner: staged.banner,
+    dismissBanner: staged.dismissBanner,
 
     // Match-phase recovery (#1864)
     recovering,

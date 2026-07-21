@@ -52,6 +52,8 @@ export interface SubmitParams {
   signal?: AbortSignal;
   /** Progress across the sequential PUT run — drives "Registering X of Y…". */
   onChunkProgress?: (progress: { current: number; total: number; chunks: number }) => void;
+  /** Fired once the durable `receiving` header lands (F8) — lets the caller refresh the #1894 reads. */
+  onCreated?: (submissionId: number) => void;
 }
 
 async function createStep(params: SubmitParams): Promise<number> {
@@ -106,6 +108,7 @@ function mapFinalizeError(error: unknown, signal?: AbortSignal): SubmitError {
 export async function runSubmit(params: SubmitParams): Promise<{ submissionId: number }> {
   const { api, retry, signal } = params;
   const submissionId = await createStep(params);
+  params.onCreated?.(submissionId);
   await putStep(params, submissionId);
   try {
     await runWithRetry(() => api.finalizeSubmission(submissionId), withSignal(retry, signal));
