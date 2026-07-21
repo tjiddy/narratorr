@@ -27,9 +27,10 @@ describe('notification-events (leaf module)', () => {
   });
 
   describe('NOTIFICATION_EVENTS tuple', () => {
-    it('contains all 5 expected event types', () => {
-      expect(NOTIFICATION_EVENTS).toHaveLength(5);
+    it('contains all 6 expected event types', () => {
+      expect(NOTIFICATION_EVENTS).toHaveLength(6);
       expect([...NOTIFICATION_EVENTS].sort()).toEqual([
+        'import_run_finished',
         'on_download_complete',
         'on_failure',
         'on_grab',
@@ -165,6 +166,25 @@ describe('notification-events (leaf module)', () => {
         },
       }));
       expect(result).toBe('Health issue: DiskCheck changed from warning → healthy');
+    });
+
+    it('import_run_finished renders source + terminal counts with "queued" for accepted', () => {
+      const result = formatEventMessage('import_run_finished', makePayload({
+        submission: { source: 'library', status: 'complete', counts: { accepted: 3, held: 2, skipped: 1, failed: 0 } },
+      }));
+      expect(result).toBe('Library import finished — 3 queued, 2 held, 1 skipped, 0 failed');
+    });
+
+    it('import_run_finished uses the Manual label for manual submissions', () => {
+      const result = formatEventMessage('import_run_finished', makePayload({
+        submission: { source: 'manual', status: 'complete', counts: { accepted: 0, held: 0, skipped: 0, failed: 5 } },
+      }));
+      expect(result).toBe('Manual import finished — 0 queued, 0 held, 0 skipped, 5 failed');
+    });
+
+    it('import_run_finished degrades gracefully when submission is absent', () => {
+      const result = formatEventMessage('import_run_finished', makePayload());
+      expect(result).toBe('Import run finished');
     });
   });
 

@@ -12,9 +12,15 @@ import { BookImportService } from './book-import.service.js';
 import { ImportSubmissionRunner } from './import-submission-runner.js';
 import { ImportStagingService } from './import-staging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
+import type { NotifierService } from './notifier.service.js';
 import { serializeSubmissionForDigest, type StagedImportItem } from '../../core/import-staging/schemas.js';
 
 interface DrainSeam { drainOne(): Promise<boolean> }
+
+/** A notifier stub — an optional `notify` spy lets a test assert completion dispatch. */
+function stubNotifier(notify: unknown = () => Promise.resolve()): NotifierService {
+  return { notify } as unknown as NotifierService;
+}
 
 function acceptedItem(path: string, title: string): StagedImportItem {
   return { path, title, forceImport: true, metadata: { title, authors: [{ name: 'Author' }] } };
@@ -27,6 +33,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
   let runner: ImportSubmissionRunner;
   let nudge: ReturnType<typeof vi.fn>;
   let eventCreate: ReturnType<typeof vi.fn>;
+  let notifyStub: ReturnType<typeof vi.fn>;
   const log = createMockLogger();
 
   beforeEach(async () => {
@@ -36,6 +43,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
     db = createDb(dbFile);
     nudge = vi.fn();
     eventCreate = vi.fn().mockResolvedValue(undefined);
+    notifyStub = vi.fn().mockResolvedValue(undefined);
     const eventHistory = { create: eventCreate } as unknown as EventHistoryService;
     runner = new ImportSubmissionRunner({
       db,
@@ -43,6 +51,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       bookService: new BookService(db, inject(log)),
       bookImportService: new BookImportService(db, inject(log)),
       eventHistory,
+      notifier: stubNotifier(notifyStub),
       nudgeImportWorker: nudge as unknown as () => void,
     });
   });
@@ -90,6 +99,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       bookService,
       bookImportService: bookImportService ?? new BookImportService(db, inject(log)),
       eventHistory: { create: eventCreate } as unknown as EventHistoryService,
+      notifier: stubNotifier(notifyStub),
       nudgeImportWorker: nudge as unknown as () => void,
     });
   }
@@ -102,6 +112,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       bookService: new BookService(rdb, inject(log)),
       bookImportService: new BookImportService(rdb, inject(log)),
       eventHistory: { create: eventCreate } as unknown as EventHistoryService,
+      notifier: stubNotifier(notifyStub),
       nudgeImportWorker: nudge as unknown as () => void,
     });
   }
@@ -169,6 +180,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       bookService: new BookService(db, inject(log)),
       bookImportService: new BookImportService(db, inject(log)),
       eventHistory: { create: eventCreate } as unknown as EventHistoryService,
+      notifier: stubNotifier(notifyStub),
       nudgeImportWorker: nudge as unknown as () => void,
     });
     await drainAll();
@@ -522,6 +534,102 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       );
       // The item still committed as accepted despite the best-effort failures.
       expect((await db.select().from(books))).toHaveLength(1);
+    });
+  });
+
+  // ── #1894: import_run_finished dispatch on the winning terminal CAS ───────
+  describe('completion notification (#1894)', () => {
+    it('dispatches import_run_finished exactly once with source + terminal counts on completion', async () => {
+      // Two null payloads → both fail validation → terminal 'failed' → completes.
+      const subId = await seedProcessing([null, null], { source: 'library' });
+      await drainAll();
+      const [hdr] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
+      expect(hdr!.status).toBe('complete');
+      expect(notifyStub).toHaveBeenCalledTimes(1);
+      expect(notifyStub).toHaveBeenCalledWith('import_run_finished', {
+        event: 'import_run_finished',
+        submission: { source: 'library', status: 'complete', counts: { accepted: 0, held: 0, skipped: 0, failed: 2 } },
+      });
+    });
+
+    it('does not re-fire on a redundant re-drain of an already-complete submission', async () => {
+      await seedProcessing([null], { source: 'manual', mode: 'move' });
+      await drainAll();
+      expect(notifyStub).toHaveBeenCalledTimes(1);
+      notifyStub.mockClear();
+      await drainAll(); // nothing 'processing' remains → no completion, no re-fire
+      expect(notifyStub).not.toHaveBeenCalled();
+    });
+
+    // Seed a 'processing' header whose items are ALREADY terminal (no pending) — the
+    // boot/no-pending completion path (drainOne's maybeComplete).
+    async function seedProcessingNoPending(dispositions: ('skipped' | 'held' | 'failed')[]): Promise<number> {
+      const [sub] = await db.insert(importSubmissions).values({
+        clientSubmissionId: randomUUID(), payloadDigest: 'a'.repeat(64), source: 'library',
+        expectedCount: dispositions.length, status: 'processing', receivedCount: dispositions.length,
+      }).returning();
+      for (let i = 0; i < dispositions.length; i++) {
+        await db.insert(importSubmissionItems).values({
+          submissionId: sub!.id, ordinal: i, path: `/p${i}`, title: `T${i}`,
+          disposition: dispositions[i]!, reason: dispositions[i] === 'skipped' ? 'already-in-library' : null,
+        });
+      }
+      return sub!.id;
+    }
+
+    it('dispatches exactly once on the ACCEPTED-item completion path (F13)', async () => {
+      const subId = await seedProcessing([acceptedItem('/a', 'A')], { source: 'manual', mode: 'copy' });
+      await drainAll();
+      const [hdr] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
+      expect(hdr!.status).toBe('complete');
+      expect(notifyStub).toHaveBeenCalledTimes(1);
+      expect(notifyStub).toHaveBeenCalledWith('import_run_finished', {
+        event: 'import_run_finished',
+        submission: { source: 'manual', status: 'complete', counts: { accepted: 1, held: 0, skipped: 0, failed: 0 } },
+      });
+    });
+
+    it('dispatches exactly once on the boot/no-pending completion path via public start() auto-resume (F13)', async () => {
+      const subId = await seedProcessingNoPending(['skipped', 'held']);
+      const r = makeRunner(new BookService(db, inject(log)));
+      r.start();
+      await waitFor(isComplete(subId));
+      await r.stop();
+      expect(notifyStub).toHaveBeenCalledTimes(1);
+      expect(notifyStub).toHaveBeenCalledWith('import_run_finished', {
+        event: 'import_run_finished',
+        submission: { source: 'library', status: 'complete', counts: { accepted: 0, held: 1, skipped: 1, failed: 0 } },
+      });
+    });
+
+    it('dispatch is strictly POST-COMMIT — proven via a SEPARATE connection that sees only committed data (F33/F14)', async () => {
+      const subId = await seedProcessing([null], { source: 'library' });
+      // A distinct connection to the same file sees ONLY committed state. If the
+      // dispatch were moved inside the completion transaction (pre-commit), this
+      // read would still observe the pre-completion status — so 'complete' here is
+      // deletion-proof evidence that notify fires only after the tx promise resolves.
+      const observer = createDb(dbFile);
+      let statusSeenBySeparateConn: string | undefined;
+      notifyStub.mockImplementation(async () => {
+        const [h] = await observer.select().from(importSubmissions).where(eq(importSubmissions.id, subId)).limit(1);
+        statusSeenBySeparateConn = h?.status;
+      });
+      await drainAll();
+      expect(notifyStub).toHaveBeenCalledTimes(1);
+      expect(statusSeenBySeparateConn).toBe('complete'); // committed before dispatch
+      observer.$client.close();
+    });
+
+    it('a rejected notifier dispatch leaves the header complete and does not stall later submissions (F14)', async () => {
+      const first = await seedProcessing([null], { source: 'library' });
+      const second = await seedProcessing([null], { source: 'manual', mode: 'copy' });
+      notifyStub.mockRejectedValueOnce(new Error('notify lookup boom')); // first completion's dispatch rejects
+      await drainAll();
+      const [h1] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, first));
+      const [h2] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, second));
+      expect(h1!.status).toBe('complete'); // rejection isolated — header stays complete
+      expect(h2!.status).toBe('complete'); // later submission still drained
+      expect(notifyStub).toHaveBeenCalledTimes(2);
     });
   });
 

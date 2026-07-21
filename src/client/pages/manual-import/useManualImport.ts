@@ -222,18 +222,26 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   // matched rows keep their result (the engine's observed map is preserved).
   const handleResumeMatch = useCallback(() => resume(), [resume]);
 
+  // Reset the page to the path step WITHOUT navigating away (#1894). This backs the
+  // attention banner's "Import again" on Manual Import: the abandoned banner shows
+  // from the normal `path` state, so calling `handleBack` there would navigate to
+  // /library. `resetToPath` always lands on `path` and never leaves the page.
+  const resetToPath = useCallback(() => {
+    cancelMatching();
+    prevMatchCountRef.current = 0;
+    setStep('path');
+    setRows([]);
+    // Drop held rows so a reset can't leave a stale panel (#1732).
+    clearHeld();
+  }, [cancelMatching, clearHeld]);
+
   const handleBack = useCallback(() => {
     if (step === 'review') {
-      cancelMatching();
-      prevMatchCountRef.current = 0;
-      setStep('path');
-      setRows([]);
-      // Drop held rows so backing out of review can't leave a stale panel (#1732).
-      clearHeld();
+      resetToPath();
     } else {
       navigate('/library');
     }
-  }, [step, cancelMatching, navigate, clearHeld]);
+  }, [step, resetToPath, navigate]);
 
   // Computed counts
   const selectedCount = rows.filter(r => r.selected).length;
@@ -276,6 +284,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       handleEdit,
       handleImport,
       handleBack,
+      resetToPath,
       handleReconfirmHeld,
       handleRestartMatch,
       handleResumeMatch,

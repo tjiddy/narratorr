@@ -6,7 +6,7 @@ import type { Notifier, TestResult } from '@/lib/api';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
 import { NotifierCardForm } from './NotifierCardForm';
 import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from '../../../shared/notifier-registry.js';
-import { EVENT_LABELS, type NotificationEvent } from '../../../shared/notification-events.js';
+import { EVENT_LABELS, NOTIFICATION_EVENTS, type NotificationEvent } from '../../../shared/notification-events.js';
 import {
   createNotifierFormSchema,
   type CreateNotifierFormData,
@@ -60,7 +60,9 @@ const defaultValues: CreateNotifierFormData = {
   name: '',
   type: NOTIFIER_TYPES[0],
   enabled: true,
-  events: ['on_grab', 'on_download_complete', 'on_import', 'on_failure', 'on_health_issue'],
+  // Derived from the registry so a newly-registered event (e.g. import_run_finished)
+  // is default-checked without touching this list.
+  events: [...NOTIFICATION_EVENTS],
   settings: NOTIFIER_REGISTRY[NOTIFIER_TYPES[0]].defaultSettings,
 };
 

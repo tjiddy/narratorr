@@ -512,6 +512,12 @@ export const importSubmissions = sqliteTable('import_submissions', {
   completedAt: integer('completed_at', { mode: 'timestamp' }),
 }, (table) => [
   index('idx_import_submissions_status_updated').on(table.status, table.updatedAt),
+  // Newest-first reads (#1894). `(source, createdAt, id)` backs the source-filtered
+  // latest/attention reads (`WHERE source=? ORDER BY createdAt DESC, id DESC`);
+  // `(createdAt, id)` backs the unfiltered cross-source Activity list + Library
+  // attention read (a source-leading index cannot serve a global newest order).
+  index('idx_import_submissions_source_created_id').on(table.source, table.createdAt, table.id),
+  index('idx_import_submissions_created_id').on(table.createdAt, table.id),
 ]);
 
 // Per-ordinal staged item. `itemPayload` holds the strict staged item; `path`/

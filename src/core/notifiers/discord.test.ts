@@ -70,6 +70,31 @@ describe('DiscordNotifier', () => {
     expect(fieldNames).toContain('Files');
   });
 
+  it('sends embed for import_run_finished carrying source/status/count fields incl. a required 0 (F79)', async () => {
+    let capturedBody: unknown;
+    server.use(
+      http.post(WEBHOOK_URL, async ({ request }) => {
+        capturedBody = await request.json();
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const notifier = new DiscordNotifier({ webhookUrl: WEBHOOK_URL });
+    const result = await notifier.send('import_run_finished', {
+      event: 'import_run_finished',
+      submission: { source: 'library', status: 'complete', counts: { accepted: 0, held: 1, skipped: 0, failed: 0 } },
+    });
+    expect(result.success).toBe(true);
+    const body = capturedBody as { embeds: { title: string; fields: { name: string; value: string }[] }[] };
+    expect(body.embeds[0]!.title).toBe('Import Run Finished');
+    const fields = new Map(body.embeds[0]!.fields.map((f) => [f.name, f.value]));
+    expect(fields.get('Source')).toBe('library');
+    expect(fields.get('Status')).toBe('complete');
+    expect(fields.get('Queued')).toBe('0'); // required zero not dropped
+    expect(fields.get('Held')).toBe('1');
+    expect(fields.get('Skipped')).toBe('0');
+    expect(fields.get('Failed')).toBe('0');
+  });
+
   it('sends embed for on_failure with error details', async () => {
     let capturedBody: unknown;
 

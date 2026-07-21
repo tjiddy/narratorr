@@ -41,6 +41,16 @@ function payloadToEnv(event: NotificationEvent, payload: EventPayload): Record<s
     env.NARRATORR_HEALTH_CURR_STATE = payload.health.currentState;
     if (payload.health.message) env.NARRATORR_HEALTH_MESSAGE = payload.health.message;
   }
+  if (payload.submission) {
+    // Every count env var is always set — `.toString()` (not truthiness) keeps a
+    // required `0` present (F79).
+    env.NARRATORR_SUBMISSION_SOURCE = payload.submission.source;
+    env.NARRATORR_SUBMISSION_STATUS = payload.submission.status;
+    env.NARRATORR_SUBMISSION_ACCEPTED = payload.submission.counts.accepted.toString();
+    env.NARRATORR_SUBMISSION_HELD = payload.submission.counts.held.toString();
+    env.NARRATORR_SUBMISSION_SKIPPED = payload.submission.counts.skipped.toString();
+    env.NARRATORR_SUBMISSION_FAILED = payload.submission.counts.failed.toString();
+  }
 
   return env;
 }

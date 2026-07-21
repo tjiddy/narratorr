@@ -115,9 +115,12 @@ describe('import-submissions routes (#1893)', () => {
       await app.inject({ method: 'GET', url: '/api/import/submissions/1' });
       expect(mockFn(services, 'getById')).toHaveBeenCalledWith(1, false);
     });
-    it('includeItems=true → detail (service called with true)', async () => {
+    it('includeItems=true → report service projection, NOT staging.getById (F87)', async () => {
+      const reportDetail = services.importSubmissionReport.reportDetail as unknown as ReturnType<typeof vi.fn>;
+      reportDetail.mockResolvedValue({ ...summary, itemsIncluded: true, items: [] });
       await app.inject({ method: 'GET', url: '/api/import/submissions/1?includeItems=true' });
-      expect(mockFn(services, 'getById')).toHaveBeenCalledWith(1, true);
+      expect(reportDetail).toHaveBeenCalledWith(1);
+      expect(mockFn(services, 'getById')).not.toHaveBeenCalled();
     });
     it('invalid includeItems value → 400', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/import/submissions/1?includeItems=yes' });
@@ -244,6 +247,117 @@ describe('import-submissions routes (#1893)', () => {
         expect(res.statusCode).toBe(500); // rethrown to the generic handler
         expect(spies.error).toHaveBeenCalledWith(
           expect.objectContaining({ error: expect.objectContaining({ message: `${c.name} boom` }) }),
+          expect.stringContaining(c.msg),
+        );
+        restore();
+      });
+    }
+  });
+
+  // ── #1894 read side ──────────────────────────────────────────────────────
+
+  const reportList = () => services.importSubmissionReport.list as unknown as ReturnType<typeof vi.fn>;
+  const reportAttention = () => services.importSubmissionReport.attention as unknown as ReturnType<typeof vi.fn>;
+  const stagingDiscard = () => services.importStaging.discardReceiving as unknown as ReturnType<typeof vi.fn>;
+
+  describe('GET /api/import/submissions (list, F56)', () => {
+    it('returns the {data,total} envelope and passes coerced defaults', async () => {
+      reportList().mockResolvedValue({ data: [summary], total: 1 });
+      const res = await app.inject({ method: 'GET', url: '/api/import/submissions' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ data: [summary], total: 1 });
+      expect(reportList()).toHaveBeenCalledWith({ limit: 20, offset: 0 });
+    });
+
+    it('coerces numeric-string limit and threads source', async () => {
+      reportList().mockResolvedValue({ data: [], total: 0 });
+      await app.inject({ method: 'GET', url: '/api/import/submissions?limit=1&source=library' });
+      expect(reportList()).toHaveBeenCalledWith({ limit: 1, offset: 0, source: 'library' });
+    });
+
+    it('rejects invalid queries with 400 invalid-query', async () => {
+      reportList().mockResolvedValue({ data: [], total: 0 });
+      for (const q of ['source=bogus', 'limit=0', 'limit=101', 'limit=1.5', 'offset=-1', 'offset=2.5', 'bogus=1']) {
+        const res = await app.inject({ method: 'GET', url: `/api/import/submissions?${q}` });
+        expect(res.statusCode, q).toBe(400);
+        expect(res.json().error).toBe('invalid-query');
+      }
+    });
+
+    it('latest arm — no submissions returns {data:[],total:0} (never 204)', async () => {
+      reportList().mockResolvedValue({ data: [], total: 0 });
+      const res = await app.inject({ method: 'GET', url: '/api/import/submissions?limit=1&source=manual' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ data: [], total: 0 });
+    });
+  });
+
+  describe('GET /api/import/submissions/attention', () => {
+    it('returns the {data,watch} envelope', async () => {
+      reportAttention().mockResolvedValue({ data: null, watch: true });
+      const res = await app.inject({ method: 'GET', url: '/api/import/submissions/attention' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ data: null, watch: true });
+      expect(reportAttention()).toHaveBeenCalledWith({});
+    });
+
+    it('threads source and rejects unknown keys / bad source with 400', async () => {
+      reportAttention().mockResolvedValue({ data: null, watch: false });
+      await app.inject({ method: 'GET', url: '/api/import/submissions/attention?source=library' });
+      expect(reportAttention()).toHaveBeenCalledWith({ source: 'library' });
+      for (const q of ['source=bogus', 'bogus=1']) {
+        const res = await app.inject({ method: 'GET', url: `/api/import/submissions/attention?${q}` });
+        expect(res.statusCode, q).toBe(400);
+      }
+    });
+  });
+
+  describe('DELETE /api/import/submissions/:id', () => {
+    it('discards a receiving submission → 200 {success:true}', async () => {
+      stagingDiscard().mockResolvedValue({ success: true });
+      const res = await app.inject({ method: 'DELETE', url: '/api/import/submissions/5' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: true });
+      expect(stagingDiscard()).toHaveBeenCalledWith(5);
+    });
+
+    it('maps non-receiving → 409 and unknown → 404 via SubmissionError', async () => {
+      stagingDiscard().mockRejectedValue(new SubmissionError('submission-not-receiving', 409, 'nope'));
+      expect((await app.inject({ method: 'DELETE', url: '/api/import/submissions/5' })).statusCode).toBe(409);
+      stagingDiscard().mockRejectedValue(new SubmissionError('submission-not-found', 404, 'gone'));
+      expect((await app.inject({ method: 'DELETE', url: '/api/import/submissions/5' })).statusCode).toBe(404);
+    });
+
+    it('invalid id → 400', async () => {
+      expect((await app.inject({ method: 'DELETE', url: '/api/import/submissions/abc' })).statusCode).toBe(400);
+    });
+  });
+
+  describe('by-client GET stays on ImportStagingService (F87)', () => {
+    it('includeItems=true routes to staging.getByClientId, not the report service', async () => {
+      mockFn(services, 'getByClientId').mockResolvedValue({ ...summary, itemsIncluded: true, items: [] });
+      await app.inject({ method: 'GET', url: `/api/import/submissions/by-client/${UUID}?includeItems=true` });
+      expect(mockFn(services, 'getByClientId')).toHaveBeenCalledWith(UUID, true);
+      expect(reportList()).not.toHaveBeenCalled();
+    });
+  });
+
+  // F25 — the new read/discard routes must serialize + log an unexpected (non-typed)
+  // rejection before rethrowing to the generic 500 handler.
+  describe('#1894 read/discard route error diagnostics (F25)', () => {
+    const cases = [
+      { name: 'list', setup: () => reportList().mockRejectedValue(new Error('list boom')), op: () => app.inject({ method: 'GET', url: '/api/import/submissions' }), msg: 'list', boom: 'list boom' },
+      { name: 'attention', setup: () => reportAttention().mockRejectedValue(new Error('attention boom')), op: () => app.inject({ method: 'GET', url: '/api/import/submissions/attention' }), msg: 'attention', boom: 'attention boom' },
+      { name: 'discard', setup: () => stagingDiscard().mockRejectedValue(new Error('discard boom')), op: () => app.inject({ method: 'DELETE', url: '/api/import/submissions/5' }), msg: 'discard', boom: 'discard boom' },
+    ];
+    for (const c of cases) {
+      it(`${c.name}: an unexpected rejection returns 500 and logs the serialized error`, async () => {
+        const { spies, restore } = installMockAppLog(app);
+        c.setup();
+        const res = await c.op();
+        expect(res.statusCode).toBe(500); // rethrown to the generic handler
+        expect(spies.error).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.objectContaining({ message: c.boom }) }),
           expect.stringContaining(c.msg),
         );
         restore();

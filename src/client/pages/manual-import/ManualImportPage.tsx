@@ -12,6 +12,8 @@ import { useManualImport } from './useManualImport.js';
 import { useFolderHistory } from './useFolderHistory.js';
 import { PathStep } from './PathStep.js';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
+import { LastImportPanel } from '@/components/import-report/LastImportPanel';
+import { ImportAttentionBanner } from '@/components/import-report/ImportAttentionBanner';
 
 // eslint-disable-next-line complexity -- 3-step page with 21 hook props, path input, and conditional step rendering
 export function ManualImportPage() {
@@ -23,7 +25,7 @@ export function ManualImportPage() {
 
   const { state, actions, mutations, counts } = useManualImport({ onScanSuccess: folderHistory.addRecent, libraryPath });
   const { step, scanPath, setScanPath, scanError, setScanError, rows, mode, setMode, editIndex, setEditIndex, isMatching, progress, chunkProgress, heldReview, recovering, paused, pausedReason, matchRemaining, matchTotal } = state;
-  const { handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack, handleReconfirmHeld, handleRestartMatch, handleResumeMatch } = actions;
+  const { handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack, resetToPath, handleReconfirmHeld, handleRestartMatch, handleResumeMatch } = actions;
   const { scanMutation, importMutation } = mutations;
   const { selectedCount, selectedUnmatchedCount, readyCount, reviewCount, noMatchCount, pendingCount, selectedPendingCount, duplicateCount, allSelected } = counts;
 
@@ -55,6 +57,10 @@ export function ManualImportPage() {
           <p className="text-sm text-muted-foreground mt-1 ml-10">{scanPath}</p>
         )}
       </div>
+
+      {/* Durable last-import panel + attention banner (#1894) */}
+      <LastImportPanel source="manual" />
+      <ImportAttentionBanner source="manual" onImportAgain={() => resetToPath()} />
 
       {/* Step 1: Path Input */}
       {step === 'path' && (

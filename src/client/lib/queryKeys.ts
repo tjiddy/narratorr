@@ -73,4 +73,16 @@ export const queryKeys = {
     suggestions: () => ['discover', 'suggestions'] as const,
     stats: () => ['discover', 'stats'] as const,
   },
+  // Durable import report (#1894). `list` backs the Activity import-history pages
+  // (patched by id when a self-polled detail advances — F86/F89); `latest` backs
+  // the last-import panel; `attention` backs the banner; `detail` backs both
+  // expansion surfaces. All share the `['importSubmissions']` root prefix so the
+  // cache patch can scan every cached page.
+  importSubmissions: {
+    root: () => ['importSubmissions'] as const,
+    list: (params: { source?: string; limit?: number; offset?: number }) => ['importSubmissions', 'list', params] as const,
+    latest: (source?: string) => ['importSubmissions', 'latest', source ?? 'all'] as const,
+    attention: (source?: string) => ['importSubmissions', 'attention', source ?? 'all'] as const,
+    detail: (id: number) => ['importSubmissions', 'detail', id] as const,
+  },
 } as const;

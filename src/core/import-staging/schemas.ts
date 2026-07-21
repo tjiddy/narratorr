@@ -347,6 +347,73 @@ export const submissionResponseSchema = z
 export type SubmissionResponse = z.infer<typeof submissionResponseSchema>;
 
 // ---------------------------------------------------------------------------
+// Read-side (#1894): list / latest / attention contracts over the durable record
+// ---------------------------------------------------------------------------
+
+/**
+ * The summary row shape (`itemsIncluded:false`) as a standalone schema — the row
+ * type transferred by the list/latest reads. It is the summary arm of
+ * `submissionResponseSchema`; declared separately so the list envelope and the
+ * client wrapper can name a `SubmissionSummary` type without the union.
+ */
+export const submissionSummarySchema = z
+  .object({ ...submissionHeaderFields, itemsIncluded: z.literal(false) })
+  .strict();
+export type SubmissionSummary = z.infer<typeof submissionSummarySchema>;
+
+/** List envelope — mirrors `PaginatedResponse<T>` (`common.ts`). */
+export const submissionListResponseSchema = z
+  .object({ data: z.array(submissionSummarySchema), total: z.number().int() })
+  .strict();
+export type SubmissionListResponse = z.infer<typeof submissionListResponseSchema>;
+
+/**
+ * Strict list query (narratorr-owned). `limit`/`offset` arrive as query strings;
+ * coerced to bounded integers. Unknown keys / out-of-range / non-integer → the
+ * route's typed `400 invalid-query`.
+ */
+export const submissionListQuerySchema = z
+  .object({
+    source: submissionSourceSchema.optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+    offset: z.coerce.number().int().min(0).default(0),
+  })
+  .strict();
+export type SubmissionListQuery = z.infer<typeof submissionListQuerySchema>;
+
+/** Strict attention query — `source?` only. */
+export const submissionAttentionQuerySchema = z
+  .object({ source: submissionSourceSchema.optional() })
+  .strict();
+export type SubmissionAttentionQuery = z.infer<typeof submissionAttentionQuerySchema>;
+
+/** Server-authoritative attention classification carried on the attention read's `data`. */
+export const submissionAttentionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('abandoned') }).strict(),
+  z
+    .object({ kind: z.literal('completed-attention'), held: z.number().int(), failed: z.number().int() })
+    .strict(),
+]);
+export type SubmissionAttention = z.infer<typeof submissionAttentionSchema>;
+
+/** A summary row plus its server-computed attention classification. */
+export const attentionSubmissionSchema = z
+  .object({ ...submissionHeaderFields, itemsIncluded: z.literal(false), attention: submissionAttentionSchema })
+  .strict();
+export type AttentionSubmission = z.infer<typeof attentionSubmissionSchema>;
+
+/**
+ * Attention read envelope (F60/F68). `data` = the single newest attention-worthy
+ * submission in scope (or null); `watch` = whether any non-terminal
+ * (`receiving`/`processing`) submission exists in scope, so the client knows to
+ * keep polling. Both are one atomic snapshot; always JSON, never 204.
+ */
+export const attentionResponseSchema = z
+  .object({ data: attentionSubmissionSchema.nullable(), watch: z.boolean() })
+  .strict();
+export type AttentionResponse = z.infer<typeof attentionResponseSchema>;
+
+// ---------------------------------------------------------------------------
 // Canonical digest serialization (client at create ⇄ server at finalize)
 // ---------------------------------------------------------------------------
 

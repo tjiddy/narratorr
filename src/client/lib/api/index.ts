@@ -21,6 +21,7 @@ export type { ImportList, ImportListItem, ImportListPreview } from './import-lis
 export type { SuggestionRow, MarkAddedResult, RefreshResult } from './discover.js';
 export type { BulkOpType, BulkJobStatus, BulkRenamePreview, BulkRenamePreviewItem } from './bulk-operations.js';
 export type { ImportJobWithBook, ImportJobBook, ImportJobsParams } from './import-jobs.js';
+export type { ImportSubmissionListParams, AttentionResponse, AttentionSubmission, SubmissionAttention, SubmissionListResponse, SubmissionResponse, SubmissionSummary, StagedItemResultDto, SubmissionAggregates } from './submissions.js';
 
 export { formatBytes } from '@core/utils/parse.js';
 export { formatBytesPerSec } from './formatBytesPerSec.js';
@@ -46,6 +47,7 @@ import { importListsApi } from './import-lists.js';
 import { discoverApi } from './discover.js';
 import { bulkOperationsApi } from './bulk-operations.js';
 import { importJobsApi } from './import-jobs.js';
+import { submissionsApi } from './submissions.js';
 
 /**
  * Single source of truth for the API barrel. Both the runtime `api` object and
@@ -76,6 +78,7 @@ export const apiModules = [
   { name: 'discoverApi', api: discoverApi },
   { name: 'bulkOperationsApi', api: bulkOperationsApi },
   { name: 'importJobsApi', api: importJobsApi },
+  { name: 'submissionsApi', api: submissionsApi },
 ];
 
 type UnionToIntersection<U> = (U extends unknown ? (arg: U) => void : never) extends (

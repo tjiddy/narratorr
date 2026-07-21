@@ -11,11 +11,13 @@ import { ASIN_UNIQUE_VIOLATION } from './book-dedup.js';
 import { isUniqueViolation } from '../../shared/error-message.js';
 import type { BookImportService } from './book-import.service.js';
 import type { EventHistoryService } from './event-history.service.js';
+import type { NotifierService } from './notifier.service.js';
+import { fireAndForget } from '../utils/fire-and-forget.js';
 import { classifyConfirmItem } from './import-confirm-item.helpers.js';
 import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
 import type { ImportConfirmItem } from './library-scan.service.js';
 import type { ManualImportJobPayload } from './import-adapters/types.js';
-import { aggregateDispositions, stagedImportItemSchema, type ItemDisposition } from '../../core/import-staging/schemas.js';
+import { aggregateDispositions, stagedImportItemSchema, type ItemDisposition, type SubmissionAggregates, type SubmissionSource } from '../../core/import-staging/schemas.js';
 
 const SAFETY_POLL_INTERVAL_MS = 30_000;
 
@@ -34,12 +36,23 @@ interface TerminalWrite {
   existingTitle?: string;
 }
 
+/**
+ * The winning terminal-CAS outcome (#1894). `maybeComplete` returns this ONLY when
+ * its `processing`→`complete` CAS wins (`getRowsAffected===1`); the caller dispatches
+ * the `import_run_finished` notification post-commit. A lost/replayed CAS returns null.
+ */
+export interface CompletionNotice {
+  source: SubmissionSource;
+  counts: SubmissionAggregates;
+}
+
 export interface ImportSubmissionRunnerDeps {
   db: Db;
   log: FastifyBaseLogger;
   bookService: BookService;
   bookImportService: BookImportService;
   eventHistory: EventHistoryService;
+  notifier: NotifierService;
   nudgeImportWorker: () => void;
 }
 
@@ -59,6 +72,7 @@ export class ImportSubmissionRunner {
   private readonly bookService: BookService;
   private readonly bookImportService: BookImportService;
   private readonly eventHistory: EventHistoryService;
+  private readonly notifier: NotifierService;
   private readonly nudgeImportWorker: () => void;
   private readonly emitter = new EventEmitter();
   private running = false;
@@ -74,7 +88,26 @@ export class ImportSubmissionRunner {
     this.bookService = deps.bookService;
     this.bookImportService = deps.bookImportService;
     this.eventHistory = deps.eventHistory;
+    this.notifier = deps.notifier;
     this.nudgeImportWorker = deps.nudgeImportWorker;
+  }
+
+  /**
+   * Dispatch the `import_run_finished` notification for a winning completion,
+   * post-commit and best-effort (F: delivery is one attempt, not exactly-once).
+   * Routed through `fireAndForget` so a `NotifierService.notify` rejection (it can
+   * reject on its initial DB query before `Promise.allSettled`) can never abort the
+   * runner drain.
+   */
+  private dispatchCompletion(notice: CompletionNotice): void {
+    fireAndForget(
+      this.notifier.notify('import_run_finished', {
+        event: 'import_run_finished',
+        submission: { source: notice.source, status: 'complete', counts: notice.counts },
+      }),
+      this.log,
+      'Failed to dispatch import_run_finished notification',
+    );
   }
 
   /** Nudge the runner to look for finalized submissions to process. */
@@ -146,7 +179,8 @@ export class ImportSubmissionRunner {
     const processed = await this.processOnePending(sub);
     if (!processed) {
       // A 'processing' submission with no pending items → complete it (boot-resume safety).
-      await this.db.transaction((tx) => this.maybeComplete(tx, sub.id));
+      const notice = await this.db.transaction((tx) => this.maybeComplete(tx, sub));
+      if (notice) this.dispatchCompletion(notice);
       return true;
     }
     return true;
@@ -216,8 +250,11 @@ export class ImportSubmissionRunner {
   private async acceptItem(sub: SubmissionRow, row: ItemRow, item: ImportConfirmItem): Promise<void> {
     const resolved = await this.bookService.resolveCreateInput(buildBookCreatePayload(item, item.metadata ?? null, 'importing'));
     let createdBookId: number | undefined;
+    // Every catch branch returns, so `notice` is only read on the success path where
+    // the tx assigned it — no initializer (avoids a useless-assignment).
+    let notice: CompletionNotice | null;
     try {
-      await this.db.transaction(async (tx) => {
+      notice = await this.db.transaction(async (tx) => {
         const bookId = await this.bookService.createResolved(resolved, tx);
         const payload: ManualImportJobPayload = { ...item };
         if (sub.mode) payload.mode = sub.mode;
@@ -231,7 +268,7 @@ export class ImportSubmissionRunner {
         if (getRowsAffected(claim) !== 1) throw new AlreadyDispositioned();
 
         createdBookId = bookId;
-        await this.maybeComplete(tx, sub.id);
+        return this.maybeComplete(tx, sub);
       });
     } catch (error: unknown) {
       // Same-ASIN create-time race (F2). `createResolved(resolved, tx)` runs on our
@@ -290,11 +327,13 @@ export class ImportSubmissionRunner {
       this.log.warn({ error: serializeError(err), submissionId: sub.id, ordinal: row.ordinal }, 'Failed to record book_added event — book lookup failed');
     }
     this.nudgeImportWorker();
+    // Post-commit: this item's accept completed the submission → dispatch once.
+    if (notice) this.dispatchCompletion(notice);
   }
 
   /** CAS-guarded disposition write for a held/skipped/failed item + maybe-complete, in one tx. */
   private async writeTerminal(sub: SubmissionRow, row: ItemRow, write: TerminalWrite): Promise<void> {
-    await this.db.transaction(async (tx) => {
+    const notice = await this.db.transaction(async (tx) => {
       const claim = await tx
         .update(importSubmissionItems)
         .set({
@@ -305,32 +344,39 @@ export class ImportSubmissionRunner {
           updatedAt: new Date(),
         })
         .where(and(eq(importSubmissionItems.id, row.id), eq(importSubmissionItems.disposition, 'pending')));
-      if (getRowsAffected(claim) !== 1) return; // already dispositioned by another pass
-      await this.maybeComplete(tx, sub.id);
+      if (getRowsAffected(claim) !== 1) return null; // already dispositioned by another pass
+      return this.maybeComplete(tx, sub);
     });
+    // Post-commit: this terminal write completed the submission → dispatch once.
+    if (notice) this.dispatchCompletion(notice);
   }
 
   /**
    * When no 'pending' items remain, freeze the terminal aggregates and CAS-flip the
    * header 'processing' → 'complete' (idempotent). Runs inside the same tx as the
    * final item's disposition write, so the outcome record commits atomically.
+   *
+   * Returns a `CompletionNotice` ONLY when THIS call's terminal CAS wins
+   * (`getRowsAffected===1`) so the caller can dispatch `import_run_finished`
+   * post-commit exactly once (#1894); a still-pending header or a lost/replayed CAS
+   * returns null (no re-fire).
    */
-  private async maybeComplete(tx: DbOrTx, submissionId: number): Promise<void> {
+  private async maybeComplete(tx: DbOrTx, sub: SubmissionRow): Promise<CompletionNotice | null> {
     const [stillPending] = await tx
       .select({ id: importSubmissionItems.id })
       .from(importSubmissionItems)
-      .where(and(eq(importSubmissionItems.submissionId, submissionId), eq(importSubmissionItems.disposition, 'pending')))
+      .where(and(eq(importSubmissionItems.submissionId, sub.id), eq(importSubmissionItems.disposition, 'pending')))
       .limit(1);
-    if (stillPending) return;
+    if (stillPending) return null;
 
     const rows = await tx
       .select({ disposition: importSubmissionItems.disposition })
       .from(importSubmissionItems)
-      .where(eq(importSubmissionItems.submissionId, submissionId));
+      .where(eq(importSubmissionItems.submissionId, sub.id));
     // One shared disposition→aggregate mapping with computeProgress (F13).
     const agg = aggregateDispositions(rows.map((r) => r.disposition as ItemDisposition));
     const now = new Date();
-    await tx
+    const result = await tx
       .update(importSubmissions)
       .set({
         status: 'complete',
@@ -341,6 +387,8 @@ export class ImportSubmissionRunner {
         completedAt: now,
         updatedAt: now,
       })
-      .where(and(eq(importSubmissions.id, submissionId), eq(importSubmissions.status, 'processing')));
+      .where(and(eq(importSubmissions.id, sub.id), eq(importSubmissions.status, 'processing')));
+    if (getRowsAffected(result) !== 1) return null;
+    return { source: sub.source, counts: agg };
   }
 }
