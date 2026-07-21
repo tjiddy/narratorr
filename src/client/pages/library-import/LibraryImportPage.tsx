@@ -9,6 +9,7 @@ import { useLibraryImport } from './useLibraryImport.js';
 import { isLibraryDbDuplicate } from './isLibraryDbDuplicate.js';
 import { LastImportPanel } from '@/components/import-report/LastImportPanel';
 import { ImportAttentionBanner } from '@/components/import-report/ImportAttentionBanner';
+import { StagedSubmitBanner } from '@/components/import-report/StagedSubmitBanner';
 
 // eslint-disable-next-line max-lines-per-function, complexity -- page orchestrator with scan, match, duplicate, register flows
 export function LibraryImportPage() {
@@ -25,6 +26,8 @@ export function LibraryImportPage() {
     chunkProgress,
     libraryRoot,
     heldReview,
+    banner,
+    dismissBanner,
     recovering,
     paused,
     pausedReason,
@@ -78,6 +81,9 @@ export function LibraryImportPage() {
               : `${rows.length} book${rows.length !== 1 ? 's' : ''} found`}
         </p>
       </div>
+
+      {/* In-session staged-submit recoverable/error banner (#1902) */}
+      <StagedSubmitBanner message={banner} onDismiss={dismissBanner} />
 
       {/* Durable last-import panel + attention banner (#1894) */}
       <LastImportPanel source="library" />

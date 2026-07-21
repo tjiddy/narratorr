@@ -5,6 +5,7 @@ import {
   ArrowLeftIcon,
   CheckIcon,
 } from '@/components/icons';
+import { StagedSubmitBanner } from '@/components/import-report/StagedSubmitBanner';
 import { PageHeader } from '@/components/PageHeader.js';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -24,7 +25,7 @@ export function ManualImportPage() {
   const libraryPath = settings?.library?.path ?? '';
 
   const { state, actions, mutations, counts } = useManualImport({ onScanSuccess: folderHistory.addRecent, libraryPath });
-  const { step, scanPath, setScanPath, scanError, setScanError, rows, mode, setMode, editIndex, setEditIndex, isMatching, progress, chunkProgress, heldReview, recovering, paused, pausedReason, matchRemaining, matchTotal } = state;
+  const { step, scanPath, setScanPath, scanError, setScanError, rows, mode, setMode, editIndex, setEditIndex, isMatching, progress, chunkProgress, heldReview, banner, dismissBanner, recovering, paused, pausedReason, matchRemaining, matchTotal } = state;
   const { handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack, resetToPath, handleReconfirmHeld, handleRestartMatch, handleResumeMatch } = actions;
   const { scanMutation, importMutation } = mutations;
   const { selectedCount, selectedUnmatchedCount, readyCount, reviewCount, noMatchCount, pendingCount, selectedPendingCount, duplicateCount, allSelected } = counts;
@@ -57,6 +58,9 @@ export function ManualImportPage() {
           <p className="text-sm text-muted-foreground mt-1 ml-10">{scanPath}</p>
         )}
       </div>
+
+      {/* In-session staged-submit recoverable/error banner (#1902) */}
+      <StagedSubmitBanner message={banner} onDismiss={dismissBanner} />
 
       {/* Durable last-import panel + attention banner (#1894) */}
       <LastImportPanel source="manual" />
