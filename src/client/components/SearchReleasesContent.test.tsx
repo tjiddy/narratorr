@@ -51,6 +51,7 @@ const defaultProps: ContentProps = {
   onCancelIndexer: vi.fn(),
   onShowResults: vi.fn(),
   onRetry: vi.fn(),
+  retryDisabled: false,
   onGrab: vi.fn(),
   onBlacklist: vi.fn(),
 };
@@ -123,6 +124,17 @@ describe('SearchReleasesContent', () => {
       renderContent({ phase: 'idle', error: 'Connection refused', onRetry });
       await userEvent.click(screen.getByText('Retry'));
       expect(onRetry).toHaveBeenCalledOnce();
+    });
+
+    // F24: Retry owns its DOM here, so its disabled contract is asserted directly —
+    // rendered (never hidden) and inert when the current query is ineligible.
+    it('renders Retry disabled and does not call onRetry when retryDisabled is true', async () => {
+      const onRetry = vi.fn();
+      renderContent({ phase: 'idle', error: 'Connection refused', retryDisabled: true, onRetry });
+      const retry = screen.getByText('Retry');
+      expect(retry).toBeDisabled();
+      await userEvent.click(retry);
+      expect(onRetry).not.toHaveBeenCalled();
     });
 
     it('does not show error when phase is searching', () => {

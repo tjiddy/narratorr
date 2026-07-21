@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type Dispatch, type SetStateAction } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, type Dispatch, type SetStateAction } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';
@@ -53,11 +53,23 @@ export interface SearchStreamActions {
   removeResult: (ref: { infoHash?: string; guid?: string }) => void;
 }
 
-/** Build the SSE stream URL with query, context, and stream-token params (#1453). */
+// Ranking-context caps (F15). The stream route validates context independently of
+// `q`: `title` ≤ 500, `author` ≤ 200 (`searchQuerySchema`, src/shared/schemas/search.ts).
+// Valid book metadata is unbounded, so a pathological book (title > 500 / author > 200)
+// would 400 on EVERY request no matter how the user trims the editable `q`. Clamp the
+// book-keyed context to the route maxima here so every structurally valid book stays
+// searchable; the user's `q` is never touched. Kept as client-local literals — the
+// clamp is a client URL-builder concern and this issue is scoped to `src/client` (no
+// schema change); the route schema remains the authoritative validator.
+const MAX_CONTEXT_TITLE = 500;
+const MAX_CONTEXT_AUTHOR = 200;
+
+/** Build the SSE stream URL with query, context, and stream-token params (#1453).
+ *  Context `title`/`author` are clamped to the route maxima (F15); `query` is untouched. */
 function buildStreamUrl(query: string, context: SearchContext | undefined, token: string): string {
   const params = new URLSearchParams({ q: query });
-  if (context?.author) params.set('author', context.author);
-  if (context?.title) params.set('title', context.title);
+  if (context?.author) params.set('author', context.author.slice(0, MAX_CONTEXT_AUTHOR));
+  if (context?.title) params.set('title', context.title.slice(0, MAX_CONTEXT_TITLE));
   if (context?.bookDuration) params.set('bookDuration', String(context.bookDuration));
   if (token) params.set('token', token);
   return `${URL_BASE}/api/search/stream?${params.toString()}`;
@@ -196,6 +208,19 @@ export function useSearchStream(
   // Holds the latest openStream so a reconnect can call it from inside onerror
   // without making openStream depend on itself.
   const openStreamRef = useRef<(token: string) => void>(() => {});
+  // Search-session contract (F11/F14/F17/F18). `start()` captures an immutable
+  // session: a monotonically increasing generation plus the exact query/context it
+  // submitted. The generation advances SYNCHRONOUSLY on start / reset / unmount. The
+  // token re-mint continuation captures the generation at schedule time and no-ops
+  // (neither reopens a stream nor mutates phase/error) if it has since advanced —
+  // and, when still live, reopens the CAPTURED snapshot, never the latest render.
+  // A value-compared generation is StrictMode-safe: unmount advances it and a fresh
+  // mount begins a new session, so the dev setup→cleanup→setup probe cannot wedge it.
+  const sessionGenRef = useRef(0);
+  const sessionSnapshotRef = useRef<{ query: string; context: SearchContext | undefined }>({
+    query,
+    context,
+  });
 
   // Mint a short-lived stream token (#1453) for SSE auth instead of reading the
   // long-lived API key — the search-stream endpoint is no longer key-reachable.
@@ -234,7 +259,11 @@ export function useSearchStream(
     if (esRef.current) {
       esRef.current.close();
     }
-    const url = buildStreamUrl(query, context, token);
+    // Reopen the SESSION snapshot's query/context — never the latest render — so a
+    // token re-mint reconnect re-fires the query the search actually submitted even
+    // if the persistent input has since been edited (F14).
+    const { query: sessionQuery, context: sessionContext } = sessionSnapshotRef.current;
+    const url = buildStreamUrl(sessionQuery, sessionContext, token);
     const es = new EventSource(url);
     esRef.current = es;
 
@@ -257,17 +286,30 @@ export function useSearchStream(
       // or one after results are shown, is treated as a terminal failure.
       if (!resultsShownRef.current && !remintAttemptedRef.current) {
         remintAttemptedRef.current = true;
+        // Bind this recovery to the session live at schedule time. If start/reset/
+        // unmount advances the generation before the mint settles, the recovery is
+        // abandoned on BOTH paths (F11/F17/F18): fulfillment opens no stream, and
+        // rejection does not force `Search connection failed`/idle onto the newer
+        // search. A recovery within the still-live session reopens (fulfillment) or
+        // fails generically (rejection).
+        const scheduledGen = sessionGenRef.current;
         api.mintStreamToken()
-          .then(({ token: fresh }) => { openStreamRef.current(fresh); })
-          .catch(failConnection);
+          .then(({ token: fresh }) => {
+            if (sessionGenRef.current !== scheduledGen) return;
+            openStreamRef.current(fresh);
+          })
+          .catch(() => {
+            if (sessionGenRef.current !== scheduledGen) return;
+            failConnection();
+          });
         return;
       }
       failConnection();
     };
-  }, [query, context, clearFinalizingTimeout, failConnection]);
+  }, [clearFinalizingTimeout, failConnection]);
 
   // Keep openStreamRef pointed at the latest openStream so onerror reconnects
-  // with current query/context without a self-referential dependency.
+  // (using the captured session snapshot) without a self-referential dependency.
   useEffect(() => { openStreamRef.current = openStream; }, [openStream]);
 
   const start = useCallback(() => {
@@ -275,6 +317,10 @@ export function useSearchStream(
     if (!streamToken) return;
 
     cleanup();
+    // Open a new search session: advance the generation (superseding any in-flight
+    // recovery) and snapshot the exact query/context being submitted (F11/F14).
+    sessionGenRef.current += 1;
+    sessionSnapshotRef.current = { query, context };
     setPhase('searching');
     setResults(null);
     setError(null);
@@ -285,7 +331,7 @@ export function useSearchStream(
     resultsShownRef.current = false;
 
     openStream(streamToken.token ?? '');
-  }, [streamToken, cleanup, openStream]);
+  }, [streamToken, cleanup, openStream, query, context]);
 
   const cancelIndexer = useCallback((indexerId: number) => {
     if (!sessionId || cancelledRef.current.has(indexerId)) return;
@@ -332,6 +378,8 @@ export function useSearchStream(
 
   const reset = useCallback(() => {
     cleanup();
+    // Supersede any in-flight recovery bound to the prior session (F17/F18).
+    sessionGenRef.current += 1;
     setPhase('idle');
     setSessionId(null);
     setIndexers([]);
@@ -342,8 +390,18 @@ export function useSearchStream(
     resultsShownRef.current = false;
   }, [cleanup]);
 
-  // Cleanup on unmount
-  useEffect(() => cleanup, [cleanup]);
+  // Cleanup on unmount. Advancing the session generation MUST happen on a
+  // synchronous (layout-phase) seam, not a passive `useEffect` cleanup (F1): during a
+  // keyed book switch or close, React runs this layout cleanup during the commit —
+  // before the next book's body is interactive and before passive effects flush. A
+  // passive cleanup runs AFTER the new UI commits, leaving a window in which a pending
+  // token re-mint that settles can still see `scheduledGen === sessionGenRef.current`
+  // and reopen a superseded/orphan stream. A value-compared generation (not a boolean)
+  // keeps this StrictMode-safe under the dev setup→cleanup→setup probe.
+  useLayoutEffect(() => () => {
+    sessionGenRef.current += 1;
+    cleanup();
+  }, [cleanup]);
 
   const hasResults = indexers.some(idx => idx.status === 'complete' && (idx.resultCount ?? 0) > 0);
 
