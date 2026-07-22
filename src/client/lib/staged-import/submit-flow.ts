@@ -23,7 +23,12 @@ export type SubmitDisposition =
   | 'finalize-unreachable'; // finalize 5xx exhaustion — retry then by-client recovery, hint retained
 
 export class SubmitError extends Error {
-  constructor(public readonly disposition: SubmitDisposition, public readonly cause?: unknown) {
+  constructor(
+    public readonly disposition: SubmitDisposition,
+    public readonly cause?: unknown,
+    /** `put-failed` only: upload accounting for the pinned "X of Y received" copy (#1902 AC). */
+    public readonly counts?: { received: number; total: number },
+  ) {
     super(disposition);
     this.name = 'SubmitError';
   }
@@ -86,7 +91,9 @@ async function putStep(params: SubmitParams, submissionId: number): Promise<void
     } catch (error: unknown) {
       if (isAbort(error, signal)) throw new SubmitError('aborted', error);
       // Permanent (400/409/413) or exhausted transport → stop; the receiving header is inert.
-      throw new SubmitError('put-failed', error);
+      // `sent` counts only fully-landed chunks — the in-flight chunk's fate is unknown, and
+      // under-claiming received is the honest direction for "nothing was imported" copy.
+      throw new SubmitError('put-failed', error, { received: sent, total: rows.length });
     }
     sent += chunk.length;
   }

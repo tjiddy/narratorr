@@ -12,7 +12,7 @@ import { runSubmit, SubmitError } from './submit-flow.js';
 import { createPollController, type PollController } from './poll.js';
 import { reconcileByClient } from './reconcile.js';
 import { readOutbox, putOutbox, markOutboxFinalized, evictOutbox, type OutboxRecord } from './outbox.js';
-import { STAGED_COPY, type StagedBannerKey } from './messages.js';
+import { STAGED_COPY, putFailedWithCounts, type StagedBannerKey } from './messages.js';
 import { buildStagedOutcomeToast, isCleanCompletion, type LocalExclusions } from './outcome.js';
 import { acceptedItemPaths } from '@/lib/import-outcome.js';
 
@@ -268,7 +268,8 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
         case 'put-failed':
           // Permanent PUT (400/409/413): NOT connectivity — the upload stopped, nothing imported.
           // Leave the `receiving` hint for the next mount's receiving/404 reconcile arm.
-          setBanner(STAGED_COPY.putFailed);
+          // Pinned #1902 copy with received accounting when the flow provided counts.
+          setBanner(error.counts ? putFailedWithCounts(error.counts.received, error.counts.total) : STAGED_COPY.putFailed);
           return;
         case 'create-invalid':
           setBanner(STAGED_COPY.createInvalid); // validation failure → evict, nothing landed

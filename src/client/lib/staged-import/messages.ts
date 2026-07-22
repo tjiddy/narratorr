@@ -16,7 +16,7 @@ export const STAGED_COPY = {
   finalizeInvariant: 'Import couldn’t be finalized — please re-run',
   /** Finalized (processing/complete) 404 — invariant/data-loss, surfaced once then the hint evicts. */
   finalizedMissing: 'Import records are missing — the server may have lost this run',
-  /** PUT permanent failure (400/409/413) — NOT connectivity: the upload stopped, nothing imported; hint retained for receiving reconcile. */
+  /** PUT permanent failure (400/409/413) — NOT connectivity: the upload stopped, nothing imported; hint retained for receiving reconcile. Fallback when counts are unavailable. */
   putFailed: 'Some books couldn’t be uploaded — nothing was imported; reopen to try again',
   /** Create non-retryable 4xx (invalid body) — a validation failure, not connectivity; hint evicted. */
   createInvalid: 'That import couldn’t be prepared — re-scan and try again',
@@ -25,3 +25,12 @@ export const STAGED_COPY = {
 } as const;
 
 export type StagedBannerKey = keyof typeof STAGED_COPY;
+
+/**
+ * The AC-pinned PUT-failure copy WITH received accounting (#1902): "X of Y received —
+ * nothing imported". `received` counts fully-landed chunks only (the in-flight chunk's
+ * fate is unknown; under-claiming is the honest direction alongside "nothing was imported").
+ */
+export function putFailedWithCounts(received: number, total: number): string {
+  return `${received} of ${total} received — nothing was imported; reopen to try again`;
+}

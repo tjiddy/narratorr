@@ -52,7 +52,7 @@ import * as matchTimer from '@/hooks/match-timer';
 import type { MatchTimerMock } from '@/__tests__/match-timer-mock';
 import { wireStagedComplete, acceptedRow, heldRow, skippedRow, failedRow, summaryResponse, detailResponse, type StagedMockFns } from '@/lib/staged-import/__tests__/staged-fixtures';
 import { __resetOutboxCache, readOutbox, putOutbox } from '@/lib/staged-import/outbox';
-import { STAGED_COPY } from '@/lib/staged-import/messages';
+import { STAGED_COPY, putFailedWithCounts } from '@/lib/staged-import/messages';
 import { PREFLIGHT_COPY } from '@/lib/staged-import/preflight';
 
 /** A wrapper whose QueryClient is spied so tests can observe invalidation timing (F8). */
@@ -980,12 +980,14 @@ describe('useManualImport', () => {
   });
 
   // ── Distinct permanent-failure dispositions (F7) ──────────────────────────────
-  it('a permanent PUT failure shows the distinct upload-failure copy and RETAINS the hint (F7)', async () => {
+  it('a permanent PUT failure shows the pinned "X of Y received" copy and RETAINS the hint (F7, #1902 AC)', async () => {
     const result = await scanTwo();
     vi.mocked(api.putImportSubmissionItems).mockRejectedValue(new ApiError(409, { error: 'submission-not-receiving' }));
     await act(async () => { result.current.actions.handleImport(); });
 
-    await waitFor(() => expect(result.current.state.banner).toBe(STAGED_COPY.putFailed));
+    // First chunk died → zero fully-landed chunks of the 2-item submission.
+    await waitFor(() => expect(result.current.state.banner).toBe(putFailedWithCounts(0, 2)));
+    expect(result.current.state.banner).toBe('0 of 2 received — nothing was imported; reopen to try again');
     expect(result.current.state.banner).not.toBe(STAGED_COPY.createUnreachable); // NOT connectivity copy
     expect(api.finalizeImportSubmission).not.toHaveBeenCalled();
     expect(readOutbox('manual')).not.toBeNull(); // receiving hint left for reconcile
