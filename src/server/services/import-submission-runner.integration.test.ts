@@ -748,4 +748,80 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       }
     });
   });
+
+  // ── #1921: spec-named forced-import concurrency pins (AC2/AC3) ─────────────
+  // Sequential runner-boundary pins driven by the direct `drainOne` seam (AC4): no
+  // interleaving gate, no lifecycle timer loop, no wall-clock waits — `drainAll` just
+  // drains the two seeded 'processing' headers one pending item at a time.
+  describe('forced-import staged dispositions (AC2/AC3, #1921)', () => {
+    function forcedItem(path: string, title: string, asin?: string): StagedImportItem {
+      return { path, title, forceImport: true, metadata: { title, authors: [{ name: 'Author' }], ...(asin ? { asin } : {}) } };
+    }
+
+    it('two forced re-confirms resolving to the SAME non-null ASIN → exactly [accepted, skipped(already-in-library)]; one book+job, both headers complete, no drop (AC2)', async () => {
+      // Two tabs re-confirm the same held row (forceImport bypasses classification) whose
+      // resolved ASIN is the SAME non-null value in both and distinct from any incumbent —
+      // no book with this ASIN is seeded, so the winner is decided at the create-time unique
+      // index, not confirm-time classification.
+      const subA = await seedProcessing([forcedItem('/tabA', 'Shared Book', 'B0SHARED1')]);
+      const subB = await seedProcessing([forcedItem('/tabB', 'Shared Book', 'B0SHARED1')]);
+
+      await drainAll();
+
+      // Exactly one book placeholder + one manual job — the ASIN unique index fenced the
+      // duplicate registration; the losing tx rolled back.
+      expect(await db.select().from(books)).toHaveLength(1);
+      const jobs = await db.select().from(importJobs);
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]!.type).toBe('manual');
+
+      // The two item rows carry EXACTLY [accepted, skipped] — never a duplicate registration,
+      // never a silent drop (both terminal, neither left pending).
+      const rows = await db.select().from(importSubmissionItems)
+        .where(eq(importSubmissionItems.submissionId, subA))
+        .then(async (a) => [...a, ...await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subB))]);
+      expect(rows.every((r) => r.disposition !== 'pending')).toBe(true);
+      expect(rows.map((r) => r.disposition).sort()).toEqual(['accepted', 'skipped']);
+      const accepted = rows.find((r) => r.disposition === 'accepted')!;
+      const skipped = rows.find((r) => r.disposition === 'skipped')!;
+      expect(skipped.reason).toBe('already-in-library');
+      expect(skipped.existingBookId).toBe(accepted.bookId); // the skip points at the ONE registered book
+
+      const [hA] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subA));
+      const [hB] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subB));
+      expect(hA!.status).toBe('complete');
+      expect(hB!.status).toBe('complete');
+    });
+
+    it('two fresh forced null-ASIN submissions of the same book → both accepted, two books, two pending manual jobs (AC3 null-ASIN fence-gap pin)', async () => {
+      // NULL-ASIN FENCE-GAP PIN: the partial ASIN unique index (src/db/schema.ts:116-124) only
+      // applies where `asin IS NOT NULL`, so confirm-time dedup CANNOT fence duplicate null-ASIN
+      // forced imports. Force bypasses classification and NO providerId means resolveCreateInput
+      // (src/server/services/book.service.ts:276-294) leaves the resolved ASIN null — so both
+      // rows create a DISTINCT book (per-bookId active-job index, src/db/schema.ts:477-481) and
+      // both jobs enqueue. This pins the current behavior so any future change is a visible decision.
+      const subA = await seedProcessing([forcedItem('/dup', 'Dup Book')]);
+      const subB = await seedProcessing([forcedItem('/dup', 'Dup Book')]);
+
+      await drainAll();
+
+      // Two distinct null-ASIN books and two pending manual jobs — the fence gap admits both.
+      const bookRows = await db.select().from(books);
+      expect(bookRows).toHaveLength(2);
+      expect(bookRows.every((b) => b.asin == null)).toBe(true);
+      const jobs = await db.select().from(importJobs);
+      expect(jobs).toHaveLength(2);
+      expect(jobs.every((j) => j.status === 'pending' && j.type === 'manual')).toBe(true);
+
+      // Both item rows accepted — none held/skipped/failed — and both headers complete.
+      const rows = await db.select().from(importSubmissionItems)
+        .where(eq(importSubmissionItems.submissionId, subA))
+        .then(async (a) => [...a, ...await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subB))]);
+      expect(rows.every((r) => r.disposition === 'accepted')).toBe(true);
+      const [hA] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subA));
+      const [hB] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subB));
+      expect(hA!.status).toBe('complete');
+      expect(hB!.status).toBe('complete');
+    });
+  });
 });

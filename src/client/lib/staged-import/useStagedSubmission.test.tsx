@@ -36,6 +36,17 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   },
 }));
 
+// Stub the `clientSubmissionId` entropy boundary (#1921 AC1). By default it delegates to the
+// REAL generator (client-uuid.test.ts owns the generator's own coverage); the two-instance pin
+// overrides it with `mockReturnValueOnce` to feed two FIXED valid UUIDs, so its distinct-id
+// premise is deterministic and never rides on ambient `crypto` output.
+const { clientIdMock } = vi.hoisted(() => ({ clientIdMock: vi.fn<() => string>() }));
+vi.mock('./client-uuid.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./client-uuid.js')>();
+  clientIdMock.mockImplementation(() => actual.generateClientSubmissionId());
+  return { ...actual, generateClientSubmissionId: () => clientIdMock() };
+});
+
 const DIGEST = 'a'.repeat(64);
 const wrapper = ({ children }: { children: ReactNode }) =>
   createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }, children);
@@ -152,6 +163,90 @@ describe('useStagedSubmission — run supersession (F19)', () => {
     expect(readOutbox('library')).toMatchObject({ clientSubmissionId: bClientId, status: 'finalized', submissionId: 200 });
     expect(params.onCleanNavigate).not.toHaveBeenCalled();
     expect(params.onDeselectAccepted).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Two INDEPENDENT hook instances racing before create (AC1 client, #1921). Each
+ * `useStagedSubmission` instance owns its own epoch/abort refs, so neither supersedes the
+ * other — both keep a live create/PUT/finalize chain under a DISTINCT `clientSubmissionId`.
+ * The single-slot source-scoped outbox is the only shared surface: the newer instance's
+ * create replaces the hint, and the older still-active instance's LATE finalize callback must
+ * NOT rewrite it — the `expectedClientId` guard in `markOutboxFinalized` protects the newer
+ * hint (outbox.ts:123-133). The client mocks the submissions API and cannot observe server
+ * durability; durable-header discovery is proven by the linked real-DB test in
+ * import-submission-report.service.integration.test.ts.
+ */
+describe('useStagedSubmission — two independent instances (AC1 client, #1921)', () => {
+  // Two FIXED valid v4 UUIDs (F2): the distinct-id premise is deterministic, not entropy-dependent.
+  const CLIENT_1 = '11111111-1111-4111-8111-111111111111'; // older instance
+  const CLIENT_2 = '22222222-2222-4222-8222-222222222222'; // newer instance
+
+  // Deterministic advance (F1/AC4): drain the pending microtask chain (create→PUT→finalize→
+  // markOutboxFinalized) with a FIXED number of `Promise.resolve()` yields — NO wall-clock timers.
+  // Every mock resolves synchronously, so the chain is a fixed microtask sequence; the poll's
+  // interval timer never fires (and is irrelevant — the `finalized` hint lands before startPoll).
+  async function drainMicrotasks(): Promise<void> {
+    await act(async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); });
+  }
+
+  it('two instances hold distinct id/PUT/finalize chains; a late older-instance callback cannot rewrite the newer instance\'s outbox hint', async () => {
+    // Fixed, ordered client ids — instance 1 submits first (CLIENT_1), instance 2 second (CLIENT_2).
+    clientIdMock.mockReturnValueOnce(CLIENT_1).mockReturnValueOnce(CLIENT_2);
+    // Per-id PUT/finalize/poll wiring — each instance drives its OWN durable id and its poll
+    // parks at `processing` (so a `finalized` hint is not evicted on completion).
+    mockPut.mockImplementation((id: number) => Promise.resolve(summaryResponse({ id, source: 'library', status: 'receiving', expectedCount: 1 })));
+    mockFinalize.mockImplementation((id: number) => Promise.resolve(summaryResponse({ id, source: 'library', status: 'processing', expectedCount: 1 })));
+    mockGet.mockImplementation((id: number) => Promise.resolve(summaryResponse({ id, source: 'library', status: 'processing', expectedCount: 1, processedCount: 0 })));
+    // Instance 1's create is HELD (an explicit deferred gate, not a timer) so its finalize (and
+    // its outbox mark) lands LATE, after instance 2 has run its whole chain and taken the hint.
+    let resolveCreate1!: (v: ReturnType<typeof summaryResponse>) => void;
+    mockCreate
+      .mockImplementationOnce(() => new Promise<ReturnType<typeof summaryResponse>>((r) => { resolveCreate1 = r; }))
+      .mockImplementationOnce(() => Promise.resolve(summaryResponse({ id: 200, source: 'library', status: 'receiving', expectedCount: 1 })));
+
+    const inst1 = renderStaged(); // older instance
+    const inst2 = renderStaged(); // newer instance
+
+    // Both instances submit (each mints its fixed clientSubmissionId); each blocks on its digest.
+    act(() => { inst1.result.current.submit([{ path: '/one', title: 'One' }], undefined); });
+    act(() => { inst2.result.current.submit([{ path: '/two', title: 'Two' }], undefined); });
+    expect(digestResolvers).toHaveLength(2);
+
+    // Instance 1 enters its pipeline first — writes its (submitting) outbox hint and PARKS on its held create.
+    await act(async () => { digestResolvers[0]!(DIGEST); });
+    await drainMicrotasks();
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+
+    // Instance 2 runs its whole chain to `finalized` — it now OWNS the single-slot outbox hint.
+    await act(async () => { digestResolvers[1]!(DIGEST); });
+    await drainMicrotasks();
+    const client1 = (mockCreate.mock.calls[0]![0] as { clientSubmissionId: string }).clientSubmissionId;
+    const client2 = (mockCreate.mock.calls[1]![0] as { clientSubmissionId: string }).clientSubmissionId;
+    expect(client1).toBe(CLIENT_1);
+    expect(client2).toBe(CLIENT_2);
+    expect(client1).not.toBe(client2); // distinct durable identities → independent runs
+    expect(readOutbox('library')).toMatchObject({ clientSubmissionId: CLIENT_2, status: 'finalized', submissionId: 200 });
+
+    // NOW instance 1's held create resolves LATE — it finishes PUT/finalize and calls
+    // markOutboxFinalized(CLIENT_1), which MUST be a no-op because the slot belongs to instance 2.
+    resolveCreate1(summaryResponse({ id: 100, source: 'library', status: 'receiving', expectedCount: 1 }));
+    await drainMicrotasks();
+
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    // Per-instance payload ownership (F3): each durable id carried ITS OWN survivor item, never the
+    // other's — the PUT for id 100 sends ordinal 0 `/one` and the PUT for id 200 sends ordinal 0 `/two`.
+    // (A regression that sent `/two` for both ids, or swapped them, would fail here even though the
+    // id-only checks below still pass.)
+    const put100 = mockPut.mock.calls.find((c) => c[0] === 100)!;
+    const put200 = mockPut.mock.calls.find((c) => c[0] === 200)!;
+    expect(put100[1]).toMatchObject({ items: [{ ordinal: 0, item: { path: '/one', title: 'One' } }] });
+    expect(put200[1]).toMatchObject({ items: [{ ordinal: 0, item: { path: '/two', title: 'Two' } }] });
+    // Both instances drove an independent finalize over their own durable id.
+    expect(mockFinalize.mock.calls.some((c) => c[0] === 100)).toBe(true);
+    expect(mockFinalize.mock.calls.some((c) => c[0] === 200)).toBe(true);
+    // The hint STILL belongs to the newer instance — the late older-instance callback did not rewrite it.
+    expect(readOutbox('library')).toMatchObject({ clientSubmissionId: CLIENT_2, status: 'finalized', submissionId: 200 });
   });
 });
 
