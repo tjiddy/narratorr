@@ -7,9 +7,16 @@ import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { importSubmissions, importSubmissionItems, books } from '../../db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { ImportSubmissionReportService, reportItemProjection } from './import-submission-report.service.js';
-import { ABANDONED_UPLOAD_GRACE_MS } from './import-staging.service.js';
+import { ABANDONED_UPLOAD_GRACE_MS, ImportStagingService } from './import-staging.service.js';
 import { REPORT_ITEM_COLUMNS } from './import-submission-dto.js';
 import type { ItemDisposition, StagedImportItem, SubmissionSource, SubmissionStatus } from '../../core/import-staging/schemas.js';
+import { randomUUID } from 'node:crypto';
+import type { FastifyBaseLogger } from 'fastify';
+
+const noopLog = {
+  info() {}, warn() {}, error() {}, debug() {}, fatal() {}, trace() {},
+  child() { return noopLog; }, level: 'info', silent() {},
+} as unknown as FastifyBaseLogger;
 
 let seq = 0;
 
@@ -175,6 +182,29 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       expect(spy.count).toBe(1); // only the batch existence probe (no non-complete rows)
       expect(spy.statements[0]).toMatch(/distinct/i);
       spy.restore();
+    });
+
+    // AC1 real-DB layer (#1921): durable discovery of two INDEPENDENT creates. Two distinct
+    // `createSubmission` calls (distinct clientSubmissionIds) must BOTH survive in the durable
+    // list read — the read behind GET /api/import/submissions — with no last-write-wins loss of
+    // a receipt. The headers are minted through the real `ImportStagingService.createSubmission`
+    // (NOT the direct-insert `seed` helper), which is exactly the two distinct create calls the AC
+    // requires; the client-hook/outbox layer of AC1 is pinned separately in useStagedSubmission.test.tsx.
+    it('two distinct createSubmission calls are BOTH returned by list — durable discovery, no last-write-wins loss (AC1)', async () => {
+      const staging = new ImportStagingService(db, noopLog, () => { /* runner nudge no-op */ });
+      const idA = randomUUID();
+      const idB = randomUUID();
+      // Concurrent creates (Promise.all) — the durable list must surface BOTH `receiving` headers
+      // regardless of how the two inserts interleave.
+      const [a, b] = await Promise.all([
+        staging.createSubmission({ source: 'library', clientSubmissionId: idA, payloadDigest: 'a'.repeat(64), expectedCount: 1 }),
+        staging.createSubmission({ source: 'library', clientSubmissionId: idB, payloadDigest: 'b'.repeat(64), expectedCount: 1 }),
+      ]);
+      expect(a.id).not.toBe(b.id); // two distinct durable headers, not a create-or-return collapse
+
+      const { data, total } = await service.list({ limit: 20, offset: 0 });
+      expect(total).toBe(2);
+      expect(new Set(data.map((d) => d.id))).toEqual(new Set([a.id, b.id]));
     });
   });
 

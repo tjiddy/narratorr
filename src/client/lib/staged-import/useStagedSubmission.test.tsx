@@ -156,6 +156,65 @@ describe('useStagedSubmission — run supersession (F19)', () => {
 });
 
 /**
+ * Two INDEPENDENT hook instances racing before create (AC1 client, #1921). Each
+ * `useStagedSubmission` instance owns its own epoch/abort refs, so neither supersedes the
+ * other — both keep a live create/PUT/finalize chain under a DISTINCT `clientSubmissionId`.
+ * The single-slot source-scoped outbox is the only shared surface: the newer instance's
+ * create replaces the hint, and the older still-active instance's LATE finalize callback must
+ * NOT rewrite it — the `expectedClientId` guard in `markOutboxFinalized` protects the newer
+ * hint (outbox.ts:123-133). The client mocks the submissions API and cannot observe server
+ * durability; durable-header discovery is proven by the linked real-DB test in
+ * import-submission-report.service.integration.test.ts.
+ */
+describe('useStagedSubmission — two independent instances (AC1 client, #1921)', () => {
+  it('two instances hold distinct id/PUT/finalize chains; a late older-instance callback cannot rewrite the newer instance\'s outbox hint', async () => {
+    // Per-id PUT/finalize/poll wiring — each instance drives its OWN durable id and its poll
+    // parks at `processing` (so a `finalized` hint is not evicted on completion).
+    mockPut.mockImplementation((id: number) => Promise.resolve(summaryResponse({ id, source: 'library', status: 'receiving', expectedCount: 1 })));
+    mockFinalize.mockImplementation((id: number) => Promise.resolve(summaryResponse({ id, source: 'library', status: 'processing', expectedCount: 1 })));
+    mockGet.mockImplementation((id: number) => Promise.resolve(summaryResponse({ id, source: 'library', status: 'processing', expectedCount: 1, processedCount: 0 })));
+    // Instance 1's create is HELD so its finalize (and its outbox mark) lands LATE, after
+    // instance 2 has already run its whole chain and taken the hint. Instance 2's create is inline.
+    let resolveCreate1!: (v: ReturnType<typeof summaryResponse>) => void;
+    mockCreate
+      .mockImplementationOnce(() => new Promise<ReturnType<typeof summaryResponse>>((r) => { resolveCreate1 = r; }))
+      .mockImplementationOnce(() => Promise.resolve(summaryResponse({ id: 200, source: 'library', status: 'receiving', expectedCount: 1 })));
+
+    const inst1 = renderStaged(); // older instance
+    const inst2 = renderStaged(); // newer instance
+
+    // Both instances submit (each mints a distinct clientSubmissionId); each blocks on its digest.
+    act(() => { inst1.result.current.submit([{ path: '/one', title: 'One' }], undefined); });
+    act(() => { inst2.result.current.submit([{ path: '/two', title: 'Two' }], undefined); });
+    expect(digestResolvers).toHaveLength(2);
+
+    // Instance 1 enters its pipeline first — writes its (submitting) outbox hint and PARKS on its held create.
+    await act(async () => { digestResolvers[0]!(DIGEST); await new Promise((r) => setTimeout(r, 0)); });
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+
+    // Instance 2 runs its whole chain to `finalized` — it now OWNS the single-slot outbox hint.
+    await act(async () => { digestResolvers[1]!(DIGEST); await new Promise((r) => setTimeout(r, 0)); });
+    const client1 = (mockCreate.mock.calls[0]![0] as { clientSubmissionId: string }).clientSubmissionId;
+    const client2 = (mockCreate.mock.calls[1]![0] as { clientSubmissionId: string }).clientSubmissionId;
+    expect(client1).not.toBe(client2); // distinct durable identities → independent runs
+    expect(readOutbox('library')).toMatchObject({ clientSubmissionId: client2, status: 'finalized', submissionId: 200 });
+
+    // NOW instance 1's held create resolves LATE — it finishes PUT/finalize and calls
+    // markOutboxFinalized(client1), which MUST be a no-op because the slot belongs to instance 2.
+    await act(async () => { resolveCreate1(summaryResponse({ id: 100, source: 'library', status: 'receiving', expectedCount: 1 })); await new Promise((r) => setTimeout(r, 0)); });
+
+    // Both instances drove an INDEPENDENT create/PUT/finalize chain over their own durable id.
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(mockPut.mock.calls.some((c) => c[0] === 100)).toBe(true);
+    expect(mockPut.mock.calls.some((c) => c[0] === 200)).toBe(true);
+    expect(mockFinalize.mock.calls.some((c) => c[0] === 100)).toBe(true);
+    expect(mockFinalize.mock.calls.some((c) => c[0] === 200)).toBe(true);
+    // The hint STILL belongs to the newer instance — the late older-instance callback did not rewrite it.
+    expect(readOutbox('library')).toMatchObject({ clientSubmissionId: client2, status: 'finalized', submissionId: 200 });
+  });
+});
+
+/**
  * Paused clean-completion policy (#1895 F6/F7/F8/F11). `shouldStayOnClean` is snapshotted
  * per-run AFTER preflight (alongside the frozen submitted paths); a clean completion whose
  * snapshot is true STAYS on the page and deselects the frozen submitted survivors in place
