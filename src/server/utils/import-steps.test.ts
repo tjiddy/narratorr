@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
+import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
 
 // embedTagsForImport auto-detects ffmpeg now (resolveFfmpegPath). Plain-arrow toggle mock
 // (survives vi.clearAllMocks); default detected, flip false for the not-detected test.
@@ -699,14 +700,14 @@ describe('prepareImportSiblings', () => {
 
   it('removes any stale staging and backup siblings before staging a fresh import (no marker)', async () => {
     const log = createMockLog();
-    await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+    await prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log });
     expect(rm).toHaveBeenCalledWith(staging, { recursive: true, force: true });
     expect(rm).toHaveBeenCalledWith(backup, { recursive: true, force: true });
   });
 
   it('skips removal and logs error-level when a sibling is outside libraryRoot', async () => {
     const log = createMockLog();
-    await prepareImportSiblings({ stagingPath: '/tmp/x.import-tmp', targetPath: '/tmp/x', backupPath: '/tmp/x.import-bak', libraryRoot: '/library', log });
+    await prepareImportSiblings({ targetPath: '/tmp/x', libraryRoot: '/library', log });
     expect(rm).not.toHaveBeenCalled();
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({ libraryRoot: '/library' }),
@@ -720,7 +721,7 @@ describe('prepareImportSiblings', () => {
     // commitStagedImport would enumerate and commit the stale files into the target.
     vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
     await expect(
-      prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+      prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log }),
     ).rejects.toThrow('EACCES');
   });
 
@@ -731,7 +732,7 @@ describe('prepareImportSiblings', () => {
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
     await expect(
-      prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+      prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log }),
     ).rejects.toThrow('EBUSY');
   });
 
@@ -740,7 +741,7 @@ describe('prepareImportSiblings', () => {
     vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);             // marker exists (#1341: a real marker reads as a file)
     vi.mocked(readdir).mockImplementation(async (p: unknown) => (p === backup ? [dirent('old.m4b')] : []) as never);
 
-    await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+    await prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log });
 
     // Backed-up original restored into the target...
     expect(rename).toHaveBeenCalledWith(join(backup, 'old.m4b'), join(target, 'old.m4b'));
@@ -758,7 +759,7 @@ describe('prepareImportSiblings', () => {
     vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);             // marker exists (#1341: a real marker reads as a file)
     vi.mocked(readdir).mockResolvedValue([] as never);                 // empty backup
 
-    await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+    await prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log });
 
     expect(rename).not.toHaveBeenCalled();                            // nothing to restore
     expect(rm).toHaveBeenCalledWith(marker, { force: true });
@@ -772,7 +773,7 @@ describe('prepareImportSiblings', () => {
     vi.mocked(rename).mockRejectedValueOnce(new Error('EIO restore'));
 
     await expect(
-      prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+      prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log }),
     ).rejects.toBeInstanceOf(BackupRecoveryError);
 
     // Backup and marker are NOT removed — they survive for the next boot's recovery.
@@ -786,22 +787,23 @@ describe('prepareImportSiblings', () => {
     // Error and delete the backup). It surfaces as a BackupRecoveryError → preserve.
     vi.mocked(stat).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
     await expect(
-      prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+      prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log }),
     ).rejects.toBeInstanceOf(BackupRecoveryError);
     // Neither sibling is strict-cleared — the marker sighting was inconclusive, fail toward preservation.
     expect(rm).not.toHaveBeenCalledWith(backup, { recursive: true, force: true });
   });
 
-  it('marker present, staging strict-clear fails (EBUSY) → BackupRecoveryError, backup preserved (#1336 window 3)', async () => {
+  it('marker present, total-clean staging strict-clear fails (EBUSY) → BackupRecoveryError, marker preserved (#1336 window 3 / #1911 F25iii)', async () => {
     const log = createMockLog();
     vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);             // marker exists (#1341: a real marker reads as a file)
-    // A killed commit leaves a populated .import-tmp; an EBUSY clearing it on the recovery
-    // boot must surface as BackupRecoveryError (→ preserve), not propagate raw.
+    vi.mocked(readdir).mockResolvedValue([] as never);                              // both backups empty → no restore, no ambiguity
+    // The interrupted commit left stale staging; an EBUSY clearing it during the total-clean
+    // (AFTER both backups are enumerated, BEFORE the strict marker removal) must surface as
+    // BackupRecoveryError (→ preserve), not propagate raw, and must NOT remove the marker.
     vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
     await expect(
-      prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+      prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log }),
     ).rejects.toBeInstanceOf(BackupRecoveryError);
-    expect(rm).not.toHaveBeenCalledWith(backup, { recursive: true, force: true });
     expect(rm).not.toHaveBeenCalledWith(marker, { force: true });
   });
 });
@@ -1006,7 +1008,7 @@ describe('commitStagedImport', () => {
     vi.mocked(stat).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     vi.mocked(readdir).mockImplementation(async (p: unknown) => (p === backup ? [dirent('old.mp3')] : []) as never);
 
-    await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+    await prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log });
 
     // No recovery restore from the stale leftover — the marker-absent path strict-clears it.
     expect(rename).not.toHaveBeenCalled();
@@ -1190,9 +1192,8 @@ describe('commitStagedImport', () => {
 describe('partial in-process rollback restore failure (#1336 window 5)', () => {
   const dirent = (name: string, isFile = true) => ({ name, isFile: () => isFile, isDirectory: () => !isFile });
   const target = '/library/Author/Title';
-  const staging = `${target}.import-tmp`;
-  const backup = `${target}.import-bak`;
-  const marker = `${target}.import-commit-pending`;
+  // #1911: stagedAudioReplace stages/backs up into the ACTIVE born-hidden scratch.
+  const { stagingPath: staging, backupPath: backup, markerPath: marker } = deriveImportSiblings(target);
   const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 
   it('best-effort rollback leaves the one unrestored file + marker on disk; the next run converges', async () => {
@@ -1210,11 +1211,13 @@ describe('partial in-process rollback restore failure (#1336 window 5)', () => {
     // a real marker is a file, so it reads as present (#1341 isFile).
     vi.mocked(stat).mockRejectedValueOnce(enoent()).mockRejectedValueOnce(enoent()).mockResolvedValue({ isFile: () => true } as never);
     vi.mocked(rename).mockImplementation(async (src: unknown, dst: unknown) => {
-      // Normalize separators: production builds these args with join() (backslashes on Windows),
-      // so match against the POSIX needles below regardless of host.
-      const s = String(src).split('\\').join('/'), d = String(dst).split('\\').join('/');
-      if (s === `${staging}/new.m4b`) throw new Error('EIO move-in');           // move-in fails → rollback
-      if (s === `${backup}/z.mp3` && d === `${target}/z.mp3`) throw new Error('EIO restore z'); // one restore fails (swallowed)
+      // Normalize separators on BOTH sides: production builds its args with join() AND the
+      // staging/backup needles come from deriveImportSiblings (also join-built), so on Windows
+      // both carry backslashes — normalize actuals and needles alike or nothing matches.
+      const norm = (x: unknown) => String(x).split('\\').join('/');
+      const s = norm(src), d = norm(dst);
+      if (s === `${norm(staging)}/new.m4b`) throw new Error('EIO move-in');     // move-in fails → rollback
+      if (s === `${norm(backup)}/z.mp3` && d === `${norm(target)}/z.mp3`) throw new Error('EIO restore z'); // one restore fails (swallowed)
       return undefined as never;                                                // backups + a.mp3 restore succeed
     });
 
@@ -1246,12 +1249,99 @@ describe('partial in-process rollback restore failure (#1336 window 5)', () => {
     vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);                       // marker present (#1341: a real marker reads as a file)
     vi.mocked(readdir).mockImplementation(async (p: unknown) => (p === backup ? [dirent('z.mp3')] : []) as never);
 
-    await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+    await prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log });
 
     // The leftover original is restored, then the now-empty backup and the marker are cleared.
     expect(rename).toHaveBeenCalledWith(join(backup, 'z.mp3'), join(target, 'z.mp3'));
     expect(rm).toHaveBeenCalledWith(backup, { recursive: true, force: true });
     expect(rm).toHaveBeenCalledWith(marker, { force: true });
+  });
+});
+
+// ── #1911 recovery total-clean: marker-removal + late non-selected-clear preservation ──
+
+describe('#1911 recovery preservation: strict marker-removal + late total-clean failures abort the caller (F2/F3)', () => {
+  const dirent = (name: string, isFile = true) => ({ name, isFile: () => isFile, isDirectory: () => !isFile });
+  const target = '/library/Author/Title';
+  const { backupPath: backup, legacyBackupPath: legacyBackup, markerPath: marker } =
+    deriveImportSiblings(target);
+
+  beforeEach(() => {
+    vi.mocked(stat).mockReset();
+    // Marker present as a FILE for the #1341 preflight AND prepareImportSiblings' marker check,
+    // so recovery runs (not the marker-absent branch).
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);
+    vi.mocked(rename).mockResolvedValue(undefined as never);
+    vi.mocked(mkdir).mockResolvedValue(undefined as never);
+    // Each test installs its own `rm.mockImplementation`; start from a clean resolved default.
+    vi.mocked(rm).mockReset();
+    vi.mocked(rm).mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    // These tests install a persistent `rm.mockImplementation` (path-specific rejections).
+    // `vi.clearAllMocks()` (the file-level `beforeEach`) clears CALLS but NOT implementations,
+    // and the downstream `handleImportFailure` suite reuses this exact `.import-bak` path
+    // without resetting `rm` — so restore the resolved default here or the leaked rejection
+    // silently drives an unintended cleanup-failure branch in those tests (#1911 review F5).
+    vi.mocked(rm).mockReset();
+    vi.mocked(rm).mockResolvedValue(undefined as never);
+  });
+
+  it('F2 (AC9): a strict marker-removal `rm` failure throws BackupRecoveryError, preserves the marker, and the stage/mutation callback is never reached', async () => {
+    const log = createMockLog();
+    // Both backups empty → no restore, no ambiguity; the FOUR staging/backup clears all
+    // succeed, so the ONLY failure point is the last-step strict `rm(marker)`.
+    vi.mocked(readdir).mockResolvedValue([] as never);
+    vi.mocked(rm).mockImplementation(async (p: unknown, opts: unknown) => {
+      const isMarkerRemoval = String(p) === marker && (opts as { force?: boolean; recursive?: boolean })?.force === true
+        && !(opts as { recursive?: boolean })?.recursive;
+      if (isMarkerRemoval) throw Object.assign(new Error('EACCES marker rm'), { code: 'EACCES' });
+      return undefined as never;
+    });
+
+    const stage = vi.fn(async () => { /* mutation callback — must never run */ });
+    const thrown = await stagedAudioReplace({
+      targetPath: target, libraryRoot: '/library', log, sourceAudioSize: 1, stage,
+    }).then(() => null, (e: unknown) => e);
+
+    // Typed preservation error surfaced (strict removal, not the best-effort swallow).
+    expect(thrown).toBeInstanceOf(BackupRecoveryError);
+    // The strict marker removal WAS attempted (proving we reached the last recovery step)…
+    expect(rm).toHaveBeenCalledWith(marker, { force: true });
+    // …and, having failed, no other code path removed the marker — it survives for the next attempt.
+    expect(vi.mocked(rm).mock.calls.filter(([p, o]) =>
+      String(p) === marker && (o as { force?: boolean })?.force === true).length).toBe(1);
+    // Proceed-signal contract: prepareImportSiblings threw, so staging/mutation never ran.
+    expect(stage).not.toHaveBeenCalled();
+  });
+
+  it('F3 (AC8/F25iii): a late clear failure on the NON-selected convention throws, retains the marker, and never reaches the stage/mutation callback', async () => {
+    const log = createMockLog();
+    // ACTIVE backup is the populated (selected) convention; LEGACY backup is empty (non-selected).
+    vi.mocked(readdir).mockImplementation(async (p: unknown) =>
+      (p === backup ? [dirent('old.m4b')] : []) as never);
+    // The selected restore + the earlier three clears all succeed; the LATE clear of the
+    // non-selected legacy backup fails by exact path — this must abort BEFORE marker removal.
+    vi.mocked(rm).mockImplementation(async (p: unknown) => {
+      if (String(p) === legacyBackup) throw Object.assign(new Error('EBUSY legacy backup'), { code: 'EBUSY' });
+      return undefined as never;
+    });
+
+    const stage = vi.fn(async () => { /* mutation callback — must never run */ });
+    const thrown = await stagedAudioReplace({
+      targetPath: target, libraryRoot: '/library', log, sourceAudioSize: 1, stage,
+    }).then(() => null, (e: unknown) => e);
+
+    // The selected (active) backup WAS restored additively before the total-clean began…
+    expect(rename).toHaveBeenCalledWith(join(backup, 'old.m4b'), join(target, 'old.m4b'));
+    // …but the non-selected clear failed → typed preservation error naming the legacy convention.
+    expect(thrown).toBeInstanceOf(BackupRecoveryError);
+    expect((thrown as BackupRecoveryError).convention).toBe('legacy');
+    // Marker NEVER removed while the total-clean is incomplete (F10/F18) — it survives.
+    expect(rm).not.toHaveBeenCalledWith(marker, { force: true });
+    // Proceed-signal contract: the caller aborts, staging/mutation never ran.
+    expect(stage).not.toHaveBeenCalled();
   });
 });
 

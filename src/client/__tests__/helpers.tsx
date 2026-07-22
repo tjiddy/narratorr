@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 export function renderWithProviders(
   ui: React.ReactElement,
-  { route = '/', queryClient }: { route?: string; queryClient?: QueryClient } = {},
+  { route = '/', queryClient, basename }: { route?: string; queryClient?: QueryClient; basename?: string } = {},
 ): RenderResult {
   const client =
     queryClient ??
@@ -12,9 +12,13 @@ export function renderWithProviders(
       defaultOptions: { queries: { retry: false } },
     });
 
+  const initialRoute = basename ? `${basename}${route === '/' ? '' : route}` : route;
+
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter>
+      <MemoryRouter initialEntries={[initialRoute]} {...(basename && { basename })}>
+        {ui}
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }

@@ -43,6 +43,7 @@ import {
   composeReviewReason,
   type DiscoveryLogger,
 } from './book-discovery.js';
+import { comparePosixPath } from './path-order.js';
 import { parseFolderStructure } from '../../server/utils/folder-parsing.js';
 import { reconstructDiscGroup } from '../../server/utils/import-helpers.js';
 import { readdir, stat } from 'node:fs/promises';
@@ -226,6 +227,30 @@ describe('discoverBooks', () => {
         '/audiobooks/Author/Real Book.import-bak': [{ name: 'old.mp3', isFile: true, size: 4000 }],
         '/audiobooks/Author/Staging.import-tmp': [{ name: 'staged.mp3', isFile: true, size: 3000 }],
         '/audiobooks/Author/Pending.import-commit-pending': [{ name: 'pending.mp3', isFile: true, size: 2000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.folderParts).toEqual(['Author', 'Real Book']);
+      expect(result[0]!.totalSize).toBe(5000);
+    });
+
+    it('#1911: skips the active born-hidden staging/backup dirs (via isHiddenName) and a legacy un-dotted staging', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Author', isFile: false }],
+        '/audiobooks/Author': [
+          { name: 'Real Book', isFile: false },
+          // Active born-hidden scratch — dot-led, so skipped by isHiddenName from birth, not
+          // merely via the reserved-suffix endsWith fallback.
+          { name: '.Real Book.import-staging', isFile: false },
+          { name: '.Real Book.import-backup', isFile: false },
+          // A legacy un-dotted staging still excluded via the reserved-suffix path.
+          { name: 'Real Book.import-tmp', isFile: false },
+        ],
+        '/audiobooks/Author/Real Book': [{ name: 'ch1.mp3', isFile: true, size: 5000 }],
+        '/audiobooks/Author/.Real Book.import-staging': [{ name: 'staged.mp3', isFile: true, size: 3000 }],
+        '/audiobooks/Author/.Real Book.import-backup': [{ name: 'old.mp3', isFile: true, size: 4000 }],
+        '/audiobooks/Author/Real Book.import-tmp': [{ name: 'legacy.mp3', isFile: true, size: 2000 }],
       });
 
       const result = await discoverBooks('/audiobooks');
@@ -2644,5 +2669,83 @@ describe('normalizeAlbumForComparison (#1031)', () => {
   it('strips terminal "Pt 3" / "pt 03" variant', () => {
     expect(normalizeAlbumForComparison('Saga Pt 3')).toBe(normalizeAlbumForComparison('Saga'));
     expect(normalizeAlbumForComparison('Saga pt 03')).toBe(normalizeAlbumForComparison('Saga'));
+  });
+});
+
+describe('comparePosixPath (#1891)', () => {
+  it('is separator-independent — slash and backslash forms of the same pair order identically', () => {
+    expect(Math.sign(comparePosixPath('/root/a/b', '/root/a/c')))
+      .toBe(Math.sign(comparePosixPath('\\root\\a\\b', '\\root\\a\\c')));
+    // A slash form vs its own backslash twin fold to the SAME primary key, so the
+    // raw tie-break decides — still nonzero because the raw strings differ.
+    expect(comparePosixPath('/root/a/b', '\\root\\a\\b')).not.toBe(0);
+  });
+
+  it('folded-key collision is total: distinct raw paths return nonzero, antisymmetric; only raw equality is 0', () => {
+    const nested = '/root/a/b';     // POSIX nested pair /root/a → b
+    const literal = '/root/a\\b';   // a single folder literally named "a\\b"
+    // Both fold to the same primary key on the Linux/Docker target.
+    expect(nested.split('\\').join('/')).toBe(literal.split('\\').join('/'));
+    const fwd = comparePosixPath(nested, literal);
+    const rev = comparePosixPath(literal, nested);
+    expect(fwd).not.toBe(0);
+    expect(Math.sign(fwd)).toBe(-Math.sign(rev)); // antisymmetric
+    expect(comparePosixPath(nested, nested)).toBe(0); // zero ONLY on exact raw equality
+  });
+
+  it('uses code-unit order, NOT localeCompare — a collation-equivalent pair still orders nonzero', () => {
+    const a = '/root/Å';    // precomposed Å
+    const b = '/root/Å';   // A + combining ring: localeCompare ties, code units differ
+    expect(a.localeCompare(b)).toBe(0);
+    expect(comparePosixPath(a, b)).not.toBe(0);
+  });
+});
+
+describe('discoverBooks — deterministic ordering (#1891)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns sibling leaf folders in comparePosixPath order regardless of readdir order', async () => {
+    setupFs({
+      '/audiobooks': [
+        { name: 'Zebra', isFile: false },
+        { name: 'Apple', isFile: false },
+        { name: 'Mango', isFile: false },
+      ],
+      '/audiobooks/Zebra': [{ name: 't.mp3', isFile: true, size: 100 }],
+      '/audiobooks/Apple': [{ name: 't.mp3', isFile: true, size: 100 }],
+      '/audiobooks/Mango': [{ name: 't.mp3', isFile: true, size: 100 }],
+    });
+
+    const result = await discoverBooks('/audiobooks');
+    expect(result.map((r) => r.path)).toEqual([
+      '/audiobooks/Apple',
+      '/audiobooks/Mango',
+      '/audiobooks/Zebra',
+    ]);
+  });
+
+  it('orders a folded-key collision pair identically across two readdir permutations (raw paths, pre-normalization)', async () => {
+    // /root/a/b (nested) and /root/a\\b (one literal folder) fold to the same POSIX
+    // key; only the raw code-unit tie-break separates them. Serve the root children in
+    // both orders and assert the EXACT raw .path sequence is identical and stable.
+    const build = (rootEntries: { name: string; isFile: boolean }[]) => ({
+      '/root': rootEntries,
+      '/root/a': [{ name: 'b', isFile: false }],
+      '/root/a/b': [{ name: 't.mp3', isFile: true, size: 100 }],
+      '/root/a\\b': [{ name: 't.mp3', isFile: true, size: 100 }],
+    });
+    const nestedFirst = [{ name: 'a', isFile: false }, { name: 'a\\b', isFile: false }];
+    const literalFirst = [{ name: 'a\\b', isFile: false }, { name: 'a', isFile: false }];
+
+    setupFs(build(nestedFirst));
+    const r1 = (await discoverBooks('/root')).map((r) => r.path);
+    setupFs(build(literalFirst));
+    const r2 = (await discoverBooks('/root')).map((r) => r.path);
+
+    // '/' (0x2f) sorts before '\\' (0x5c) at the divergence, so nested wins — in BOTH runs.
+    expect(r1).toEqual(['/root/a/b', '/root/a\\b']);
+    expect(r2).toEqual(r1);
   });
 });

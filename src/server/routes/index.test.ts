@@ -74,13 +74,13 @@ vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(
 vi.mock('../../core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
 
 describe('routeRegistry', () => {
-  it('contains all 35 route factories', () => {
+  it('contains all 36 route factories', () => {
     // books, bookFiles, bookPreview, search, activity, importJobs, indexers, downloadClients,
-    // settings, metadata, libraryScan, system, notifiers, connectors, blacklist,
+    // settings, metadata, libraryScan, importSubmissions, system, notifiers, connectors, blacklist,
     // auth, remotePathMapping, filesystem, eventHistory, events, searchStream,
     // prowlarrCompat, importLists, discover, bulkOperations, retryImport, importPreview,
     // v1Books, v1Authors, v1Narrators, v1Series, v1Downloads, v1Actions, v1Metadata, v1System
-    expect(routeRegistry).toHaveLength(35);
+    expect(routeRegistry).toHaveLength(36);
   });
 
   it('every entry is a function', () => {
@@ -298,7 +298,6 @@ describe('createServices', () => {
   it('calls wire() once on each required-wiring service with the correct cyclic deps', async () => {
     const { SettingsService, BlacklistService, DownloadService, EventHistoryService } = await import('../services/index.js');
     const { ImportOrchestrator } = await import('../services/import-orchestrator.js');
-    const { LibraryScanService } = await import('../services/library-scan.service.js');
     const { QualityGateOrchestrator } = await import('../services/quality-gate-orchestrator.js');
     const { createRetrySearchDeps } = await import('../services/retry-search.js');
 
@@ -341,10 +340,9 @@ describe('createServices', () => {
     expect(importWireArg.retrySearchDeps).toBe(retrySearchDepsResult);
     expect(typeof importWireArg.nudgeImportWorker).toBe('function');
 
-    const libraryScanInstance = vi.mocked(LibraryScanService).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
-    expect(libraryScanInstance.wire).toHaveBeenCalledOnce();
-    expect(typeof libraryScanInstance.wire.mock.calls[0]![0].nudgeImportWorker).toBe('function');
-
+    // LibraryScanService no longer has a wire() seam — its direct-confirm path was removed
+    // (#1902), so the composition root no longer calls libraryScan.wire(...). The adjacent
+    // QualityGateOrchestrator wiring below is unaffected and still asserted.
     const qgoInstance = vi.mocked(QualityGateOrchestrator).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
     expect(qgoInstance.wire).toHaveBeenCalledOnce();
     expect(typeof qgoInstance.wire.mock.calls[0]![0].nudgeImportWorker).toBe('function');
@@ -495,5 +493,45 @@ describe('createServices', () => {
     const mergeInstances = vi.mocked(MergeService).mock.instances;
     expect(mergeInstances).toHaveLength(1);
     expect(mergeServiceArg).toBe(mergeInstances[0]);
+  });
+
+  // F29: the composition root must wire the winning-finalize nudge to the SAME
+  // ImportSubmissionRunner instance it returns, and the accepted-item nudge to the
+  // SAME ImportQueueWorker instance — passing no-op/reversed callbacks would compile
+  // and leave service-local tests green while delaying finalized/accepted processing.
+  it('wires the finalize nudge to the composed runner and the accepted-item nudge to the composed worker (F29)', async () => {
+    const { SettingsService } = await import('../services/index.js');
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    const services = await createServices(db, log);
+
+    // ImportQueueWorker is a constructor mock (no methods) — give the SAME instance the
+    // composition root captured a `nudge` spy so the runner's callback can invoke it.
+    const workerNudge = vi.fn();
+    (services.importQueueWorker as unknown as { nudge: () => void }).nudge = workerNudge;
+    // ImportSubmissionRunner is a REAL instance — spy its nudge to observe the staging callback.
+    const runnerNudge = vi.spyOn(services.importSubmissionRunner, 'nudge').mockImplementation(() => {});
+
+    // Invoke the two callbacks the composition root injected into the real services.
+    (services.importStaging as unknown as { nudgeRunner: () => void }).nudgeRunner();
+    (services.importSubmissionRunner as unknown as { nudgeImportWorker: () => void }).nudgeImportWorker();
+
+    // staging's nudgeRunner → the composed runner instance; runner's nudge → the composed worker.
+    expect(runnerNudge).toHaveBeenCalledTimes(1);
+    expect(workerNudge).toHaveBeenCalledTimes(1);
   });
 });

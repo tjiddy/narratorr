@@ -31,6 +31,14 @@ function renderBody(template: string, event: NotificationEvent, payload: EventPa
     'health.previousState': payload.health?.previousState ?? '',
     'health.currentState': payload.health?.currentState ?? '',
     'health.message': payload.health?.message ?? '',
+    // `import_run_finished` tokens. Optional chaining stops at `submission?`, so a
+    // required count of `0` still renders "0" (not dropped) — F79.
+    'submission.source': payload.submission?.source ?? '',
+    'submission.status': payload.submission?.status ?? '',
+    'submission.counts.accepted': payload.submission?.counts.accepted?.toString() ?? '',
+    'submission.counts.held': payload.submission?.counts.held?.toString() ?? '',
+    'submission.counts.skipped': payload.submission?.counts.skipped?.toString() ?? '',
+    'submission.counts.failed': payload.submission?.counts.failed?.toString() ?? '',
   };
 
   return template.replace(/\{(\w+(?:\.\w+)*)\}/g, (match, key: string) => key in flat ? flat[key]! : match);

@@ -48,7 +48,7 @@ export const settingsRegistry = {
   }),
   metadata: defineCategory({
     schema: metadataSettingsSchema,
-    defaults: { audibleRegion: 'us' as const, languages: ['english'] as const, minDurationMinutes: 0, hardcoverApiKey: '' },
+    defaults: { audibleRegion: 'us' as const, languages: ['english'] as const, minDurationMinutes: 30, hardcoverApiKey: '' },
   }),
   processing: defineCategory({
     schema: processingSettingsSchema,

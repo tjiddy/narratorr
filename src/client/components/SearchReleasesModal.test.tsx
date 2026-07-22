@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -1169,7 +1169,10 @@ describe('SearchReleasesModal', () => {
     expect(screen.getByLabelText('Refresh results')).toBeDisabled();
   });
 
-  it('refresh button triggers reset and restart when clicked', async () => {
+  // F13: Refresh re-fires the current (possibly edited) query through the single
+  // guarded start path — it calls `start` once and does NOT call a separate `reset`
+  // (start() internally closes the prior stream and clears results/session/error).
+  it('refresh button calls start once and does not call reset', async () => {
     setStreamResults(mockResults);
     const user = userEvent.setup();
 
@@ -1180,10 +1183,8 @@ describe('SearchReleasesModal', () => {
     vi.clearAllMocks();
     await user.click(screen.getByLabelText('Refresh results'));
 
-    expect(mockStreamActions.reset).toHaveBeenCalledOnce();
-    await waitFor(() => {
-      expect(mockStreamActions.start).toHaveBeenCalledOnce();
-    });
+    expect(mockStreamActions.start).toHaveBeenCalledOnce();
+    expect(mockStreamActions.reset).not.toHaveBeenCalled();
   });
 
   it('shows narrator line in header when narrators exist', () => {
@@ -1945,6 +1946,213 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
       });
       const badges = screen.getAllByText('In library');
       expect(badges).toHaveLength(1);
+    });
+  });
+
+  // ==========================================================================
+  // Editable query with re-search (#1905)
+  // ==========================================================================
+  describe('editable query', () => {
+    const QUERY_LABEL = 'Search query';
+
+    it('prefills the input with "{title} {author}" on open', () => {
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      const input = screen.getByLabelText(QUERY_LABEL) as HTMLInputElement;
+      expect(input.value).toBe('The Way of Kings Brandon Sanderson');
+      expect(input).toHaveAttribute('maxLength', '500');
+    });
+
+    it('prefills with title only (no trailing space) when the author is absent', () => {
+      const authorless = createMockBook({ authors: [] });
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={authorless} onClose={vi.fn()} />,
+      );
+
+      const input = screen.getByLabelText(QUERY_LABEL) as HTMLInputElement;
+      expect(input.value).toBe('The Way of Kings');
+    });
+
+    it('Search button re-fires start with an edited query', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      const input = screen.getByLabelText(QUERY_LABEL);
+      await user.clear(input);
+      await user.type(input, 'Doctor Sleep');
+      vi.clearAllMocks();
+      await user.click(screen.getByRole('button', { name: /^Search$/ }));
+
+      expect(mockStreamActions.start).toHaveBeenCalledOnce();
+    });
+
+    it('Enter in the input re-fires start while eligible', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      const input = screen.getByLabelText(QUERY_LABEL);
+      vi.clearAllMocks();
+      await user.type(input, '{Enter}');
+
+      expect(mockStreamActions.start).toHaveBeenCalledOnce();
+    });
+
+    it('a one-char query disables Search/Refresh and makes Enter a no-op', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      const input = screen.getByLabelText(QUERY_LABEL);
+      await user.clear(input);
+      await user.type(input, 'a');
+      vi.clearAllMocks();
+
+      expect(screen.getByRole('button', { name: /^Search$/ })).toBeDisabled();
+      expect(screen.getByLabelText('Refresh results')).toBeDisabled();
+      await user.type(input, '{Enter}');
+      expect(mockStreamActions.start).not.toHaveBeenCalled();
+    });
+
+    it('a whitespace-only query disables Search and makes Enter a no-op', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      const input = screen.getByLabelText(QUERY_LABEL);
+      await user.clear(input);
+      await user.type(input, '   ');
+      vi.clearAllMocks();
+
+      expect(screen.getByRole('button', { name: /^Search$/ })).toBeDisabled();
+      await user.type(input, '{Enter}');
+      expect(mockStreamActions.start).not.toHaveBeenCalled();
+    });
+
+    it('disables Search and Refresh while a search is in flight', () => {
+      setStreamSearching([{ id: 1, name: 'ABB', status: 'pending' }]);
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByRole('button', { name: /^Search$/ })).toBeDisabled();
+      expect(screen.getByLabelText('Refresh results')).toBeDisabled();
+    });
+
+    // F6 — the inclusive lower boundary (length 2), doubling as the explicitly
+    // preserved "sanitizer-empty" case: a raw `??` must stay submit-eligible AND stay
+    // raw (no client-side punctuation filtering). A `> 2` mutation or an added client
+    // sanitizer would fail this.
+    it('a raw punctuation-only query (??) is submit-eligible and is not client-sanitized', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      const input = screen.getByLabelText(QUERY_LABEL) as HTMLInputElement;
+      await user.clear(input);
+      await user.type(input, '??');
+      vi.clearAllMocks();
+
+      expect(input.value).toBe('??'); // not client-sanitized
+      const searchBtn = screen.getByRole('button', { name: /^Search$/ });
+      expect(searchBtn).toBeEnabled();
+      await user.click(searchBtn);
+      expect(mockStreamActions.start).toHaveBeenCalledOnce();
+    });
+
+    // F6 — the inclusive UPPER boundary: exactly 500 characters remains eligible. A
+    // `< 500` mutation would fail this. (Set via fireEvent to avoid typing 500 chars;
+    // `maxLength={500}` already bars a 501st via user input — over-500 ineligibility is
+    // covered by the prefill test below.)
+    it('an exactly-500-character query is submit-eligible (inclusive upper boundary)', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      const input = screen.getByLabelText(QUERY_LABEL) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'a'.repeat(500) } });
+      vi.clearAllMocks();
+
+      expect(input.value).toHaveLength(500);
+      const searchBtn = screen.getByRole('button', { name: /^Search$/ });
+      expect(searchBtn).toBeEnabled();
+      await user.click(searchBtn);
+      expect(mockStreamActions.start).toHaveBeenCalledOnce();
+    });
+
+    it('does not auto-start when the prefill exceeds 500 chars, but keeps the input visible', () => {
+      const longTitle = 'X'.repeat(520);
+      const longBook = createMockBook({ title: longTitle, authors: [] });
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={longBook} onClose={vi.fn()} />,
+      );
+
+      expect(mockStreamActions.start).not.toHaveBeenCalled();
+      expect(screen.getByLabelText(QUERY_LABEL)).toBeInTheDocument();
+    });
+
+    it('renders the query input in the empty-results phase', () => {
+      setStreamResults([]);
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByLabelText(QUERY_LABEL)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Search$/ })).toBeInTheDocument();
+    });
+
+    it('renders the query input in the error phase so the user can edit and retry', () => {
+      mockStreamState = {
+        phase: 'idle',
+        sessionId: null,
+        indexers: [],
+        results: null,
+        error: 'Search connection failed',
+        hasResults: false,
+        authReady: true,
+      };
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText(/Search failed/)).toBeInTheDocument();
+      expect(screen.getByLabelText(QUERY_LABEL)).toBeInTheDocument();
+    });
+
+    it('disables the error-state Retry (never hides it) when the edited query is ineligible', async () => {
+      mockStreamState = {
+        phase: 'idle',
+        sessionId: null,
+        indexers: [],
+        results: null,
+        error: 'Search connection failed',
+        hasResults: false,
+        authReady: true,
+      };
+      const user = userEvent.setup();
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      const input = screen.getByLabelText(QUERY_LABEL);
+      await user.clear(input);
+      await user.type(input, 'a'); // one char → ineligible
+      vi.clearAllMocks();
+
+      const retry = screen.getByText('Retry');
+      expect(retry).toBeInTheDocument();
+      expect(retry).toBeDisabled();
+      await user.click(retry);
+      expect(mockStreamActions.start).not.toHaveBeenCalled();
     });
   });
 });

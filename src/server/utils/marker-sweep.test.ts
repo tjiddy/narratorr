@@ -10,7 +10,9 @@ import {
   convergeStrandedMarker,
   prepareImportSiblings,
   BackupRecoveryError,
+  BackupAmbiguityError,
 } from './import-steps.js';
+import { deriveImportSiblings } from './import-sibling-paths.js';
 
 /**
  * #1338 — boot-time sweep that converges stranded `.import-commit-pending` markers the
@@ -35,17 +37,26 @@ const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () 
 
 interface Siblings {
   target: string;
+  /** Legacy un-dotted staging (recognition-only). */
   staging: string;
+  /** Legacy un-dotted backup (recognition-only). */
   backup: string;
+  /** Active born-hidden staging (`.<name>.import-staging`). */
+  activeStaging: string;
+  /** Active born-hidden backup (`.<name>.import-backup`). */
+  activeBackup: string;
   marker: string;
 }
 
 function siblings(target: string): Siblings {
+  const d = deriveImportSiblings(target);
   return {
     target,
-    staging: `${target}.import-tmp`,
-    backup: `${target}.import-bak`,
-    marker: `${target}.import-commit-pending`,
+    staging: d.legacyStagingPath,
+    backup: d.legacyBackupPath,
+    activeStaging: d.stagingPath,
+    activeBackup: d.backupPath,
+    marker: d.markerPath,
   };
 }
 
@@ -284,8 +295,9 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     await writeFile(marker, '');
 
     const error = await prepareImportSiblings({
-      stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: root, log: makeLog(),
+      targetPath: target, libraryRoot: root, log: makeLog(),
     }).then(() => null, (e: unknown) => e);
+    void staging;
 
     expect(error).toBeInstanceOf(BackupRecoveryError);
     const message = (error as BackupRecoveryError).message;
@@ -294,5 +306,193 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     // Names both remedy levers: per-target retry AND the boot sweep.
     expect(message).toMatch(/retr/i);
     expect(message).toMatch(/sweep/i);
+  }));
+
+  // ── #1911: active-convention recovery, mixed-state total cleanup, ambiguity, F13/F19 ──
+
+  it('#1911 active recovery: marker + populated `.import-backup` restores originals, clears both conventions + marker', withTmp(async (root) => {
+    const { target, activeStaging, activeBackup, marker } = siblings(join(root, 'Author', 'Title'));
+    const originalBytes = Buffer.alloc(400, 9);
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'new.m4b'), Buffer.from('STAGED-NEW'));
+    await mkdir(activeBackup, { recursive: true });
+    await writeFile(join(activeBackup, 'old.m4b'), originalBytes);
+    await mkdir(activeStaging, { recursive: true });
+    await writeFile(join(activeStaging, 'leftover.partial'), Buffer.from('scratch'));
+    await writeFile(marker, '');
+
+    const result = await sweepCommitPendingMarkers(root, makeLog());
+
+    expect(result).toEqual({ converged: 1, skipped: [] });
+    expect(await readFile(join(target, 'old.m4b'))).toEqual(originalBytes);
+    expect(await pathExists(marker)).toBe(false);
+    expect(await pathExists(activeBackup)).toBe(false);
+    expect(await pathExists(activeStaging)).toBe(false);
+  }));
+
+  it('#1911 F25(i): marker + populated LEGACY backup + populated ACTIVE staging → restores from legacy, clears the active staging too', withTmp(async (root) => {
+    const { target, backup, activeStaging, activeBackup, marker } = siblings(join(root, 'Author', 'Title'));
+    const bytes = Buffer.alloc(200, 3);
+    await mkdir(target, { recursive: true });
+    await mkdir(backup, { recursive: true });
+    await writeFile(join(backup, 'old.m4b'), bytes);
+    // A stale ACTIVE staging dir with audio that must NOT feed the next commit.
+    await mkdir(activeStaging, { recursive: true });
+    await writeFile(join(activeStaging, 'stale.m4b'), Buffer.from('STALE'));
+    await writeFile(marker, '');
+
+    const result = await sweepCommitPendingMarkers(root, makeLog());
+
+    expect(result).toEqual({ converged: 1, skipped: [] });
+    expect(await readFile(join(target, 'old.m4b'))).toEqual(bytes);
+    // Both conventions' scratch cleared; a subsequent stage sees a clean active staging path.
+    expect(await pathExists(activeStaging)).toBe(false);
+    expect(await pathExists(activeBackup)).toBe(false);
+    expect(await pathExists(backup)).toBe(false);
+    expect(await pathExists(marker)).toBe(false);
+  }));
+
+  it('#1911 F25(ii): marker + populated ACTIVE backup + populated LEGACY staging → restores from active, clears the un-dotted legacy staging (no ABS-visible survivor)', withTmp(async (root) => {
+    const { target, staging, activeBackup, marker } = siblings(join(root, 'Author', 'Title'));
+    const bytes = Buffer.alloc(200, 4);
+    await mkdir(target, { recursive: true });
+    await mkdir(activeBackup, { recursive: true });
+    await writeFile(join(activeBackup, 'old.m4b'), bytes);
+    await mkdir(staging, { recursive: true });
+    await writeFile(join(staging, 'stale.m4b'), Buffer.from('STALE'));
+    await writeFile(marker, '');
+
+    const result = await sweepCommitPendingMarkers(root, makeLog());
+
+    expect(result).toEqual({ converged: 1, skipped: [] });
+    expect(await readFile(join(target, 'old.m4b'))).toEqual(bytes);
+    // The ABS-visible legacy staging must not survive.
+    expect(await pathExists(staging)).toBe(false);
+    expect(await pathExists(activeBackup)).toBe(false);
+    expect(await pathExists(marker)).toBe(false);
+  }));
+
+  it('#1911 both-populated: throws ambiguity, preserves BOTH backups + marker, non-convergent, converges after operator removes one', withTmp(async (root) => {
+    const { target, backup, activeBackup, marker } = siblings(join(root, 'Author', 'Title'));
+    const legacyBytes = Buffer.alloc(120, 1);
+    const activeBytes = Buffer.alloc(130, 2);
+    await mkdir(dirname(target), { recursive: true });
+    await mkdir(backup, { recursive: true });
+    await writeFile(join(backup, 'old-legacy.m4b'), legacyBytes);
+    await mkdir(activeBackup, { recursive: true });
+    await writeFile(join(activeBackup, 'old-active.m4b'), activeBytes);
+    await writeFile(marker, '');
+
+    // Direct seam throws the ambiguity error, preserving everything (no clear, no marker removal).
+    const err = await prepareImportSiblings({ targetPath: target, libraryRoot: root, log: makeLog() })
+      .then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(BackupAmbiguityError);
+    expect(await readFile(join(backup, 'old-legacy.m4b'))).toEqual(legacyBytes);
+    expect(await readFile(join(activeBackup, 'old-active.m4b'))).toEqual(activeBytes);
+    expect(await pathExists(marker)).toBe(true);
+
+    // Non-convergent: the boot sweep reports it skipped (operator action, no retry promise).
+    const log = makeLog();
+    const swept = await sweepCommitPendingMarkers(root, log);
+    expect(swept.skipped).toEqual([marker]);
+    expect(await pathExists(marker)).toBe(true);
+    // F19: the warn names both backup paths and makes no automatic-retry promise.
+    const warn = (log.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([arg]) => arg && typeof arg === 'object' && (arg as { markerPath?: string }).markerPath === marker,
+    );
+    expect(warn).toBeDefined();
+    const warnMeta = warn![0] as { activeBackupPath?: string; legacyBackupPath?: string };
+    expect(warnMeta.activeBackupPath).toBe(activeBackup);
+    expect(warnMeta.legacyBackupPath).toBe(backup);
+    expect(String(warn![1])).not.toMatch(/retry on next boot/i);
+
+    // After the operator removes ONE backup, the next attempt converges.
+    await rm(backup, { recursive: true, force: true });
+    const after = await sweepCommitPendingMarkers(root, makeLog());
+    expect(after).toEqual({ converged: 1, skipped: [] });
+    expect(await readFile(join(target, 'old-active.m4b'))).toEqual(activeBytes);
+    expect(await pathExists(marker)).toBe(false);
+  }));
+
+  it('#1911 F13: an ACTIVE-backup recovery failure names `.import-backup` in the message', withTmp(async (root) => {
+    const { target, activeBackup, marker } = siblings(join(root, 'Author', 'Title'));
+    await mkdir(dirname(target), { recursive: true });
+    // `.import-backup` is a FILE → readdir ENOTDIR → BackupRecoveryError naming the active path.
+    await writeFile(activeBackup, Buffer.from('not-a-directory'));
+    await writeFile(marker, '');
+
+    const error = await prepareImportSiblings({ targetPath: target, libraryRoot: root, log: makeLog() })
+      .then(() => null, (e: unknown) => e);
+    expect(error).toBeInstanceOf(BackupRecoveryError);
+    const message = (error as BackupRecoveryError).message;
+    expect(message).toContain('.import-backup');
+    expect((error as BackupRecoveryError).convention).toBe('active');
+  }));
+
+  it('#1911 AC6 cross-target: preparing visible `Title` touches ONLY Title-derived siblings; a foreign `.Title` legacy backup + marker survive', withTmp(async (root) => {
+    const dir = join(root, 'Author');
+    await mkdir(dir, { recursive: true });
+    const visible = siblings(join(dir, 'Title'));
+    const hidden = siblings(join(dir, '.Title')); // a DIFFERENT, dot-led target under the same parent
+    // Foreign pre-upgrade state belonging to `.Title`: populated legacy backup + its own marker.
+    const foreignBytes = Buffer.alloc(180, 6);
+    await mkdir(hidden.backup, { recursive: true });
+    await writeFile(join(hidden.backup, 'foreign.m4b'), foreignBytes);
+    await writeFile(hidden.marker, '');
+    // `Title` itself has NO marker → marker-absent prepare (fresh import).
+    await mkdir(visible.target, { recursive: true });
+
+    await prepareImportSiblings({ targetPath: visible.target, libraryRoot: root, log: makeLog() });
+
+    // The foreign target's backup + marker are UNTOUCHED — disjoint suffix namespaces + per-target
+    // derivation mean Title's op can never reach `.Title`'s siblings.
+    expect(await readFile(join(hidden.backup, 'foreign.m4b'))).toEqual(foreignBytes);
+    expect(await pathExists(hidden.marker)).toBe(true);
+  }));
+
+  it('#1911 AC6 cross-target (symmetric): preparing hidden `.Title` leaves a foreign visible `Title` legacy backup + marker intact', withTmp(async (root) => {
+    const dir = join(root, 'Author');
+    await mkdir(dir, { recursive: true });
+    const visible = siblings(join(dir, 'Title'));
+    const hidden = siblings(join(dir, '.Title'));
+    const foreignBytes = Buffer.alloc(190, 7);
+    await mkdir(visible.backup, { recursive: true });
+    await writeFile(join(visible.backup, 'foreign.m4b'), foreignBytes);
+    await writeFile(visible.marker, '');
+    await mkdir(hidden.target, { recursive: true });
+
+    await prepareImportSiblings({ targetPath: hidden.target, libraryRoot: root, log: makeLog() });
+
+    expect(await readFile(join(visible.backup, 'foreign.m4b'))).toEqual(foreignBytes);
+    expect(await pathExists(visible.marker)).toBe(true);
+  }));
+
+  it('#1911 findCommitPendingMarkers: an ACTIVE dotted scratch sibling beside its live (un-dotted) marker is pruned', withTmp(async (root) => {
+    // `.Title.import-staging` is a true active scratch sibling: the un-dotted
+    // `Title.import-commit-pending` marker sits beside it, so it is pruned and any decoy
+    // marker inside it is NOT collected.
+    const { activeStaging, marker } = siblings(join(root, 'Author', 'Title'));
+    await mkdir(activeStaging, { recursive: true });
+    await writeFile(join(activeStaging, 'decoy.import-commit-pending'), '');
+    await writeFile(marker, '');
+
+    expect(await findCommitPendingMarkers(root)).toEqual([marker]);
+  }));
+
+  it('#1911 AC13 findCommitPendingMarkers: a HIDDEN-target legacy scratch (`.Title.import-bak` beside `.Title.import-commit-pending`) is pruned, its decoy subtree not collected', withTmp(async (root) => {
+    // The explicit AC13 hidden-target legacy pairing: a dot-led target `.Title` whose legacy
+    // backup `.Title.import-bak` sits beside its OWN dot-led marker `.Title.import-commit-pending`.
+    // isScratchSibling must pair the un-dotted-suffix legacy sibling with the marker on the SAME
+    // (dot-led) basename, so the scratch dir is pruned and the decoy marker inside it is skipped.
+    const author = join(root, 'Author');
+    await mkdir(author, { recursive: true });
+    const legacyBackup = join(author, '.Title.import-bak');       // hidden target's legacy backup
+    const liveMarker = join(author, '.Title.import-commit-pending'); // its live sibling marker
+    await mkdir(legacyBackup, { recursive: true });
+    await writeFile(join(legacyBackup, 'decoy.import-commit-pending'), ''); // must NOT be collected
+    await writeFile(liveMarker, '');
+
+    // Only the live sibling marker is found; the pruned scratch subtree's decoy is excluded.
+    expect(await findCommitPendingMarkers(root)).toEqual([liveMarker]);
   }));
 });

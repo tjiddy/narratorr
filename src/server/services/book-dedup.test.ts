@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { OwnedRecordingError, buildForcedImportRefusedReason, toLibraryRecording, toRecordingCandidate } from './book-dedup.js';
+import { describe, it, expect, vi } from 'vitest';
+import { mockDbChain } from '../__tests__/helpers.js';
+import { OwnedRecordingError, buildForcedImportRefusedReason, toLibraryRecording, toRecordingCandidate, resolveDuplicate } from './book-dedup.js';
 import type { BookWithAuthor } from './book.service.js';
+import type { Db } from '../../db/index.js';
 
 // Build a minimal `BookWithAuthor` row exercising only the fields `toLibraryRecording` reads.
 function makeRow(overrides: {
@@ -111,6 +113,50 @@ describe('toLibraryRecording (#1734 fence/DB-dedup drift guard)', () => {
   // pin that `toLibraryRecording` carries it through so the veto is not inert.
   it('carries productionType through from the owner row', () => {
     expect(toLibraryRecording(makeRow({ productionType: 'abridged' })).productionType).toBe('abridged');
+  });
+});
+
+// #1891 F8 — the review representative must be the LOWEST matching books.id. Gathering
+// builds a Set (insertion-ordered), then `resolveDuplicate` relies on the terminal
+// `return [...ids].sort((a, b) => a - b)` to iterate ascending so the FIRST review
+// incumbent is the lowest id. The DB-backed integration test seeds ascending IDs and the
+// author query returns them in rowid (ascending) order, so the sort is never load-bearing
+// there — deleting it leaves that test green. This focused resolver test forces the author
+// query to gather the HIGHER id FIRST, so the sort is the only thing that yields the
+// lowest-id representative; deleting it flips `book.id` to 80 and fails here.
+describe('resolveDuplicate — deterministic review representative under reverse gather order (#1891 F8)', () => {
+  const makeBook = (id: number): BookWithAuthor =>
+    ({
+      id,
+      title: 'Match Title',
+      authors: [{ name: 'Some Author' }],
+      narrators: [{ name: `Reader ${id}` }],
+      asin: null,
+      duration: null,
+      productionType: null,
+    }) as unknown as BookWithAuthor;
+
+  it('returns the lowest-id review incumbent even when the author query gathers the higher id first', async () => {
+    // Mocked author-scope query returns id 80 BEFORE id 75 (non-ascending) — no ASIN and
+    // no candidate narrators, so every incumbent resolves to `review`.
+    const db = {
+      select: vi.fn().mockReturnValue(
+        mockDbChain([
+          { id: 80, title: 'Match Title' },
+          { id: 75, title: 'Match Title' },
+        ]),
+      ),
+    } as unknown as Db;
+    const getById = vi.fn(async (id: number) => makeBook(id));
+
+    const res = await resolveDuplicate(db, getById, {
+      title: 'Match Title',
+      authors: [{ name: 'Some Author' }],
+    });
+
+    expect(res.verdict).toBe('review');
+    expect(res.book?.id).toBe(75);
+    expect(res.recordingReviewReason).toBeDefined();
   });
 });
 

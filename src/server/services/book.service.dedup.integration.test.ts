@@ -3,8 +3,10 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createDb, runMigrations, type Db } from '../../db/index.js';
-import { books } from '../../db/schema.js';
+import { books, authors, narrators, bookAuthors, bookNarrators, series, seriesMembers, unmatchedGenres } from '../../db/schema.js';
 import { BookService, OwnedRecordingError } from './book.service.js';
+import { isUniqueViolation } from '../../shared/error-message.js';
+import { ASIN_UNIQUE_VIOLATION } from './book-dedup.js';
 import { matchesLibraryIdentity, type DedupIdentity } from '../../shared/dedup.js';
 import { slugify } from '../../core/index.js';
 import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording } from '../../core/utils/recording-identity.js';
@@ -260,6 +262,47 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       // Two owned recordings existed, neither matched → new recording of an owned title.
       expect(res.hasIncumbent).toBe(true);
     });
+
+    it('review representative is the LOWEST books.id among pairwise-matching review incumbents (#1891)', async () => {
+      // Two same-author incumbents both resolve `review` (candidate carries no narrator
+      // signal). The gather is sorted ascending, so the representative is deterministic.
+      const first = await seed({ title: 'Nightblood', author: 'Brandon Sanderson', narrators: ['Reader A'] });
+      const second = await seed({ title: 'Nightblood', author: 'Brandon Sanderson', narrators: ['Reader B'] });
+      expect(second).toBeGreaterThan(first);
+      const res = await service.findDuplicate({ title: 'Nightblood', authors: [{ name: 'Brandon Sanderson' }] });
+      expect(res.verdict).toBe('review');
+      expect(res.book?.id).toBe(first);
+      expect(res.recordingReviewReason).toBeDefined();
+    });
+
+    it('a later same-recording still beats an earlier review incumbent (#1891 ladder unchanged)', async () => {
+      // Lower-id incumbent → review (no ASIN; matches title/author but the candidate
+      // carries no narrator signal). Higher-id incumbent → an ASIN-equal same-recording.
+      // same-recording wins over the earlier review regardless of gather order.
+      await seed({ title: 'Skyward', author: 'Brandon Sanderson', narrators: ['Suzy Jackson'] });
+      const owned = await seed({ title: 'Skyward', author: 'Brandon Sanderson', narrators: ['Suzy Jackson'], asin: 'B0SKYWARD1' });
+      const res = await service.findDuplicate({
+        title: 'Skyward', authors: [{ name: 'Brandon Sanderson' }], asin: 'b0skyward1',
+      });
+      expect(res.verdict).toBe('same-recording');
+      expect(res.book?.id).toBe(owned);
+    });
+
+    it('WoW distinct-subtitle candidate (no ASIN) vs owned WoW novels → different-recording, book null, hasIncumbent false (#1891)', async () => {
+      // The regression this issue exists to fix: distinct franchise subtitles must NOT
+      // be gathered as incumbents, so the candidate is a genuinely NEW book — NOT flagged
+      // a possible/hard duplicate.
+      await seed({ title: 'World of Warcraft: Tides of Darkness', author: 'Aaron Rosenberg', narrators: ['Reader One'] });
+      await seed({ title: 'World of Warcraft: Rise of the Horde', author: 'Aaron Rosenberg', narrators: ['Reader Two'] });
+      const res = await service.findDuplicate({
+        title: 'World of Warcraft: Beyond the Dark Portal',
+        authors: [{ name: 'Aaron Rosenberg' }],
+        narrators: ['Reader Three'],
+      });
+      expect(res.verdict).toBe('different-recording');
+      expect(res.book).toBeNull();
+      expect(res.hasIncumbent).toBe(false);
+    });
   });
 
   // ─── Cross-home scope drift guard (#1726) ───
@@ -439,5 +482,146 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
         ).resolves.not.toThrow();
       });
     });
+  });
+});
+
+// DB-backed coverage for the tx-scoped `createResolved` primitive (#1892): the
+// optional-outer-tx contract (rollback leaves nothing / commit persists), the
+// two-branch unique-conflict behavior, and the numeric-id return. A mock-chain
+// test cannot prove real transaction/rollback or FK semantics
+// (libsql-foreign-keys-on-by-default), so this seeds a real libsql DB.
+describe('BookService.createResolved — tx-scoped insert primitive (DB-backed, #1892)', () => {
+  let dir: string;
+  let db: Db;
+  let loggedInfo: string[];
+  let service: BookService;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'book-svc-create-resolved-'));
+    const dbFile = join(dir, 'narratorr.db');
+    await runMigrations(dbFile);
+    db = createDb(dbFile);
+    loggedInfo = [];
+    // Capturing logger so we can prove the primitive emits no post-commit log.
+    const capturingLog = {
+      info(_obj: unknown, msg?: string) { if (typeof msg === 'string') loggedInfo.push(msg); },
+      warn() {}, error() {}, debug() {}, fatal() {}, trace() {},
+      child() { return capturingLog; }, level: 'info', silent() {},
+    } as unknown as FastifyBaseLogger;
+    service = new BookService(db, capturingLog);
+  });
+
+  afterEach(() => {
+    db.$client.close();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // libsql may keep handles on Windows — best effort
+    }
+  });
+
+  it('rolls back every write when the caller transaction throws after createResolved (AC5/AC9/F7)', async () => {
+    // Brand-new author/narrator/series fixtures so no pre-existing row masks the
+    // rollback check across all eight write surfaces.
+    await expect(
+      db.transaction(async (tx) => {
+        await service.createResolved(
+          {
+            title: 'Rollback Me',
+            authors: [{ name: 'Fresh Author RB' }],
+            narrators: ['Fresh Narrator RB'],
+            seriesName: 'Fresh Series RB',
+            seriesPosition: 1,
+            genres: ['zzz-not-a-known-genre'],
+          },
+          tx,
+        );
+        throw new Error('force rollback');
+      }),
+    ).rejects.toThrow('force rollback');
+
+    expect(await db.select().from(books)).toHaveLength(0);
+    expect(await db.select().from(bookAuthors)).toHaveLength(0);
+    expect(await db.select().from(bookNarrators)).toHaveLength(0);
+    expect(await db.select().from(authors)).toHaveLength(0);
+    expect(await db.select().from(narrators)).toHaveLength(0);
+    expect(await db.select().from(series)).toHaveLength(0);
+    expect(await db.select().from(seriesMembers)).toHaveLength(0);
+    expect(await db.select().from(unmatchedGenres)).toHaveLength(0);
+    // No post-commit side effect escaped the primitive.
+    expect(loggedInfo).not.toContain('Book added to library');
+  });
+
+  it('persists exactly one fully-linked book when the caller transaction commits (AC5/AC6/F12)', async () => {
+    const bookId = await db.transaction(async (tx) =>
+      service.createResolved(
+        {
+          title: 'Committed',
+          authors: [{ name: 'Commit Author' }],
+          narrators: ['Commit Narrator'],
+          seriesName: 'Commit Series',
+          seriesPosition: 2,
+        },
+        tx,
+      ),
+    );
+
+    expect(typeof bookId).toBe('number');
+    const rows = await db.select({ id: books.id }).from(books);
+    expect(rows).toHaveLength(1);
+    // F12 — the returned value is the persisted row id, not a placeholder.
+    expect(rows[0]!.id).toBe(bookId);
+
+    const hydrated = await service.getById(bookId);
+    expect(hydrated!.authors.map((a) => a.name)).toEqual(['Commit Author']);
+    expect(hydrated!.narrators.map((n) => n.name)).toEqual(['Commit Narrator']);
+    expect(hydrated!.seriesName).toBe('Commit Series');
+    expect(await db.select().from(seriesMembers)).toHaveLength(1);
+  });
+
+  it('maps a same-ASIN unique violation to OwnedRecordingError on the self-managed path (AC7)', async () => {
+    const incumbentId = await service.createResolved({ title: 'Owner', authors: [{ name: 'A' }], asin: 'B0X' });
+
+    await expect(
+      service.createResolved({ title: 'Intruder', authors: [{ name: 'B' }], asin: 'B0X' }),
+    ).rejects.toMatchObject({ name: 'OwnedRecordingError', existingBookId: incumbentId, reason: 'asin-owned' });
+
+    // The rolled-back intruder left no second row.
+    expect(await db.select().from(books)).toHaveLength(1);
+  });
+
+  it('propagates the RAW unique violation (not OwnedRecordingError) on the caller-tx path and leaves no new row (AC7)', async () => {
+    await service.createResolved({ title: 'Owner', authors: [{ name: 'A' }], asin: 'B0X' });
+
+    let caught: unknown;
+    try {
+      await db.transaction(async (tx) =>
+        service.createResolved({ title: 'Intruder', authors: [{ name: 'B' }], asin: 'B0X' }, tx),
+      );
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(OwnedRecordingError);
+    expect(isUniqueViolation(caught, ASIN_UNIQUE_VIOLATION)).toBe(true);
+    // Only the incumbent remains after the outer rollback.
+    expect(await db.select().from(books)).toHaveLength(1);
+  });
+
+  it('wrapper create() returns a fully hydrated BookWithAuthor after its self-managed commit (AC6/F11)', async () => {
+    const book = await service.create({
+      title: 'Hydrated',
+      authors: [{ name: 'Hydra Author' }],
+      narrators: ['Hydra Narrator'],
+      seriesName: 'Hydra Series',
+      seriesPosition: 3,
+    });
+
+    expect(book.authors.map((a) => a.name)).toEqual(['Hydra Author']);
+    expect(book.narrators.map((n) => n.name)).toEqual(['Hydra Narrator']);
+    // BookWithAuthor carries scalar series fields (no nested `series` relation).
+    expect(book.seriesName).toBe('Hydra Series');
+    expect(book.seriesPosition).toBe(3);
   });
 });

@@ -428,7 +428,7 @@ describe('IndexerCard — edit mode', () => {
     expect(onCancel).toHaveBeenCalled();
   });
 
-  it('pre-fills MAM fields when editing a myanonamouse indexer', () => {
+  it('pre-fills MAM fields when editing a myanonamouse indexer, with no Base URL input (#1886)', () => {
     const mamIndexer: Indexer = createMockIndexer({
       id: 5,
       name: 'My MAM',
@@ -446,7 +446,9 @@ describe('IndexerCard — edit mode', () => {
     );
 
     expect(screen.getByLabelText('MAM ID')).toHaveValue('secret-mam-id');
-    expect(screen.getByLabelText(/Base URL/)).toHaveValue('https://mam.example.com');
+    // baseUrl is API-only (#1886): no input, but the persisted value still round-trips
+    // (asserted in the #908 registry-overlay round-trip test below)
+    expect(screen.queryByLabelText(/Base URL/)).not.toBeInTheDocument();
   });
 
   it('shows Save Changes on submit button', () => {
@@ -1146,8 +1148,10 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         expect(payloadSettings).not.toHaveProperty(key);
       }
 
-      // Persisted MAM-specific keys MUST round-trip
+      // Persisted MAM-specific keys MUST round-trip — including baseUrl, which has
+      // no form input (#1886) and survives purely via schema-declared hydration
       expect(payloadSettings).toHaveProperty('mamId', 'mam-secret');
+      expect(payloadSettings).toHaveProperty('baseUrl', 'https://mam.example.com');
       expect(payloadSettings).toHaveProperty('isVip', true);
       expect(payloadSettings).toHaveProperty('classname', 'VIP');
       expect(payloadSettings).toHaveProperty('mamUsername', 'mamuser');

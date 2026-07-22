@@ -1,6 +1,6 @@
 export const FORMAT_LABELS: Record<string, string> = {
-  m4b: 'M4B (recommended — chapters supported)',
-  mp3: 'MP3 (no chapter support)',
+  m4b: 'M4B (recommended)',
+  mp3: 'MP3',
 };
 
 export const MERGE_LABELS: Record<string, string> = {
@@ -10,6 +10,6 @@ export const MERGE_LABELS: Record<string, string> = {
 };
 
 export const TAG_MODE_LABELS: Record<string, string> = {
-  populate_missing: 'Populate missing (only write blank fields)',
-  overwrite: 'Overwrite (write all fields)',
+  populate_missing: 'Populate missing',
+  overwrite: 'Overwrite',
 };

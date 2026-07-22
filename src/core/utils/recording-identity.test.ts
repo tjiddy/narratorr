@@ -301,7 +301,7 @@ describe('resolveRecordingIdentity (#1710)', () => {
     });
 
     it('both author-less, subtitle drift (raw titles differ) → different-recording (not scoped together)', () => {
-      // Author-less arm gates on RAW title equality, not normalizeTitleForDedup, so a
+      // Author-less arm gates on RAW title equality (no subtitle/suffix tolerance), so a
       // parenthetical/subtitle never collapses two author-less rows.
       expect(verdictOf(
         candidate({ title: 'Dune (Unabridged)', authors: [], narrators: ['X'] }),

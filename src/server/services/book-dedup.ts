@@ -9,7 +9,7 @@
 import { eq, and, sql, notExists } from 'drizzle-orm';
 import { slugify } from '../../core/index.js';
 import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording, type RecordingVerdict, type RecordingReviewReason } from '../../core/utils/recording-identity.js';
-import { normalizeTitleForDedup } from '../../shared/dedup.js';
+import { buildTitleShape, titlesMatchForDedup } from '../../shared/dedup.js';
 import { canonicalizeAsin } from '../../shared/asin.js';
 import { books, authors, bookAuthors } from '../../db/schema.js';
 import type { Db } from '../../db/index.js';
@@ -134,11 +134,12 @@ export function toLibraryRecording(b: BookWithAuthor): LibraryRecording {
 
 /**
  * Gather the ids of every plausible incumbent in the bibliographic scope (#1711).
- * Multi-narration means a normalized title + primary-author slug can legitimately
- * match more than one row, so this returns ALL of them (no `limit(1)`). The three
- * branches mirror the pre-#1711 ordered identity contract: (1) ASIN
- * case-insensitive, (2) normalized-title + position-0 author slug, (3) author-less
- * exact title-only with the #253 notExists guard.
+ * Multi-narration (and the non-transitive subtitle relation, #1891) means a
+ * title + primary-author slug can legitimately match more than one row, so this
+ * returns ALL of them (no `limit(1)`), sorted ascending. The three branches mirror
+ * the pre-#1711 ordered identity contract: (1) ASIN case-insensitive, (2) pairwise
+ * title-match + position-0 author slug, (3) author-less exact title-only with the
+ * #253 notExists guard.
  */
 async function gatherIncumbentIds(db: Db, candidate: DuplicateCandidate): Promise<number[]> {
   const ids = new Set<number>();
@@ -159,8 +160,10 @@ async function gatherIncumbentIds(db: Db, candidate: DuplicateCandidate): Promis
     for (const r of byAsin) ids.add(r.id);
   }
 
-  // (2) normalized title + position-0 author slug — ALL hits. Title normalization
-  // is not SQLite-expressible, so fetch by author slug and compare in app code.
+  // (2) title + position-0 author slug — ALL pairwise-matching hits (#1891). The
+  // subtitle-tolerant relation is non-transitive so we retain EVERY incumbent whose
+  // title pairwise-matches the candidate, not the lowest-id only; the returned array
+  // is sorted ascending below so the `review` representative is deterministic.
   const authorList = candidate.authors;
   if (authorList && authorList.length > 0) {
     const primarySlug = slugify(authorList[0]!.name);
@@ -168,9 +171,9 @@ async function gatherIncumbentIds(db: Db, candidate: DuplicateCandidate): Promis
       .innerJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
       .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
       .where(eq(authors.slug, primarySlug));
-    const wanted = normalizeTitleForDedup(candidate.title);
+    const wanted = buildTitleShape(candidate.title);
     for (const row of byAuthor) {
-      if (normalizeTitleForDedup(row.title) === wanted) ids.add(row.id);
+      if (titlesMatchForDedup(buildTitleShape(row.title), wanted)) ids.add(row.id);
     }
   }
 
@@ -186,7 +189,10 @@ async function gatherIncumbentIds(db: Db, candidate: DuplicateCandidate): Promis
     for (const r of byTitle) ids.add(r.id);
   }
 
-  return [...ids];
+  // Ascending books.id so `resolveDuplicate` picks the lowest-id incumbent as the
+  // deterministic `review` representative (#1891). Ordering never affects the
+  // `same-recording` verdict, which wins order-independently.
+  return [...ids].sort((a, b) => a - b);
 }
 
 /**
@@ -208,6 +214,8 @@ export async function resolveDuplicate(db: Db, getById: GetByIdFn, candidate: Du
     if (!book) continue;
     const { verdict, recordingReviewReason } = resolveRecordingIdentity(recordingCandidate, toLibraryRecording(book));
     if (verdict === 'same-recording') return { verdict: 'same-recording', book, hasIncumbent: true };
+    // First `review` wins the representative slot; `ids` is ascending (#1891) so this
+    // is the lowest-id matching incumbent — a deterministic representative.
     if (verdict === 'review' && !reviewBook) {
       reviewBook = book;
       reviewReason = recordingReviewReason;

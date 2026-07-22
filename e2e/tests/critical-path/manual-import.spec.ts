@@ -1,16 +1,24 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * Phase 2 critical path #2 — exercises the full manual-import flow:
+ * Phase 2 critical path #2 — exercises the full manual-import flow over the STAGED
+ * submission lane (#1902):
  *
  *   /library → Library Actions menu → "Import Files"
  *     → /import (path step)
  *     → enter sourcePath, click Scan
  *     → Review step: match completes with confidence 'none'
  *     → Edit Metadata: search, select result, save → confidence 'medium'
- *     → Import → success toast → /library
- *     → imported card visible (bg-emerald-500)
+ *     → Import → create → chunked PUT (KILLED once mid-flight, then retried) →
+ *       finalize → poll to complete → success toast → /library
+ *     → imported card visible (bg-emerald-500) — registered EXACTLY ONCE
  *     → book detail shows "Imported"
+ *
+ * The killed-middle-chunk step (#1902 F15) fails the first `PUT .../items` request
+ * with a 503, exercising the client's shared retry policy: the idempotent, ordinal-keyed
+ * chunk is re-PUT and the durable finalize + server-owned processing still drive the row
+ * to `imported` — with a single library card, proving exactly-once registration despite
+ * the transport failure.
  *
  * globalSetup boots the Audible fake on :4300 (empty for structured search,
  * one generic product for keyword search) and pre-populates sourcePath with
@@ -91,25 +99,56 @@ test.describe('Critical path: manual import', () => {
       await expect(importBtn).toBeEnabled({ timeout: 5_000 });
     });
 
-    // ── Confirm import ───────────────────────────────────────────────────
-    await test.step('click Import and verify success toast + navigation', async () => {
+    // ── Kill the first chunk PUT, then confirm the staged import recovers ─────
+    await test.step('lose the first chunk PUT response AFTER the server persists it, then recover via retry → finalize → complete', async () => {
+      // The first inert chunk upload actually REACHES and persists on the staged server via
+      // `route.fetch()`; we then hide its successful response from the client behind a synthetic
+      // 503 ("lost response"). The client's retry re-PUTs the SAME ordinal against a server that
+      // already stored it — so this exercises real server replay idempotency (#1902 F15/F25), not
+      // a request that never landed. Every later request passes through untouched.
+      let putLostOnce = false;
+      let serverAcceptedFirstPut = false;
+      await page.route('**/api/import/submissions/*/items', async (route) => {
+        if (route.request().method() === 'PUT' && !putLostOnce) {
+          putLostOnce = true;
+          // Forward to the real server so the ordinal is durably persisted...
+          const serverResponse = await route.fetch();
+          serverAcceptedFirstPut = serverResponse.ok();
+          // ...then drop its success on the client side as a lost response, forcing a retry of
+          // the already-landed ordinal.
+          await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'e2e-lost-put-response' }) });
+          return;
+        }
+        await route.continue();
+      });
+
       await page.getByRole('button', { name: /^Import 1/i }).click();
-      // Success toast from importMutation.onSuccess.
-      await expect(page.getByText(/queued for import/i)).toBeVisible({ timeout: 10_000 });
-      // Should navigate to /library.
+
+      // The polled record drives the success toast once processing completes...
+      await expect(page.getByText(/queued for import/i)).toBeVisible({ timeout: 20_000 });
+      // ...and a clean in-session completion navigates to /library.
       await page.waitForURL(/\/library/, { timeout: 10_000 });
+      // The first PUT genuinely landed on the server, and the client saw a lost response → retried.
+      expect(putLostOnce).toBe(true);
+      expect(serverAcceptedFirstPut).toBe(true);
+      await page.unroute('**/api/import/submissions/*/items');
     });
 
-    // ── Library card shows imported status ────────────────────────────────
-    await test.step('library card shows imported status (bg-emerald-500)', async () => {
-      const bookCard = page.getByRole('link', { name: new RegExp(SEED_MANUAL_IMPORT_TITLE) }).first();
-      const statusBar = bookCard.getByTestId('status-bar');
-      await expect(statusBar).toHaveClass(/bg-emerald-500/, { timeout: 15_000 });
+    // ── Library card shows imported status, registered EXACTLY ONCE ───────
+    await test.step('exactly one imported card for the seed title (bg-emerald-500)', async () => {
+      const bookCards = page.getByRole('link', { name: new RegExp(SEED_MANUAL_IMPORT_TITLE) });
+      // Wait for the (single) card to reach imported/emerald status once processing settles.
+      await expect(bookCards.first().getByTestId('status-bar')).toHaveClass(/bg-emerald-500/, { timeout: 15_000 });
+      // Exactly-once (F20/F15): the killed-then-retried chunk is idempotent per ordinal, so the
+      // retry must NOT create a second registration — a duplicate card fails this assertion (the
+      // prior `.first()` masked it under Playwright's deletion heuristic).
+      await expect(bookCards).toHaveCount(1);
     });
 
     // ── Book detail page shows "Imported" ────────────────────────────────
     await test.step('book detail page shows Imported status', async () => {
-      await page.getByRole('link', { name: new RegExp(SEED_MANUAL_IMPORT_TITLE) }).first().click();
+      // Exactly one card exists (asserted above), so this navigates to the sole imported book.
+      await page.getByRole('link', { name: new RegExp(SEED_MANUAL_IMPORT_TITLE) }).click();
       await expect(page).toHaveURL(/\/books\/\d+$/);
       await expect(page.getByText('Imported', { exact: true })).toBeVisible({ timeout: 10_000 });
     });

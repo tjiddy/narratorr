@@ -41,6 +41,7 @@ import { searchApi } from './search.js';
 import { settingsApi } from './settings.js';
 import { eventHistoryApi } from './event-history.js';
 import { systemApi } from './system.js';
+import { submissionsApi } from './submissions.js';
 
 beforeEach(() => {
   mockFetchApi.mockClear();
@@ -532,15 +533,6 @@ describe('libraryScanApi', () => {
     }));
   });
 
-  it('confirmImport → POST /library/import/confirm with books and mode', async () => {
-    const books = [{ path: '/audio/book', title: 'Book' }];
-    await libraryScanApi.confirmImport(books, 'copy');
-    expect(mockFetchApi).toHaveBeenCalledWith('/library/import/confirm', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ books, mode: 'copy' }),
-    }));
-  });
-
   it('startMatchJob → POST /library/import/match with candidates', async () => {
     const books = [{ path: '/audio', title: 'Book', author: 'Auth' }];
     await libraryScanApi.startMatchJob(books);
@@ -822,4 +814,75 @@ describe('response pass-through', () => {
     expect(result).toBe(data);
   });
 
+});
+
+// #1894 F63 — durable import-report wrapper (relevant to the #1902 migration).
+describe('submissionsApi', () => {
+  it('listImportSubmissions with no params → GET /import/submissions (no stray query keys)', async () => {
+    await submissionsApi.listImportSubmissions();
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions');
+  });
+
+  it('listImportSubmissions with source/limit/offset → threads exactly those keys', async () => {
+    await submissionsApi.listImportSubmissions({ source: 'library', limit: 1, offset: 20 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions?source=library&limit=1&offset=20');
+  });
+
+  it('getImportSubmissionAttention without source → GET /import/submissions/attention', async () => {
+    await submissionsApi.getImportSubmissionAttention();
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/attention');
+  });
+
+  it('getImportSubmissionAttention with source → GET /import/submissions/attention?source=manual', async () => {
+    await submissionsApi.getImportSubmissionAttention({ source: 'manual' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/attention?source=manual');
+  });
+
+  it('getImportSubmissionDetail → GET /import/submissions/:id?includeItems=true', async () => {
+    await submissionsApi.getImportSubmissionDetail(7);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/7?includeItems=true');
+  });
+
+  it('discardImportSubmission → DELETE /import/submissions/:id', async () => {
+    await submissionsApi.discardImportSubmission(9);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/9', { method: 'DELETE' });
+  });
+
+  // ── Staged write + poll lane (#1902) ──────────────────────────────────────
+  it('createImportSubmission → POST /import/submissions with the create body', async () => {
+    const body = { source: 'library', clientSubmissionId: 'u', payloadDigest: 'd', expectedCount: 2 } as never;
+    await submissionsApi.createImportSubmission(body);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions', { method: 'POST', body: JSON.stringify(body) });
+  });
+
+  it('putImportSubmissionItems → PUT /import/submissions/:id/items with the {items} envelope', async () => {
+    const body = { items: [{ ordinal: 0, item: { path: '/a', title: 'A' } }] } as never;
+    await submissionsApi.putImportSubmissionItems(5, body);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/5/items', { method: 'PUT', body: JSON.stringify(body) });
+  });
+
+  it('finalizeImportSubmission → POST /import/submissions/:id/finalize', async () => {
+    await submissionsApi.finalizeImportSubmission(5);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/5/finalize', { method: 'POST' });
+  });
+
+  it('getImportSubmission (summary) → GET /import/submissions/:id?includeItems=false', async () => {
+    await submissionsApi.getImportSubmission(5);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/5?includeItems=false');
+  });
+
+  it('getImportSubmission (detail) → GET /import/submissions/:id?includeItems=true', async () => {
+    await submissionsApi.getImportSubmission(5, true);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/5?includeItems=true');
+  });
+
+  it('getImportSubmissionByClientId (summary) → GET /import/submissions/by-client/:uuid?includeItems=false', async () => {
+    await submissionsApi.getImportSubmissionByClientId('abc');
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/by-client/abc?includeItems=false');
+  });
+
+  it('getImportSubmissionByClientId (detail) → GET /import/submissions/by-client/:uuid?includeItems=true', async () => {
+    await submissionsApi.getImportSubmissionByClientId('abc', true);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/by-client/abc?includeItems=true');
+  });
 });

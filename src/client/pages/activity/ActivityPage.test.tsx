@@ -81,6 +81,9 @@ vi.mock('@/lib/api', async () => {
       markEventFailed: vi.fn(),
       deleteEvent: vi.fn(),
       deleteEvents: vi.fn(),
+      // #1894 — the import-history section renders in the History tab.
+      listImportSubmissions: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+      getImportSubmissionDetail: vi.fn(),
     },
   };
 });
@@ -906,6 +909,40 @@ describe('ActivityPage', () => {
 
       // Event History section rendered — filter dropdown "All" option visible
       expect(screen.getByText('All')).toBeInTheDocument();
+    });
+
+    it('renders Import history ABOVE event history, and event history stays usable when import history is empty (F22)', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('Nothing running right now')).toBeInTheDocument());
+      await user.click(screen.getByRole('tab', { name: /history/i }));
+
+      const section = await screen.findByTestId('import-history-section');
+      expect(await screen.findByTestId('import-history-empty')).toBeInTheDocument(); // empty import history
+      // Event history is still rendered (its "All" filter) and comes AFTER the import section.
+      const allFilter = screen.getByText('All');
+      expect(allFilter).toBeInTheDocument();
+      expect(section.compareDocumentPosition(allFilter) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('an import-history render crash is isolated to its section fallback; Event history stays usable (F5/F31)', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); // silence React's caught-error log
+      const user = userEvent.setup();
+      // A malformed list row (no `aggregates`) crashes DispositionCounts during render —
+      // a real API/data-shape failure that must NOT reach the route boundary.
+      vi.mocked(api.listImportSubmissions).mockResolvedValue({
+        data: [{ id: 1, clientSubmissionId: 'c', source: 'library', status: 'complete', expectedCount: 1, receivedCount: 1, processedCount: 1, detailsPruned: false, itemsIncluded: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as never],
+        total: 1,
+      });
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('Nothing running right now')).toBeInTheDocument());
+      await user.click(screen.getByRole('tab', { name: /history/i }));
+
+      // The section's local boundary shows its fallback…
+      expect(await screen.findByTestId('import-history-boundary-fallback')).toBeInTheDocument();
+      // …and Event history below it remains usable (its "All" filter renders).
+      expect(screen.getByText('All')).toBeInTheDocument();
+      errSpy.mockRestore();
     });
 
     it('clicking Active tab from History restores active downloads content', async () => {

@@ -80,16 +80,13 @@ describe('IndexerFields', () => {
     expect(apiUrl).toHaveValue('https://nzb.example.com');
   });
 
-  it('renders MAM ID and Base URL for myanonamouse type and accepts input', async () => {
-    const user = userEvent.setup();
+  it('renders MAM ID for myanonamouse type without a Base URL input (#1886)', () => {
     renderWithProviders(<FieldWrapper type="myanonamouse" />);
 
     expect(screen.getByText('MAM ID')).toBeInTheDocument();
-    expect(screen.getByText('Base URL')).toBeInTheDocument();
     expect(screen.getByText(/Generate from MAM/)).toBeInTheDocument();
-    const baseUrlInput = screen.getByPlaceholderText('https://www.myanonamouse.net');
-    await user.type(baseUrlInput, 'https://custom.mam.net');
-    expect(baseUrlInput).toHaveValue('https://custom.mam.net');
+    // settings.baseUrl is API-only (#1886) — the form must not surface it
+    expect(screen.queryByText('Base URL')).not.toBeInTheDocument();
   });
 
   describe('prowlarrManaged prop (#201)', () => {
@@ -365,19 +362,20 @@ describe('IndexerFields', () => {
       });
     });
 
-    it('#361 refresh with sentinel mamId and indexerId includes current baseUrl and useProxy from form', async () => {
+    it('#361 refresh with sentinel mamId and indexerId includes persisted baseUrl and current useProxy from form', async () => {
       (api.testIndexerConfig as Mock).mockResolvedValue({
         success: true,
         metadata: { username: 'User1', classname: 'User', isVip: false },
       });
       const user = userEvent.setup();
 
-      // Start with different defaults so we can prove the test reads live form state
+      // baseUrl has no form input (#1886) — a persisted API-set value hydrates into
+      // defaultValues and must still reach the detection request via watch().
       function EditableFormWrapper() {
         const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
           defaultValues: {
             name: '', type: 'myanonamouse',
-            settings: { mamId: '********', baseUrl: '', useProxy: false, searchLanguages: [1], searchType: 'active', isVip: true, mamUsername: 'OldUser' },
+            settings: { mamId: '********', baseUrl: 'https://persisted.mam.net', useProxy: false, searchLanguages: [1], searchType: 'active', isVip: true, mamUsername: 'OldUser' },
           },
         });
         return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} indexerId={42} />;
@@ -389,10 +387,7 @@ describe('IndexerFields', () => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
 
-      // Edit baseUrl and toggle useProxy before clicking refresh
-      const baseUrlInput = screen.getByLabelText(/Base URL/);
-      await user.type(baseUrlInput, 'https://edited.mam.net');
-
+      // Toggle useProxy before clicking refresh to prove live form state is read
       const proxyToggle = screen.getByLabelText('Route through proxy');
       await user.click(proxyToggle);
 
@@ -402,7 +397,7 @@ describe('IndexerFields', () => {
         expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
           expect.objectContaining({
             settings: expect.objectContaining({
-              baseUrl: 'https://edited.mam.net',
+              baseUrl: 'https://persisted.mam.net',
               useProxy: true,
             }),
           }),

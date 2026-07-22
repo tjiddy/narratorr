@@ -10,11 +10,11 @@ import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres,
 import { slugify, findUnmatchedGenres, normalizeGenres } from '../../core/index.js';
 import { replaceSeriesLink, upsertSeriesLink, type ReplaceSeriesLinkArgs } from './book-series-link.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
-import { generatePublicId } from '../utils/public-id.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BookRow } from './types.js';
-import { productionTypeSchema, type BookStatus, type ProductionType } from '../../shared/schemas/book.js';
+import { productionTypeSchema, type BookStatus } from '../../shared/schemas/book.js';
+import { buildNewBookValues, type CreateBookInput, type ResolvedBookCreateInput } from './book-create.js';
 import { canonicalizeAsin } from '../../shared/asin.js';
 import { isUniqueViolation } from '../../shared/error-message.js';
 import {
@@ -36,6 +36,8 @@ export {
 } from './book-dedup.js';
 
 export { CoverUploadError } from './cover-upload.js';
+
+export type { CreateBookInput, ResolvedBookCreateInput } from './book-create.js';
 
 type NewBook = typeof books.$inferInsert;
 type AuthorRow = typeof authors.$inferSelect;
@@ -243,27 +245,35 @@ export class BookService {
     }
   }
 
-  async create(data: {
-    title: string;
-    authors: { name: string; asin?: string | undefined }[];
-    narrators?: string[] | undefined;
-    subtitle?: string | undefined;
-    description?: string | undefined;
-    publisher?: string | undefined;
-    coverUrl?: string | undefined;
-    asin?: string | undefined;
-    isbn?: string | undefined;
-    seriesName?: string | undefined;
-    seriesPosition?: number | undefined;
-    duration?: number | undefined;
-    publishedDate?: string | undefined;
-    genres?: string[] | undefined;
-    status?: BookRow['status'] | undefined;
-    enrichmentStatus?: BookRow['enrichmentStatus'] | undefined;
-    productionType?: ProductionType | undefined;
-    providerId?: string | undefined;
-    importListId?: number | undefined;
-  }): Promise<BookWithAuthor> {
+  /**
+   * Enrichment WRAPPER (#1892). Preserves the pre-split public contract for
+   * every current caller: performs the ASIN enrichment provider round-trip,
+   * delegates the durable write to the tx-scoped `createResolved` primitive with
+   * NO outer transaction, then — after that self-managed transaction commits —
+   * emits the success log, fires the fire-and-forget genre telemetry, and
+   * hydrates to a `BookWithAuthor`. The post-commit side effects live here (not
+   * in the primitive) so a future caller-owned-tx rollback can never strand them.
+   */
+  async create(data: CreateBookInput): Promise<BookWithAuthor> {
+    const resolved = await this.resolveCreateInput(data);
+    const bookId = await this.createResolved(resolved);
+
+    this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: data.asin }, 'Book added to library');
+    this.trackUnmatchedGenres(data.genres).catch((error) => this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres'));
+    return this.getById(bookId) as Promise<BookWithAuthor>;
+  }
+
+  /**
+   * Provider-ASIN enrichment, extracted from `create()` (#1893). Fetches provider
+   * detail when `asin` is absent but `providerId` present, carries the resolved
+   * ASIN, drops the enrichment-only `providerId`, and returns a providerId-free
+   * `ResolvedBookCreateInput`. This is the ONLY provider I/O on the create path —
+   * call it BEFORE opening a transaction so `createResolved` does zero I/O inside
+   * the tx. `create()` delegates here (its pinned enrichment tests still pass);
+   * the staged-import runner calls it pre-transaction, then hands the result to
+   * `createResolved(resolved, tx)`.
+   */
+  async resolveCreateInput(data: CreateBookInput): Promise<ResolvedBookCreateInput> {
     // Enrich with ASIN from metadata provider if missing
     let enrichedAsin = data.asin;
     if (!enrichedAsin && data.providerId && this.metadataService) {
@@ -278,71 +288,47 @@ export class BookService {
       }
     }
 
-    // Canonicalize at the create write boundary (#1733) so the stored value, the
-    // create-time race guard below, and the durable `upper(asin)` unique index
-    // all agree on a single (UPPERCASE) canonical form — otherwise a case-drifted
-    // ASIN slips two owned rows past both the guard and the constraint.
-    const canonicalAsin = canonicalizeAsin(enrichedAsin);
+    // Drop the enrichment-only `providerId` and carry the resolved ASIN into the
+    // primitive — enrichment is now done, so `createResolved` does zero I/O.
+    const { providerId: _providerId, ...rest } = data;
+    return { ...rest, asin: enrichedAsin };
+  }
 
-    let bookId: number;
+  /**
+   * Tx-scoped insert PRIMITIVE (#1892). Accepts PRE-RESOLVED metadata (`asin`
+   * already decided) and an optional outer transaction; performs ZERO provider
+   * I/O and NO post-commit side effects (no success log, no genre telemetry, no
+   * hydration). Returns the inserted numeric `bookId` — the wrapper hydrates it
+   * after its own commit; the staged-import worker uses it for enqueue/outcome
+   * writes.
+   *
+   * Modeled on `BookImportService.enqueue`: with `tx` it runs every write on the
+   * caller's handle and PROPAGATES a same-ASIN unique violation RAW (the staged
+   * orchestrator owns the post-rollback incumbent lookup — a `this.db` read
+   * cannot observe an uncommitted caller tx). Without `tx` it opens its own
+   * transaction and, after that rolls back, maps the same-ASIN unique violation
+   * to `OwnedRecordingError` (#1711) — identical to the pre-split behavior for
+   * every current caller.
+   */
+  async createResolved(data: ResolvedBookCreateInput, tx?: DbOrTx): Promise<number> {
+    // Canonicalize at the write boundary (#1733) so the stored value, the
+    // create-time race guard, and the durable `upper(asin)` unique index all
+    // agree on a single (UPPERCASE) canonical form.
+    const canonicalAsin = canonicalizeAsin(data.asin);
+
+    // Caller owns the transaction: run the writes on their handle and let any
+    // unique violation surface raw — no off-handle incumbent lookup here.
+    if (tx) return this.runResolvedInsert(tx, data, canonicalAsin);
+
     try {
-      bookId = await this.db.transaction(async (tx) => {
-        const result = await tx
-          .insert(books)
-          .values({
-            publicId: generatePublicId('bk'),
-            title: data.title,
-            subtitle: data.subtitle,
-            description: data.description,
-            publisher: data.publisher,
-            coverUrl: data.coverUrl,
-            asin: canonicalAsin,
-            isbn: data.isbn,
-            seriesName: data.seriesName,
-            seriesPosition: data.seriesPosition,
-            duration: data.duration,
-            publishedDate: data.publishedDate,
-            genres: data.genres,
-            status: data.status || 'wanted',
-            enrichmentStatus: data.enrichmentStatus,
-            // SQLite text-enums emit no DB CHECK (drizzle-sqlite-text-enum-no-db-check),
-            // so validate the value at the write boundary; absent → column default.
-            productionType: productionTypeSchema.parse(data.productionType ?? 'unknown'),
-            importListId: data.importListId,
-          })
-          .returning();
-
-        const id = result[0]!.id;
-
-        await this.syncAuthors(tx, id, data.authors);
-        if (data.narrators && data.narrators.length > 0) {
-          await this.syncNarrators(tx, id, data.narrators);
-        }
-
-        // Upsert series + local member row at create time so the Series card
-        // can render immediately. The Hardcover lazy-populate flow at GET time
-        // replaces this local row with canonical Hardcover members when a key
-        // is configured.
-        if (data.seriesName) {
-          await upsertSeriesLink(tx, this.log, id, {
-            name: data.seriesName,
-            position: data.seriesPosition ?? null,
-            title: data.title,
-            authorName: data.authors[0]?.name ?? null,
-          });
-        }
-
-        return id;
-      });
+      return await this.db.transaction((inner) => this.runResolvedInsert(inner, data, canonicalAsin));
     } catch (error: unknown) {
       // Same-ASIN create-time race against the partial unique index (#1711).
-      // Two non-null equal ASINs are `same-recording` by the resolver contract,
-      // so this is a deterministically-owned recording, not a candidate for
-      // review: resolve the incumbent and throw a typed `OwnedRecordingError`
-      // so each caller fail-closes (409 / owned skip, never enqueue).
+      // The failed insert has rolled back, so `findAsinCollision(-1, …)` reads a
+      // clean `this.db` and any match is the incumbent (sentinel -1: no self-row
+      // to exclude). Two non-null equal ASINs are a deterministically-owned
+      // recording → typed `OwnedRecordingError` so each caller fail-closes.
       if (canonicalAsin && isUniqueViolation(error, ASIN_UNIQUE_VIOLATION)) {
-        // sourceBookId sentinel (-1): the new row rolled back, so there is no
-        // self-row to exclude — any match is the incumbent.
         const collision = await this.findAsinCollision(-1, canonicalAsin);
         if (collision) {
           throw new OwnedRecordingError({ existingBookId: collision.conflictBookId, title: collision.conflictTitle, reason: 'asin-owned' });
@@ -350,10 +336,35 @@ export class BookService {
       }
       throw error;
     }
+  }
 
-    this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: data.asin }, 'Book added to library');
-    this.trackUnmatchedGenres(data.genres).catch((error) => this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres'));
-    return this.getById(bookId) as Promise<BookWithAuthor>;
+  /**
+   * The in-transaction write sequence shared by both `createResolved` branches
+   * (mirrors `BookImportService.runEnqueue`): book insert, author/narrator
+   * junctions, and the create-time series link — all on the supplied handle.
+   */
+  private async runResolvedInsert(tx: DbOrTx, data: ResolvedBookCreateInput, canonicalAsin: string | null): Promise<number> {
+    const result = await tx.insert(books).values(buildNewBookValues(data, canonicalAsin)).returning();
+    const id = result[0]!.id;
+
+    await this.syncAuthors(tx, id, data.authors);
+    if (data.narrators && data.narrators.length > 0) {
+      await this.syncNarrators(tx, id, data.narrators);
+    }
+
+    // Upsert series + local member row at create time so the Series card can
+    // render immediately. The Hardcover lazy-populate flow at GET time replaces
+    // this local row with canonical Hardcover members when a key is configured.
+    if (data.seriesName) {
+      await upsertSeriesLink(tx, this.log, id, {
+        name: data.seriesName,
+        position: data.seriesPosition ?? null,
+        title: data.title,
+        authorName: data.authors[0]?.name ?? null,
+      });
+    }
+
+    return id;
   }
 
   async update(id: number, data: { [K in keyof NewBook]?: NewBook[K] | undefined } & { narrators?: string[] | undefined; authors?: { name: string; asin?: string | undefined }[] | undefined }): Promise<BookWithAuthor | null> {
@@ -544,7 +555,7 @@ export class BookService {
   }
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */
-  private async trackUnmatchedGenres(genres: string[] | undefined): Promise<void> {
+  async trackUnmatchedGenres(genres: string[] | undefined): Promise<void> {
     const unmatched = findUnmatchedGenres(normalizeGenres(genres));
     if (unmatched.length === 0) return;
 

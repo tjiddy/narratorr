@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdir, rm, writeFile, readFile, readdir, stat } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { stagedAudioReplace, prepareImportSiblings, BackupRecoveryError, markerPresent, MarkerPathConflictError } from './import-steps.js';
+import { deriveImportSiblings } from './import-sibling-paths.js';
 import { copyAudioFiles, copyDiscGroup, getAudioPathSize } from './import-helpers.js';
 
 /**
@@ -74,9 +75,42 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
     await replaceFromSource();
 
     expect(await listAllFiles(target)).toEqual(['a.mp3', 'b.mp3', 'c.mp3']);
-    // Transient siblings cleaned up.
-    expect(await pathExists(`${target}.import-tmp`)).toBe(false);
-    expect(await pathExists(`${target}.import-bak`)).toBe(false);
+    // Transient siblings cleaned up — active born-hidden scratch AND any legacy leftover (#1911).
+    const { stagingPath, backupPath, legacyStagingPath, legacyBackupPath } = deriveImportSiblings(target);
+    expect(await pathExists(stagingPath)).toBe(false);
+    expect(await pathExists(backupPath)).toBe(false);
+    expect(await pathExists(legacyStagingPath)).toBe(false);
+    expect(await pathExists(legacyBackupPath)).toBe(false);
+  });
+
+  it('#1911: stages into a dot-led `.import-staging` dir (born hidden), commits audio into the visible target, scratch gone after', async () => {
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+    const { stagingPath, backupPath } = deriveImportSiblings(target);
+
+    let observedStagingBasename: string | undefined;
+    let stagingWasDotLedDuringStage = false;
+    await stagedAudioReplace({
+      targetPath: target,
+      libraryRoot,
+      log: makeLog(),
+      sourceAudioSize: await getAudioPathSize(source),
+      stage: async (sp) => {
+        // `basename` (not `split('/')`) so the dot-led check holds on Windows, where the
+        // Node-composed path uses backslash separators (cross-platform test rule).
+        observedStagingBasename = basename(sp);
+        await copyAudioFiles(source, sp);
+        stagingWasDotLedDuringStage = await pathExists(sp) && observedStagingBasename!.startsWith('.');
+      },
+    });
+
+    // The staging dir handed to `stage()` is the born-hidden active path and is dot-led.
+    expect(basename(stagingPath)).toMatch(/^\.Title\.import-staging$/);
+    expect(stagingWasDotLedDuringStage).toBe(true);
+    // Audio committed into the VISIBLE target; scratch gone.
+    expect(await listAllFiles(target)).toContain('new.mp3');
+    expect(await pathExists(stagingPath)).toBe(false);
+    expect(await pathExists(backupPath)).toBe(false);
   });
 
   it('AC1: preserves pre-existing non-audio (cover.jpg / .nfo) while replacing audio', async () => {
@@ -293,9 +327,11 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
     await rm(libraryRoot, { recursive: true, force: true });
   });
 
-  /** Re-enter the import pre-step exactly as the startup-recovery re-run would. */
+  /** Re-enter the import pre-step exactly as the startup-recovery re-run would. The seam
+   * derives BOTH conventions from `targetPath`; these legacy-seeded specimens exercise the
+   * legacy recognition path (#1911). */
   function recover(): Promise<void> {
-    return prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot, log: makeLog() });
+    return prepareImportSiblings({ targetPath: target, libraryRoot, log: makeLog() });
   }
 
   it('AC: restores a flat backed-up original into the target, then clears backup + marker', async () => {
@@ -507,9 +543,10 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
     expect(error).toBeInstanceOf(Error);
     expect(error).not.toBeInstanceOf(BackupRecoveryError);
 
-    // The marker survives, and the backup is NOT deleted while the marker is present.
+    // The marker survives, and the (active #1911) backup is NOT deleted while the marker is present.
+    const activeBackup = deriveImportSiblings(target).backupPath;
     expect(await pathExists(marker)).toBe(true);
-    expect(await pathExists(backup)).toBe(true);
+    expect(await pathExists(activeBackup)).toBe(true);
   });
 
   it('false-positive guard: a stale non-empty .import-bak with NO marker is strict-cleared, target NOT regressed', async () => {
@@ -522,7 +559,7 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
     await writeFile(join(backup, 'book.m4b'), staleBytes);
 
     const log = makeLog();
-    await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot, log });
+    await prepareImportSiblings({ targetPath: target, libraryRoot, log });
 
     // Backup strict-cleared, committed target audio untouched, no recovery log.
     expect(await pathExists(backup)).toBe(false);

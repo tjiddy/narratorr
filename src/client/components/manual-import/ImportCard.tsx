@@ -22,6 +22,13 @@ interface ImportCardProps {
   lockDuplicates?: boolean | undefined;
   /** Pre-computed relative path to display instead of the auto-shortened absolute path */
   relativePath?: string | undefined;
+  /**
+   * When true (paused match run, #1895), a genuinely-new pending row renders the static
+   * `Paused` badge instead of the spinning `Matching` one. Defaults to false so the
+   * non-paused path — and Manual Import — stay byte-identical. Does NOT affect the
+   * within-scan `Duplicate in scan` branch, which precedes the confidence badge.
+   */
+  paused?: boolean | undefined;
 }
 
 const confidenceVariant = {
@@ -65,9 +72,13 @@ function ownershipBadge(book: ImportRow['book']): { label: string; variant: 'mut
   return null;
 }
 
-function ConfidenceBadge({ confidence, reason }: { confidence?: Confidence | undefined; reason?: string | undefined }) {
+function ConfidenceBadge({ confidence, reason, paused }: { confidence?: Confidence | undefined; reason?: string | undefined; paused?: boolean | undefined }) {
   if (!confidence) {
-    return (
+    // Paused (#1895): the run is halted, so a result-less row is not "matching" — drop the
+    // spinner and say so, statically. Non-paused keeps the spinning "Matching" badge.
+    return paused ? (
+      <Badge variant="muted">Paused</Badge>
+    ) : (
       <Badge variant="muted" icon={LoadingSpinner}>
         Matching
       </Badge>
@@ -84,7 +95,7 @@ function ConfidenceBadge({ confidence, reason }: { confidence?: Confidence | und
 }
 
 // eslint-disable-next-line complexity -- confidence scoring display with conditional styles and layouts
-export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath }: ImportCardProps) {
+export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath, paused }: ImportCardProps) {
   const isDuplicate = row.book.isDuplicate;
   const confidence = row.matchResult?.confidence;
   const showPencilAlways = !confidence || confidence === 'medium' || confidence === 'none';
@@ -184,7 +195,7 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         ) : ownership ? (
           <Badge variant={ownership.variant}>{ownership.label}</Badge>
         ) : (
-          <ConfidenceBadge confidence={confidence} reason={row.matchResult?.reason} />
+          <ConfidenceBadge confidence={confidence} reason={row.matchResult?.reason} paused={paused} />
         )}
       </div>
 

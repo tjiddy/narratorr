@@ -1,0 +1,2 @@
+CREATE INDEX `idx_import_submissions_source_created_id` ON `import_submissions` (`source`,`created_at`,`id`);--> statement-breakpoint
+CREATE INDEX `idx_import_submissions_created_id` ON `import_submissions` (`created_at`,`id`);

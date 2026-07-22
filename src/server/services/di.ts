@@ -49,6 +49,9 @@ import type { MergeService } from './merge.service.js';
 import type { QualityGateOrchestrator } from './quality-gate-orchestrator.js';
 import type { BulkOperationService } from './bulk-operation.service.js';
 import type { ImportQueueWorker } from './import-queue-worker.js';
+import type { ImportStagingService } from './import-staging.service.js';
+import type { ImportSubmissionReportService } from './import-submission-report.service.js';
+import type { ImportSubmissionRunner } from './import-submission-runner.js';
 
 export interface Services {
   settings: SettingsService;
@@ -87,6 +90,9 @@ export interface Services {
   bookRejection: BookRejectionService;
   bookDeletion: BookDeletionService;
   importQueueWorker: ImportQueueWorker;
+  importStaging: ImportStagingService;
+  importSubmissionReport: ImportSubmissionReportService;
+  importSubmissionRunner: ImportSubmissionRunner;
   retrySearchDeps: RetrySearchDeps;
   seriesCard: SeriesCardService;
   referenceRead: ReferenceReadService;
@@ -134,6 +140,9 @@ export const SERVICE_KEYS = Object.keys({
   bookRejection: true,
   bookDeletion: true,
   importQueueWorker: true,
+  importStaging: true,
+  importSubmissionReport: true,
+  importSubmissionRunner: true,
   retrySearchDeps: true,
   seriesCard: true,
   referenceRead: true,

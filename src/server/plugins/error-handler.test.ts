@@ -17,7 +17,7 @@ import { DownloadError, DuplicateDownloadError } from '../services/download.serv
 import { TaskRegistryError } from '../services/task-registry.js';
 import { CoverUploadError } from '../services/cover-upload.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../core/download-clients/errors.js';
-import { BackupRecoveryError, MarkerPathConflictError } from '../utils/import-staging.js';
+import { BackupRecoveryError, BackupAmbiguityError, MarkerPathConflictError } from '../utils/import-staging.js';
 
 function createTestApp() {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -59,6 +59,7 @@ function createTestApp() {
   // #1418 — marker-recovery failures surfaced by the synchronous rename route
   app.get('/throw-backup-recovery', async () => { throw new BackupRecoveryError('/library/Author/Title'); });
   app.get('/throw-marker-conflict', async () => { throw new MarkerPathConflictError('/library/Author/Title.import-commit-pending'); });
+  app.get('/throw-backup-ambiguity', async () => { throw new BackupAmbiguityError('/library/Author/Title', '/library/Author/.Title.import-backup', '/library/Author/Title.import-bak'); });
   app.get('/throw-generic', async () => { throw new Error('disk full'); });
   app.get('/throw-non-error', async () => { throw 'string error'; });
   // #1831 — genuine Fastify framework 4xx (e.g. body-too-large) is surfaced verbatim…
@@ -213,6 +214,17 @@ describe('error-handler plugin', () => {
       const res = await app.inject({ method: 'GET', url: '/throw-marker-conflict' });
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload).error).toContain('non-file already occupies');
+    });
+
+    // #1911 — the both-populated ambiguity is structural + non-retryable (409, like the marker
+    // conflict), NOT the transient 503 of a recoverable backup failure. It names both backups.
+    it('maps BackupAmbiguityError BACKUP_AMBIGUOUS to 409', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-backup-ambiguity' });
+      expect(res.statusCode).toBe(409);
+      const err = JSON.parse(res.payload).error;
+      expect(err).toContain('populated backups exist for BOTH conventions');
+      expect(err).toContain('.import-backup');
+      expect(err).toContain('.import-bak');
     });
 
     // #149 — DownloadError and TaskRegistryError typed error mapping (ERR-1)

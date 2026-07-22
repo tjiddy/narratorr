@@ -15,6 +15,7 @@ const EVENT_COLORS: Record<NotificationEvent, number> = {
   on_import: 0x2ecc71,         // green
   on_failure: 0xe74c3c,        // red
   on_health_issue: 0xe67e22,   // dark orange
+  import_run_finished: 0x2ecc71, // green
 };
 
 // eslint-disable-next-line complexity -- event-specific embed field building
@@ -63,6 +64,18 @@ function buildEmbed(event: NotificationEvent, payload: EventPayload, includeCove
     if (payload.health.message) {
       fields.push({ name: 'Detail', value: payload.health.message });
     }
+  }
+
+  if (event === 'import_run_finished' && payload.submission) {
+    // Every count field is always emitted — `.toString()` (not truthiness) so a
+    // required `0` is not dropped (F79).
+    const s = payload.submission;
+    fields.push({ name: 'Source', value: s.source, inline: true });
+    fields.push({ name: 'Status', value: s.status, inline: true });
+    fields.push({ name: 'Queued', value: s.counts.accepted.toString(), inline: true });
+    fields.push({ name: 'Held', value: s.counts.held.toString(), inline: true });
+    fields.push({ name: 'Skipped', value: s.counts.skipped.toString(), inline: true });
+    fields.push({ name: 'Failed', value: s.counts.failed.toString(), inline: true });
   }
 
   const embed: Record<string, unknown> = {

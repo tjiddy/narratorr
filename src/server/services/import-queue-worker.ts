@@ -12,7 +12,7 @@ import { serializeError } from '../utils/serialize-error.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { parsePhaseHistory } from '../utils/parse-phase-history.js';
 import { safeEmit } from '../utils/safe-emit.js';
-import { sweepCommitPendingMarkers } from '../utils/import-staging.js';
+import { sweepCommitPendingMarkers } from '../utils/import-marker-sweep.js';
 import { transitionBookStatus } from '../utils/book-status.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { OwnedRecordingError } from './book.service.js';
@@ -36,6 +36,8 @@ export class ImportQueueWorker {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private drainInProgress = false;
   private drainRequested = false;
+  // The in-flight `runDrain()` promise (F72) — `stop()` awaits it.
+  private runDrainPromise: Promise<void> | null = null;
 
   /**
    * `getLibraryRoot` resolves the configured library root for the boot-time stranded-marker
@@ -96,6 +98,9 @@ export class ImportQueueWorker {
       this.log.info('Waiting for current import job to complete before shutdown…');
       await this.currentJobPromise;
     }
+    // Await the launched drain (F72): a barrier-aborted drain leaves its row
+    // `pending`; one that already claimed finishes its single job here.
+    await this.runDrainPromise;
   }
 
   /**
@@ -244,7 +249,7 @@ export class ImportQueueWorker {
       return;
     }
     this.drainInProgress = true;
-    void this.runDrain();
+    this.runDrainPromise = this.runDrain(); // tracked so stop() can await it (F72)
   }
 
   private async runDrain(): Promise<void> {
@@ -279,6 +284,11 @@ export class ImportQueueWorker {
     if (candidates.length === 0) return false;
 
     const candidateId = candidates[0]!.id;
+
+    // Pre-claim stop barrier (F72): a drain resuming from the candidate SELECT
+    // after `stop()` set `stopping` aborts BEFORE claiming, leaving the durable
+    // `import_jobs` row `pending` for `bootRecovery()` + the next start's drain.
+    if (this.stopping || !this.running) return false;
 
     // Atomically claim via conditional update
     const now = new Date();

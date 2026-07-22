@@ -1,14 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../__tests__/helpers';
 import { HealthIndicator } from './HealthIndicator';
-
-const mockNavigate = vi.fn();
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual('react-router-dom');
-  return { ...actual, useNavigate: () => mockNavigate };
-});
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -29,12 +22,10 @@ describe('HealthIndicator', () => {
 
     const { container } = renderWithProviders(<HealthIndicator />);
 
-    // Wait for query to resolve
     await waitFor(() => {
       expect(api.getHealthSummary).toHaveBeenCalled();
     });
 
-    // Should not render a visible indicator
     expect(container.querySelector('[data-testid="health-indicator"]')).toBeNull();
   });
 
@@ -44,9 +35,9 @@ describe('HealthIndicator', () => {
     renderWithProviders(<HealthIndicator />);
 
     await waitFor(() => {
-      const button = screen.getByTestId('health-indicator');
-      expect(button).toBeInTheDocument();
-      const dot = button.querySelector('span');
+      const link = screen.getByTestId('health-indicator');
+      expect(link).toBeInTheDocument();
+      const dot = link.querySelector('span');
       expect(dot?.className).toContain('amber');
     });
   });
@@ -57,33 +48,37 @@ describe('HealthIndicator', () => {
     renderWithProviders(<HealthIndicator />);
 
     await waitFor(() => {
-      const button = screen.getByTestId('health-indicator');
-      expect(button).toBeInTheDocument();
-      const dot = button.querySelector('span');
+      const link = screen.getByTestId('health-indicator');
+      expect(link).toBeInTheDocument();
+      const dot = link.querySelector('span');
       expect(dot?.className).toContain('red');
     });
   });
 
-  it('click navigates to /settings/system', async () => {
-    const user = userEvent.setup();
+  it('renders a link resolving to /settings/system (guardable by the unsaved-changes guard)', async () => {
     (api.getHealthSummary as Mock).mockResolvedValue({ state: 'error' });
 
     renderWithProviders(<HealthIndicator />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId('health-indicator')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByTestId('health-indicator'));
-    expect(mockNavigate).toHaveBeenCalledWith('/settings/system');
+    const link = await screen.findByRole('link', { name: /health: error/i });
+    expect(link).toHaveAttribute('href', '/settings/system');
   });
 
-  it('has aria-label on the health status button that includes the health state', async () => {
+  it('resolves the link under a subpath basename', async () => {
+    (api.getHealthSummary as Mock).mockResolvedValue({ state: 'error' });
+
+    renderWithProviders(<HealthIndicator />, { basename: '/narratorr' });
+
+    const link = await screen.findByRole('link', { name: /health: error/i });
+    expect(link).toHaveAttribute('href', '/narratorr/settings/system');
+  });
+
+  it('has aria-label on the health status link that includes the health state', async () => {
     (api.getHealthSummary as Mock).mockResolvedValue({ state: 'error' });
     renderWithProviders(<HealthIndicator />);
     await waitFor(() => {
-      const button = screen.getByTestId('health-indicator');
-      expect(button).toHaveAttribute('aria-label', expect.stringContaining('error'));
+      const link = screen.getByTestId('health-indicator');
+      expect(link).toHaveAttribute('aria-label', expect.stringContaining('error'));
     });
   });
 });

@@ -5,6 +5,7 @@ import { IMPORT_SIBLING_SUFFIXES } from './import-sibling-suffixes.js';
 import { classifyLeafFolder, hasStrongChapterSetEvidence } from './book-classifier.js';
 import { readAlbumTag } from './audio-scanner.js';
 import { parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass, type EmbeddedDiscMarker } from './disc-marker.js';
+import { comparePosixPath } from './path-order.js';
 
 // Re-exported so existing importers (import-helpers.ts, tests) keep a single entry point.
 export { parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass, type EmbeddedDiscMarker } from './disc-marker.js';
@@ -80,12 +81,17 @@ export interface DiscoveredFolder {
  * Disc folder merging: if a parent directory has 2+ immediate children
  * that each contain audio files (and no audio of its own), those children
  * are merged into a single book entry using the parent path.
+ *
+ * Results are sorted by `comparePosixPath` before returning (#1891) so callers inherit
+ * a deterministic order — the non-transitive duplicate predicate makes dispositions
+ * order-dependent.
  */
 export async function discoverBooks(rootPath: string, options?: DiscoverBooksOptions): Promise<DiscoveredFolder[]> {
   const results: DiscoveredFolder[] = [];
   const log = options?.log;
   log?.debug({ rootPath }, 'Starting book discovery');
   await walkDirectory(rootPath, rootPath, results, log);
+  results.sort((x, y) => comparePosixPath(x.path, y.path));
   log?.debug({ rootPath, discovered: results.length }, 'Book discovery complete');
   return results;
 }

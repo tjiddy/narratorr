@@ -10,6 +10,7 @@ export const NOTIFICATION_EVENTS = [
   'on_import',
   'on_failure',
   'on_health_issue',
+  'import_run_finished',
 ] as const;
 
 export type NotificationEvent = typeof NOTIFICATION_EVENTS[number];
@@ -20,6 +21,7 @@ export const EVENT_LABELS: Record<string, string> = {
   on_import: 'Import',
   on_failure: 'Failure',
   on_health_issue: 'Health Issue',
+  import_run_finished: 'Import Run Finished',
 } satisfies Record<NotificationEvent, string>;
 
 /** Descriptive event titles for notification adapters. */
@@ -29,6 +31,7 @@ export const EVENT_TITLES: Record<NotificationEvent, string> = {
   on_import: 'Import Complete',
   on_failure: 'Failure',
   on_health_issue: 'Health Issue',
+  import_run_finished: 'Import Run Finished',
 };
 
 export interface EventPayload {
@@ -61,6 +64,12 @@ export interface EventPayload {
     currentState: 'healthy' | 'warning' | 'error';
     message?: string | undefined;
   };
+  /** Terminal outcome of a staged import run (#1894, `import_run_finished`). */
+  submission?: {
+    source: 'library' | 'manual';
+    status: 'complete';
+    counts: { accepted: number; held: number; skipped: number; failed: number };
+  };
 }
 
 type EventFormatter = (payload: EventPayload, bookInfo: string) => string;
@@ -80,6 +89,14 @@ const EVENT_FORMATTERS: Record<NotificationEvent, EventFormatter> = {
     const h = payload.health;
     if (!h) return 'Health issue detected';
     return `Health issue: ${h.checkName} changed from ${h.previousState} → ${h.currentState}${h.message ? `: ${h.message}` : ''}`;
+  },
+  import_run_finished: (payload) => {
+    const s = payload.submission;
+    if (!s) return 'Import run finished';
+    const label = s.source === 'library' ? 'Library' : 'Manual';
+    const { accepted, held, skipped, failed } = s.counts;
+    // "queued" for accepted — a forced import can still be refused at copy-time.
+    return `${label} import finished — ${accepted} queued, ${held} held, ${skipped} skipped, ${failed} failed`;
   },
 };
 

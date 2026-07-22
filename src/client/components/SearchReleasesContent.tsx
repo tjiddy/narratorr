@@ -206,6 +206,10 @@ interface SearchReleasesContentProps {
   onCancelIndexer: (id: number) => void;
   onShowResults: () => void;
   onRetry: () => void;
+  /** Retry is rendered in every error state but disabled when the current query is
+   *  ineligible (F9/F24) — the single observable contract is "rendered, disabled",
+   *  never hidden. */
+  retryDisabled: boolean;
   onGrab: (result: SearchResult) => void;
   onBlacklist: (result: SearchResult) => void;
 }
@@ -223,6 +227,7 @@ export function SearchReleasesContent({
   onCancelIndexer,
   onShowResults,
   onRetry,
+  retryDisabled,
   onGrab,
   onBlacklist,
 }: SearchReleasesContentProps) {
@@ -242,7 +247,12 @@ export function SearchReleasesContent({
           <div className="flex items-center gap-3 px-4 py-3 bg-destructive/10 text-destructive rounded-xl">
             <p>Search failed: {error}</p>
           </div>
-          <button type="button" onClick={onRetry} className="text-sm text-primary hover:text-primary/80">
+          <button
+            type="button"
+            onClick={onRetry}
+            disabled={retryDisabled}
+            className="text-sm text-primary hover:text-primary/80 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
             Retry
           </button>
         </div>

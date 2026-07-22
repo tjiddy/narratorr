@@ -74,7 +74,7 @@ import {
 import { createDb, runMigrations } from '../db/index.js';
 import { config } from './config.js';
 import { createServices, registerRoutes } from './routes';
-import { startJobs } from './jobs';
+import { startRuntime } from './startup.js';
 import multipart from '@fastify/multipart';
 import authPlugin from './plugins/auth.js';
 import { errorHandlerPlugin } from './plugins/error-handler.js';
@@ -186,11 +186,10 @@ async function main() {
     await registerStaticAndSpa(app, urlBasePrefix);
   }
 
-  // Start import queue worker first (boot recovery marks orphaned jobs as failed BEFORE download recovery)
-  await services.importQueueWorker.start();
-
-  // Start background jobs (includes download startup recovery which may re-enqueue downloads)
-  const jobScheduler = startJobs(db, services, app.log);
+  // Start the runtime in the load-bearing order (import worker → staged runner →
+  // background jobs). Extracted to startRuntime() so the ordering contract is
+  // unit-tested without booting the server (mirrors gracefulShutdown).
+  const jobScheduler = await startRuntime(app, services, db);
 
   // Graceful shutdown — ensures port is released on tsx watch restarts. The
   // ordered teardown (job scheduler stop → import worker → connector queue drain →

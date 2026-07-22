@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { basename, join } from 'node:path';
 import { dotPrefixBasename } from './hidden-staging.js';
+import { deriveImportSiblings } from '../../server/utils/import-sibling-paths.js';
 
 describe('dotPrefixBasename (#1852)', () => {
   // dotPrefixBasename composes `join`, which emits backslashes on Windows; normalize the actual
@@ -49,5 +50,21 @@ describe('ABS-parity: every v1 staging entry name is ignored by Audiobookshelf (
       // ...and its whole subtree: any file INSIDE a `.merge-tmp/` is also invisible (dotpath rule).
       expect(absShouldIgnore(`${name}/track.mp3`)).toBe(true);
     }
+  });
+
+  // #1911: the import staging/backup dirs are the specimen this issue closes — ABS ingested a
+  // visible `.import-tmp` mid-copy. Their born-hidden active names must be ABS-invisible too.
+  it('AC2/AC14: the active import staging + backup basenames (and files inside) are ABS-ignored', () => {
+    const { stagingPath, backupPath } = deriveImportSiblings('/lib/Author/Title');
+    for (const name of [basename(stagingPath), basename(backupPath)]) {
+      expect(name.startsWith('.')).toBe(true);
+      expect(absShouldIgnore(name)).toBe(true);
+      // A mid-copy audio file inside the staging dir is also folded out (the specimen scenario).
+      expect(absShouldIgnore(`${name}/06 - Royal Assassin.mp3`)).toBe(true);
+    }
+    // A dot-led (hidden-root) target keeps a dot-led scratch too (double-dot).
+    const hidden = deriveImportSiblings('/lib/Author/.Title');
+    expect(basename(hidden.stagingPath)).toBe('..Title.import-staging');
+    expect(absShouldIgnore(basename(hidden.stagingPath))).toBe(true);
   });
 });

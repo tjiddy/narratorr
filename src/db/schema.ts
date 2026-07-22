@@ -11,6 +11,8 @@ import { IMPORT_LIST_TYPES } from '../shared/import-list-registry';
 import { CONNECTOR_TYPES } from '../shared/connector-registry';
 import { IMPORT_JOB_TYPES, IMPORT_JOB_STATUSES, IMPORT_JOB_PHASES } from '../shared/schemas/import-job';
 import { PROTOCOLS } from '../shared/schemas/download-protocol';
+import { SUBMISSION_STATUSES, SUBMISSION_SOURCES, ITEM_DISPOSITIONS } from '../core/import-staging/schemas';
+import type { StagedImportItem } from '../core/import-staging/schemas';
 import type { NotificationEvent } from '../shared/notification-events';
 
 // ============ LIBRARY ============
@@ -477,6 +479,72 @@ export const importJobs = sqliteTable('import_jobs', {
   uniqueIndex('idx_import_jobs_book_active')
     .on(table.bookId)
     .where(sql`status IN ('pending', 'processing')`),
+]);
+
+// ============ IMPORT STAGING (#1893) ============
+
+// Inert staged-upload header. A finalized header (status processing/complete) is
+// retained INDEFINITELY (the durable record outlives item details); a never-
+// finalized 'receiving' header is inert and GC-eligible (48h stale sweep). The
+// terminal aggregate counts freeze at completion and survive item-row pruning.
+export const importSubmissions = sqliteTable('import_submissions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  clientSubmissionId: text('client_submission_id').notNull().unique(),
+  payloadDigest: text('payload_digest').notNull(),
+  source: text('source', { enum: SUBMISSION_SOURCES }).notNull(),
+  mode: text('mode', { enum: ['copy', 'move'] }),
+  expectedCount: integer('expected_count').notNull(),
+  status: text('status', { enum: SUBMISSION_STATUSES }).notNull().default('receiving'),
+  receivedCount: integer('received_count').notNull().default(0),
+  // Cumulative persisted staged-JSON bytes accumulator (F58). Updated in the same
+  // PUT transaction as the ordinal writes; a re-PUT of an existing ordinal adds 0.
+  receivedBytes: integer('received_bytes').notNull().default(0),
+  acceptedCount: integer('accepted_count').notNull().default(0),
+  heldCount: integer('held_count').notNull().default(0),
+  skippedCount: integer('skipped_count').notNull().default(0),
+  failedCount: integer('failed_count').notNull().default(0),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  completedAt: integer('completed_at', { mode: 'timestamp' }),
+}, (table) => [
+  index('idx_import_submissions_status_updated').on(table.status, table.updatedAt),
+  // Newest-first reads (#1894). `(source, createdAt, id)` backs the source-filtered
+  // latest/attention reads (`WHERE source=? ORDER BY createdAt DESC, id DESC`);
+  // `(createdAt, id)` backs the unfiltered cross-source Activity list + Library
+  // attention read (a source-leading index cannot serve a global newest order).
+  index('idx_import_submissions_source_created_id').on(table.source, table.createdAt, table.id),
+  index('idx_import_submissions_created_id').on(table.createdAt, table.id),
+]);
+
+// Per-ordinal staged item. `itemPayload` holds the strict staged item; `path`/
+// `title` are projected columns (always non-null, independent of payload nulling)
+// used for indexing/display/GC. `bookId` is the created placeholder for an
+// `accepted` row (set-null on later book delete, disposition stays accepted, F50);
+// `existingBookId` is the incumbent owned book for a held/skipped row.
+export const importSubmissionItems = sqliteTable('import_submission_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  submissionId: integer('submission_id')
+    .notNull()
+    .references(() => importSubmissions.id, { onDelete: 'cascade' }),
+  ordinal: integer('ordinal').notNull(),
+  itemPayload: text('item_payload', { mode: 'json' }).$type<StagedImportItem>(),
+  path: text('path').notNull(),
+  title: text('title').notNull(),
+  disposition: text('disposition', { enum: ITEM_DISPOSITIONS }).notNull().default('pending'),
+  reason: text('reason'),
+  bookId: integer('book_id').references(() => books.id, { onDelete: 'set null' }),
+  existingBookId: integer('existing_book_id').references(() => books.id, { onDelete: 'set null' }),
+  existingTitle: text('existing_title'),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+}, (table) => [
+  uniqueIndex('idx_import_submission_items_ordinal_unique').on(table.submissionId, table.ordinal),
+  index('idx_import_submission_items_submission_disposition').on(table.submissionId, table.disposition),
 ]);
 
 // ============ SETTINGS ============

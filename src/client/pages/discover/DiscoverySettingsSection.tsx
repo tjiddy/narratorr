@@ -18,6 +18,9 @@ function pickFormFields(src: typeof DEFAULT_SETTINGS.discovery): DiscoveryFormDa
   };
 }
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CARD_LABEL = 'Discovery';
+
 export function DiscoverySettingsSection() {
   const { form, mutation, onSubmit } = useSettingsForm<DiscoveryFormData>({
     schema: discoveryFormSchema,
@@ -25,6 +28,7 @@ export function DiscoverySettingsSection() {
     select: (s: AppSettings) => pickFormFields(s.discovery),
     toPayload: (d) => ({ discovery: d }),
     successMessage: 'Discovery settings saved',
+    label: CARD_LABEL,
   });
 
   const { register, handleSubmit, formState: { errors, isDirty } } = form;
@@ -32,7 +36,7 @@ export function DiscoverySettingsSection() {
   return (
     <SettingsSection
       icon={<ZapIcon className="w-5 h-5 text-primary" />}
-      title="Discovery"
+      title={CARD_LABEL}
       description="Configure recommendation engine settings"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">

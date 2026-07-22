@@ -8,6 +8,8 @@ import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { parseFolderStructure, extractYear, LibraryScanService } from './library-scan.service.js';
+import { books } from '../../db/schema.js';
+import { buildTitleShape } from '../../shared/dedup.js';
 
 vi.mock('./enrichment-utils.js', () => ({
   enrichBookFromAudio: vi.fn().mockResolvedValue({ enriched: true }),
@@ -15,6 +17,14 @@ vi.mock('./enrichment-utils.js', () => ({
 
 vi.mock('../../core/utils/book-discovery.js', () => ({
   discoverBooks: vi.fn().mockResolvedValue([]),
+}));
+
+// Mock the audio-scanner boundary so the REAL discoverBooks (delegated to in the F3
+// cross-boundary ordering test) does not drag music-metadata into this suite. Leaf-folder
+// classification never calls readAlbumTag, so the stub is never invoked — it only keeps
+// the transitive module load light.
+vi.mock('../../core/utils/audio-scanner.js', () => ({
+  readAlbumTag: vi.fn(),
 }));
 
 vi.mock('node:fs/promises', () => ({
@@ -34,7 +44,7 @@ vi.mock('../utils/import-helpers.js', () => ({
 
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { discoverBooks } from '../../core/utils/book-discovery.js';
-import { access } from 'node:fs/promises';
+import { access, readdir, stat } from 'node:fs/promises';
 
 // ============================================================================
 // parseFolderStructure (pure function tests)
@@ -314,247 +324,6 @@ describe('LibraryScanService', () => {
       undefined,
       inject<never>(mockConnectorService),
     );
-    // Wire the required-wiring nudgeImportWorker dep so confirmImport doesn't
-    // throw ServiceWireError. Tests that exercise the unwired contract
-    // construct a separate unwired service.
-    service.wire({ nudgeImportWorker: vi.fn() });
-  });
-
-  describe('confirmImport', () => {
-    it('creates book records for each item', async () => {
-      const result = await service.confirmImport([
-        { path: '/audiobooks/Author/Title', title: 'Title', authorName: 'Author' },
-      ]);
-
-      expect(mockBookService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Title', authors: [{ name: 'Author' }], status: 'importing' }),
-      );
-      expect(result.accepted).toBe(1);
-    });
-
-    it('skips duplicates during import', async () => {
-      mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Existing' } });
-
-      const result = await service.confirmImport([
-        { path: '/audiobooks/Author/Title', title: 'Existing', authorName: 'Author' },
-      ]);
-
-      expect(mockBookService.create).not.toHaveBeenCalled();
-      expect(result.accepted).toBe(0);
-    });
-
-    it('counts accepted items', async () => {
-      const result = await service.confirmImport([
-        { path: '/a/b', title: 'Book 1' },
-        { path: '/a/c', title: 'Book 2' },
-      ]);
-
-      expect(result.accepted).toBe(2);
-    });
-
-    it('does not count skipped duplicates as accepted', async () => {
-      mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Existing' } });
-
-      const result = await service.confirmImport([
-        { path: '/audiobooks/A', title: 'Existing', authorName: 'Author' },
-      ]);
-
-      expect(result.accepted).toBe(0);
-    });
-
-    it('uses passed-through metadata when creating book records', async () => {
-      const metadata = {
-        title: 'Harry Potter and the Philosopher\'s Stone',
-        authors: [{ name: 'J.K. Rowling' }],
-        asin: 'B017V4IM1G',
-        description: 'The boy who lived...',
-        narrators: ['Stephen Fry'],
-        genres: ['fantasy', 'young-adult'],
-        coverUrl: 'https://example.com/cover.jpg',
-        duration: 480,
-        publishedDate: '1997-06-26',
-        providerId: 'hc-123',
-      };
-
-      await service.confirmImport([
-        { path: '/audiobooks/HP1', title: 'Harry Potter', authorName: 'J.K. Rowling', metadata },
-      ]);
-
-      // confirmImport no longer does its own metadata lookup — metadata is passed through
-      expect(mockMetadataService.searchBooks).not.toHaveBeenCalled();
-      expect(mockBookService.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: 'Harry Potter',
-          authors: [{ name: 'J.K. Rowling' }],
-          asin: 'B017V4IM1G',
-          description: 'The boy who lived...',
-          narrators: ['Stephen Fry'],
-          genres: ['fantasy', 'young-adult'],
-          coverUrl: 'https://example.com/cover.jpg',
-          duration: 480,
-          providerId: 'hc-123',
-        }),
-      );
-    });
-
-    it('still imports when metadata lookup returns no results', async () => {
-      mockMetadataService.searchBooks.mockResolvedValue([]);
-
-      const result = await service.confirmImport([
-        { path: '/audiobooks/Obscure', title: 'Obscure Book' },
-      ]);
-
-      expect(result.accepted).toBe(1);
-      expect(mockBookService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Obscure Book' }),
-      );
-    });
-
-    it('still accepts when metadata lookup throws', async () => {
-      mockMetadataService.searchBooks.mockRejectedValue(new Error('API timeout'));
-
-      const result = await service.confirmImport([
-        { path: '/audiobooks/Timeout', title: 'Timeout Book' },
-      ]);
-
-      expect(result.accepted).toBe(1);
-    });
-
-    it('preserves user-provided values over metadata', async () => {
-      mockMetadataService.searchBooks.mockResolvedValue([{
-        title: 'Different Title',
-        authors: [{ name: 'Different Author' }],
-        asin: 'B123',
-        coverUrl: 'https://provider.com/cover.jpg',
-      }]);
-
-      await service.confirmImport([
-        { path: '/audiobooks/A', title: 'My Title', authorName: 'My Author', coverUrl: '/my/cover.jpg', asin: 'MY-ASIN' },
-      ]);
-
-      expect(mockBookService.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: 'My Title',
-          authors: [{ name: 'My Author' }],
-          coverUrl: '/my/cover.jpg',
-          asin: 'MY-ASIN',
-        }),
-      );
-    });
-
-    it('continues creating placeholders when one item throws', async () => {
-      mockBookService.create
-        .mockRejectedValueOnce(new Error('DB constraint error'))
-        .mockResolvedValueOnce({ id: 2, title: 'Book 2', status: 'importing' });
-
-      const result = await service.confirmImport([
-        { path: '/a/b', title: 'Broken Book' },
-        { path: '/a/c', title: 'Book 2' },
-      ]);
-
-      expect(result.accepted).toBe(1);
-      expect(mockBookService.create).toHaveBeenCalledTimes(2);
-      expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Broken Book' }),
-        expect.stringContaining('Failed to create placeholder'),
-      );
-    });
-
-    it('returns zero accepted when all items are duplicates', async () => {
-      mockBookService.findDuplicate.mockResolvedValue({ verdict: 'same-recording', book: { id: 1, title: 'Dup' } });
-
-      const result = await service.confirmImport([
-        { path: '/a/b', title: 'Dup 1' },
-        { path: '/a/c', title: 'Dup 2' },
-        { path: '/a/d', title: 'Dup 3' },
-      ]);
-
-      expect(result.accepted).toBe(0);
-      expect(mockBookService.create).not.toHaveBeenCalled();
-    });
-
-    it('returns zero accepted for empty items array', async () => {
-      const result = await service.confirmImport([]);
-
-      expect(result.accepted).toBe(0);
-      expect(mockBookService.create).not.toHaveBeenCalled();
-    });
-  });
-
-  // ============================================================================
-  // confirmImport — SSE emissions (#618)
-  // ============================================================================
-
-  describe('confirmImport — import_jobs creation (#635)', () => {
-    it('creates import_jobs row for each accepted item with mode in metadata', async () => {
-      mockBookService.create.mockResolvedValueOnce({ id: 42, title: 'Test', status: 'importing' });
-
-      const result = await service.confirmImport([
-        { path: '/audiobooks/Author/Title', title: 'Test', authorName: 'Author' },
-      ], 'copy');
-
-      expect(result).toEqual({ accepted: 1, heldReview: [], skipped: [], failed: [] });
-      expect(mockBookImportService.enqueue).toHaveBeenCalledWith(expect.objectContaining({
-        bookId: 42,
-        type: 'manual',
-      }));
-      const metadata = JSON.parse(mockBookImportService.enqueue.mock.calls[0]![0].metadata);
-      expect(metadata.mode).toBe('copy');
-    });
-
-    it('creates import_jobs rows for multiple items', async () => {
-      mockBookService.create
-        .mockResolvedValueOnce({ id: 10, title: 'Book A', status: 'importing' })
-        .mockResolvedValueOnce({ id: 11, title: 'Book B', status: 'importing' });
-
-      const result = await service.confirmImport([
-        { path: '/a/b', title: 'Book A' },
-        { path: '/a/c', title: 'Book B' },
-      ]);
-
-      expect(result).toEqual({ accepted: 2, heldReview: [], skipped: [], failed: [] });
-      expect(mockBookImportService.enqueue).toHaveBeenCalledTimes(2);
-    });
-
-    it('does not create import_jobs row for duplicate-skipped items', async () => {
-      mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Dup' } });
-
-      const result = await service.confirmImport([
-        { path: '/a/b', title: 'Dup', authorName: 'Author' },
-      ]);
-
-      // #1822: the duplicate is now reported in the skipped bucket, not silently dropped.
-      expect(result).toEqual({
-        accepted: 0,
-        heldReview: [],
-        skipped: [{ path: '/a/b', title: 'Dup', reason: 'already-in-library', existingBookId: 1, existingTitle: 'Dup' }],
-        failed: [],
-      });
-      expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
-    });
-
-    it('records book_added eventHistory for each accepted item', async () => {
-      mockBookService.create.mockResolvedValueOnce({ id: 8, title: 'History Test', status: 'importing' });
-
-      await service.confirmImport([
-        { path: '/a/b', title: 'History Test' },
-      ]);
-
-      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 8, eventType: 'book_added', source: 'manual' }),
-      );
-    });
-
-    it('pointer mode: metadata JSON omits mode key', async () => {
-      mockBookService.create.mockResolvedValueOnce({ id: 10, title: 'Ptr', status: 'importing' });
-
-      await service.confirmImport([
-        { path: '/a', title: 'Ptr' },
-      ]); // no mode = pointer
-
-      const metadata = JSON.parse(mockBookImportService.enqueue.mock.calls[0]![0].metadata);
-      expect(metadata.mode).toBeUndefined();
-    });
   });
 
   // ============================================================================
@@ -994,58 +763,6 @@ describe('LibraryScanService', () => {
     });
   });
 
-  // =========================================================================
-  // #114 — confirmImport forceImport override
-  // =========================================================================
-  describe('confirmImport forceImport override', () => {
-    it('when forceImport is absent, silently skips a title+author duplicate (safety-net preserved)', async () => {
-      mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Existing' } });
-
-      const result = await service.confirmImport([
-        { path: '/audiobooks/Author/Title', title: 'Existing', authorName: 'Author' },
-      ]);
-
-      expect(mockBookService.create).not.toHaveBeenCalled();
-      expect(result.accepted).toBe(0);
-    });
-
-    it('when forceImport is true, bypasses the safety-net check and processes the book', async () => {
-      mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Existing' } });
-
-      const result = await service.confirmImport([
-        { path: '/audiobooks/Author/Title', title: 'Existing', authorName: 'Author', forceImport: true },
-      ]);
-
-      expect(mockBookService.findDuplicate).not.toHaveBeenCalled();
-      expect(mockBookService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Existing' }),
-      );
-      expect(result.accepted).toBe(1);
-    });
-
-    it('non-duplicate items are unaffected when forceImport is absent', async () => {
-      const result = await service.confirmImport([
-        { path: '/audiobooks/New/Book', title: 'New Book', authorName: 'Author' },
-      ]);
-
-      expect(mockBookService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'New Book' }),
-      );
-      expect(result.accepted).toBe(1);
-    });
-
-    it('accepted count reflects only processed (non-skipped) items', async () => {
-      mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Dup' } });
-
-      const result = await service.confirmImport([
-        { path: '/a/dup', title: 'Dup', authorName: 'Author' },
-        { path: '/a/new', title: 'New', authorName: 'Author' },
-      ]);
-
-      expect(result.accepted).toBe(1);
-    });
-  });
-
   describe('rescanLibrary', () => {
     beforeEach(() => {
       // Default: access succeeds (library root exists)
@@ -1257,189 +974,6 @@ describe('LibraryScanService', () => {
     });
   });
 
-  // #341 — book_added event on book creation
-  describe('book_added event', () => {
-    describe('confirmImport', () => {
-      it('records book_added event with source=manual for each placeholder created', async () => {
-        await service.confirmImport([
-          { path: '/audiobooks/Author/Title', title: 'Title', authorName: 'Author' },
-        ]);
-
-        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
-          expect.objectContaining({
-            eventType: 'book_added',
-            source: 'manual',
-            bookTitle: 'Title',
-            authorName: 'Author',
-          }),
-        );
-      });
-
-      it('uses comma-joined authorName from created book for multi-author imports', async () => {
-        mockBookService.create.mockResolvedValueOnce({
-          id: 1,
-          title: 'Title',
-          status: 'importing',
-          authors: [{ id: 1, name: 'Author A' }, { id: 2, name: 'Author B' }],
-        });
-
-        await service.confirmImport([
-          {
-            path: '/audiobooks/Author/Title',
-            title: 'Title',
-            authorName: 'Author A',
-            metadata: { title: 'Title', authors: [{ name: 'Author A' }, { name: 'Author B' }], narrators: [] },
-          },
-        ]);
-
-        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
-          expect.objectContaining({
-            eventType: 'book_added',
-            authorName: 'Author A, Author B',
-          }),
-        );
-      });
-
-      it('includes narratorName from created book in book_added event', async () => {
-        mockBookService.create.mockResolvedValueOnce({
-          id: 1,
-          title: 'Title',
-          status: 'importing',
-          authors: [{ id: 1, name: 'Author' }],
-          narrators: [{ id: 1, name: 'Narrator Z' }],
-        });
-
-        await service.confirmImport([
-          { path: '/audiobooks/Author/Title', title: 'Title', authorName: 'Author' },
-        ]);
-
-        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
-          expect.objectContaining({
-            eventType: 'book_added',
-            narratorName: 'Narrator Z',
-          }),
-        );
-      });
-
-      it('does NOT record book_added event for duplicate-skipped items', async () => {
-        mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Existing' } });
-
-        await service.confirmImport([
-          { path: '/audiobooks/Author/Title', title: 'Existing', authorName: 'Author' },
-        ]);
-
-        const calls = mockEventHistoryService.create.mock.calls;
-        const eventTypes = calls.map((c: unknown[]) => (c[0] as { eventType: string }).eventType);
-        expect(eventTypes).not.toContain('book_added');
-      });
-
-      it('does NOT record book_added event for failed placeholder creations', async () => {
-        mockBookService.create.mockRejectedValueOnce(new Error('Create failed'));
-
-        await service.confirmImport([
-          { path: '/audiobooks/Author/Title', title: 'Title', authorName: 'Author' },
-        ]);
-
-        const calls = mockEventHistoryService.create.mock.calls;
-        const eventTypes = calls.map((c: unknown[]) => (c[0] as { eventType: string }).eventType);
-        expect(eventTypes).not.toContain('book_added');
-      });
-    });
-  });
-});
-
-describe('buildBookCreatePayload multi-author (issue #79)', () => {
-  let service: LibraryScanService;
-  let mockBookService: { findDuplicate: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(enrichBookFromAudio).mockResolvedValue({ enriched: true });
-    const db = createMockDb();
-    const chainMethods = {
-      from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue([]), set: vi.fn().mockReturnThis(),
-    };
-    db.select.mockReturnValue(chainMethods as never);
-    db.update.mockReturnValue(chainMethods as never);
-    mockBookService = {
-      findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null }),
-      create: vi.fn().mockImplementation(async (data: { title: string }) => ({ id: 99, title: data.title, status: 'imported' })),
-      update: vi.fn().mockResolvedValue({ id: 99, title: 'Test', authors: [], narrators: [] }),
-    };
-    const settings = createMockSettingsService({
-      library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '' },
-      import: { minFreeSpaceGB: 0, deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 },
-    });
-    service = new LibraryScanService(
-      db as never,
-      mockBookService as never,
-      { enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) } as never,
-      { searchBooks: vi.fn().mockResolvedValue([]), getBook: vi.fn().mockResolvedValue(null), enrichBook: vi.fn().mockResolvedValue(null) } as never,
-      settings as never,
-      { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(), level: 'info', silent: vi.fn() } as never,
-      { create: vi.fn().mockResolvedValue({}) } as never,
-    );
-    service.wire({ nudgeImportWorker: vi.fn() });
-  });
-
-  it('with meta.authors = [{name:"A"},{name:"B"}] passes both to bookService.create', async () => {
-    await service.confirmImport([{
-      path: '/audiobooks/test',
-      title: 'Multi Author Book',
-      metadata: {
-        title: 'Multi Author Book',
-        authors: [{ name: 'Author A' }, { name: 'Author B' }],
-        narrators: [],
-      },
-    }]);
-
-    expect(mockBookService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ authors: [{ name: 'Author A' }, { name: 'Author B' }] }),
-    );
-  });
-
-  it('fallback: when meta.authors is absent, uses item.authorName', async () => {
-    await service.confirmImport([{
-      path: '/audiobooks/test',
-      title: 'Single Author Book',
-      authorName: 'Frank Herbert',
-    }]);
-
-    expect(mockBookService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ authors: [{ name: 'Frank Herbert' }] }),
-    );
-  });
-
-  it('with both authorName and multi-author meta.authors, preserves metadata array', async () => {
-    await service.confirmImport([{
-      path: '/audiobooks/test',
-      title: 'Co-authored Book',
-      authorName: 'Author A',
-      metadata: {
-        title: 'Co-authored Book',
-        authors: [{ name: 'Author A' }, { name: 'Author B' }],
-        narrators: [],
-      },
-    }]);
-
-    expect(mockBookService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ authors: [{ name: 'Author A' }, { name: 'Author B' }] }),
-    );
-  });
-
-  it('with meta.authors = [] falls back to item.authorName (not zero-author book)', async () => {
-    await service.confirmImport([{
-      path: '/audiobooks/test',
-      title: 'Fallback Book',
-      authorName: 'Isaac Asimov',
-      metadata: { title: 'Fallback Book', authors: [], narrators: [] },
-    }]);
-
-    expect(mockBookService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ authors: [{ name: 'Isaac Asimov' }] }),
-    );
-  });
 });
 
 describe('scanDirectory() — duplicateReason field (#133)', () => {
@@ -2152,7 +1686,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
     );
   });
 
-  function mockPreFetch(paths: string[], titleAuthors: Array<{ title: string; slug: string }>) {
+  function mockPreFetch(paths: string[], titleAuthors: Array<{ id?: number; title: string; slug: string; asin?: string | null }>) {
     mockDb.select
       .mockReturnValueOnce(mockDbChain(paths.map((p) => ({ path: p }))))
       .mockReturnValueOnce(mockDbChain(titleAuthors));
@@ -2343,7 +1877,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries[3]!.isDuplicate).toBe(false);
     });
 
-    it('first occurrence is DB path duplicate → second occurrence becomes new discovery (not within-scan dup)', async () => {
+    it('first occurrence is DB path duplicate → still registers, so second occurrence is a within-scan dup (#1891)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
@@ -2355,10 +1889,301 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // First: DB path dup (short-circuited, never added to within-scan map)
+      // First: DB path dup — and now (#1891) every authored row registers regardless of
+      // which branch emitted it, so the path-dup row IS added to the within-scan bucket.
       expect(result.discoveries[0]!.duplicateReason).toBe('path');
-      // Second: not in DB, first was never added to within-scan map → new discovery
+      // Second: not in DB by path/title, but pairwise-matches the registered first row →
+      // within-scan duplicate of it.
+      expect(result.discoveries[1]!.isDuplicate).toBe(true);
+      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/Title');
+    });
+  });
+
+  describe('pairwise non-transitive title matching (#1891)', () => {
+    it('non-transitive chain: a within-scan-dup row still registers, so a later row matches IT not the first (branch 4)', async () => {
+      // Series: A (row1, normal) — Series (row2, within-scan dup of row1) — Series: B
+      // (row3). row3 ≁ row1 (distinct subtitles) but ~ row2 (bare bridges) → row3's
+      // first-match is row2, proving the within-scan-dup row2 registered.
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/SeriesA', folderParts: ['Author', 'Series: A'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Author/SeriesB', folderParts: ['Author', 'Series: B'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/SeriesA');
+      expect(result.discoveries[2]!.duplicateReason).toBe('within-scan');
+      expect(result.discoveries[2]!.duplicateFirstPath).toBe('/audiobooks/Author/Series');
+    });
+
+    it('existing-library review-hint row registers, so a non-transitive later row is a within-scan dup of it (branch 3)', async () => {
+      // DB owns "Series: A". row1 bare "Series" bridges to it → existing-title hint
+      // AND registers. row2 "Series: B" ≁ DB "Series: A" but ~ row1 "Series".
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Author/SeriesB', folderParts: ['Author', 'Series: B'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], [{ id: 50, title: 'Series: A', slug: 'author' }]);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.isDuplicate).toBe(false);
+      expect(result.discoveries[0]!.existingBookId).toBe(50);
+      expect(result.discoveries[0]!.reviewReason).toBeDefined();
+      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/Series');
+    });
+
+    it('decisive-ASIN row registers, so a later same-base row is a within-scan dup of it (branch 2)', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/SeriesAsin', folderParts: ['Author', 'Series [B01ABC0001]'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      // Existing ASIN row (no title/slug so it only populates the ASIN map, not the bucket).
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ id: 90, title: null, slug: null, asin: 'B01ABC0001' }]));
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.duplicateReason).toBe('slug'); // decisive ASIN
+      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/SeriesAsin');
+    });
+
+    it('retrieval invariant: existing "Dune (Edition: Deluxe)" and scanned "Dune" share the colonBase bucket', async () => {
+      // The bucket is keyed on colonBase ("dune"), NOT the stale colon-first artifact
+      // ("dune (edition"), so the fullNormalized-arm match still resolves.
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Frank Herbert/Dune', folderParts: ['Frank Herbert', 'Dune'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], [{ id: 60, title: 'Dune (Edition: Deluxe)', slug: 'frank-herbert' }]);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.existingBookId).toBe(60);
+      expect(result.discoveries[0]!.reviewReason).toBeDefined();
+    });
+
+    it('distinct-subtitle sibling is NOT an existing-library match', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Beyond', folderParts: ['Author', 'WoW: Beyond'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], [{ id: 70, title: 'WoW: Tides', slug: 'author' }]);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.isDuplicate).toBe(false);
+      expect(result.discoveries[0]).not.toHaveProperty('existingBookId');
+    });
+
+    it('distinct-subtitle siblings are NOT within-scan duplicates', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Beyond', folderParts: ['Author', 'WoW: Beyond'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Author/Tides', folderParts: ['Author', 'WoW: Tides'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
+    });
+
+    it('bare/subtitle bridge still collides within a scan', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Author/SeriesA', folderParts: ['Author', 'Series: A'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/Series');
+    });
+
+    it('existing-library multi-match resolves to the LOWEST matching books.id, and pins the orderBy(books.id) contract (F1)', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      // The lowest-id representative is produced by the query's `.orderBy(books.id)`, NOT
+      // by in-app sorting — the mock returns rows verbatim, so the value assertion alone
+      // would still pass if the production `orderBy` were deleted. Capture the
+      // title+author query chain and assert the ordering contract directly, so removing
+      // `.orderBy(books.id)` fails this test (F1).
+      const titleAuthorChain = mockDbChain([
+        { id: 75, title: 'Series', slug: 'author' },
+        { id: 80, title: 'Series: A', slug: 'author' },
+      ]);
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(titleAuthorChain);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.existingBookId).toBe(75);
+      expect(titleAuthorChain.orderBy).toHaveBeenCalledWith(books.id);
+    });
+
+    it('within-scan retrieval invariant across differing PARSED inputs, driven by the shape API not the parser (F7)', async () => {
+      // F7: the earlier "Dune (Edition: Deluxe)" fixture was vacuous — parseFolderStructure
+      // strips the parenthetical BEFORE buildTitleShape, so both rows reached the bucket as
+      // identical "Dune". Use a suffix the parser DEMONSTRABLY PRESERVES (a space-form
+      // " Book 1" series marker with no comma) but that buildTitleShape's fixpoint core
+      // collapses. The two rows therefore reach withinScanBucket with DIFFERING parsed
+      // titles ("Dune Book 1" vs "Dune") that share colonBase "dune"; the match is the
+      // shape API's doing, so reverting the marker/fixpoint shape behavior fails this test.
+      //
+      // Precondition (asserted): the parser preserves the marker so the shape API — not the
+      // parser — is what collapses it.
+      expect(parseFolderStructure(['Frank Herbert', 'Dune Book 1']).title).toBe('Dune Book 1');
+      expect(buildTitleShape('Dune Book 1').fullNormalized).toBe('dune');
+
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Frank Herbert/DuneBook1', folderParts: ['Frank Herbert', 'Dune Book 1'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Frank Herbert/Dune', folderParts: ['Frank Herbert', 'Dune'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Frank Herbert/DuneBook1');
+    });
+
+    it('within-scan retrieval invariant across a colon-bearing preserved suffix ("Saga, Book 1: Deluxe" → "Saga") (F7)', async () => {
+      // A mixed colon+marker title the parser preserves verbatim; buildTitleShape derives
+      // colonBase "saga" by re-normalizing the pre-colon prefix (stripping ", Book 1"). The
+      // later bare "Saga" shares that colonBase and bridges via the one-sided colonBase arm.
+      // Reverting the prefix re-normalization moves the first row to a different bucket.
+      expect(parseFolderStructure(['Author', 'Saga, Book 1: Deluxe']).title).toBe('Saga, Book 1: Deluxe');
+      expect(buildTitleShape('Saga, Book 1: Deluxe').colonBase).toBe('saga');
+
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/SagaDeluxe', folderParts: ['Author', 'Saga, Book 1: Deluxe'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Author/Saga', folderParts: ['Author', 'Saga'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/SagaDeluxe');
+    });
+
+    it('path match outranks a simultaneous decisive-ASIN AND title+author collision (F5)', async () => {
+      // The folder matches an existing path AND carries a decisive ASIN AND a title+author
+      // hit. Path precedence must win — if the path branch moved below the extracted
+      // lower-priority branches, this would emit 'slug' or a review hint instead.
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Conflict', folderParts: ['Author', 'Conflict [B0DEC00001]'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain([{ id: 100, path: '/audiobooks/Author/Conflict' }]))
+        .mockReturnValueOnce(mockDbChain([
+          { id: 300, title: 'Conflict', slug: 'author', asin: null },
+          { id: 200, title: 'Conflict', slug: 'author', asin: 'B0DEC00001' },
+        ]));
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.isDuplicate).toBe(true);
+      expect(result.discoveries[0]!.duplicateReason).toBe('path');
+      expect(result.discoveries[0]!.existingBookId).toBe(100);
+    });
+
+    it('decisive ASIN outranks a simultaneous title+author review hint (F6)', async () => {
+      // No path match; the folder's ASIN is decisive AND its title+author also hits an
+      // incumbent. Decisive ASIN must win with the HARD `duplicateReason: 'slug'`
+      // (isDuplicate true) — if the title branch moved ahead, this would be a soft review
+      // hint (isDuplicate false, no duplicateReason).
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/AsinWins', folderParts: ['Author', 'Conflict [B0DEC00002]'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([
+          { id: 300, title: 'Conflict', slug: 'author', asin: null },
+          { id: 200, title: 'Conflict', slug: 'author', asin: 'B0DEC00002' },
+        ]));
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.isDuplicate).toBe(true);
+      expect(result.discoveries[0]!.duplicateReason).toBe('slug');
+      expect(result.discoveries[0]!.existingBookId).toBe(200);
+    });
+
+    // skipIf(win32): the fixture requires a literal backslash INSIDE a folder name
+    // (`/root/a\b`) to construct the fold-collision pair — on Windows `\` IS the path
+    // separator, so the fixture is platform-unconstructible (path.join inside the real
+    // discoverBooks re-keys every mocked entry and the collision premise dissolves).
+    // The comparator itself stays covered cross-platform by path-order.test.ts.
+    it.skipIf(process.platform === 'win32')('sorted discovery makes duplicateFirstPath stable across readdir permutations, through the REAL discoverBooks (F3)', async () => {
+      // Cross-boundary regression: delegate the mocked discoverBooks to the ACTUAL
+      // implementation so its `results.sort(comparePosixPath)` runs in-path. A
+      // folded-key collision pair — nested `/root/a/b` and one literal folder `/root/a\b`
+      // (both parse to author "a" / title "b", so the second is a within-scan dup of the
+      // first) — is served in two readdir permutations. Because discoverBooks sorts,
+      // duplicateFirstPath is identical across both; deleting the sort makes it
+      // readdir-order dependent and fails this test.
+      const actual = await vi.importActual<typeof import('../../core/utils/book-discovery.js')>(
+        '../../core/utils/book-discovery.js',
+      );
+      const makeDirent = (name: string, isFile: boolean) => ({
+        name,
+        isFile: () => isFile,
+        isDirectory: () => !isFile,
+        isSymbolicLink: () => false,
+        isBlockDevice: () => false,
+        isCharacterDevice: () => false,
+        isFIFO: () => false,
+        isSocket: () => false,
+      });
+      const buildTree = (rootChildren: { name: string; isFile: boolean }[]) => ({
+        '/root': rootChildren,
+        '/root/a': [{ name: 'b', isFile: false }],
+        '/root/a/b': [{ name: 't.mp3', isFile: true }],
+        '/root/a\\b': [{ name: 't.mp3', isFile: true }],
+      }) as Record<string, { name: string; isFile: boolean }[]>;
+      const serveTree = (tree: Record<string, { name: string; isFile: boolean }[]>) => {
+        vi.mocked(readdir).mockImplementation(async (dir: unknown) => {
+          const entries = tree[String(dir)];
+          if (!entries) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+          return entries.map((e) => makeDirent(e.name, e.isFile)) as never;
+        });
+        vi.mocked(stat).mockImplementation(async () => ({ size: 100 }) as never);
+      };
+
+      const runScan = async (rootChildren: { name: string; isFile: boolean }[]) => {
+        serveTree(buildTree(rootChildren));
+        vi.mocked(discoverBooks).mockImplementationOnce(actual.discoverBooks as never);
+        mockDb.select
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]));
+        const result = await service.scanDirectory('/root');
+        return new Map(result.discoveries.map((d) => [d.path, d]));
+      };
+
+      const nested = { name: 'a', isFile: false };
+      const literal = { name: 'a\\b', isFile: false };
+      const permA = await runScan([nested, literal]);
+      const permB = await runScan([literal, nested]);
+
+      // '/' (0x2f) sorts before '\\' (0x5c), so `/root/a/b` is always first → the normal
+      // row; `/root/a\b` is always the within-scan dup pointing back at it — in BOTH runs.
+      for (const perm of [permA, permB]) {
+        expect(perm.get('/root/a/b')!.isDuplicate).toBe(false);
+        expect(perm.get('/root/a\\b')!.duplicateReason).toBe('within-scan');
+        expect(perm.get('/root/a\\b')!.duplicateFirstPath).toBe('/root/a/b');
+      }
     });
   });
 
@@ -2543,37 +2368,4 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
     });
   });
 
-});
-
-// ── #739 — required-wiring contract for LibraryScanService ────────────
-describe('LibraryScanService — required-wiring contract', () => {
-  it('confirmImport() throws ServiceWireError when called before wire()', async () => {
-    const settings = createMockSettingsService({ library: { path: '/library' } });
-    const unwired = new LibraryScanService(
-      inject<Db>(createMockDb()),
-      inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn() }),
-      inject<BookImportService>({ enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) }),
-      inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
-      inject<SettingsService>(settings),
-      inject<FastifyBaseLogger>(createMockLogger()),
-      inject<EventHistoryService>({ create: vi.fn() }),
-    );
-
-    await expect(unwired.confirmImport([{ path: '/x', title: 'X' }])).rejects.toThrow(/LibraryScanService used before wire/);
-  });
-
-  it('wire() called twice throws ServiceWireError', () => {
-    const settings = createMockSettingsService({ library: { path: '/library' } });
-    const svc = new LibraryScanService(
-      inject<Db>(createMockDb()),
-      inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn() }),
-      inject<BookImportService>({ enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) }),
-      inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
-      inject<SettingsService>(settings),
-      inject<FastifyBaseLogger>(createMockLogger()),
-      inject<EventHistoryService>({ create: vi.fn() }),
-    );
-    svc.wire({ nudgeImportWorker: vi.fn() });
-    expect(() => svc.wire({ nudgeImportWorker: vi.fn() })).toThrow(/LibraryScanService\.wire\(\) called more than once/);
-  });
 });

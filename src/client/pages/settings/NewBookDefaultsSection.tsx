@@ -8,6 +8,9 @@ import { SettingsSection } from './SettingsSection';
 
 type NewBookDefaultsFormData = z.infer<typeof newBookDefaultsFormSchema>;
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CARD_LABEL = 'When a New Book Is Added';
+
 export function NewBookDefaultsSection() {
   const { form, mutation, onSubmit } = useSettingsForm<NewBookDefaultsFormData>({
     schema: newBookDefaultsFormSchema,
@@ -17,6 +20,7 @@ export function NewBookDefaultsSection() {
     }),
     toPayload: (d) => ({ quality: d }),
     successMessage: 'New book defaults saved',
+    label: CARD_LABEL,
   });
 
   const { register, handleSubmit, formState: { isDirty } } = form;
@@ -24,7 +28,7 @@ export function NewBookDefaultsSection() {
   return (
     <SettingsSection
       icon={<SparklesIcon className="w-5 h-5 text-primary" />}
-      title="When a New Book Is Added"
+      title={CARD_LABEL}
       description="Applied when books are added manually or via import lists or discovery"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-4">

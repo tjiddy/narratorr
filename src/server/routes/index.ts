@@ -71,6 +71,10 @@ import { BookRejectionService } from '../services/book-rejection.service.js';
 import { BookDeletionService } from '../services/book-deletion.service.js';
 import { createRetrySearchDeps } from '../services/retry-search.js';
 import { ImportQueueWorker } from '../services/import-queue-worker.js';
+import { ImportStagingService } from '../services/import-staging.service.js';
+import { ImportSubmissionReportService } from '../services/import-submission-report.service.js';
+import { ImportSubmissionRunner } from '../services/import-submission-runner.js';
+import { importSubmissionsRoutes } from './import-submissions.js';
 import { registerImportAdapter } from '../services/import-adapters/registry.js';
 import { ManualImportAdapter } from '../services/import-adapters/manual.js';
 import { AutoImportAdapter } from '../services/import-adapters/auto.js';
@@ -178,6 +182,12 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   // Construct remaining cyclic-dep services (worker created before QGO/wire phase)
   const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster, async () => (await settings.get('library')).path, eventHistory);
   const nudgeImportWorker = (): void => importQueueWorker.nudge();
+  // Staged import submission (#1893): server-owned processing runner + the inert
+  // upload/finalize/query state-machine service that nudges it on the winning CAS.
+  const importSubmissionRunner = new ImportSubmissionRunner({ db, log, bookService: book, bookImportService: bookImport, eventHistory, notifier, nudgeImportWorker });
+  const importStaging = new ImportStagingService(db, log, () => importSubmissionRunner.nudge());
+  // Read-side over the staged substrate (#1894): list / attention / report-detail.
+  const importSubmissionReport = new ImportSubmissionReportService(db);
   const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, {
     eventHistory,
     broadcaster: eventBroadcaster,
@@ -195,14 +205,13 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.wire({ retrySearchDeps, indexerService: indexer });
   eventHistory.wire({ retrySearchDeps });
   importOrchestrator.wire({ bookImportService: bookImport, blacklistService, retrySearchDeps, nudgeImportWorker });
-  libraryScan.wire({ nudgeImportWorker });
   qualityGateOrchestrator.wire({ nudgeImportWorker, bookImportService: bookImport });
 
   // Register import adapters after libraryScan/importOrchestrator are fully wired
   registerImportAdapter(new ManualImportAdapter(libraryScan.importDeps));
   registerImportAdapter(new AutoImportAdapter(importOrchestrator));
 
-  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, connector, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, bookDeletion, importQueueWorker, retrySearchDeps, seriesCard, referenceRead };
+  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, connector, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, bookDeletion, importQueueWorker, importStaging, importSubmissionReport, importSubmissionRunner, retrySearchDeps, seriesCard, referenceRead };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -239,6 +248,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => settingsRoutes(app, s.settings, s.indexer, s.healthCheck),
   (app, s) => metadataRoutes(app, s.metadata),
   (app, s) => libraryScanRoutes(app, s.libraryScan, s.matchJob, s.book, s.metadata),
+  (app, s) => importSubmissionsRoutes(app, s.importStaging, s.importSubmissionReport),
   (app, s, db) => systemRoutes(app, s, db),
   (app, s) => notifiersRoutes(app, s.notifier),
   (app, s) => connectorsRoutes(app, s.connector),

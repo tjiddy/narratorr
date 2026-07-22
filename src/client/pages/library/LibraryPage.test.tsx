@@ -28,6 +28,9 @@ vi.mock('@/lib/api', async () => {
       retryBookImport: vi.fn(),
       getActiveBulkJob: vi.fn().mockResolvedValue(null),
       checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
+      // #1894 — the cross-source attention banner mounts above the branch switch.
+      getImportSubmissionAttention: vi.fn().mockResolvedValue({ data: null, watch: false }),
+      discardImportSubmission: vi.fn(),
       getIndexers: vi.fn().mockResolvedValue([
         { id: 1, name: 'Indexer A', enabled: true },
         { id: 2, name: 'Indexer B', enabled: true },
@@ -55,6 +58,24 @@ vi.mock('react-router-dom', async () => {
 
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
+import type { AttentionSubmission } from '@/lib/api';
+
+function abandonedAttention(source: 'library' | 'manual'): AttentionSubmission {
+  return {
+    id: 7, clientSubmissionId: 'c', source, status: 'receiving',
+    expectedCount: 3, receivedCount: 1, processedCount: 0,
+    aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 }, detailsPruned: false,
+    itemsIncluded: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    attention: { kind: 'abandoned' },
+  };
+}
+const completedAttention: AttentionSubmission = {
+  id: 8, clientSubmissionId: 'c', source: 'library', status: 'complete',
+  expectedCount: 3, receivedCount: 3, processedCount: 2,
+  aggregates: { accepted: 0, held: 1, skipped: 0, failed: 1 }, detailsPruned: false,
+  itemsIncluded: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  completedAt: new Date().toISOString(), attention: { kind: 'completed-attention', held: 1, failed: 1 },
+};
 import { createMockSettings } from '@/__tests__/factories';
 
 const mockBooks = [
@@ -2859,6 +2880,45 @@ describe('LibraryPage — error states (#480)', () => {
         expect(screen.getByText('Search Releases')).toBeInTheDocument();
       });
       expect(screen.queryByText('Retry Import')).not.toBeInTheDocument();
+    });
+  });
+
+  // F21 — the cross-source attention banner is hosted ABOVE the branch switch (F40),
+  // so it renders in the empty and error branches, and routes "Import again" by the
+  // abandoned submission's source.
+  describe('attention banner host (#1894, F21)', () => {
+    it('renders the banner in the empty-library branch', async () => {
+      mockLibraryData([]);
+      vi.mocked(api.getImportSubmissionAttention).mockResolvedValue({ data: completedAttention, watch: false });
+      renderWithProviders(<LibraryPage />);
+      await waitFor(() => expect(screen.getByText('Your library is empty')).toBeInTheDocument());
+      expect(await screen.findByTestId('import-attention-banner')).toBeInTheDocument();
+    });
+
+    it('renders the banner in the error branch', async () => {
+      vi.mocked(api.listLibraryBooks).mockRejectedValue(new Error('boom'));
+      vi.mocked(api.getImportSubmissionAttention).mockResolvedValue({ data: completedAttention, watch: false });
+      renderWithProviders(<LibraryPage />);
+      await waitFor(() => expect(screen.getByText('Something went wrong')).toBeInTheDocument());
+      expect(await screen.findByTestId('import-attention-banner')).toBeInTheDocument();
+    });
+
+    it('routes "Import again" to the abandoned submission source (manual → /import)', async () => {
+      mockLibraryData([]);
+      vi.mocked(api.getImportSubmissionAttention).mockResolvedValue({ data: abandonedAttention('manual'), watch: true });
+      renderWithProviders(<LibraryPage />);
+      const banner = await screen.findByTestId('import-attention-banner');
+      fireEvent.click(within(banner).getByRole('button', { name: 'Import again' }));
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/import'));
+    });
+
+    it('routes "Import again" to /library-import for a library-source abandoned run', async () => {
+      mockLibraryData([]);
+      vi.mocked(api.getImportSubmissionAttention).mockResolvedValue({ data: abandonedAttention('library'), watch: true });
+      renderWithProviders(<LibraryPage />);
+      const banner = await screen.findByTestId('import-attention-banner');
+      fireEvent.click(within(banner).getByRole('button', { name: 'Import again' }));
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/library-import'));
     });
   });
 });

@@ -1,5 +1,6 @@
 import { NavLink, Routes, Route, useLocation } from 'react-router-dom';
 import { PageHeader } from '@/components/PageHeader.js';
+import { UnsavedChangesGuard } from '@/components/UnsavedChangesGuard.js';
 import { settingsPageRegistry } from './registry.js';
 
 export function SettingsLayout() {
@@ -7,6 +8,11 @@ export function SettingsLayout() {
 
   return (
     <div className="space-y-8">
+      {/* Guards internal-link navigation while any settings card holds unsaved
+          edits. Mounted here because every tracked form renders under /settings/*.
+          Non-link nav affordances (POP, programmatic navigate) bypass it by design. */}
+      <UnsavedChangesGuard />
+
       {/* Header */}
       <PageHeader title="Settings" subtitle="Configure your Narratorr installation" />
 

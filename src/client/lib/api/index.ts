@@ -11,7 +11,7 @@ export type { Connector, ConnectorTarget, ConnectorTestResult, ConnectorTargetsR
 export type { BlacklistEntry } from './blacklist.js';
 export type { Settings, TestResult, ProxyTestResult, HardcoverTestResult } from './settings.js';
 export type { AuthStatus, AuthConfig, StreamToken } from './auth.js';
-export type { DiscoveredBook, ScanResult, ImportConfirmItem, ImportResult, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus, RescanResult, HeldReviewItem } from './library-scan.js';
+export type { DiscoveredBook, ScanResult, ImportConfirmItem, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus, RescanResult, HeldReviewItem } from './library-scan.js';
 export type { BrowseResult } from './filesystem.js';
 export type { RemotePathMapping } from './remote-path-mappings.js';
 export type { BookEvent, EventHistoryParams } from './event-history.js';
@@ -21,6 +21,7 @@ export type { ImportList, ImportListItem, ImportListPreview } from './import-lis
 export type { SuggestionRow, MarkAddedResult, RefreshResult } from './discover.js';
 export type { BulkOpType, BulkJobStatus, BulkRenamePreview, BulkRenamePreviewItem } from './bulk-operations.js';
 export type { ImportJobWithBook, ImportJobBook, ImportJobsParams } from './import-jobs.js';
+export type { ImportSubmissionListParams, AttentionResponse, AttentionSubmission, SubmissionAttention, CreateSubmissionBody, PutItemsBody, PutItemRow, SubmissionListResponse, SubmissionResponse, SubmissionSummary, StagedItemResultDto, StagedImportItem, SubmissionAggregates } from './submissions.js';
 
 export { formatBytes } from '@core/utils/parse.js';
 export { formatBytesPerSec } from './formatBytesPerSec.js';
@@ -46,6 +47,7 @@ import { importListsApi } from './import-lists.js';
 import { discoverApi } from './discover.js';
 import { bulkOperationsApi } from './bulk-operations.js';
 import { importJobsApi } from './import-jobs.js';
+import { submissionsApi } from './submissions.js';
 
 /**
  * Single source of truth for the API barrel. Both the runtime `api` object and
@@ -76,6 +78,7 @@ export const apiModules = [
   { name: 'discoverApi', api: discoverApi },
   { name: 'bulkOperationsApi', api: bulkOperationsApi },
   { name: 'importJobsApi', api: importJobsApi },
+  { name: 'submissionsApi', api: submissionsApi },
 ];
 
 type UnionToIntersection<U> = (U extends unknown ? (arg: U) => void : never) extends (

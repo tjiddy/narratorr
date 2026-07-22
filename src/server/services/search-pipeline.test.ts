@@ -160,6 +160,18 @@ describe('buildSearchQuery', () => {
     expect(buildSearchQuery({ title: 'Foo  (Bar)  Baz', authors: null }))
       .toBe('Foo Bar Baz');
   });
+
+  it('#1904 specimen — strips the trailing "?" so the automatic path forwards a matchable query', () => {
+    expect(buildSearchQuery({
+      title: 'Is She Really Going Out with Him?',
+      authors: [{ name: 'Sophie Cousens' }],
+    })).toBe('Is She Really Going Out with Him Sophie Cousens');
+  });
+
+  it('#1904 drops apostrophes in the author name without splitting the token', () => {
+    expect(buildSearchQuery({ title: 'Trouble', authors: [{ name: "Fintan O'Toole" }] }))
+      .toBe('Trouble Fintan OToole');
+  });
 });
 
 describe('searchAndGrabForBook', () => {

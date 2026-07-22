@@ -48,6 +48,26 @@ describe('ScriptNotifier', () => {
     });
   });
 
+  it('sets NARRATORR_SUBMISSION_* env vars for import_run_finished incl. a required 0 (F79)', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof execFile>;
+    });
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('import_run_finished', {
+      event: 'import_run_finished',
+      submission: { source: 'library', status: 'complete', counts: { accepted: 0, held: 2, skipped: 0, failed: 1 } },
+    });
+    const env = (mockExecFile.mock.calls[0]![1] as unknown as { env: Record<string, string> }).env;
+    expect(env.NARRATORR_SUBMISSION_SOURCE).toBe('library');
+    expect(env.NARRATORR_SUBMISSION_STATUS).toBe('complete');
+    expect(env.NARRATORR_SUBMISSION_ACCEPTED).toBe('0'); // required zero present
+    expect(env.NARRATORR_SUBMISSION_HELD).toBe('2');
+    expect(env.NARRATORR_SUBMISSION_SKIPPED).toBe('0');
+    expect(env.NARRATORR_SUBMISSION_FAILED).toBe('1');
+  });
+
   it('executes script with correct environment variables', async () => {
     mockExecFile.mockImplementation((_file, _opts, callback) => {
       const cb = callback as (...args: unknown[]) => void;

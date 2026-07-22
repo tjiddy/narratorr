@@ -119,6 +119,9 @@ function useNamingPreviews(folderFormat: string | undefined, fileFormat: string 
   return { folderPreview, folderPreviewNoSeries, folderPreviewMultiEdition, filePreview, filePreviewNoSeries, filePreviewMultiFile, filePreviewEdition };
 }
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CARD_LABEL = 'File Naming';
+
 export function NamingSettingsSection() {
   const folderFormatRef = useRef<HTMLInputElement | null>(null);
   const fileFormatRef = useRef<HTMLInputElement | null>(null);
@@ -140,6 +143,7 @@ export function NamingSettingsSection() {
     }),
     toPayload: (d) => ({ library: d }),
     successMessage: 'File naming settings saved',
+    label: CARD_LABEL,
   });
 
   const { register, handleSubmit, watch, setValue, formState: { errors, isDirty } } = form;
@@ -192,7 +196,7 @@ export function NamingSettingsSection() {
   const fileReg = register('fileFormat');
 
   return (
-    <SettingsSection icon={<TagIcon className="w-5 h-5 text-primary" />} title="File Naming" description="Configure how audiobook files and folders are named">
+    <SettingsSection icon={<TagIcon className="w-5 h-5 text-primary" />} title={CARD_LABEL} description="Configure how audiobook files and folders are named">
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <SettingsTable>
           <SettingsRow htmlFor="namingPreset" label="Preset" description="A starting point — editing the formats below switches this to Custom.">

@@ -10,10 +10,13 @@ import { NoMatchState } from './NoMatchState.js';
 import { LibraryHeader } from './LibraryHeader.js';
 import { LibraryActionsMenu } from './LibraryActionsMenu.js';
 import { Pagination } from '@/components/Pagination';
+import { useNavigate } from 'react-router-dom';
+import { ImportAttentionBanner } from '@/components/import-report/ImportAttentionBanner';
 import { useLibraryPageState } from './useLibraryPageState.js';
 
 export function LibraryPage() {
   const s = useLibraryPageState();
+  const navigate = useNavigate();
 
   const actionsMenu = (
     <LibraryActionsMenu
@@ -27,6 +30,11 @@ export function LibraryPage() {
     />
   );
 
+  // The attention banner (#1894, F40) sits ABOVE the branch switch so it renders in
+  // the empty-library and error states too, not only the populated body. It is
+  // cross-source (no `source`) on the Library page; its query is independent of the
+  // book-list query.
+  const body = (() => {
   if (s.isLoading) return <PageLoading header={<LibraryHeader actions={actionsMenu} />} />;
   if (s.booksError) return (
     <div className="space-y-6">
@@ -138,5 +146,15 @@ export function LibraryPage() {
         onSearchBookClose={() => s.setSearchBook(null)}
       />
     </div>
+  );
+  })();
+
+  return (
+    <>
+      <ImportAttentionBanner
+        onImportAgain={(d) => navigate(d.source === 'library' ? '/library-import' : '/import')}
+      />
+      {body}
+    </>
   );
 }

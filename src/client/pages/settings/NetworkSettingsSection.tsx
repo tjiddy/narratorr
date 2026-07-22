@@ -12,6 +12,9 @@ import { SettingsSection } from './SettingsSection';
 
 type NetworkFormData = z.infer<typeof networkFormSchema>;
 
+// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+const CARD_LABEL = 'Network';
+
 export function NetworkSettingsSection() {
   const [testing, setTesting] = useState(false);
 
@@ -21,6 +24,7 @@ export function NetworkSettingsSection() {
     select: (s: AppSettings) => s.network as NetworkFormData,
     toPayload: (d) => ({ network: d }),
     successMessage: 'Network settings saved',
+    label: CARD_LABEL,
   });
 
   const { register, handleSubmit, watch, formState: { errors, isDirty } } = form;
@@ -48,7 +52,7 @@ export function NetworkSettingsSection() {
   return (
     <SettingsSection
       icon={<WifiIcon className="w-5 h-5 text-primary" />}
-      title="Network"
+      title={CARD_LABEL}
       description="Configure proxy for indexer traffic"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">

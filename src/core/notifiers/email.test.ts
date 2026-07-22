@@ -52,6 +52,19 @@ describe('EmailNotifier', () => {
     });
   });
 
+  it('sends import_run_finished with its subject + count-bearing body', async () => {
+    const notifier = new EmailNotifier(config);
+    const result = await notifier.send('import_run_finished', {
+      event: 'import_run_finished',
+      submission: { source: 'library', status: 'complete', counts: { accepted: 3, held: 1, skipped: 0, failed: 0 } },
+    });
+    expect(result.success).toBe(true);
+    expect(mockSendMail).toHaveBeenCalledWith(expect.objectContaining({
+      subject: 'Narratorr — Import Run Finished',
+      text: 'Library import finished — 3 queued, 1 held, 0 skipped, 0 failed',
+    }));
+  });
+
   it('returns failure on SMTP auth error', async () => {
     mockSendMail.mockRejectedValue(new Error('Invalid login: 535 authentication failed'));
 
