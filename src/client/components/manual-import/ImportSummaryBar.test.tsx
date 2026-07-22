@@ -163,6 +163,26 @@ describe('ImportSummaryBar', () => {
       expect(btn).toHaveAttribute('title', '2 selected books need a match, 1 still matching');
     });
 
+    // Paused-aware tooltip (#1895 follow-up): while the run is halted the tooltip agrees
+    // with the "N paused" PendingSegment beside it instead of claiming "still matching".
+    it('paused: tooltip reads "paused" for pending selected rows', () => {
+      renderBar({ selectedCount: 2, selectedPendingCount: 2, paused: true });
+      const btn = screen.getByRole('button', { name: /Import/ });
+      expect(btn).toHaveAttribute('title', '2 selected books are paused');
+    });
+
+    it('paused: singular form for 1 pending selected row', () => {
+      renderBar({ selectedCount: 2, selectedPendingCount: 1, paused: true });
+      const btn = screen.getByRole('button', { name: /Import/ });
+      expect(btn).toHaveAttribute('title', '1 selected book is paused');
+    });
+
+    it('paused: combined tooltip uses "paused" for the pending clause', () => {
+      renderBar({ selectedCount: 4, selectedUnmatchedCount: 2, selectedPendingCount: 1, paused: true });
+      const btn = screen.getByRole('button', { name: /Import/ });
+      expect(btn).toHaveAttribute('title', '2 selected books need a match, 1 paused');
+    });
+
     it('no tooltip when all matched', () => {
       renderBar({ selectedCount: 3, selectedUnmatchedCount: 0 });
       const btn = screen.getByRole('button', { name: /Import/ });

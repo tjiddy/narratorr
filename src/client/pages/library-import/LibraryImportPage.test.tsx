@@ -232,10 +232,11 @@ describe('LibraryImportPage (#133)', () => {
 
     await waitFor(() => { expect(screen.getByText(/matching paused/i)).toBeInTheDocument(); });
 
-    // Pending B2 still selected → disabled, with the existing "still matching" tooltip copy.
+    // Pending B2 still selected → disabled, with the paused-aware tooltip copy (the run is
+    // halted, so pending rows read "paused" — agreeing with the "1 paused" summary segment).
     const importBtn = screen.getByRole('button', { name: /import/i });
     expect(importBtn).toBeDisabled();
-    expect(importBtn).toHaveAttribute('title', '1 selected book is still matching');
+    expect(importBtn).toHaveAttribute('title', '1 selected book is paused');
 
     // Deselect ONLY the pending B2 row (index 1), leaving matched B1 selected.
     await userEvent.click(screen.getAllByLabelText('Deselect')[1]!);

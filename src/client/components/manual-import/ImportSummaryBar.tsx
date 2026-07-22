@@ -50,12 +50,18 @@ function pluralizeStillMatching(n: number): string {
   return `${n} selected book${n !== 1 ? 's are' : ' is'} still matching`;
 }
 
-function buildDisabledTooltip(selectedUnmatchedCount: number, selectedPendingCount: number): string | undefined {
+function pluralizePaused(n: number): string {
+  return `${n} selected book${n !== 1 ? 's are' : ' is'} paused`;
+}
+
+// Paused-aware (#1895 follow-up): while the match run is halted, pending rows read
+// "paused" — matching the PendingSegment beside this tooltip — not "still matching".
+function buildDisabledTooltip(selectedUnmatchedCount: number, selectedPendingCount: number, paused?: boolean): string | undefined {
   if (selectedUnmatchedCount > 0 && selectedPendingCount > 0) {
-    return `${pluralizeNeedsMatch(selectedUnmatchedCount)}, ${selectedPendingCount} still matching`;
+    return `${pluralizeNeedsMatch(selectedUnmatchedCount)}, ${selectedPendingCount} ${paused ? 'paused' : 'still matching'}`;
   }
   if (selectedUnmatchedCount > 0) return pluralizeNeedsMatch(selectedUnmatchedCount);
-  if (selectedPendingCount > 0) return pluralizeStillMatching(selectedPendingCount);
+  if (selectedPendingCount > 0) return paused ? pluralizePaused(selectedPendingCount) : pluralizeStillMatching(selectedPendingCount);
   return undefined;
 }
 
@@ -86,7 +92,7 @@ export function ImportSummaryBar({
   disabled,
   paused,
 }: ImportSummaryBarProps) {
-  const tooltip = buildDisabledTooltip(selectedUnmatchedCount, selectedPendingCount);
+  const tooltip = buildDisabledTooltip(selectedUnmatchedCount, selectedPendingCount, paused);
   return (
     <div className="sticky bottom-0 z-10 glass-card border-t border-white/10 rounded-b-xl px-4 py-3 flex items-center justify-between gap-4">
       {/* Counts */}
