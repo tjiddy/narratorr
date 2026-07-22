@@ -16,6 +16,7 @@ import { suggestionReasonSchema, SUGGESTION_REASONS } from './schemas/discovery.
 import { connectorTypeSchema } from './schemas/connector.js';
 import { importJobTypeSchema, importJobStatusSchema, importJobPhaseSchema } from './schemas/import-job.js';
 import { protocolSchema, PROTOCOLS } from './schemas/download-protocol.js';
+import { importModeSchema } from './schemas/library-scan.js';
 import {
   submissionStatusSchema, SUBMISSION_STATUSES,
   itemDispositionSchema, ITEM_DISPOSITIONS,
@@ -170,6 +171,12 @@ describe('schema-DB alignment', () => {
     it('importSubmissionItems.disposition DB column enum matches ITEM_DISPOSITIONS', () => {
       expect([...importSubmissionItems.disposition.enumValues].sort()).toEqual([...ITEM_DISPOSITIONS].sort());
       expect([...itemDispositionSchema.options].sort()).toEqual([...ITEM_DISPOSITIONS].sort());
+    });
+
+    // importSubmissions.mode inlines its enum literal (schema.ts) rather than importing
+    // importModeSchema, so the two can genuinely drift — this is the only guard.
+    it('importSubmissions.mode DB column enum matches importModeSchema.options', () => {
+      expect([...importSubmissions.mode.enumValues].sort()).toEqual([...importModeSchema.options].sort());
     });
   });
 
