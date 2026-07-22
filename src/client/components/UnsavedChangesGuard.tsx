@@ -168,16 +168,21 @@ export function UnsavedChangesGuard() {
     }
 
     // Replay the captured click through the live Router/native pipeline.
+    // Suppression must be armed BEFORE the dispatch: Chromium runs a link's
+    // activation behavior — including firing `beforeunload` for a document
+    // navigation — synchronously inside dispatchEvent(), so arming afterward is
+    // too late and the user gets the double prompt AC5 forbids. Arm first, then
+    // distinguish SPA replay from document navigation by the replay's outcome:
+    // React Router calls preventDefault() (no unload will occur) — disarm so a
+    // later genuine reload still prompts; a plain-anchor/reloadDocument
+    // navigation leaves defaultPrevented === false and its beforeunload has
+    // either already consumed the flag (sync) or will (async).
     bypassNextClick.current = true;
+    suppressNextBeforeunload.current = true;
     const event = new MouseEvent('click', { bubbles: true, cancelable: true });
     node.dispatchEvent(event);
-    // Distinguish SPA replay from document navigation by the replay's outcome,
-    // not a timer: React Router calls preventDefault() (defaultPrevented ===
-    // true) so no unload occurs; a plain-anchor/reloadDocument navigation leaves
-    // defaultPrevented === false, meaning a document unload is now committed —
-    // arm suppression so its single ensuing beforeunload is not double-prompted.
-    if (!event.defaultPrevented) {
-      suppressNextBeforeunload.current = true;
+    if (event.defaultPrevented) {
+      suppressNextBeforeunload.current = false;
     }
   }
 
