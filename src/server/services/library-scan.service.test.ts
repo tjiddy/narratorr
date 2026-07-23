@@ -7,7 +7,7 @@ import type { BookImportService } from './book-import.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import { parseFolderStructure, extractYear, LibraryScanService, SCAN_WITHIN_SCAN_REVIEW_HINT } from './library-scan.service.js';
+import { parseFolderStructure, extractYear, LibraryScanService, SCAN_WITHIN_SCAN_REVIEW_HINT, SCAN_RECORDING_REVIEW_HINT } from './library-scan.service.js';
 import { books } from '../../db/schema.js';
 import { buildTitleShape } from '../../shared/dedup.js';
 
@@ -1714,6 +1714,38 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries[1]).not.toHaveProperty('duplicateReason');
     });
 
+    it('clean-slate pair with DIFFERENT bracketed folder ASINs, same title+author → both normal candidates; second carries the within-scan hint (#1925 F3, motivating case)', async () => {
+      // The motivating scenario from the issue: two editions of one title (Jim Dale vs Full-Cast)
+      // distinguished ONLY by their bracketed folder ASIN — which is parsed but intentionally NOT
+      // threaded to the match job. With an EMPTY library the ASIN is never decisive (branch 2 needs
+      // an incumbent), so both folders take the normal-candidate branch-4 path; the recording ladder
+      // (not scan-time title-pairing) decides identity later.
+      // Precondition: the parser extracts DISTINCT ASINs yet the SAME title — so the ASIN is the sole discriminator.
+      const parsedA = parseFolderStructure(['J.K. Rowling', 'Harry Potter and the Goblet of Fire [B0JIMDALE1]']);
+      const parsedB = parseFolderStructure(['J.K. Rowling', 'Harry Potter and the Goblet of Fire (Full-Cast Edition) [B0F14PB6WN]']);
+      expect(parsedA.asin).toBe('B0JIMDALE1');
+      expect(parsedB.asin).toBe('B0F14PB6WN');
+      expect(parsedA.title).toBe(parsedB.title);
+
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/J.K. Rowling/04 - Goblet (Jim Dale)', folderParts: ['J.K. Rowling', 'Harry Potter and the Goblet of Fire [B0JIMDALE1]'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/J.K. Rowling/Goblet (Full-Cast) [B0F14PB6WN]', folderParts: ['J.K. Rowling', 'Harry Potter and the Goblet of Fire (Full-Cast Edition) [B0F14PB6WN]'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []); // clean-slate: empty DB
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.isDuplicate).toBe(false);
+      expect(result.discoveries[0]).not.toHaveProperty('reviewReason');
+      expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
+      // Neither carries the removed duplicate fields — both flow through to the match/confirm ladder.
+      for (const d of result.discoveries) {
+        expect(d).not.toHaveProperty('duplicateReason');
+        expect(d).not.toHaveProperty('duplicateFirstPath');
+      }
+    });
+
     it('first folder of a within-scan collision pair is a plain candidate — no flag, no hint', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
@@ -1876,14 +1908,39 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries[0]!.duplicateReason).toBe('path');
       // Second: DB title+author match → review-hint candidate, NOT a hard duplicate (#1711 F6).
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
-      expect(result.discoveries[1]!.reviewReason).toBeDefined();
       expect(result.discoveries[1]!.existingBookId).toBe(42);
-      // Third: same title+author as DB BookB → existing-library review hint (branch 3
-      // precedes the within-scan branch, so it is never treated as a within-scan collision).
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_RECORDING_REVIEW_HINT);
+      // Third: matches DB BookB (id 42) AND the registered sibling (discovery[1]). Branch 3
+      // precedes branch 4, so it MUST carry the existing-library hint + existingBookId — NOT the
+      // within-scan hint. Asserting both distinguishes branch 3 from branch 4 (which would drop
+      // existingBookId and substitute SCAN_WITHIN_SCAN_REVIEW_HINT) — the vacuity F2 flagged.
       expect(result.discoveries[2]!.isDuplicate).toBe(false);
-      expect(result.discoveries[2]!.reviewReason).toBeDefined();
+      expect(result.discoveries[2]!.existingBookId).toBe(42);
+      expect(result.discoveries[2]!.reviewReason).toBe(SCAN_RECORDING_REVIEW_HINT);
+      expect(result.discoveries[2]!.reviewReason).not.toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
       // Fourth: new discovery
       expect(result.discoveries[3]!.isDuplicate).toBe(false);
+    });
+
+    it('branch-3-over-branch-4 precedence: a folder matching an existing library book AND a sibling scan row gets the existing-library hint + existingBookId, NOT the within-scan hint (#1925 F2)', async () => {
+      // Two same-title+author folders where the DB already owns that title. The FIRST folder
+      // already matches the DB (branch 3). The SECOND matches BOTH the DB row AND the registered
+      // first sibling — branch 3 must win over branch 4.
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ id: 77, title: 'Title', slug: 'author' }]));
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      // The second folder takes branch-3 treatment, not the within-scan hint.
+      expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.existingBookId).toBe(77);
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_RECORDING_REVIEW_HINT);
+      expect(result.discoveries[1]!.reviewReason).not.toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
 
     it('first occurrence is DB path duplicate → still registers, so second occurrence gets the within-scan hint (#1891/#1925)', async () => {

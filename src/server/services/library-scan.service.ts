@@ -34,7 +34,7 @@ export type ImportMode = 'copy' | 'move';
  * existing library book but carries no decisive ASIN. Display-only; the match job
  * later replaces it with the authoritative recording verdict once narrators exist.
  */
-const SCAN_RECORDING_REVIEW_HINT = 'Possible match to an existing book — checking recording';
+export const SCAN_RECORDING_REVIEW_HINT = 'Possible match to an existing book — checking recording';
 
 /**
  * Display-only within-scan hint (#1925): the second-and-later folder of a

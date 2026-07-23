@@ -7,6 +7,7 @@ import { inject } from '../__tests__/helpers.js';
 import {
   buildDiscoveredBook,
   getAudioStats,
+  type BuildDiscoveredBookOptions,
 } from './library-scan.helpers.js';
 
 function createMockLog() {
@@ -74,6 +75,31 @@ describe('buildDiscoveredBook', () => {
     expect(result).not.toHaveProperty('existingBookId');
     expect(result).not.toHaveProperty('duplicateReason');
     expect(result).not.toHaveProperty('reviewReason');
+  });
+
+  it('never emits duplicateFirstPath even when a legacy caller passes it (removal is load-bearing, #1925 F1)', () => {
+    // The scan-only first-path field was removed with the within-scan hard-flag. This is a
+    // deletion-heuristic guard: a legacy caller supplying it (cast past the now-narrowed options
+    // type) must NOT round-trip it. Reintroducing the destructure/spread in buildDiscoveredBook
+    // would make this fail — without it, the field could silently return while the suite stays green.
+    const legacyOptions = {
+      isDuplicate: true,
+      duplicateReason: 'slug',
+      duplicateFirstPath: '/audiobooks/Author/Original',
+    } as unknown as BuildDiscoveredBookOptions;
+
+    const result = buildDiscoveredBook(
+      '/audiobooks/Author/Book',
+      { title: 'Book', author: 'Author', series: null },
+      3,
+      100,
+      legacyOptions,
+    );
+
+    expect(result).not.toHaveProperty('duplicateFirstPath');
+    // Sanity: the still-supported fields DO round-trip, so the assertion above isn't vacuously green.
+    expect(result.isDuplicate).toBe(true);
+    expect(result.duplicateReason).toBe('slug');
   });
 
   describe('parsedSeriesPosition (#1042)', () => {
