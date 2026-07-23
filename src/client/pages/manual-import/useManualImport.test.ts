@@ -2738,4 +2738,62 @@ describe('grouped return shape (REACT-1 refactor)', () => {
       expect(result.current.state.paused).toBe(false);
     });
   });
+
+  // #1925 AC10 / F5: Manual Import consumes the SAME shared scan result as Library Import. A
+  // former within-scan title collision now arrives as a normal candidate (isDuplicate: false)
+  // carrying a display-only review hint, so on this surface it must ALSO become default-selected,
+  // match-eligible, and submit WITHOUT forceImport — flowing through the confirm-time ladder.
+  describe('former within-scan rows on the Manual Import surface (#1925 AC10)', () => {
+    const SCAN_WITH_FORMER_WITHIN_SCAN: ScanResult = {
+      discoveries: [
+        { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false, reviewReason: 'Possible duplicate folder in this scan' },
+        { path: '/audiobooks/DbDup/Book', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'slug' },
+      ],
+      totalFolders: 3,
+    };
+
+    it('is default-selected on load and match-eligible; the DB duplicate is neither', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_WITH_FORMER_WITHIN_SCAN);
+      vi.mocked(api.startMatchJob).mockClear().mockResolvedValue({ jobId: 'job-123' });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
+
+      const wsRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/Copy/Author/Book');
+      const dbRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/DbDup/Book');
+      expect(wsRow?.selected).toBe(true);   // selected: !isDuplicate
+      expect(dbRow?.selected).toBe(false);  // DB duplicate stays unchecked
+
+      // Match candidates derive off `!book.isDuplicate` → include the former within-scan row, exclude the DB dup.
+      await waitFor(() => { expect(vi.mocked(api.startMatchJob)).toHaveBeenCalled(); });
+      const candidatePaths = (vi.mocked(api.startMatchJob).mock.calls[0]![0] as Array<{ path: string }>).map(c => c.path);
+      expect(candidatePaths).toContain('/audiobooks/Author/Book');
+      expect(candidatePaths).toContain('/audiobooks/Copy/Author/Book');
+      expect(candidatePaths).not.toContain('/audiobooks/DbDup/Book');
+    });
+
+    it('submits via toConfirmItem WITHOUT forceImport (flows through the confirm ladder)', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_WITH_FORMER_WITHIN_SCAN);
+      wireStagedComplete(stagedMocks, {
+        source: 'manual', mode: 'copy',
+        items: [acceptedRow(0, '/audiobooks/Author/Book', 'Book'), acceptedRow(1, '/audiobooks/Copy/Author/Book', 'Book')],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
+
+      await act(async () => { result.current.actions.handleImport(); });
+      await waitFor(() => { expect(vi.mocked(api.createImportSubmission)).toHaveBeenCalled(); });
+
+      const items = submittedItems();
+      const wsItem = items.find(i => i.path === '/audiobooks/Copy/Author/Book');
+      expect(wsItem).toBeDefined();
+      expect(wsItem).not.toHaveProperty('forceImport');
+    });
+  });
 });

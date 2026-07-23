@@ -352,21 +352,21 @@ describe('LibraryImportPage (#133)', () => {
       await waitFor(() => { expect(screen.queryByRole('button', { name: /deselect \d+ pending/i })).not.toBeInTheDocument(); });
     });
 
-    it('F5: affordance clears the actionable within-scan pending row, leaving the DB duplicate (canonical helper)', async () => {
-      // Matched B1 + a result-less WITHIN-SCAN duplicate (actionable, selected) + a DB slug dup
-      // (not selectable). A bare `!r.book.isDuplicate` handler would skip the within-scan row.
+    it('F5: affordance clears the actionable former within-scan pending row, leaving the DB duplicate (canonical helper)', async () => {
+      // Matched B1 + a result-less FORMER WITHIN-SCAN row (a normal candidate, auto-selected) + a
+      // DB slug dup (not selectable). The canonical helper keeps the DB dup out of the "new"
+      // denominator while treating the former within-scan row as actionable (#1925).
       await renderPaused([
-        disc('/audiobooks/A/WS', 'WS', { isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/A/B1' }),
+        disc('/audiobooks/A/WS', 'WS', { isDuplicate: false, reviewReason: 'Possible duplicate folder in this scan' }),
         disc('/audiobooks/A/DB', 'DB', { isDuplicate: true, duplicateReason: 'slug' }),
       ]);
 
-      // A within-scan dup starts UNSELECTED (isDuplicate=true) — select it so it's a selected
-      // pending row. DB dup is excluded from the "new" denominator, so selecting WS → "2 of 2".
-      await userEvent.click(screen.getByLabelText('Select'));
+      // WS is a normal candidate now → auto-selected; B1 matched+selected; DB dup excluded from
+      // the "new" denominator → "2 of 2 new selected" from the start.
       await waitFor(() => { expect(screen.getByText(/2 of 2 new selected/i)).toBeInTheDocument(); });
       await userEvent.click(screen.getByRole('button', { name: /deselect 1 pending/i }));
 
-      // WS cleared (helper treats within-scan as actionable); matched B1 kept → Import enabled.
+      // WS cleared (result-less pending row); matched B1 kept → Import enabled.
       await waitFor(() => { expect(screen.getByText(/1 of 2 new selected/i)).toBeInTheDocument(); });
       expect(screen.getByRole('button', { name: /import 1 book$/i })).toBeEnabled();
     });
@@ -385,13 +385,15 @@ describe('LibraryImportPage (#133)', () => {
       expect(segment.querySelector('svg')).toBeNull();
     });
 
-    it('F9: a paused result-less within-scan row keeps "Duplicate in scan" (not "Paused")', async () => {
-      await renderPaused([disc('/audiobooks/A/WS', 'WS', { isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/A/B1' })]);
+    it('F9: a paused result-less former within-scan row shows the normal "Paused" badge + review hint (#1925)', async () => {
+      await renderPaused([disc('/audiobooks/A/WS', 'WS', { isDuplicate: false, reviewReason: 'Possible duplicate folder in this scan' })]);
 
-      // The within-scan badge precedes ConfidenceBadge, so paused does not re-badge it.
-      expect(screen.getByText('Duplicate in scan')).toBeInTheDocument();
-      expect(screen.queryByText('Paused')).not.toBeInTheDocument();
-      // …but selection-wise WS is still a pending row, so the summary count reads "1 paused".
+      // No special "Duplicate in scan" badge — it's a normal candidate that renders the shared
+      // review-reason indicator and, while paused + result-less, the ordinary "Paused" badge.
+      expect(screen.queryByText('Duplicate in scan')).not.toBeInTheDocument();
+      expect(screen.getByTestId('review-reason-indicator')).toBeInTheDocument();
+      expect(screen.getByText('Paused')).toBeInTheDocument();
+      // …and selection-wise WS is a pending row, so the summary count reads "1 paused".
       expect(screen.getByText('1 paused')).toBeInTheDocument();
     });
 
@@ -1219,24 +1221,24 @@ describe('LibraryImportPage (#133)', () => {
     });
   });
 
-  describe('within-scan duplicates — visibility and toggle (#342)', () => {
+  describe('former within-scan rows — visibility and toggle (#1925)', () => {
     const scanResultWithWithinScan = {
       discoveries: [
         { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
-        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false, reviewReason: 'Possible duplicate folder in this scan' },
         { path: '/audiobooks/DbDup/DbBook', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'slug' },
       ],
       totalFolders: 3,
     };
 
-    it('within-scan duplicates are visible by default (not hidden by showExisting toggle)', async () => {
+    it('former within-scan rows are visible by default (not hidden by showExisting toggle)', async () => {
       mockApi.scanDirectory!.mockResolvedValue(scanResultWithWithinScan);
       mockApi.startMatchJob!.mockResolvedValue({ jobId: 'job-1' });
       mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
 
       renderWithProviders(<LibraryImportPage />);
 
-      // Within-scan duplicate should be visible by default
+      // Former within-scan row should be visible by default
       await waitFor(() => {
         expect(screen.getByText(/Copy\/Author\/Book/)).toBeInTheDocument();
       });
@@ -1257,7 +1259,7 @@ describe('LibraryImportPage (#133)', () => {
       expect(screen.queryByText(/DbDup\/DbBook/)).not.toBeInTheDocument();
     });
 
-    it('show existing toggle count reflects only DB duplicates, not within-scan', async () => {
+    it('show existing toggle count reflects only DB duplicates, not former within-scan rows', async () => {
       mockApi.scanDirectory!.mockResolvedValue(scanResultWithWithinScan);
       mockApi.startMatchJob!.mockResolvedValue({ jobId: 'job-1' });
       mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
@@ -1270,7 +1272,7 @@ describe('LibraryImportPage (#133)', () => {
       });
     });
 
-    it('N of M new selected denominator includes within-scan duplicates', async () => {
+    it('N of M new selected denominator counts a former within-scan row as new and default-selected', async () => {
       mockApi.scanDirectory!.mockResolvedValue(scanResultWithWithinScan);
       mockApi.startMatchJob!.mockResolvedValue({ jobId: 'job-1' });
       mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
@@ -1278,8 +1280,8 @@ describe('LibraryImportPage (#133)', () => {
       renderWithProviders(<LibraryImportPage />);
 
       await waitFor(() => {
-        // 1 non-dup selected out of 2 actionable (non-dup + within-scan dup)
-        expect(screen.getByText(/1 of 2 new selected/)).toBeInTheDocument();
+        // Both actionable rows (non-dup + former within-scan) are default-selected (#1925 AC4).
+        expect(screen.getByText(/2 of 2 new selected/)).toBeInTheDocument();
       });
     });
   });
