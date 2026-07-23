@@ -214,8 +214,8 @@ export function useLibraryImport() {
   // Deselect-pending affordance (#1895): while paused, clear `selected` on every pending row
   // — result-less and NOT a DB duplicate — so the remaining matched selection can import. The
   // predicate mirrors `selectedPendingCount` exactly (the canonical `isLibraryDbDuplicate`
-  // helper, not a bare `!isDuplicate`): a within-scan duplicate is actionable and gets cleared,
-  // a path/slug DB duplicate isn't selectable to begin with. Matched selections stay intact.
+  // helper): a path/slug DB duplicate isn't selectable to begin with, so it never needs
+  // clearing. Matched selections stay intact.
   const handleDeselectPending = useCallback(() => {
     setRows(prev => prev.map(r => (!r.matchResult && !isLibraryDbDuplicate(r.book)) ? { ...r, selected: false } : r));
   }, []);

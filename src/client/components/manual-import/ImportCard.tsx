@@ -26,7 +26,7 @@ interface ImportCardProps {
    * When true (paused match run, #1895), a genuinely-new pending row renders the static
    * `Paused` badge instead of the spinning `Matching` one. Defaults to false so the
    * non-paused path — and Manual Import — stay byte-identical. Does NOT affect the
-   * within-scan `Duplicate in scan` branch, which precedes the confidence badge.
+   * ownership badge, which precedes the confidence badge.
    */
   paused?: boolean | undefined;
 }
@@ -118,12 +118,10 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
   const shortPath = relativePath ?? pathParts.slice(-3).join('/') ?? row.book.path;
 
   // When lockDuplicates=true: path-duplicates are fully locked; slug-duplicates show edit but no checkbox.
-  // Within-scan duplicates are always selectable/editable (they're not in the DB yet).
-  const isWithinScanDuplicate = isDuplicate && row.book.duplicateReason === 'within-scan';
   const isPathDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'path';
   const isSlugDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'slug';
   const showCheckbox = !isPathDuplicate && !isSlugDuplicate;
-  const showEditButton = !isDuplicate || isSlugDuplicate || isWithinScanDuplicate;
+  const showEditButton = !isDuplicate || isSlugDuplicate;
   const ownership = ownershipBadge(row.book);
 
   // Left border: amber for no-match, matches LibraryPage's status border pattern
@@ -188,11 +186,9 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
       </div>
 
       {/* Badge: three-way recording-review ladder (#1712) for owned/new-version/review,
-          "Duplicate in scan" for within-scan, confidence badge for a genuinely new book. */}
+          confidence badge for a genuinely new book. */}
       <div className="w-32 shrink-0 flex justify-center">
-        {isWithinScanDuplicate ? (
-          <Badge variant="muted">Duplicate in scan</Badge>
-        ) : ownership ? (
+        {ownership ? (
           <Badge variant={ownership.variant}>{ownership.label}</Badge>
         ) : (
           <ConfidenceBadge confidence={confidence} reason={row.matchResult?.reason} paused={paused} />
