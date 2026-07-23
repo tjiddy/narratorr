@@ -53,7 +53,6 @@ describe('buildDiscoveredBook', () => {
         isDuplicate: true,
         existingBookId: 42,
         duplicateReason: 'slug',
-        duplicateFirstPath: '/audiobooks/Author/Book Original',
       },
     );
 
@@ -61,7 +60,6 @@ describe('buildDiscoveredBook', () => {
       isDuplicate: true,
       existingBookId: 42,
       duplicateReason: 'slug',
-      duplicateFirstPath: '/audiobooks/Author/Book Original',
     });
   });
 
@@ -75,7 +73,6 @@ describe('buildDiscoveredBook', () => {
 
     expect(result).not.toHaveProperty('existingBookId');
     expect(result).not.toHaveProperty('duplicateReason');
-    expect(result).not.toHaveProperty('duplicateFirstPath');
     expect(result).not.toHaveProperty('reviewReason');
   });
 
@@ -134,7 +131,6 @@ describe('buildDiscoveredBook', () => {
       expect(r.isDuplicate).toBe(true);
       expect(r).not.toHaveProperty('existingBookId');
       expect(r).not.toHaveProperty('duplicateReason');
-      expect(r).not.toHaveProperty('duplicateFirstPath');
       expect(r).not.toHaveProperty('reviewReason');
     });
 
@@ -147,11 +143,6 @@ describe('buildDiscoveredBook', () => {
     it('duplicateReason alone', () => {
       const r = buildDiscoveredBook(...baseArgs, { duplicateReason: 'path' });
       expect(r.duplicateReason).toBe('path');
-    });
-
-    it('duplicateFirstPath alone', () => {
-      const r = buildDiscoveredBook(...baseArgs, { duplicateFirstPath: '/orig' });
-      expect(r.duplicateFirstPath).toBe('/orig');
     });
 
     it('reviewReason alone', () => {

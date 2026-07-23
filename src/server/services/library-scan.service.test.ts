@@ -7,7 +7,7 @@ import type { BookImportService } from './book-import.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import { parseFolderStructure, extractYear, LibraryScanService } from './library-scan.service.js';
+import { parseFolderStructure, extractYear, LibraryScanService, SCAN_WITHIN_SCAN_REVIEW_HINT } from './library-scan.service.js';
 import { books } from '../../db/schema.js';
 import { buildTitleShape } from '../../shared/dedup.js';
 
@@ -636,7 +636,7 @@ describe('LibraryScanService', () => {
         expect(result.discoveries[0]!.reviewReason).toBeDefined();
       });
 
-      it('within-scan duplicate check is case-insensitive on title', async () => {
+      it('within-scan title collision is case-insensitive on title (second carries the hint, not a hard flag) (#1925)', async () => {
         vi.mocked(discoverBooks).mockResolvedValue([
           { path: '/audiobooks/Author/the way of kings', folderParts: ['Author', 'the way of kings'], audioFileCount: 1, totalSize: 100 },
           { path: '/audiobooks/Author/The Way Of Kings', folderParts: ['Author', 'The Way Of Kings'], audioFileCount: 2, totalSize: 200 },
@@ -645,9 +645,11 @@ describe('LibraryScanService', () => {
 
         const result = await service.scanDirectory('/audiobooks');
 
-        const dups = result.discoveries.filter(d => d.isDuplicate);
-        expect(dups).toHaveLength(1);
-        expect(dups[0]!.duplicateReason).toBe('within-scan');
+        // Neither folder is hard-flagged — both flow through to the match/confirm ladder.
+        expect(result.discoveries.filter(d => d.isDuplicate)).toHaveLength(0);
+        expect(result.discoveries[0]!.reviewReason).toBeUndefined();
+        expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
+        expect(result.discoveries[1]).not.toHaveProperty('duplicateReason');
       });
 
       it('does not check title+author duplicate when parsed title is empty; folder is not marked isDuplicate', async () => {
@@ -1149,7 +1151,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
       expect(result.discoveries[0]!.reviewReason).toBe(REVIEW_REASON);
     });
 
-    it('within-scan duplicate branch preserves reviewReason', async () => {
+    it('within-scan collision branch preserves an existing reviewReason over the within-scan hint (#1925)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { ...folder, path: '/audiobooks/a/Author/Title' },
         { ...folder, path: '/audiobooks/b/Author/Title' },
@@ -1158,7 +1160,10 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      // No hard flag; the upstream reviewReason wins over SCAN_WITHIN_SCAN_REVIEW_HINT
+      // via the `reviewReason ?? hint` fallback (mirrors branch 3).
+      expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]).not.toHaveProperty('duplicateReason');
       expect(result.discoveries[1]!.reviewReason).toBe(REVIEW_REASON);
     });
 
@@ -1693,7 +1698,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
   }
 
   describe('happy path', () => {
-    it('two folders with same title+author slug → second flagged isDuplicate with duplicateReason=within-scan', async () => {
+    it('two folders with same title+author slug → second flows through as a normal candidate carrying the within-scan hint (#1925)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
@@ -1703,11 +1708,13 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       const result = await service.scanDirectory('/audiobooks');
 
       expect(result.discoveries).toHaveLength(2);
-      expect(result.discoveries[1]!.isDuplicate).toBe(true);
-      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      // No hard flag — the recording ladder decides identity at confirm time.
+      expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
+      expect(result.discoveries[1]).not.toHaveProperty('duplicateReason');
     });
 
-    it('first folder of a within-scan duplicate pair remains isDuplicate=false', async () => {
+    it('first folder of a within-scan collision pair is a plain candidate — no flag, no hint', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
@@ -1718,9 +1725,10 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
       expect(result.discoveries[0]).not.toHaveProperty('duplicateReason');
+      expect(result.discoveries[0]).not.toHaveProperty('reviewReason');
     });
 
-    it('within-scan duplicate has duplicateFirstPath set to first discovery path', async () => {
+    it('within-scan second folder carries the display hint, not a first-path pointer (#1925)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
@@ -1729,10 +1737,10 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/Title');
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
 
-    it('within-scan duplicate has no existingBookId', async () => {
+    it('within-scan hinted row has no existingBookId', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
@@ -1746,7 +1754,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
   });
 
   describe('boundary values', () => {
-    it('three+ folders with same title+author → second and third both flagged as within-scan duplicates referencing first path', async () => {
+    it('three+ folders with same title+author → the second and later each carry the hint; the first does not (#1925)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/a/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/b/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
@@ -1756,16 +1764,14 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      expect(result.discoveries[0]!.isDuplicate).toBe(false);
-      expect(result.discoveries[1]!.isDuplicate).toBe(true);
-      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
-      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/a/Author/Title');
-      expect(result.discoveries[2]!.isDuplicate).toBe(true);
-      expect(result.discoveries[2]!.duplicateReason).toBe('within-scan');
-      expect(result.discoveries[2]!.duplicateFirstPath).toBe('/audiobooks/a/Author/Title');
+      // None hard-flagged; all flow through to the match/confirm ladder.
+      expect(result.discoveries.every(d => !d.isDuplicate)).toBe(true);
+      expect(result.discoveries[0]).not.toHaveProperty('reviewReason');
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
+      expect(result.discoveries[2]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
 
-    it('single folder with no duplicate → isDuplicate=false, no duplicateReason, no duplicateFirstPath', async () => {
+    it('single folder with no collision → isDuplicate=false, no duplicateReason, no hint', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
       ]);
@@ -1776,10 +1782,10 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries).toHaveLength(1);
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
       expect(result.discoveries[0]).not.toHaveProperty('duplicateReason');
-      expect(result.discoveries[0]).not.toHaveProperty('duplicateFirstPath');
+      expect(result.discoveries[0]).not.toHaveProperty('reviewReason');
     });
 
-    it('slug case normalization — different casing of same author produces same slug and triggers within-scan dedup', async () => {
+    it('slug case normalization — different casing of same author produces same slug and hints the second folder', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Brandon Sanderson/Title', folderParts: ['Brandon Sanderson', 'Title'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/brandon sanderson/Title', folderParts: ['brandon sanderson', 'Title'], audioFileCount: 3, totalSize: 100 },
@@ -1788,8 +1794,8 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      expect(result.discoveries[1]!.isDuplicate).toBe(true);
-      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
   });
 
@@ -1803,8 +1809,10 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
+      // No author → no title+author shape → no collision → no within-scan hint on the second.
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]).not.toHaveProperty('reviewReason');
     });
 
     it('two folders with empty/falsy title → not deduplicated within scan', async () => {
@@ -1818,6 +1826,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]).not.toHaveProperty('reviewReason');
     });
   });
 
@@ -1832,7 +1841,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       expect(result.discoveries[0]!.isDuplicate).toBe(true);
       expect(result.discoveries[0]!.duplicateReason).toBe('path');
-      expect(result.discoveries[0]).not.toHaveProperty('duplicateFirstPath');
+      expect(result.discoveries[0]).not.toHaveProperty('reviewReason');
     });
 
     it('folder matching DB by slug → review-hint candidate, not checked for within-scan (#1711 F6)', async () => {
@@ -1847,7 +1856,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
       expect(result.discoveries[0]!.reviewReason).toBeDefined();
-      expect(result.discoveries[0]).not.toHaveProperty('duplicateFirstPath');
+      expect(result.discoveries[0]!.existingBookId).toBe(99);
     });
 
     it('mixed scan: DB path dup + DB slug dup + within-scan dup + new folder → each has correct flag and reason', async () => {
@@ -1869,15 +1878,15 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]!.reviewReason).toBeDefined();
       expect(result.discoveries[1]!.existingBookId).toBe(42);
-      // Third: same title+author → also a review-hint candidate (the title+author branch
-      // continues before the within-scan map is populated, so it is never a within-scan dup).
+      // Third: same title+author as DB BookB → existing-library review hint (branch 3
+      // precedes the within-scan branch, so it is never treated as a within-scan collision).
       expect(result.discoveries[2]!.isDuplicate).toBe(false);
       expect(result.discoveries[2]!.reviewReason).toBeDefined();
       // Fourth: new discovery
       expect(result.discoveries[3]!.isDuplicate).toBe(false);
     });
 
-    it('first occurrence is DB path duplicate → still registers, so second occurrence is a within-scan dup (#1891)', async () => {
+    it('first occurrence is DB path duplicate → still registers, so second occurrence gets the within-scan hint (#1891/#1925)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
@@ -1893,18 +1902,18 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       // which branch emitted it, so the path-dup row IS added to the within-scan bucket.
       expect(result.discoveries[0]!.duplicateReason).toBe('path');
       // Second: not in DB by path/title, but pairwise-matches the registered first row →
-      // within-scan duplicate of it.
-      expect(result.discoveries[1]!.isDuplicate).toBe(true);
-      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
-      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/Title');
+      // a normal candidate carrying the within-scan hint (proving the path-dup row registered).
+      expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
   });
 
   describe('pairwise non-transitive title matching (#1891)', () => {
-    it('non-transitive chain: a within-scan-dup row still registers, so a later row matches IT not the first (branch 4)', async () => {
-      // Series: A (row1, normal) — Series (row2, within-scan dup of row1) — Series: B
-      // (row3). row3 ≁ row1 (distinct subtitles) but ~ row2 (bare bridges) → row3's
-      // first-match is row2, proving the within-scan-dup row2 registered.
+    it('non-transitive chain: a hinted within-scan row still registers, so a later row matches IT not the first (branch 4)', async () => {
+      // Series: A (row1, normal) — Series (row2, within-scan collision of row1) — Series: B
+      // (row3). row3 ≁ row1 (distinct subtitles) but ~ row2 (bare bridges). row3 gets the
+      // hint ONLY because row2 registered — row1 alone does not match row3 — so the hint on
+      // row3 proves the within-scan-hinted row2 registered into the bucket.
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/SeriesA', folderParts: ['Author', 'Series: A'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
@@ -1915,13 +1924,12 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       const result = await service.scanDirectory('/audiobooks');
 
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
-      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
-      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/SeriesA');
-      expect(result.discoveries[2]!.duplicateReason).toBe('within-scan');
-      expect(result.discoveries[2]!.duplicateFirstPath).toBe('/audiobooks/Author/Series');
+      expect(result.discoveries[0]).not.toHaveProperty('reviewReason');
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT); // matched row1
+      expect(result.discoveries[2]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT); // matched row2 (proves it registered)
     });
 
-    it('existing-library review-hint row registers, so a non-transitive later row is a within-scan dup of it (branch 3)', async () => {
+    it('existing-library review-hint row registers, so a non-transitive later row is a within-scan collision of it (branch 3)', async () => {
       // DB owns "Series: A". row1 bare "Series" bridges to it → existing-title hint
       // AND registers. row2 "Series: B" ≁ DB "Series: A" but ~ row1 "Series".
       vi.mocked(discoverBooks).mockResolvedValue([
@@ -1935,11 +1943,11 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
       expect(result.discoveries[0]!.existingBookId).toBe(50);
       expect(result.discoveries[0]!.reviewReason).toBeDefined();
-      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
-      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/Series');
+      expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
 
-    it('decisive-ASIN row registers, so a later same-base row is a within-scan dup of it (branch 2)', async () => {
+    it('decisive-ASIN row registers, so a later same-base row is a within-scan collision of it (branch 2)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/SeriesAsin', folderParts: ['Author', 'Series [B01ABC0001]'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
@@ -1952,8 +1960,8 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       const result = await service.scanDirectory('/audiobooks');
 
       expect(result.discoveries[0]!.duplicateReason).toBe('slug'); // decisive ASIN
-      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
-      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/SeriesAsin');
+      expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
 
     it('retrieval invariant: existing "Dune (Edition: Deluxe)" and scanned "Dune" share the colonBase bucket', async () => {
@@ -1982,7 +1990,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries[0]).not.toHaveProperty('existingBookId');
     });
 
-    it('distinct-subtitle siblings are NOT within-scan duplicates', async () => {
+    it('distinct-subtitle siblings are NOT within-scan collisions (no hint)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Beyond', folderParts: ['Author', 'WoW: Beyond'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Author/Tides', folderParts: ['Author', 'WoW: Tides'], audioFileCount: 3, totalSize: 100 },
@@ -1992,9 +2000,10 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       const result = await service.scanDirectory('/audiobooks');
 
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]).not.toHaveProperty('reviewReason');
     });
 
-    it('bare/subtitle bridge still collides within a scan', async () => {
+    it('bare/subtitle bridge still collides within a scan (hints the second)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Author/SeriesA', folderParts: ['Author', 'Series: A'], audioFileCount: 3, totalSize: 100 },
@@ -2003,8 +2012,8 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
-      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/Series');
+      expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
 
     it('existing-library multi-match resolves to the LOWEST matching books.id, and pins the orderBy(books.id) contract (F1)', async () => {
@@ -2053,8 +2062,8 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       const result = await service.scanDirectory('/audiobooks');
 
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
-      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
-      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Frank Herbert/DuneBook1');
+      expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
 
     it('within-scan retrieval invariant across a colon-bearing preserved suffix ("Saga, Book 1: Deluxe" → "Saga") (F7)', async () => {
@@ -2074,8 +2083,8 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       const result = await service.scanDirectory('/audiobooks');
 
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
-      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
-      expect(result.discoveries[1]!.duplicateFirstPath).toBe('/audiobooks/Author/SagaDeluxe');
+      expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
 
     it('path match outranks a simultaneous decisive-ASIN AND title+author collision (F5)', async () => {
@@ -2126,13 +2135,13 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
     // separator, so the fixture is platform-unconstructible (path.join inside the real
     // discoverBooks re-keys every mocked entry and the collision premise dissolves).
     // The comparator itself stays covered cross-platform by path-order.test.ts.
-    it.skipIf(process.platform === 'win32')('sorted discovery makes duplicateFirstPath stable across readdir permutations, through the REAL discoverBooks (F3)', async () => {
+    it.skipIf(process.platform === 'win32')('sorted discovery makes the within-scan hint placement stable across readdir permutations, through the REAL discoverBooks (F3)', async () => {
       // Cross-boundary regression: delegate the mocked discoverBooks to the ACTUAL
       // implementation so its `results.sort(comparePosixPath)` runs in-path. A
       // folded-key collision pair — nested `/root/a/b` and one literal folder `/root/a\b`
-      // (both parse to author "a" / title "b", so the second is a within-scan dup of the
-      // first) — is served in two readdir permutations. Because discoverBooks sorts,
-      // duplicateFirstPath is identical across both; deleting the sort makes it
+      // (both parse to author "a" / title "b", so the second is a within-scan collision of the
+      // first) — is served in two readdir permutations. Because discoverBooks sorts, the
+      // hint lands on the SAME folder across both; deleting the sort makes it
       // readdir-order dependent and fails this test.
       const actual = await vi.importActual<typeof import('../../core/utils/book-discovery.js')>(
         '../../core/utils/book-discovery.js',
@@ -2177,12 +2186,14 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       const permA = await runScan([nested, literal]);
       const permB = await runScan([literal, nested]);
 
-      // '/' (0x2f) sorts before '\\' (0x5c), so `/root/a/b` is always first → the normal
-      // row; `/root/a\b` is always the within-scan dup pointing back at it — in BOTH runs.
+      // '/' (0x2f) sorts before '\\' (0x5c), so `/root/a/b` is always first → the plain
+      // candidate (no hint); `/root/a\b` is always the within-scan collision carrying the
+      // hint — in BOTH runs.
       for (const perm of [permA, permB]) {
         expect(perm.get('/root/a/b')!.isDuplicate).toBe(false);
-        expect(perm.get('/root/a\\b')!.duplicateReason).toBe('within-scan');
-        expect(perm.get('/root/a\\b')!.duplicateFirstPath).toBe('/root/a/b');
+        expect(perm.get('/root/a/b')).not.toHaveProperty('reviewReason');
+        expect(perm.get('/root/a\\b')!.isDuplicate).toBe(false);
+        expect(perm.get('/root/a\\b')!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
       }
     });
   });

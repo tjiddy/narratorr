@@ -665,41 +665,44 @@ describe('ImportCard — relativePath prop (#133)', () => {
     expect(screen.getByText('audiobooks/Author/Book')).toBeInTheDocument();
   });
 
-  describe('within-scan duplicates (#342)', () => {
-    it('within-scan duplicate shows Duplicate in scan badge instead of Already owned', () => {
+  describe('former within-scan rows (#1925)', () => {
+    // A within-scan title collision is no longer hard-flagged: it arrives as a normal
+    // candidate (isDuplicate=false) carrying a display-only review hint.
+    const WITHIN_SCAN_HINT = 'Possible duplicate folder in this scan';
+
+    it('renders the review-reason indicator and no "Duplicate in scan" badge', () => {
       const row = makeRow({
-        book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
+        book: makeBook({ isDuplicate: false, reviewReason: WITHIN_SCAN_HINT }),
       });
       render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
-      expect(screen.getByText('Duplicate in scan')).toBeInTheDocument();
-      expect(screen.queryByText('Already owned')).not.toBeInTheDocument();
+      expect(screen.queryByText('Duplicate in scan')).not.toBeInTheDocument();
+      const indicator = screen.getByTestId('review-reason-indicator');
+      expect(indicator).toBeInTheDocument();
+      expect(indicator).toHaveAttribute('title', WITHIN_SCAN_HINT);
     });
 
-    // #1895 F9 — within-scan precedence: paused does NOT re-badge a result-less within-scan
-    // row (it never reaches ConfidenceBadge), so it keeps "Duplicate in scan", not "Paused".
-    it('paused=true: a result-less within-scan duplicate keeps "Duplicate in scan" (not "Paused")', () => {
+    // #1925: a former within-scan row is a normal candidate, so a result-less paused run
+    // renders the ordinary "Paused" badge (it no longer has a special within-scan badge).
+    it('paused=true: a result-less former within-scan row shows the normal "Paused" badge', () => {
       const row = makeRow({
-        book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
+        book: makeBook({ isDuplicate: false, reviewReason: WITHIN_SCAN_HINT }),
       });
       render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates paused />);
-      expect(screen.getByText('Duplicate in scan')).toBeInTheDocument();
-      expect(screen.queryByText('Paused')).not.toBeInTheDocument();
-      expect(screen.queryByText('Matching')).not.toBeInTheDocument();
+      expect(screen.getByText('Paused')).toBeInTheDocument();
+      expect(screen.queryByText('Duplicate in scan')).not.toBeInTheDocument();
     });
 
-    it('within-scan duplicate has checkbox shown (selectable) when lockDuplicates is true', () => {
-      const onToggle = vi.fn();
+    it('has a visible checkbox (selectable) even when lockDuplicates is true', () => {
       const row = makeRow({
-        book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
+        book: makeBook({ isDuplicate: false, reviewReason: WITHIN_SCAN_HINT }),
       });
-      render(<ImportCard row={row} onToggle={onToggle} onEdit={vi.fn()} lockDuplicates />);
-      const selectBtn = screen.getByRole('button', { name: /select|deselect/i });
-      expect(selectBtn).toBeInTheDocument();
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
+      expect(screen.getByRole('button', { name: /select|deselect/i })).toBeInTheDocument();
     });
 
-    it('within-scan duplicate has edit button shown when lockDuplicates is true', () => {
+    it('has an edit button shown even when lockDuplicates is true', () => {
       const row = makeRow({
-        book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
+        book: makeBook({ isDuplicate: false, reviewReason: WITHIN_SCAN_HINT }),
       });
       render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
       expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();

@@ -551,13 +551,13 @@ describe('library-scan routes', () => {
     });
   });
 
-  describe('POST /api/library/import/scan — within-scan duplicates (#342)', () => {
-    it('response includes duplicateReason=within-scan and duplicateFirstPath for within-scan duplicates', async () => {
+  describe('POST /api/library/import/scan — within-scan title collisions (#1925)', () => {
+    it('serializes a former within-scan row as a normal candidate + review hint, no duplicate fields', async () => {
       (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
         .mockResolvedValue({
           discoveries: [
             { path: '/a/Author/Title', parsedTitle: 'Title', parsedAuthor: 'Author', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: false },
-            { path: '/a/Copy/Author/Title', parsedTitle: 'Title', parsedAuthor: 'Author', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/a/Author/Title' },
+            { path: '/a/Copy/Author/Title', parsedTitle: 'Title', parsedAuthor: 'Author', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: false, reviewReason: 'Possible duplicate folder in this scan' },
           ],
           totalFolders: 2,
         });
@@ -565,11 +565,13 @@ describe('library-scan routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/library/import/scan', payload: { path: '/a' } });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
+      // Both rows flow through as normal candidates — the recording ladder decides identity at confirm time.
       expect(body.discoveries[0].isDuplicate).toBe(false);
-      expect(body.discoveries[0]).not.toHaveProperty('duplicateFirstPath');
-      expect(body.discoveries[1].isDuplicate).toBe(true);
-      expect(body.discoveries[1].duplicateReason).toBe('within-scan');
-      expect(body.discoveries[1].duplicateFirstPath).toBe('/a/Author/Title');
+      expect(body.discoveries[1].isDuplicate).toBe(false);
+      expect(body.discoveries[1].reviewReason).toBe('Possible duplicate folder in this scan');
+      // The within-scan hard-flag machinery is gone — no duplicate reason/first-path survives serialization.
+      expect(body.discoveries[1]).not.toHaveProperty('duplicateReason');
+      expect(body.discoveries[1]).not.toHaveProperty('duplicateFirstPath');
     });
   });
 

@@ -209,11 +209,15 @@ describe('manualImportJobPayloadSchema — narrators and seriesPosition flow thr
   });
 });
 
-describe('duplicateReasonSchema — within-scan variant (#342)', () => {
-  it('accepts within-scan value', () => {
+describe('duplicateReasonSchema — DB-backed reasons only (#1925)', () => {
+  it('accepts path and slug values', () => {
+    expect(duplicateReasonSchema.safeParse('path').success).toBe(true);
+    expect(duplicateReasonSchema.safeParse('slug').success).toBe(true);
+  });
+
+  it('rejects the removed within-scan value (#1925)', () => {
     const result = duplicateReasonSchema.safeParse('within-scan');
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data).toBe('within-scan');
+    expect(result.success).toBe(false);
   });
 
   it('rejects invalid values like foo', () => {
@@ -257,7 +261,7 @@ describe('discoveredBookSchema — parsedSeriesPosition field (#1042)', () => {
   });
 });
 
-describe('discoveredBookSchema — duplicateFirstPath field (#342)', () => {
+describe('discoveredBookSchema — duplicateFirstPath removed (#1925)', () => {
   const validDiscovery = {
     path: '/audiobooks/Author/Title',
     parsedTitle: 'Title',
@@ -266,22 +270,16 @@ describe('discoveredBookSchema — duplicateFirstPath field (#342)', () => {
     fileCount: 3,
     totalSize: 100,
     isDuplicate: true,
-    duplicateReason: 'within-scan',
+    duplicateReason: 'slug',
   };
 
-  it('validates discovery with duplicateFirstPath present', () => {
+  it('no longer carries duplicateFirstPath — the field is stripped as unknown', () => {
     const result = discoveredBookSchema.safeParse({
       ...validDiscovery,
       duplicateFirstPath: '/audiobooks/Other/Title',
     });
     expect(result.success).toBe(true);
-    if (result.success) expect(result.data.duplicateFirstPath).toBe('/audiobooks/Other/Title');
-  });
-
-  it('validates discovery with duplicateFirstPath absent', () => {
-    const result = discoveredBookSchema.safeParse(validDiscovery);
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.duplicateFirstPath).toBeUndefined();
+    if (result.success) expect(result.data).not.toHaveProperty('duplicateFirstPath');
   });
 });
 
