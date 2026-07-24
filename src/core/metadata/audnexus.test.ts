@@ -782,6 +782,104 @@ describe('AudnexusProvider', () => {
     });
   });
 
+  describe('getChaptersDetailed — chapter-runtime rescue lookup (#1934)', () => {
+    const chapters = (body: Record<string, unknown> | null, status = 200) =>
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () =>
+          status === 200 ? HttpResponse.json(body) : new HttpResponse(null, { status }),
+        ),
+      );
+
+    it('ok + isAccurate:true + positive runtimeLengthMs → usable runtime (Fablehaven B00CXXEX8W)', async () => {
+      chapters({ runtimeLengthMs: 33219490, isAccurate: true });
+      const result = await provider.getChaptersDetailed('B00CXXEX8W');
+      expect(result.kind).toBe('ok');
+      if (result.kind === 'ok') expect(result.runtimeMs).toBe(33219490);
+    });
+
+    it('ok + isAccurate:false → not usable (runtimeMs null), kind stays ok (NOT invalid_record)', async () => {
+      chapters({ runtimeLengthMs: 33219490, isAccurate: false });
+      const result = await provider.getChaptersDetailed('B_INACCURATE');
+      expect(result.kind).toBe('ok');
+      if (result.kind === 'ok') expect(result.runtimeMs).toBeNull();
+    });
+
+    it('ok + isAccurate:null → valid ok, not usable, NOT invalid_record', async () => {
+      chapters({ runtimeLengthMs: 33219490, isAccurate: null });
+      const result = await provider.getChaptersDetailed('B_NULL_ACC');
+      // A `.optional()` regression would classify `null` as invalid_record — pin ok.
+      expect(result.kind).toBe('ok');
+      if (result.kind === 'ok') expect(result.runtimeMs).toBeNull();
+    });
+
+    it('ok + isAccurate omitted → valid ok, not usable, NOT invalid_record', async () => {
+      chapters({ runtimeLengthMs: 33219490 });
+      const result = await provider.getChaptersDetailed('B_OMIT_ACC');
+      expect(result.kind).toBe('ok');
+      if (result.kind === 'ok') expect(result.runtimeMs).toBeNull();
+    });
+
+    it.each([
+      ['null', null],
+      ['zero', 0],
+      ['negative', -100000],
+    ])('ok + isAccurate:true + runtimeLengthMs %s → not usable', async (_label, ms) => {
+      chapters({ runtimeLengthMs: ms, isAccurate: true });
+      const result = await provider.getChaptersDetailed('B_BAD_MS');
+      expect(result.kind).toBe('ok');
+      if (result.kind === 'ok') expect(result.runtimeMs).toBeNull();
+    });
+
+    it('ok + runtimeLengthMs omitted → not usable', async () => {
+      chapters({ isAccurate: true });
+      const result = await provider.getChaptersDetailed('B_NO_MS');
+      expect(result.kind).toBe('ok');
+      if (result.kind === 'ok') expect(result.runtimeMs).toBeNull();
+    });
+
+    it('HTTP 404 → not_found (no throw)', async () => {
+      chapters(null, 404);
+      const result = await provider.getChaptersDetailed('B_404');
+      expect(result.kind).toBe('not_found');
+    });
+
+    it('HTTP 503 → transient_failure (no throw)', async () => {
+      chapters(null, 503);
+      const result = await provider.getChaptersDetailed('B_503');
+      expect(result.kind).toBe('transient_failure');
+    });
+
+    it('network error → transient_failure (no throw)', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => HttpResponse.error()),
+      );
+      const result = await provider.getChaptersDetailed('B_NET');
+      expect(result.kind).toBe('transient_failure');
+    });
+
+    it('malformed body (wrong-typed runtimeLengthMs) → invalid_record (no throw)', async () => {
+      chapters({ runtimeLengthMs: 'oops', isAccurate: true });
+      const result = await provider.getChaptersDetailed('B_MALFORMED');
+      expect(result.kind).toBe('invalid_record');
+    });
+
+    it('HTTP 429 with Retry-After → rate_limited preserved (not a plain miss), carrying retryAfterMs', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () =>
+          new HttpResponse(null, { status: 429, headers: { 'Retry-After': '15' } }),
+        ),
+      );
+      const result = await provider.getChaptersDetailed('B_429');
+      expect(result.kind).toBe('rate_limited');
+      if (result.kind === 'rate_limited') expect(result.retryAfterMs).toBe(15_000);
+    });
+
+    it('never throws under any error path', async () => {
+      chapters(null, 500);
+      await expect(provider.getChaptersDetailed('B_5xx')).resolves.toBeDefined();
+    });
+  });
+
   describe('legacy getBook wrapper — compatibility matrix (#1129)', () => {
     it('HTTP 429 → wrapper throws RateLimitError', async () => {
       server.use(

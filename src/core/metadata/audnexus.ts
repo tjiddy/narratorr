@@ -46,6 +46,50 @@ const audnexusBookSchema = z.object({
   genres: z.array(z.object({ name: z.string().nullish(), type: z.string().nullish() }).passthrough()).nullish(),
 }).passthrough();
 
+// Chapter-runtime lookup (#1934): the `/books/{asin}/chapters` endpoint carries a
+// second, more accurate whole-edition runtime than the `runtimeLengthMin` scalar.
+// Both fields are `.nullish()` per the external-API convention (zod-nullish-external-api):
+// Audnexus returns `null` for absent values, so a `null`/omitted `isAccurate` is a
+// VALID `ok` response that is simply not trustworthy — never an `invalid_record`.
+const audnexusChaptersSchema = z.object({
+  runtimeLengthMs: z.number().nullish(),
+  isAccurate: z.boolean().nullish(),
+}).passthrough();
+
+type AudnexusChaptersDetail = z.infer<typeof audnexusChaptersSchema>;
+
+/**
+ * Chapter-runtime lookup outcome (#1934). Preserves the same five kinds as
+ * `ProviderLookupResult` so a `rate_limited` survives to the service and can seed
+ * shared backoff (F5) — it is NEVER collapsed to an untyped miss. The `ok`
+ * payload carries the reduced `runtimeMs`: the usable milliseconds value when the
+ * record is trustworthy, or `null` when the response is valid but not usable
+ * (non-`true` `isAccurate`, or a missing/non-positive/non-finite runtime). A
+ * valid-but-unusable `ok` is DISTINCT from `invalid_record` (a body that fails the
+ * raw schema, e.g. a wrong-typed `runtimeLengthMs`).
+ */
+export type ChapterRuntimeOutcome =
+  | { kind: 'ok'; runtimeMs: number | null }
+  | { kind: 'not_found' }
+  | { kind: 'rate_limited'; retryAfterMs: number }
+  | { kind: 'invalid_record' }
+  | { kind: 'transient_failure'; message: string };
+
+/**
+ * The single "usable chapter runtime" reduction (#1934). Usable requires:
+ * `isAccurate === true` AND a finite `runtimeLengthMs` strictly `> 0`. Every other
+ * value (false/null/omitted trust flag; missing/zero/negative/non-finite runtime)
+ * yields `null` — a valid response with no usable chapter runtime. This is the one
+ * home for the trust/positivity decision (the spec's DRY mandate keeps it out of
+ * the service). `Number.isFinite` also rejects a post-parse `NaN`/`Infinity`.
+ */
+function reduceUsableChapterRuntime(data: AudnexusChaptersDetail | null): number | null {
+  if (!data || data.isAccurate !== true) return null;
+  const ms = data.runtimeLengthMs;
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return null;
+  return ms;
+}
+
 const audnexusAuthorSchema = z.object({
   asin: z.string().nullish(),
   name: z.string().nullish(),
@@ -105,6 +149,28 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
       return { kind: 'invalid_record', source: 'mapped', cause: parsed.error, issues: parsed.error.issues };
     }
     return { kind: 'ok', book: parsed.data };
+  }
+
+  /**
+   * Chapter-runtime lookup for the duration-mismatch rescue (#1934). Fetches
+   * `GET /books/{asin}/chapters?region={region}` and returns a discriminated
+   * {@link ChapterRuntimeOutcome} that never throws (every failure is a kind).
+   * The `ok` payload's `runtimeMs` is already reduced to the usable value (or
+   * `null`) via {@link reduceUsableChapterRuntime}, so callers never re-derive
+   * the trust/positivity decision.
+   */
+  async getChaptersDetailed(id: string): Promise<ChapterRuntimeOutcome> {
+    const raw = await this.fetchJsonDetailed(
+      `/books/${encodeURIComponent(id)}/chapters?region=${this.region}`,
+      audnexusChaptersSchema,
+    );
+    switch (raw.kind) {
+      case 'ok': return { kind: 'ok', runtimeMs: reduceUsableChapterRuntime(raw.data) };
+      case 'not_found': return { kind: 'not_found' };
+      case 'rate_limited': return { kind: 'rate_limited', retryAfterMs: raw.retryAfterMs };
+      case 'invalid_record': return { kind: 'invalid_record' };
+      case 'transient_failure': return { kind: 'transient_failure', message: raw.message };
+    }
   }
 
   async getAuthor(id: string): Promise<AuthorMetadata | null> {
