@@ -155,33 +155,51 @@ describe('ImportCard', () => {
     });
   });
 
-  // T1 — the matched series + #position on the review row, so same-titled series
-  // entries (Fablehaven) are distinguishable at a glance. Sourced from the RESOLVED
-  // match metadata, never from the folder-parsed edited.series.
+  // #1927 AC6 — the row reads series/#position EDITED-FIRST, then falls back to the
+  // matched metadata's primary series (mirroring displayNarrator, #1660). The row
+  // always shows the EFFECTIVE value that will be imported, so row/modal/server agree.
   describe('series / #position display', () => {
-    it('shows the matched series name and #position from edited.metadata', () => {
+    it('renders the EDITED series/#position when a non-empty edited series differs from metadata (#1927 AC6)', () => {
       render(<ImportCard
         {...defaultProps}
         row={makeRow({
           matchResult: makeMatchResult(),
-          edited: { title: 'Book Title', author: 'Author Name', series: 'Series Name', metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Children of Time', position: 3 } } },
+          // User edited the series to a value that differs from the matched metadata primary — the
+          // row must show the EDITED value (what imports item-first), not the metadata primary.
+          edited: { title: 'Book Title', author: 'Author Name', series: 'The Dresden Files', seriesPosition: 10, metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Children of Time', position: 3 } } },
+        })}
+      />);
+      expect(screen.getByText('The Dresden Files #10')).toBeInTheDocument();
+      expect(screen.queryByText('Children of Time #3')).not.toBeInTheDocument();
+    });
+
+    it('renders an untouched matched row from its metadata-seeded edited series (#1927 AC4 no-op)', () => {
+      // buildEditedFromBestMatch seeds edited.series from the metadata primary, so an untouched
+      // matched row's edited series already equals the primary — the row shows that value.
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult(),
+          edited: { title: 'Book Title', author: 'Author Name', series: 'Children of Time', seriesPosition: 3, metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Children of Time', position: 3 } } },
         })}
       />);
       expect(screen.getByText('Children of Time #3')).toBeInTheDocument();
     });
 
-    it('sources from matched metadata, NOT the folder-parsed edited.series (unmatched row shows no series line)', () => {
+    it('CLEARED matched row (edited.series === "") falls back to the metadata primary — the deferred value that imports, NOT blank (#1927 AC6)', () => {
       render(<ImportCard
         {...defaultProps}
         row={makeRow({
-          // No metadata → no match yet. edited.series carries the folder guess, which must NOT render here.
-          edited: { title: 'Book Title', author: 'Author Name', series: 'Only In Edited Not Metadata' },
+          matchResult: makeMatchResult(),
+          // Series cleared in the modal → edited.series is empty. The row shows the metadata
+          // primary (what the server imports on the defer path), identical to cleared-narrators.
+          edited: { title: 'Book Title', author: 'Author Name', series: '', metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Children of Time', position: 3 } } },
         })}
       />);
-      expect(screen.queryByText('Only In Edited Not Metadata')).not.toBeInTheDocument();
+      expect(screen.getByText('Children of Time #3')).toBeInTheDocument();
     });
 
-    it('shows the series name alone when the matched series has no position', () => {
+    it('cleared row shows the metadata series name alone when the primary has no position', () => {
       render(<ImportCard
         {...defaultProps}
         row={makeRow({
@@ -192,7 +210,7 @@ describe('ImportCard', () => {
       expect(screen.getByText('Standalone Saga')).toBeInTheDocument();
     });
 
-    it('renders a series position of 0 as #0 (not swallowed — #1028 guard)', () => {
+    it('renders a series position of 0 as #0 on the defer path (not swallowed — #1028 guard)', () => {
       render(<ImportCard
         {...defaultProps}
         row={makeRow({

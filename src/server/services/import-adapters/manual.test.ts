@@ -1319,6 +1319,68 @@ describe('ManualImportAdapter', () => {
       }));
     });
 
+    it('worker rehydration: a non-empty user series + paired position survives the strict schema round-trip and WINS over matched metadata in the copy target (#1927 F6/AC2)', async () => {
+      // Full live chain: JSON → strict manualImportJobPayloadSchema parse → toImportConfirmItem →
+      // copyToLibrary. The user's `Custom Saga #7` must reach the folder target, NOT the matched
+      // metadata's `Provider Saga #2` — the item-first resolver runs at the persisted boundary.
+      const settingsSvc = createMockSettingsService({
+        library: { path: '/library', folderFormat: '{author}/{series} #{seriesPosition}/{title}', fileFormat: '' },
+      });
+      deps.settingsService = inject<SettingsService>(settingsSvc);
+      adapter = new ManualImportAdapter(deps);
+
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
+
+      const payload: ManualImportJobPayload = {
+        path: '/audiobooks/Author/Custom Saga 7/Test Book',
+        title: 'Test Book',
+        authorName: 'Author',
+        seriesName: 'Custom Saga',
+        seriesPosition: 7,
+        metadata: { title: 'Test Book', authors: [{ name: 'Author' }], seriesPrimary: { name: 'Provider Saga', position: 2 } },
+        mode: 'copy',
+      };
+      const job = makeJob({ metadata: JSON.stringify(payload) });
+      await adapter.process(job, ctx);
+
+      const expectedTarget = '/library/Author/Custom Saga #7/Test Book';
+      expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledWith(expect.objectContaining({
+        sourcePath: payload.path,
+        targetPath: expectedTarget,
+      }));
+    });
+
+    it('worker rehydration: a whitespace-only seriesName defers to the matched metadata pair — no whitespace third state (#1927 F4/F10/AC5)', async () => {
+      // A non-React/persisted caller can submit `seriesName: "   "` (the schema accepts any string).
+      // The authoritative server resolver classifies it absent, so the copy target defers to the
+      // metadata pair (Provider Saga #2), NOT a whitespace folder or the item's orphan position 99.
+      const settingsSvc = createMockSettingsService({
+        library: { path: '/library', folderFormat: '{author}/{series} #{seriesPosition}/{title}', fileFormat: '' },
+      });
+      deps.settingsService = inject<SettingsService>(settingsSvc);
+      adapter = new ManualImportAdapter(deps);
+
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
+
+      const payload: ManualImportJobPayload = {
+        path: '/audiobooks/Author/Whitespace/Test Book',
+        title: 'Test Book',
+        authorName: 'Author',
+        seriesName: '   ',
+        seriesPosition: 99,
+        metadata: { title: 'Test Book', authors: [{ name: 'Author' }], seriesPrimary: { name: 'Provider Saga', position: 2 } },
+        mode: 'copy',
+      };
+      const job = makeJob({ metadata: JSON.stringify(payload) });
+      await adapter.process(job, ctx);
+
+      const expectedTarget = '/library/Author/Provider Saga #2/Test Book';
+      expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledWith(expect.objectContaining({
+        sourcePath: payload.path,
+        targetPath: expectedTarget,
+      }));
+    });
+
     it('failure path: payload.narrators wins over payload.metadata.narrators[0] (F11/#1028)', async () => {
       const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
       vi.mocked(stageSourceAudio).mockRejectedValueOnce(new Error('Disk full'));

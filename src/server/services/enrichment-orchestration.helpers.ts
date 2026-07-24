@@ -14,6 +14,7 @@ import { RateLimitError } from '../../core/index.js';
 import type { EnrichmentStatus } from '../../shared/schemas/enrichment.js';
 import { canonicalizeAsin } from '../../shared/asin.js';
 import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
+import { resolveImportSeries } from './resolve-import-series.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -311,7 +312,12 @@ export function buildBookCreatePayload(
   meta: BookMetadata | null,
   status: 'imported' | 'importing',
 ) {
-  const primary = pickPrimarySeries(meta);
+  // Item-first, two-state, pair-locked series resolution (#1927) — shared with
+  // `copyToLibrary`'s `targetBook` so the DB record and the physical folder agree.
+  // A user's explicit series edit wins over the matched metadata's primary series;
+  // an absent (empty/whitespace) item series defers to metadata. `pickPrimarySeries`
+  // (`seriesPrimary` over `series[0]`, #1088/#1097) still selects the defer-path ref.
+  const series = resolveImportSeries(item, pickPrimarySeries(meta));
   return {
     title: item.title,
     // When metadata provides multiple authors (co-authored books), preserve the full array.
@@ -320,12 +326,8 @@ export function buildBookCreatePayload(
       ? meta.authors
       : (item.authorName ? [{ name: item.authorName }] : (meta?.authors?.length ? meta.authors : [])),
     narrators: item.narrators?.length ? item.narrators : meta?.narrators,
-    // Provider-truth precedence: accepted provider metadata wins over raw item/tag fields.
-    // Prefer the canonical primary-series ref over `series[0]` (#1088 / #1097) —
-    // `series[0]` on Audible can be a broader universe entry rather than the
-    // real book series. When `meta` is null (no provider match accepted), fall back to item-derived values.
-    seriesName: primary?.name ?? item.seriesName ?? undefined,
-    seriesPosition: primary?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
+    seriesName: series.name,
+    seriesPosition: series.position,
     coverUrl: item.coverUrl || meta?.coverUrl,
     asin: item.asin || meta?.asin,
     isbn: meta?.isbn,

@@ -200,7 +200,14 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
                   id="edit-series"
                   type="text"
                   value={series}
-                  onChange={(e) => setSeries(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setSeries(next);
+                    // Position without a series is meaningless (#1927 Defect 2): emptying
+                    // the series CLEARS the position value in the UI rather than leaving a
+                    // stale grayed-out number trapped in the disabled field.
+                    if (!next.trim()) setSeriesPosition('');
+                  }}
                   className="w-full px-3 py-2 glass-card rounded-xl text-sm focus-ring"
                 />
               </div>

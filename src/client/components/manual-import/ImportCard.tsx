@@ -107,12 +107,15 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
   const displayNarrator = row.edited.narrators?.length
     ? row.edited.narrators.join(', ')
     : row.edited.metadata?.narrators?.join(', ');
-  // Matched series/#position — from the RESOLVED match metadata (auto-match bestMatch or a user
-  // Fix-Match pick), NOT edited.series (which is folder-parsed at scan time and would show the
-  // parsed series before any match). Only present once matched, so an unmatched row shows nothing
-  // here; the parsed series still shows in the left path. Disambiguates same-titled series entries
-  // (e.g. Fablehaven) at a glance.
-  const matchedSeries = pickPrimarySeries(row.edited.metadata);
+  // Series/#position — edited-first, then metadata fallback (#1927 AC6), mirroring
+  // `displayNarrator` (#1660) and the item-first server resolver so the row shows the
+  // EFFECTIVE value that will be imported. A non-empty edited series (user edit, or the
+  // provider primary seeded onto an untouched matched row) wins and renders verbatim; a
+  // cleared/absent edited series defers to the matched metadata's primary series — the
+  // deferred value the server imports. `edited.series` is trimmed only to classify.
+  const matchedSeries = row.edited.series?.trim()
+    ? { name: row.edited.series, position: row.edited.seriesPosition }
+    : pickPrimarySeries(row.edited.metadata);
   // Show pre-computed relative path if provided, otherwise last 3 path segments
   const pathParts = row.book.path.split(/[\\/]/).filter(Boolean);
   const shortPath = relativePath ?? pathParts.slice(-3).join('/') ?? row.book.path;
