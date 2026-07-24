@@ -45,6 +45,10 @@ function createMockMetadataService(): MetadataService {
   return inject<MetadataService>({
     searchBooks: vi.fn().mockResolvedValue([]),
     getBook: vi.fn().mockResolvedValue(null),
+    // #1934 — chapter-runtime rescue seam. Defaults to "no usable runtime" so a
+    // scalar duration-mismatch stands (existing regression suites unchanged);
+    // rescue tests override per-case.
+    getChapterRuntimeMs: vi.fn().mockResolvedValue(null),
     search: vi.fn(),
     searchSeries: vi.fn(),
     getAuthor: vi.fn(),
@@ -4225,6 +4229,233 @@ describe('MatchJobService', () => {
       const result = await runSingle();
       expect(result.confidence).toBe('high');
       expect(log.info).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining(CAP_LOG));
+    });
+  });
+
+  // ── #1934 — chapter-runtime rescue on the automatic match path ──────────
+  describe('#1934 chapter-runtime rescue', () => {
+    // Exact Fablehaven/B00CXXEX8W numbers from the UAT report.
+    const SCANNED = 33219.47;         // ffprobe format.duration seconds
+    const CHAPTER_MS = 33219490;      // /books/<asin>/chapters runtimeLengthMs (in band)
+    const SCALAR_MIN = 539;           // runtimeLengthMin scalar (32340s, out of band)
+    const ASIN = 'B00CXXEX8W';
+
+    /** Minimal scan result; totalDuration + optional tag fields. */
+    function makeScan(overrides: Partial<Record<string, unknown>> = {}) {
+      return {
+        codec: 'AAC', bitrate: 128000, sampleRate: 44100, channels: 2,
+        bitrateMode: 'cbr' as const, fileFormat: 'm4b', totalSize: 100_000_000,
+        fileCount: 1, hasCoverArt: false, totalDuration: SCANNED,
+        ...overrides,
+      };
+    }
+
+    const fableCandidate: MatchCandidate = {
+      path: '/audiobooks/Brandon Mull/Fablehaven/01 - Fablehaven',
+      title: 'Fablehaven, Book 1',
+      author: 'Brandon Mull',
+    };
+
+    function fableEdition(overrides: Partial<BookMetadata> = {}): BookMetadata {
+      return makeBookMetadata({
+        title: 'Fablehaven, Book 1', authors: [{ name: 'Brandon Mull' }],
+        asin: ASIN, duration: SCALAR_MIN, ...overrides,
+      });
+    }
+
+    async function run(candidate: MatchCandidate = fableCandidate): Promise<MatchResult> {
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+      return service.getJob(id)!.results[0]!;
+    }
+
+    it('AC1: filename-single scalar mismatch + usable in-band chapters → high, no reason/reasonKind', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([fableEdition()]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(CHAPTER_MS);
+
+      const result = await run();
+      expect(result.confidence).toBe('high');
+      expect(result.reason).toBeUndefined();
+      expect(result.reasonKind).toBeUndefined();
+      expect(result.scannedSeconds).toBe(SCANNED);
+      // AC4 — exactly one chapters fetch, for the top candidate's ASIN.
+      expect(metadataService.getChapterRuntimeMs).toHaveBeenCalledExactlyOnceWith(ASIN);
+    });
+
+    it('AC1: filename-multi scalar mismatch + usable in-band chapters → high', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        fableEdition(), fableEdition({ asin: 'B0OTHEREDN' }),
+      ]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(CHAPTER_MS);
+
+      const result = await run();
+      expect(result.confidence).toBe('high');
+      expect(result.reasonKind).toBeUndefined();
+      expect(metadataService.getChapterRuntimeMs).toHaveBeenCalledExactlyOnceWith(ASIN);
+    });
+
+    it('AC1/AC3: tag ASIN kill-shot scalar mismatch + usable in-band chapters → high (single)', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeScan({ tagTitle: 'Fablehaven, Book 1', tagAuthor: 'Brandon Mull', tagAsin: ASIN }),
+      );
+      vi.mocked(metadataService.getBook).mockResolvedValue(fableEdition());
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(CHAPTER_MS);
+
+      const result = await run();
+      expect(result.confidence).toBe('high');
+      expect(result.reasonKind).toBeUndefined();
+      expect(metadataService.getChapterRuntimeMs).toHaveBeenCalledExactlyOnceWith(ASIN);
+      expect(metadataService.searchBooks).not.toHaveBeenCalled(); // kill-shot short-circuits
+    });
+
+    it('AC1: tag-multi scalar mismatch + usable in-band chapters → high', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeScan({ tagTitle: 'Fablehaven', tagAuthor: 'Brandon Mull' }),
+      );
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        fableEdition({ title: 'Fablehaven' }), fableEdition({ title: 'Fablehaven', asin: 'B0OTHEREDN' }),
+      ]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(CHAPTER_MS);
+
+      const result = await run();
+      expect(result.confidence).toBe('high');
+      expect(result.reasonKind).toBeUndefined();
+      expect(metadataService.getChapterRuntimeMs).toHaveBeenCalledExactlyOnceWith(ASIN);
+    });
+
+    it('AC4: a scalar-verified match issues ZERO chapters requests (lazy)', async () => {
+      // Edition 554min (33240s) is within 240s of the 33219.47s scan → verified high.
+      vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([fableEdition({ duration: 554 })]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(CHAPTER_MS);
+
+      const result = await run();
+      expect(result.confidence).toBe('high');
+      expect(metadataService.getChapterRuntimeMs).not.toHaveBeenCalled();
+    });
+
+    it('AC2: a defective file (out of band vs both scalar AND chapters) stays medium/duration-mismatch', async () => {
+      // Scanned 30000s matches neither the 32340s scalar nor the 33219.49s chapters.
+      vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: 30000 }));
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([fableEdition()]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(CHAPTER_MS);
+
+      const result = await run();
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+      expect(result.reason).toContain('Duration mismatch');
+    });
+
+    it('AC7: no usable chapter runtime (null) preserves the scalar mismatch, no throw', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([fableEdition()]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(null);
+
+      const result = await run();
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+      expect(result.error).toBeUndefined(); // did NOT fall into matchSingleBook's 'none' catch
+    });
+
+    it('AC7: a chapters lookup that throws degrades to the scalar verdict (no confidence:none)', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([fableEdition()]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockRejectedValue(new Error('boom'));
+
+      const result = await run();
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+      expect(result.bestMatch).not.toBeNull();
+      expect(result.error).toBeUndefined();
+    });
+
+    it('AC8: a usable chapter runtime exactly 240s from the scan is verified (inclusive band)', async () => {
+      // scanned 1000s; chapters 1240s → Δ240 → in band. Scalar out of band (539min).
+      vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: 1000 }));
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([fableEdition()]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(1240 * 1000);
+
+      const result = await run();
+      expect(result.confidence).toBe('high');
+    });
+
+    it('AC8: 241s from the scan is NOT verified (exclusive), mismatch preserved', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: 1000 }));
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([fableEdition()]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(1241 * 1000);
+
+      const result = await run();
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+    });
+
+    // AC6 — the chapter-corroborated promotion sets capCtx.durationVerified true,
+    // observed via the narrator-cap log across all four mismatch sites. Each case
+    // mismatches the narrator so the (now-high) match demotes and logs the flag.
+    describe('AC6: durationVerified propagates to capCtx across all four sites', () => {
+      const CAP = 'Narrator wrong-edition cap fired';
+      const editionMY = (over: Partial<BookMetadata> = {}) =>
+        fableEdition({ narrators: ['E. B. Stevens'], ...over });
+
+      it('filename-single', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ tagNarrator: 'John Doe' }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([editionMY()]);
+        vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(CHAPTER_MS);
+
+        const result = await run();
+        expect(result.confidence).toBe('medium'); // narrator cap re-demoted
+        expect(log.info).toHaveBeenCalledWith(
+          expect.objectContaining({ matchSource: 'filename-single', durationVerified: true }),
+          expect.stringContaining(CAP),
+        );
+      });
+
+      it('filename-multi', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ tagNarrator: 'John Doe' }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([editionMY(), editionMY({ asin: 'B0OTHEREDN' })]);
+        vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(CHAPTER_MS);
+
+        const result = await run();
+        expect(result.confidence).toBe('medium');
+        expect(log.info).toHaveBeenCalledWith(
+          expect.objectContaining({ matchSource: 'filename-duration-resolved', durationVerified: true }),
+          expect.stringContaining(CAP),
+        );
+      });
+
+      it('tag-single (ASIN kill-shot)', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeScan({ tagTitle: 'Fablehaven, Book 1', tagAuthor: 'Brandon Mull', tagAsin: ASIN, tagNarrator: 'John Doe' }),
+        );
+        vi.mocked(metadataService.getBook).mockResolvedValue(editionMY());
+        vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(CHAPTER_MS);
+
+        const result = await run();
+        expect(result.confidence).toBe('medium');
+        expect(log.info).toHaveBeenCalledWith(
+          expect.objectContaining({ matchSource: 'asin-tag', durationVerified: true }),
+          expect.stringContaining(CAP),
+        );
+      });
+
+      it('tag-multi', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeScan({ tagTitle: 'Fablehaven', tagAuthor: 'Brandon Mull', tagNarrator: 'John Doe' }),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          editionMY({ title: 'Fablehaven' }), editionMY({ title: 'Fablehaven', asin: 'B0OTHEREDN' }),
+        ]);
+        vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(CHAPTER_MS);
+
+        const result = await run();
+        expect(result.confidence).toBe('medium');
+        expect(log.info).toHaveBeenCalledWith(
+          expect.objectContaining({ durationVerified: true }),
+          expect.stringContaining(CAP),
+        );
+      });
     });
   });
 });

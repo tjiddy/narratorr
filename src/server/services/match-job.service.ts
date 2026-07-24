@@ -16,6 +16,7 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, tagTitleScore, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
+import { applyChapterRuntimeRescue } from './match-job-duration-rescue.js';
 
 
 // Data contracts live in match-job.types.ts (#1864 file-size cap); re-exported so the
@@ -201,12 +202,10 @@ class MatchJob {
     // confidence (incl. 'none'/title-floor/error exits) so the client can re-evaluate a
     // medium re-pick. Declared outside the try so the catch's error result honors it too.
     let scannedSeconds: number | undefined;
-    const withScanned = (result: MatchResult): MatchResult =>
-      scannedSeconds && scannedSeconds > 0 ? { ...result, scannedSeconds } : result;
+    const withScanned = (result: MatchResult): MatchResult => scannedSeconds && scannedSeconds > 0 ? { ...result, scannedSeconds } : result;
     try {
       // Scan audio files for duration (used for runtime disambiguation) AND tag fields
-      let duration: number | undefined;
-      let audioResult: AudioScanResult | null = null;
+      let duration: number | undefined, audioResult: AudioScanResult | null = null;
       try {
         const ffprobePath = await this.resolveFfprobePath();
         audioResult = await scanAudioDirectory(book.path, {
@@ -335,6 +334,14 @@ class MatchJob {
           capCtx = { log: this.log, matchSource: 'filename-duration-resolved', durationVerified: confidence === 'high' };
         }
       }
+
+      // Lazy chapter-runtime rescue (#1934) — the ONE seam all four automatic
+      // mismatch sites funnel through. It fetches the edition's chapter table only
+      // when the resolved verdict is a scalar `duration-mismatch` with an ASIN, and
+      // promotes to `high` (dropping the reason, setting `durationVerified`) when
+      // the file matches the edition's real chapter-derived runtime. Every other
+      // state degrades to the scalar verdict; the lookup never throws (AC4/AC7).
+      ({ resolved, capCtx } = await applyChapterRuntimeRescue({ resolved, capCtx, scannedSeconds, chapters: this.metadataService, log: this.log }));
 
       // Single cap chokepoint (#1650/#1652) — every high-producing branch above
       // funnels here; non-high outcomes returned early and never reach it.
