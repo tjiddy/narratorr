@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
-import { AudnexusProvider } from './audnexus.js';
+import { AudnexusProvider, normalizeRuntimeMs } from './audnexus.js';
 import { MetadataError, RateLimitError, TransientError } from './errors.js';
 
 describe('AudnexusProvider', () => {
@@ -868,9 +868,12 @@ describe('AudnexusProvider', () => {
       expect(result).toBeNull();
     });
 
-    it('returns null when runtimeLengthMs is non-finite (1e999 → Infinity)', async () => {
-      // JSON has no NaN/Infinity token, but 1e999 parses to Infinity — enough to
-      // exercise the Number.isFinite guard (the same branch rejects NaN).
+    it('returns null when the payload carries a non-finite runtime (Zod rejects it as invalid → null)', async () => {
+      // JSON has no NaN/Infinity token, but 1e999 parses to Infinity. In Zod 4,
+      // `z.number()` REJECTS Infinity/NaN, so this fails schema parse and surfaces
+      // as invalid_record → null — the fetch path never reaches normalizeRuntimeMs.
+      // The finite guard itself is covered directly in the normalizeRuntimeMs unit
+      // tests below (F1), which is the only layer that can exercise it.
       server.use(
         http.get('https://api.audnex.us/books/:asin/chapters', () => {
           return new HttpResponse('{"asin":"B00CXXEX8W","runtimeLengthMs":1e999}', {
@@ -935,5 +938,31 @@ describe('AudnexusProvider', () => {
 
       await expect(provider.getChapterRuntimeMs('B00CXXEX8W')).rejects.toThrow(TransientError);
     }, 20000);
+  });
+
+  // #1938 (F1) — direct coverage of the finite/positive normalizer guard. This is
+  // the ONLY layer that can reach the `Number.isFinite` branch: Zod 4's
+  // `z.number()` rejects NaN/Infinity upstream, so the fetch path can never hand a
+  // non-finite value to normalizeRuntimeMs. Testing it directly gives the guard a
+  // trustworthy signal — deleting `Number.isFinite` from the normalizer flips the
+  // Infinity/NaN cases here from null to the raw value and fails the test.
+  describe('normalizeRuntimeMs (finite/positive boundary)', () => {
+    it('returns a finite, strictly-positive number unchanged', () => {
+      expect(normalizeRuntimeMs(33219490)).toBe(33219490);
+      expect(normalizeRuntimeMs(1)).toBe(1);
+      expect(normalizeRuntimeMs(0.5)).toBe(0.5);
+    });
+
+    it.each([
+      ['NaN', NaN],
+      ['Infinity', Infinity],
+      ['-Infinity', -Infinity],
+      ['zero', 0],
+      ['negative', -5000],
+      ['null', null],
+      ['undefined', undefined],
+    ])('collapses %s to null', (_label, value) => {
+      expect(normalizeRuntimeMs(value)).toBeNull();
+    });
   });
 });

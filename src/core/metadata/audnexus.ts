@@ -238,8 +238,16 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
  * finite, strictly-positive number is a usable corroboration value. `null`,
  * `undefined`, `0`, negatives, and non-finite (`NaN`/`Infinity`) all collapse to
  * `null` so the match layer never has to re-guard.
+ *
+ * The `Number.isFinite` branch is intentional defense-in-depth. Zod 4's
+ * `z.number()` already rejects `NaN`/`Infinity` upstream (they fail schema parse
+ * and surface as `invalid_record → null` before this runs), so no HTTP payload
+ * reaches here non-finite today — but the normalizer's contract is decoupled from
+ * that schema, so it owns the guard independently. Exported and unit-tested
+ * directly (F1) so the guard has a trustworthy signal even though the fetch path
+ * can't reach it.
  */
-function normalizeRuntimeMs(value: number | null | undefined): number | null {
+export function normalizeRuntimeMs(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
