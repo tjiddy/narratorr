@@ -22,6 +22,7 @@ const mockAudnexus = {
   type: 'audnexus',
   getBook: vi.fn().mockResolvedValue(null),
   getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
+  getChaptersDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
   getAuthor: vi.fn().mockResolvedValue(null),
 };
 
@@ -51,6 +52,7 @@ describe('MetadataService', () => {
     mockAudibleProvider.test.mockReset();
     mockAudnexus.getBook.mockReset();
     mockAudnexus.getBookDetailed.mockReset();
+    mockAudnexus.getChaptersDetailed.mockReset();
     mockAudnexus.getAuthor.mockReset();
     // Reset mock return values
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
@@ -60,6 +62,7 @@ describe('MetadataService', () => {
     mockAudibleProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
     mockAudnexus.getBookDetailed.mockResolvedValue({ kind: 'not_found' });
+    mockAudnexus.getChaptersDetailed.mockResolvedValue({ kind: 'not_found' });
     mockAudnexus.getAuthor.mockResolvedValue(null);
 
     mockLog = createMockLogger();
@@ -1322,6 +1325,55 @@ describe('MetadataService', () => {
       const result = await service.enrichBook('B000TEST');
       expect(result).toEqual(mockEnriched);
       expect(mockAudnexus.getBook).toHaveBeenCalledWith('B000TEST');
+    });
+  });
+
+  describe('getChapterRuntimeMs (#1934)', () => {
+    it('returns the usable runtime on an ok outcome', async () => {
+      mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'ok', runtimeMs: 33219490 });
+      const result = await service.getChapterRuntimeMs('B00CXXEX8W');
+      expect(result).toBe(33219490);
+      expect(mockAudnexus.getChaptersDetailed).toHaveBeenCalledWith('B00CXXEX8W');
+    });
+
+    it('returns null when an ok outcome carries no usable runtime', async () => {
+      mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'ok', runtimeMs: null });
+      expect(await service.getChapterRuntimeMs('B_NOTRUST')).toBeNull();
+    });
+
+    it.each(['not_found', 'invalid_record', 'transient_failure'] as const)(
+      'returns null (no throw) on a %s outcome',
+      async (kind) => {
+        mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind, message: 'x' });
+        expect(await service.getChapterRuntimeMs('B_FAIL')).toBeNull();
+      },
+    );
+
+    it('never propagates a provider throw — returns null (AC7 defensive depth)', async () => {
+      // The provider contract never throws, but the seam is defensive regardless.
+      mockAudnexus.getChaptersDetailed.mockRejectedValueOnce(new Error('boom'));
+      await expect(service.getChapterRuntimeMs('B_THROW')).resolves.toBeNull();
+    });
+
+    it('F5: seeds the SHARED Audnexus backoff on a rate_limited outcome and short-circuits siblings', async () => {
+      mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60000 });
+      const first = await service.getChapterRuntimeMs('B_FIRST');
+      expect(first).toBeNull();
+
+      // Second lookup during the active backoff must short-circuit BEFORE hitting
+      // the provider again — the backoff is shared and pre-emptive.
+      const second = await service.getChapterRuntimeMs('B_SECOND');
+      expect(second).toBeNull();
+      expect(mockAudnexus.getChaptersDetailed).toHaveBeenCalledTimes(1);
+    });
+
+    it('F5: an existing Audnexus backoff (seeded by enrichBook) short-circuits the chapter lookup', async () => {
+      mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60000, 'Audnexus'));
+      await expect(service.enrichBook('B000FIRST')).rejects.toThrow(RateLimitError);
+
+      const result = await service.getChapterRuntimeMs('B_DURING_BACKOFF');
+      expect(result).toBeNull();
+      expect(mockAudnexus.getChaptersDetailed).not.toHaveBeenCalled();
     });
   });
 

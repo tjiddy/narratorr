@@ -7,7 +7,6 @@ import {
   RateLimitError,
   TransientError,
   type MetadataSearchProvider,
-  type MetadataEnrichmentProvider,
   type MetadataSearchResults,
   type BookMetadata,
   type AuthorMetadata,
@@ -22,6 +21,7 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { lookupForFixMatch as runFixMatchLookup, type FixMatchLookupResult } from './metadata-fix-match.js';
 import { resolveBook as runResolveBook, type ResolveBookInput } from './metadata-resolve-book.js';
+import { fetchChapterRuntimeMs as runChapterRuntime } from './metadata-chapter-runtime.js';
 export type { FixMatchLookupResult } from './metadata-fix-match.js';
 export type { ResolveBookInput } from './metadata-resolve-book.js';
 
@@ -94,7 +94,10 @@ export class MetadataService {
   private static readonly KNOWN_PODCAST_TYPES = new Set(['PodcastParent', 'Periodical']);
 
   private providers: MetadataSearchProvider[] = [];
-  private audnexus: MetadataEnrichmentProvider;
+  // Typed as the concrete `AudnexusProvider` (not the general
+  // `MetadataEnrichmentProvider` interface) so the Audnex-only chapter-runtime
+  // lookup is reachable without widening the shared enrichment contract (#1934 F6).
+  private audnexus: AudnexusProvider;
   private throttle = new RequestThrottle();
   private rateLimitUntil: Map<string, number> = new Map();
 
@@ -393,6 +396,23 @@ export class MetadataService {
       this.log.warn({ error: serializeError(error), asin }, 'Audnexus enrichment lookup failed');
       return null;
     }
+  }
+
+  /**
+   * Usable chapter-runtime lookup for the duration-mismatch rescue (#1934). Thin
+   * delegator — the orchestration (shared Audnexus backoff, provider outcome
+   * handling, never-throws degradation) lives in {@link runChapterRuntime} so this
+   * file stays under its `max-lines` budget while reusing the throttle/rate-limit
+   * internals (F5, F7). Returns the trusted runtime in MILLISECONDS or `null`.
+   */
+  getChapterRuntimeMs(asin: string): Promise<number | null> {
+    return runChapterRuntime({
+      getChaptersDetailed: (id) => this.audnexus.getChaptersDetailed(id),
+      acquireThrottle: () => this.throttle.acquire(),
+      isRateLimited: (name) => this.isRateLimited(name),
+      setRateLimited: (name, ms) => this.setRateLimited(name, ms),
+      log: this.log,
+    }, asin);
   }
 
   /**
