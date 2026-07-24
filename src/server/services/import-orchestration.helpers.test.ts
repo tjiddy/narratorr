@@ -74,12 +74,13 @@ describe('copyToLibrary — token precedence (#1028)', () => {
     };
   }
 
-  it('meta.series[0] wins over item series fields (#1071 provider-truth precedence)', async () => {
+  it('item series fields win over meta.series[0] in the folder path (#1927 AC2 item-first)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
-    // Item tags say `Mistborn #5`; provider match says `Wax and Wayne #1` — provider wins.
-    const targetPath = '/library/Author/Wax and Wayne #1/Title';
+    // The user edited Series to `The Dresden Files #10`; provider match says `Wax and Wayne #1`.
+    // Item-first (#1927): the physical folder must match the user's edit, not the metadata.
+    const targetPath = '/library/Author/The Dresden Files #10/Title';
     const path = await copyToLibrary(
-      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Mistborn', seriesPosition: 5 },
+      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'The Dresden Files', seriesPosition: 10 },
       { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Wax and Wayne', position: 1 }] },
       'copy',
       deps,
@@ -99,12 +100,30 @@ describe('copyToLibrary — token precedence (#1028)', () => {
     expect(path.targetPath).toBe(targetPath);
   });
 
-  it('meta.series[0].position: 0 wins over item (#1071 falsy regression guard)', async () => {
+  it('item series with NO position → folder path uses item series, metadata position NOT grafted (#1927 AC3 pair-lock)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
-    // Provider says position 0 (prequel); item tags say 5; provider wins, position 0 preserved.
+    // The user edited Series to `Custom Saga` with no position; provider match says `Provider Saga #15`.
+    // Pair-lock: the folder token must carry the item series with NO position — the metadata position
+    // must NOT be borrowed at this boundary (mirrors the DB-create case). The renderer emits a bare
+    // `#` for the empty position token; the assertion is that `#15` (and `Provider Saga`) never appear.
+    const targetPath = '/library/Author/Custom Saga #/Title';
+    const path = await copyToLibrary(
+      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Custom Saga' },
+      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Provider Saga', position: 15 }] },
+      'copy',
+      deps,
+    );
+    expect(path.targetPath).toBe(targetPath);
+    expect(path.targetPath).not.toContain('#15');
+    expect(path.targetPath).not.toContain('Provider Saga');
+  });
+
+  it('item OMITS series → folder path defers to meta.series[0], position 0 preserved (#1927 AC3 defer path)', async () => {
+    const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
+    // No user series edit; provider says position 0 (prequel). Defer → metadata pair, 0 preserved.
     const targetPath = '/library/Author/Prequels #0/Title';
     const path = await copyToLibrary(
-      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Prequels', seriesPosition: 5 },
+      { path: targetPath, title: 'Title', authorName: 'Author' },
       { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Prequels', position: 0 }] },
       'copy',
       deps,
@@ -112,12 +131,30 @@ describe('copyToLibrary — token precedence (#1028)', () => {
     expect(path.targetPath).toBe(targetPath);
   });
 
-  it('falls back to meta.series[0].position when item.seriesPosition is undefined', async () => {
+  it('item seriesName "   " (whitespace) → folder path defers to metadata (#1927 AC5 non-React-caller guard)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
-    const targetPath = '/library/Author/Discworld #99/Title';
+    // A whitespace-only seriesName (a non-React/persisted caller can submit one) classifies as
+    // absent at the shared resolver, so the folder path defers to the matched metadata pair.
+    const targetPath = '/library/Author/Wax and Wayne #1/Title';
     const path = await copyToLibrary(
-      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Discworld' },
-      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Discworld', position: 99 }] },
+      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: '   ', seriesPosition: 99 },
+      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Wax and Wayne', position: 1 }] },
+      'copy',
+      deps,
+    );
+    expect(path.targetPath).toBe(targetPath);
+  });
+
+  it('padded item series " Saga " wins over a DIFFERENT metadata primary; renderer sanitizes to "Saga" (#1927 AC5/F12)', async () => {
+    const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
+    // Item ` Saga ` #3 vs metadata `Other` #2 — the sanitized `Saga #3` segment can ONLY come
+    // from the item, proving item-first won. The renderer's existing sanitizePath trims the
+    // padding to `Saga` on disk (parity with the pre-change metadata-first path output);
+    // this change adds NO new canonicalization (F13, out of scope).
+    const targetPath = '/library/Author/Saga #3/Title';
+    const path = await copyToLibrary(
+      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: ' Saga ', seriesPosition: 3 },
+      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Other', position: 2 }] },
       'copy',
       deps,
     );

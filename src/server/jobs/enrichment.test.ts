@@ -802,19 +802,54 @@ describe('enrichment job', () => {
       expect(setCall).toHaveProperty('seriesPosition', 1);
     });
 
-    it('does NOT overwrite existing seriesName', async () => {
-      setupEnrichment({ seriesName: 'Existing Series', seriesPosition: 3 }, { series: [{ name: 'New Series', position: 1 }] });
+    // #1927 AC10 — a stored series name is authoritative: enrichment writes NEITHER field,
+    // so a metadata position is never grafted onto a user's stored series (the pair stays
+    // single-sourced). Covers name-present × { position present, position null }.
+    it('stored seriesName present + position present → writes NEITHER field (#1927 AC10)', async () => {
+      setupEnrichment({ seriesName: 'Custom Saga', seriesPosition: 3 }, { series: [{ name: 'Provider Saga', position: 15 }] });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
       const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('seriesName');
+      expect(setCall).not.toHaveProperty('seriesPosition');
     });
 
-    it('fills seriesPosition independently when seriesName exists but seriesPosition is null', async () => {
-      setupEnrichment({ seriesName: 'The Stormlight Archive', seriesPosition: null }, { series: [{ name: 'The Stormlight Archive', position: 1 }] });
+    it('stored seriesName present + position null → position NOT back-filled (#1927 AC10 reverses the old independent fill)', async () => {
+      // Pre-#1927 this back-filled seriesPosition beside the stored name (crossing sources).
+      // AC10: a stored name is authoritative; a missing position is corrected via Fix Match /
+      // the metadata editor, never grafted by enrichment.
+      setupEnrichment({ seriesName: 'Custom Saga', seriesPosition: null }, { series: [{ name: 'Provider Saga', position: 15 }] });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
       const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('seriesName');
-      expect(setCall).toHaveProperty('seriesPosition', 1);
+      expect(setCall).not.toHaveProperty('seriesPosition');
+    });
+
+    it('orphan { seriesName: null, seriesPosition: 5 } → BOTH written atomically, stale position overwritten (#1927 AC10/F11)', async () => {
+      // The name is absent, so the metadata pair is written atomically — the orphan `5` is
+      // overwritten by the metadata position (15), never surviving as `Provider Saga #5`.
+      setupEnrichment({ seriesName: null, seriesPosition: 5 }, { series: [{ name: 'Provider Saga', position: 15 }] });
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+      expect(setCall).toHaveProperty('seriesName', 'Provider Saga');
+      expect(setCall).toHaveProperty('seriesPosition', 15);
+    });
+
+    it('orphan { seriesName: null, seriesPosition: 5 } vs metadata with NO position → position CLEARED to null (#1927 AC10)', async () => {
+      // Absent name + metadata name without a position → seriesName set, orphan position cleared
+      // to null (not retained), so the written pair is single-sourced.
+      setupEnrichment({ seriesName: null, seriesPosition: 5 }, { series: [{ name: 'Provider Saga' }] });
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+      expect(setCall).toHaveProperty('seriesName', 'Provider Saga');
+      expect(setCall).toHaveProperty('seriesPosition', null);
+    });
+
+    it('absent name + metadata primary position 0 → seriesPosition 0 written (not dropped) (#1927 AC10)', async () => {
+      setupEnrichment({ seriesName: null, seriesPosition: null }, { series: [{ name: 'Prequels', position: 0 }] });
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+      expect(setCall).toHaveProperty('seriesName', 'Prequels');
+      expect(setCall).toHaveProperty('seriesPosition', 0);
     });
 
     it('does not change series when enrichment returns empty series array', async () => {

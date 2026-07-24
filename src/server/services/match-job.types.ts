@@ -1,5 +1,6 @@
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { DuplicateReason, RecordingVerdict } from '../../shared/schemas.js';
+import type { MatchReasonKind } from '../../shared/match-reason-kind.js';
 
 /**
  * Match-job data contracts. Extracted from `match-job.service.ts` (#1864 file-size
@@ -26,6 +27,18 @@ export interface MatchResult {
   alternatives: BookMetadata[];
   error?: string;
   reason?: string;
+  /** Structured discriminator for the duration-confidence Review reason (#1929),
+   * paired with `reason` (never parsed from it). Present only on the three
+   * duration-derived medium reasons; absent on high, attempt-cap, narrator-cap,
+   * and legacy medium rows. The client re-pick logic branches on it. */
+  reasonKind?: MatchReasonKind;
+  /** Raw unrounded scanner runtime in SECONDS (#1929) — the same value the match
+   * job compares against a candidate's `duration * 60`. Threaded unconditionally
+   * onto every assembled result whenever the scanner produced a positive runtime
+   * (it is a file property, not confidence-dependent), so the client can
+   * re-evaluate any medium re-pick against the picked edition. Absent when the
+   * scan found no positive runtime. */
+  scannedSeconds?: number;
   /** Post-match library-duplicate flags (#1662), set from the resolved `bestMatch`
    * (which carries the author/asin a no-author filename lacks). The client merge
    * propagates these onto `row.book` so the badge lights up and the row fails closed. */

@@ -1,7 +1,7 @@
 /**
  * Total, cross-platform-stable ordering over filesystem paths (#1891). Scan
- * dispositions (`duplicateFirstPath`, `isDuplicate` in the library scan) are
- * order-dependent under the non-transitive title predicate, so identical trees MUST
+ * dispositions (`isDuplicate` and the within-scan review hint in the library scan)
+ * are order-dependent under the non-transitive title predicate, so identical trees MUST
  * order identically regardless of `readdir` order, separator style, or folded-key
  * collisions. `discoverBooks` sorts its results with this before returning.
  *

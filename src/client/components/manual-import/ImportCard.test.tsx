@@ -155,33 +155,51 @@ describe('ImportCard', () => {
     });
   });
 
-  // T1 — the matched series + #position on the review row, so same-titled series
-  // entries (Fablehaven) are distinguishable at a glance. Sourced from the RESOLVED
-  // match metadata, never from the folder-parsed edited.series.
+  // #1927 AC6 — the row reads series/#position EDITED-FIRST, then falls back to the
+  // matched metadata's primary series (mirroring displayNarrator, #1660). The row
+  // always shows the EFFECTIVE value that will be imported, so row/modal/server agree.
   describe('series / #position display', () => {
-    it('shows the matched series name and #position from edited.metadata', () => {
+    it('renders the EDITED series/#position when a non-empty edited series differs from metadata (#1927 AC6)', () => {
       render(<ImportCard
         {...defaultProps}
         row={makeRow({
           matchResult: makeMatchResult(),
-          edited: { title: 'Book Title', author: 'Author Name', series: 'Series Name', metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Children of Time', position: 3 } } },
+          // User edited the series to a value that differs from the matched metadata primary — the
+          // row must show the EDITED value (what imports item-first), not the metadata primary.
+          edited: { title: 'Book Title', author: 'Author Name', series: 'The Dresden Files', seriesPosition: 10, metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Children of Time', position: 3 } } },
+        })}
+      />);
+      expect(screen.getByText('The Dresden Files #10')).toBeInTheDocument();
+      expect(screen.queryByText('Children of Time #3')).not.toBeInTheDocument();
+    });
+
+    it('renders an untouched matched row from its metadata-seeded edited series (#1927 AC4 no-op)', () => {
+      // buildEditedFromBestMatch seeds edited.series from the metadata primary, so an untouched
+      // matched row's edited series already equals the primary — the row shows that value.
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult(),
+          edited: { title: 'Book Title', author: 'Author Name', series: 'Children of Time', seriesPosition: 3, metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Children of Time', position: 3 } } },
         })}
       />);
       expect(screen.getByText('Children of Time #3')).toBeInTheDocument();
     });
 
-    it('sources from matched metadata, NOT the folder-parsed edited.series (unmatched row shows no series line)', () => {
+    it('CLEARED matched row (edited.series === "") falls back to the metadata primary — the deferred value that imports, NOT blank (#1927 AC6)', () => {
       render(<ImportCard
         {...defaultProps}
         row={makeRow({
-          // No metadata → no match yet. edited.series carries the folder guess, which must NOT render here.
-          edited: { title: 'Book Title', author: 'Author Name', series: 'Only In Edited Not Metadata' },
+          matchResult: makeMatchResult(),
+          // Series cleared in the modal → edited.series is empty. The row shows the metadata
+          // primary (what the server imports on the defer path), identical to cleared-narrators.
+          edited: { title: 'Book Title', author: 'Author Name', series: '', metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Children of Time', position: 3 } } },
         })}
       />);
-      expect(screen.queryByText('Only In Edited Not Metadata')).not.toBeInTheDocument();
+      expect(screen.getByText('Children of Time #3')).toBeInTheDocument();
     });
 
-    it('shows the series name alone when the matched series has no position', () => {
+    it('cleared row shows the metadata series name alone when the primary has no position', () => {
       render(<ImportCard
         {...defaultProps}
         row={makeRow({
@@ -192,7 +210,26 @@ describe('ImportCard', () => {
       expect(screen.getByText('Standalone Saga')).toBeInTheDocument();
     });
 
-    it('renders a series position of 0 as #0 (not swallowed — #1028 guard)', () => {
+    it('renders a padded edited series name VERBATIM (no trim) so the row matches the mapper/DB record (#1927 AC5/AC6/F12)', () => {
+      const paddedName = ' Padded Saga ';
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult(),
+          // Padded edited series with a DIFFERENT metadata primary — the row must render the item's
+          // ORIGINAL padded value (edited.series is trimmed only to classify present-vs-absent, never
+          // rewritten), matching what toConfirmItem ships and the DB stores. A `.trim()` in the render
+          // path would drop the surrounding whitespace and re-introduce row/server disagreement.
+          edited: { title: 'Book Title', author: 'Author Name', series: paddedName, seriesPosition: 5, metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Different Primary', position: 9 } } },
+        })}
+      />);
+      // getByText normalizes for the lookup; textContent is the raw, un-normalized render.
+      const seriesLine = screen.getByText(/Padded Saga/);
+      expect(seriesLine.textContent).toBe(`${paddedName} #5`);
+      expect(screen.queryByText('Different Primary #9')).not.toBeInTheDocument();
+    });
+
+    it('renders a series position of 0 as #0 on the defer path (not swallowed — #1028 guard)', () => {
       render(<ImportCard
         {...defaultProps}
         row={makeRow({
@@ -665,41 +702,44 @@ describe('ImportCard — relativePath prop (#133)', () => {
     expect(screen.getByText('audiobooks/Author/Book')).toBeInTheDocument();
   });
 
-  describe('within-scan duplicates (#342)', () => {
-    it('within-scan duplicate shows Duplicate in scan badge instead of Already owned', () => {
+  describe('former within-scan rows (#1925)', () => {
+    // A within-scan title collision is no longer hard-flagged: it arrives as a normal
+    // candidate (isDuplicate=false) carrying a display-only review hint.
+    const WITHIN_SCAN_HINT = 'Possible duplicate folder in this scan';
+
+    it('renders the review-reason indicator and no "Duplicate in scan" badge', () => {
       const row = makeRow({
-        book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
+        book: makeBook({ isDuplicate: false, reviewReason: WITHIN_SCAN_HINT }),
       });
       render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
-      expect(screen.getByText('Duplicate in scan')).toBeInTheDocument();
-      expect(screen.queryByText('Already owned')).not.toBeInTheDocument();
+      expect(screen.queryByText('Duplicate in scan')).not.toBeInTheDocument();
+      const indicator = screen.getByTestId('review-reason-indicator');
+      expect(indicator).toBeInTheDocument();
+      expect(indicator).toHaveAttribute('title', WITHIN_SCAN_HINT);
     });
 
-    // #1895 F9 — within-scan precedence: paused does NOT re-badge a result-less within-scan
-    // row (it never reaches ConfidenceBadge), so it keeps "Duplicate in scan", not "Paused".
-    it('paused=true: a result-less within-scan duplicate keeps "Duplicate in scan" (not "Paused")', () => {
+    // #1925: a former within-scan row is a normal candidate, so a result-less paused run
+    // renders the ordinary "Paused" badge (it no longer has a special within-scan badge).
+    it('paused=true: a result-less former within-scan row shows the normal "Paused" badge', () => {
       const row = makeRow({
-        book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
+        book: makeBook({ isDuplicate: false, reviewReason: WITHIN_SCAN_HINT }),
       });
       render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates paused />);
-      expect(screen.getByText('Duplicate in scan')).toBeInTheDocument();
-      expect(screen.queryByText('Paused')).not.toBeInTheDocument();
-      expect(screen.queryByText('Matching')).not.toBeInTheDocument();
+      expect(screen.getByText('Paused')).toBeInTheDocument();
+      expect(screen.queryByText('Duplicate in scan')).not.toBeInTheDocument();
     });
 
-    it('within-scan duplicate has checkbox shown (selectable) when lockDuplicates is true', () => {
-      const onToggle = vi.fn();
+    it('has a visible checkbox (selectable) even when lockDuplicates is true', () => {
       const row = makeRow({
-        book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
+        book: makeBook({ isDuplicate: false, reviewReason: WITHIN_SCAN_HINT }),
       });
-      render(<ImportCard row={row} onToggle={onToggle} onEdit={vi.fn()} lockDuplicates />);
-      const selectBtn = screen.getByRole('button', { name: /select|deselect/i });
-      expect(selectBtn).toBeInTheDocument();
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
+      expect(screen.getByRole('button', { name: /select|deselect/i })).toBeInTheDocument();
     });
 
-    it('within-scan duplicate has edit button shown when lockDuplicates is true', () => {
+    it('has an edit button shown even when lockDuplicates is true', () => {
       const row = makeRow({
-        book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
+        book: makeBook({ isDuplicate: false, reviewReason: WITHIN_SCAN_HINT }),
       });
       render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
       expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();

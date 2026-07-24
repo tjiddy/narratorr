@@ -26,6 +26,7 @@ import type { ConnectorService } from './connector.service.js';
 import type { ImportConfirmItem, ImportMode } from './library-scan.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
+import { resolveImportSeries } from './resolve-import-series.js';
 
 
 export interface ImportPipelineDeps {
@@ -243,15 +244,18 @@ export async function copyToLibrary(
 
   const librarySettings = await settingsService.get('library');
   const namingOptions = toNamingOptions(librarySettings);
-  // Provider-truth precedence: accepted provider metadata wins over raw item/tag fields.
-  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
-  // on Audible can be a broader universe entry rather than the real book series.
-  // When `meta` is null (no provider match accepted), fall back to item-derived values.
-  const metaPrimarySeries = pickPrimarySeries(meta);
+  // Item-first, two-state, pair-locked series resolution (#1927) — the SAME shared
+  // resolver `buildBookCreatePayload` uses, so the physical library folder and the
+  // stored DB record resolve the series identically. A user's explicit series edit
+  // wins; an absent (empty/whitespace) item series defers to the matched metadata's
+  // primary (`pickPrimarySeries`: `seriesPrimary` over `series[0]`, #1088/#1097). The
+  // resolver preserves a padded name verbatim; `buildTargetPath`/`sanitizePath` below
+  // is the sole on-disk normalizer, unchanged by this work.
+  const series = resolveImportSeries(item, pickPrimarySeries(meta));
   const targetBook = {
     title: item.title,
-    seriesName: metaPrimarySeries?.name ?? item.seriesName ?? undefined,
-    seriesPosition: metaPrimarySeries?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
+    seriesName: series.name,
+    seriesPosition: series.position,
     narrators: item.narrators?.length
       ? item.narrators.map(name => ({ name }))
       : (meta?.narrators?.length ? meta.narrators.map(n => ({ name: n })) : undefined),

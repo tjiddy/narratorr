@@ -824,4 +824,111 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       expect(hB!.status).toBe('complete');
     });
   });
+
+  // #1925: within-scan title collisions no longer hard-flag at scan time — both folders flow
+  // through as NON-forced confirm items in ONE submission. The runner processes them in ascending
+  // ordinal, committing the first before classifying the second, so the SECOND item's
+  // classifyConfirmItem → findDuplicate → resolveRecordingIdentity runs over the matched metadata
+  // both rows carry (persisted onto the first's placeholder via buildBookCreatePayload). These pin
+  // the three confirm-ladder outcomes; none uses forceImport (the decision must reach the ladder).
+  describe('within-scan sibling confirm-ladder outcomes (#1925 AC6/AC7)', () => {
+    /** A NON-forced staged item whose matched metadata carries the identity signals the ladder reads. */
+    function ladderItem(
+      path: string,
+      title: string,
+      opts: { author?: string; narrators?: string[]; asin?: string; duration?: number } = {},
+    ): StagedImportItem {
+      const author = opts.author ?? 'J.K. Rowling';
+      return {
+        path,
+        title,
+        authorName: author,
+        ...(opts.narrators ? { narrators: opts.narrators } : {}),
+        ...(opts.asin ? { asin: opts.asin } : {}),
+        metadata: {
+          title,
+          authors: [{ name: author }],
+          ...(opts.narrators ? { narrators: opts.narrators } : {}),
+          ...(opts.asin ? { asin: opts.asin } : {}),
+          ...(opts.duration !== undefined ? { duration: opts.duration } : {}),
+        },
+      };
+    }
+
+    async function orderedItems(subId: number) {
+      return db.select().from(importSubmissionItems)
+        .where(eq(importSubmissionItems.submissionId, subId))
+        .orderBy(asc(importSubmissionItems.ordinal));
+    }
+
+    it('AC6 same-edition decisive signal (equal canonical ASIN): first imports, second → same-recording skip; ONE book', async () => {
+      const subId = await seedProcessing([
+        ladderItem('/hp/a', 'Harry Potter', { narrators: ['Jim Dale'], asin: 'B0EQUALASIN' }),
+        ladderItem('/hp/b', 'Harry Potter', { narrators: ['Jim Dale'], asin: 'B0EQUALASIN' }),
+      ]);
+
+      await drainAll();
+
+      const rows = await orderedItems(subId);
+      expect(rows[0]!.disposition).toBe('accepted');
+      expect(rows[1]!.disposition).toBe('skipped');
+      expect(rows[1]!.reason).toBe('already-in-library');
+      // The skip carries the incumbent id+title → surfaced as "already in your library as '{title}'".
+      expect(rows[1]!.existingBookId).toBe(rows[0]!.bookId);
+      expect(rows[1]!.existingTitle).toBe('Harry Potter');
+      // Never two identical books — one imported, one skipped-with-report.
+      expect(await db.select().from(books)).toHaveLength(1);
+    });
+
+    it('AC6 no usable identity signal (title+author only, no narrator/ASIN): first imports, second → review held; ONE book, ONE held', async () => {
+      const subId = await seedProcessing([
+        ladderItem('/hp/a', 'Harry Potter', { narrators: ['Jim Dale'] }),
+        ladderItem('/hp/b', 'Harry Potter'), // no narrator or ASIN signal on the comparison
+      ]);
+
+      await drainAll();
+
+      const rows = await orderedItems(subId);
+      expect(rows[0]!.disposition).toBe('accepted');
+      expect(rows[1]!.disposition).toBe('held');
+      expect(rows[1]!.reason).toBe('recording-review-required');
+      // One imported, one held (NOT skipped, NOT a second import).
+      expect(await db.select().from(books)).toHaveLength(1);
+      const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
+      expect(h!.acceptedCount).toBe(1);
+      expect(h!.heldCount).toBe(1);
+    });
+
+    it('AC7 distinct editions (single narrator vs NAMED full-cast, unequal ASINs): both import; TWO books', async () => {
+      const subId = await seedProcessing([
+        ladderItem('/hp/a', 'Harry Potter', { narrators: ['Jim Dale'], asin: 'B0JIMDALE' }),
+        // Named full-cast members — NOT the literal "Full Cast" placeholder — so the sets compare not-equal.
+        ladderItem('/hp/b', 'Harry Potter', { narrators: ['Hugh Laurie', 'Cush Jumbo'], asin: 'B0FULLCAST' }),
+      ]);
+
+      await drainAll();
+
+      const rows = await orderedItems(subId);
+      expect(rows.every((r) => r.disposition === 'accepted')).toBe(true);
+      // different-recording for the second row → both import as distinct editions (#1712).
+      expect(await db.select().from(books)).toHaveLength(2);
+    });
+
+    it('AC7 negative control (Tehanu shape — different ASIN, EQUAL narrator): second → same-recording skip; ONE book', async () => {
+      // A distinct matched ASIN ALONE does not yield two books: unequal ASINs defer to the narrator
+      // ladder, and an equal narrator (with agreeing duration) resolves same-recording → skip.
+      const subId = await seedProcessing([
+        ladderItem('/te/a', 'Tehanu', { author: 'Ursula K. Le Guin', narrators: ['Jenny Sterlin'], asin: 'B0OLDTEHANU', duration: 420 }),
+        ladderItem('/te/b', 'Tehanu', { author: 'Ursula K. Le Guin', narrators: ['Jenny Sterlin'], asin: 'B0NEWTEHANU', duration: 420 }),
+      ]);
+
+      await drainAll();
+
+      const rows = await orderedItems(subId);
+      expect(rows[0]!.disposition).toBe('accepted');
+      expect(rows[1]!.disposition).toBe('skipped');
+      expect(rows[1]!.reason).toBe('already-in-library');
+      expect(await db.select().from(books)).toHaveLength(1);
+    });
+  });
 });

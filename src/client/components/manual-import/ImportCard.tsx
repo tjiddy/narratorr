@@ -26,7 +26,7 @@ interface ImportCardProps {
    * When true (paused match run, #1895), a genuinely-new pending row renders the static
    * `Paused` badge instead of the spinning `Matching` one. Defaults to false so the
    * non-paused path — and Manual Import — stay byte-identical. Does NOT affect the
-   * within-scan `Duplicate in scan` branch, which precedes the confidence badge.
+   * ownership badge, which precedes the confidence badge.
    */
   paused?: boolean | undefined;
 }
@@ -107,23 +107,24 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
   const displayNarrator = row.edited.narrators?.length
     ? row.edited.narrators.join(', ')
     : row.edited.metadata?.narrators?.join(', ');
-  // Matched series/#position — from the RESOLVED match metadata (auto-match bestMatch or a user
-  // Fix-Match pick), NOT edited.series (which is folder-parsed at scan time and would show the
-  // parsed series before any match). Only present once matched, so an unmatched row shows nothing
-  // here; the parsed series still shows in the left path. Disambiguates same-titled series entries
-  // (e.g. Fablehaven) at a glance.
-  const matchedSeries = pickPrimarySeries(row.edited.metadata);
+  // Series/#position — edited-first, then metadata fallback (#1927 AC6), mirroring
+  // `displayNarrator` (#1660) and the item-first server resolver so the row shows the
+  // EFFECTIVE value that will be imported. A non-empty edited series (user edit, or the
+  // provider primary seeded onto an untouched matched row) wins and renders verbatim; a
+  // cleared/absent edited series defers to the matched metadata's primary series — the
+  // deferred value the server imports. `edited.series` is trimmed only to classify.
+  const matchedSeries = row.edited.series?.trim()
+    ? { name: row.edited.series, position: row.edited.seriesPosition }
+    : pickPrimarySeries(row.edited.metadata);
   // Show pre-computed relative path if provided, otherwise last 3 path segments
   const pathParts = row.book.path.split(/[\\/]/).filter(Boolean);
   const shortPath = relativePath ?? pathParts.slice(-3).join('/') ?? row.book.path;
 
   // When lockDuplicates=true: path-duplicates are fully locked; slug-duplicates show edit but no checkbox.
-  // Within-scan duplicates are always selectable/editable (they're not in the DB yet).
-  const isWithinScanDuplicate = isDuplicate && row.book.duplicateReason === 'within-scan';
   const isPathDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'path';
   const isSlugDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'slug';
   const showCheckbox = !isPathDuplicate && !isSlugDuplicate;
-  const showEditButton = !isDuplicate || isSlugDuplicate || isWithinScanDuplicate;
+  const showEditButton = !isDuplicate || isSlugDuplicate;
   const ownership = ownershipBadge(row.book);
 
   // Left border: amber for no-match, matches LibraryPage's status border pattern
@@ -188,11 +189,9 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
       </div>
 
       {/* Badge: three-way recording-review ladder (#1712) for owned/new-version/review,
-          "Duplicate in scan" for within-scan, confidence badge for a genuinely new book. */}
+          confidence badge for a genuinely new book. */}
       <div className="w-32 shrink-0 flex justify-center">
-        {isWithinScanDuplicate ? (
-          <Badge variant="muted">Duplicate in scan</Badge>
-        ) : ownership ? (
+        {ownership ? (
           <Badge variant={ownership.variant}>{ownership.label}</Badge>
         ) : (
           <ConfidenceBadge confidence={confidence} reason={row.matchResult?.reason} paused={paused} />

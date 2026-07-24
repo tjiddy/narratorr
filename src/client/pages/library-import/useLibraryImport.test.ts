@@ -1385,36 +1385,40 @@ describe('empty result edge case', () => {
     expect(result.current.state.scanError).toBeNull();
   });
 
-  describe('within-scan duplicates — visibility and selection (#342)', () => {
+  describe('former within-scan rows — visibility and selection (#1925)', () => {
     const scanResultWithWithinScan: ScanResult = {
       discoveries: [
         { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
-        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false, reviewReason: 'Possible duplicate folder in this scan' },
         { path: '/audiobooks/DbDup/Book', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'slug' },
       ],
       totalFolders: 3,
     };
 
-    it('within-scan duplicates are auto-deselected on initial load', async () => {
+    it('a former within-scan row is default-selected on initial load (#1925 AC4)', async () => {
       mockScanDirectory.mockResolvedValue(scanResultWithWithinScan);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      const withinScanRow = result.current.state.rows.find(r => r.book.duplicateReason === 'within-scan');
-      expect(withinScanRow?.selected).toBe(false);
+      const withinScanRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/Copy/Author/Book');
+      expect(withinScanRow?.selected).toBe(true);
     });
 
-    it('within-scan duplicates are included in select-all toggling', async () => {
+    it('former within-scan rows participate in select-all toggling', async () => {
       mockScanDirectory.mockResolvedValue(scanResultWithWithinScan);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
+      const findWs = () => result.current.state.rows.find(r => r.book.path === '/audiobooks/Copy/Author/Book');
+      // Starts selected (#1925 AC4). All actionable rows already selected → select-all toggles OFF.
+      expect(findWs()?.selected).toBe(true);
       act(() => { result.current.actions.handleSelectAll(); });
-
-      const withinScanRow = result.current.state.rows.find(r => r.book.duplicateReason === 'within-scan');
-      expect(withinScanRow?.selected).toBe(true);
+      expect(findWs()?.selected).toBe(false);
+      // …and back ON — proving it is part of the toggled actionable set.
+      act(() => { result.current.actions.handleSelectAll(); });
+      expect(findWs()?.selected).toBe(true);
     });
 
     it('DB duplicates (path/slug) are excluded from select-all toggling', async () => {
@@ -1430,17 +1434,17 @@ describe('empty result edge case', () => {
     });
   });
 
-  describe('within-scan duplicates — match flow (#342)', () => {
+  describe('former within-scan rows — match flow (#1925)', () => {
     const scanResultMatchFlow: ScanResult = {
       discoveries: [
         { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
-        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false, reviewReason: 'Possible duplicate folder in this scan' },
         { path: '/audiobooks/DbDup/Book', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'path' },
       ],
       totalFolders: 3,
     };
 
-    it('initial matcher candidates include within-scan duplicates but exclude DB duplicates', async () => {
+    it('initial matcher candidates include former within-scan rows but exclude DB duplicates', async () => {
       // Must set before hook mounts (auto-scan fires on mount)
       mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
       mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
@@ -1479,7 +1483,7 @@ describe('empty result edge case', () => {
       expect(byPath('/audiobooks/Standalone')).not.toHaveProperty('seriesPosition');
     });
 
-    it('mergeMatchResults applies match data to within-scan row and seeds edited metadata', async () => {
+    it('mergeMatchResults applies match data to a former within-scan row and seeds edited metadata', async () => {
       mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
       mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
       // Poll returns a high-confidence match for the within-scan duplicate row
@@ -1504,17 +1508,17 @@ describe('empty result edge case', () => {
 
       // After poll merges match results, within-scan row should have matchResult and edited metadata
       await waitFor(() => {
-        const withinScanRow = result.current.state.rows.find(r => r.book.duplicateReason === 'within-scan');
+        const withinScanRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/Copy/Author/Book');
         expect(withinScanRow?.matchResult?.confidence).toBe('high');
       }, { timeout: 5000 });
 
-      const withinScanRow = result.current.state.rows.find(r => r.book.duplicateReason === 'within-scan');
+      const withinScanRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/Copy/Author/Book');
       expect(withinScanRow?.edited.title).toBe('Matched Title');
       expect(withinScanRow?.edited.author).toBe('Matched Author');
       expect(withinScanRow?.edited.asin).toBe('B999');
     });
 
-    it('mergeMatchResults with confidence=none deselects within-scan row', async () => {
+    it('mergeMatchResults with confidence=none deselects a former within-scan row', async () => {
       mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
       mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
       mockGetMatchJob.mockResolvedValue({
@@ -1531,19 +1535,19 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // Select the within-scan row first
-      const withinScanIdx = result.current.state.rows.findIndex(r => r.book.duplicateReason === 'within-scan');
-      act(() => { result.current.actions.handleToggle(withinScanIdx); });
+      // The row is a normal candidate now, so it starts SELECTED (#1925 AC4).
+      const initial = result.current.state.rows.find(r => r.book.path === '/audiobooks/Copy/Author/Book');
+      expect(initial?.selected).toBe(true);
 
-      // After poll merges confidence=none, the row should be deselected
+      // After poll merges confidence=none, a no-match row is auto-deselected.
       await waitFor(() => {
-        const row = result.current.state.rows.find(r => r.book.duplicateReason === 'within-scan');
+        const row = result.current.state.rows.find(r => r.book.path === '/audiobooks/Copy/Author/Book');
         expect(row?.matchResult?.confidence).toBe('none');
         expect(row?.selected).toBe(false);
       }, { timeout: 5000 });
     });
 
-    it('handleRestartMatch includes within-scan rows and excludes DB duplicates', async () => {
+    it('handleRestartMatch includes former within-scan rows and excludes DB duplicates', async () => {
       // Initial match attempt fails at start (paused) so we can trigger Restart
       mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
       mockStartMatchJob
@@ -1571,17 +1575,17 @@ describe('empty result edge case', () => {
     });
   });
 
-  describe('within-scan duplicates — derived state (#342)', () => {
+  describe('former within-scan rows — derived state (#1925)', () => {
     const scanResultMixed: ScanResult = {
       discoveries: [
         { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
-        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false, reviewReason: 'Possible duplicate folder in this scan' },
         { path: '/audiobooks/DbDup/Book', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'slug' },
       ],
       totalFolders: 3,
     };
 
-    it('readyCount includes selected within-scan duplicates with high-confidence matches', async () => {
+    it('readyCount includes selected former within-scan rows with high-confidence matches', async () => {
       mockScanDirectory.mockReset().mockResolvedValue(scanResultMixed);
       mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
       // Poll returns high-confidence match for both the non-dup and within-scan dup
@@ -1600,25 +1604,23 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // Select all actionable rows (including within-scan dup)
-      act(() => { result.current.actions.handleSelectAll(); });
-
-      // Wait for match results to merge
+      // Both actionable rows are default-selected (#1925 AC4) — no select-all needed. Wait for
+      // the high-confidence matches to merge; both selected + high → readyCount 2.
       await waitFor(() => {
-        expect(result.current.counts.readyCount).toBe(2); // non-dup + within-scan dup, both selected + high confidence
+        expect(result.current.counts.readyCount).toBe(2); // non-dup + former within-scan row
       }, { timeout: 5000 });
     });
 
-    it('pendingCount includes within-scan duplicates awaiting match results', async () => {
+    it('pendingCount includes former within-scan rows awaiting match results', async () => {
       mockScanDirectory.mockResolvedValue(scanResultMixed);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // Within-scan dup has no matchResult yet → should count as pending
+      // Former within-scan row has no matchResult yet → should count as pending
       // DB dup should NOT count as pending
       // Non-dup has no matchResult yet → should count as pending
-      expect(result.current.counts.pendingCount).toBe(2); // non-dup + within-scan dup
+      expect(result.current.counts.pendingCount).toBe(2); // non-dup + former within-scan row
     });
 
     // #1102 — selectedPendingCount is scoped to selection, excludes DB duplicates
@@ -1628,12 +1630,9 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // Non-dup row is auto-selected; within-scan dup is auto-deselected.
+      // Both the non-dup and the former within-scan row are auto-selected (#1925 AC4), so both
+      // pending rows are selected from the start; the DB slug dup is excluded.
       expect(result.current.counts.pendingCount).toBe(2);
-      expect(result.current.counts.selectedPendingCount).toBe(1);
-
-      // Selecting all actionable rows includes the within-scan dup → 2 pending selected.
-      act(() => { result.current.actions.handleSelectAll(); });
       expect(result.current.counts.selectedPendingCount).toBe(2);
     });
 
@@ -1645,14 +1644,15 @@ describe('empty result edge case', () => {
 
       // Locate the DB-dup row index (slug duplicate) and force-select it via handleToggle.
       const dbDupIndex = result.current.state.rows.findIndex(r =>
-        r.book.isDuplicate && r.book.duplicateReason !== 'within-scan',
+        r.book.isDuplicate && r.book.duplicateReason === 'slug',
       );
       expect(dbDupIndex).toBeGreaterThanOrEqual(0);
       act(() => { result.current.actions.handleToggle(dbDupIndex); });
       expect(result.current.state.rows[dbDupIndex]!.selected).toBe(true);
 
       // DB dup must NOT contribute to selectedPendingCount (matches pendingCount semantics).
-      expect(result.current.counts.selectedPendingCount).toBe(1);
+      // Non-dup + former within-scan row remain the only two selected pending rows.
+      expect(result.current.counts.selectedPendingCount).toBe(2);
     });
 
     it('duplicateCount counts only DB duplicates', async () => {
@@ -1664,28 +1664,34 @@ describe('empty result edge case', () => {
       expect(result.current.counts.duplicateCount).toBe(1); // only DB slug dup
     });
 
-    it('allSelected treats within-scan duplicates as actionable', async () => {
+    it('allSelected treats former within-scan rows as actionable', async () => {
       mockScanDirectory.mockResolvedValue(scanResultMixed);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // Not all selected yet (within-scan dup is auto-deselected)
+      // Both actionable rows (non-dup + former within-scan) are auto-selected, so allSelected
+      // is true from the start; the DB slug dup is excluded from the "all actionable" set.
+      expect(result.current.counts.allSelected).toBe(true);
+
+      // Deselecting the former within-scan row breaks allSelected — proving it is counted
+      // among the actionable rows.
+      const withinScanIdx = result.current.state.rows.findIndex(r => r.book.path === '/audiobooks/Copy/Author/Book');
+      act(() => { result.current.actions.handleToggle(withinScanIdx); });
       expect(result.current.counts.allSelected).toBe(false);
 
-      // Select all actionable rows
+      // Reselecting all restores it.
       act(() => { result.current.actions.handleSelectAll(); });
-
       expect(result.current.counts.allSelected).toBe(true);
     });
   });
 
-  describe('within-scan duplicates — registration (#342)', () => {
-    it('handleRegister sends forceImport: true for selected duplicate rows', async () => {
+  describe('former within-scan rows — registration (#1925)', () => {
+    it('handleRegister omits forceImport for a selected former within-scan row (#1925 AC5)', async () => {
       const scanResult: ScanResult = {
         discoveries: [
           { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
-          { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+          { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false, reviewReason: 'Possible duplicate folder in this scan' },
         ],
         totalFolders: 2,
       };
@@ -1698,17 +1704,18 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // Select all (including within-scan dup)
-      act(() => { result.current.actions.handleSelectAll(); });
+      // Both rows are normal candidates, default-selected (#1925 AC4) — register directly.
       act(() => { result.current.actions.handleRegister(); });
 
       await waitFor(() => { expect(mockCreateSubmission).toHaveBeenCalled(); });
 
+      // #1925 AC5: a former within-scan row flows through the confirm-time recording ladder
+      // rather than bypassing it — so neither row submits with forceImport.
       const items = submittedItems() as Array<{ path: string; forceImport?: boolean }>;
       const nonDup = items.find(i => i.path === '/audiobooks/Author/Book');
-      const withinScanDup = items.find(i => i.path === '/audiobooks/Copy/Author/Book');
+      const withinScanRow = items.find(i => i.path === '/audiobooks/Copy/Author/Book');
       expect(nonDup?.forceImport).toBeUndefined();
-      expect(withinScanDup?.forceImport).toBe(true);
+      expect(withinScanRow?.forceImport).toBeUndefined();
     });
 
     it('scan with only DB duplicates still shows All caught up', async () => {
@@ -1725,11 +1732,11 @@ describe('empty result edge case', () => {
       await waitFor(() => { expect(result.current.state.emptyResult).toBe(true); });
     });
 
-    it('scan with mix of new + within-scan duplicates does NOT show All caught up', async () => {
+    it('scan with mix of new + former within-scan rows does NOT show All caught up', async () => {
       const mixedResult: ScanResult = {
         discoveries: [
           { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
-          { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+          { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false, reviewReason: 'Possible duplicate folder in this scan' },
         ],
         totalFolders: 2,
       };
@@ -1832,6 +1839,72 @@ describe('empty result edge case', () => {
 
       expect(result.current.state.rows[0]!.edited).not.toHaveProperty('narrators');
       expect(result.current.state.rows[0]!.edited).not.toHaveProperty('seriesPosition');
+    });
+  });
+
+  // #1929 — re-picking a match on a duration-mismatch Review row must re-check the
+  // picked edition against the scanned runtime, never blanket-clear to green.
+  describe('#1929 re-pick re-evaluates duration evidence (library surface)', () => {
+    const scanWithSingleNew: ScanResult = {
+      discoveries: [
+        { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+      ],
+      totalFolders: 1,
+    };
+    // scanned 14h53m vs the seeded 14h58m edition (Δ300s, out of band).
+    const durationMismatchResult = {
+      path: '/audiobooks/AuthorA/Book1',
+      confidence: 'medium' as const,
+      bestMatch: { title: 'Official', authors: [{ name: 'Author A' }], duration: 898 },
+      alternatives: [],
+      reason: 'Duration mismatch — scanned 14h 53m vs expected 14h 58m',
+      reasonKind: 'duration-mismatch' as const,
+      scannedSeconds: 53580,
+    };
+
+    async function seedMismatchRow() {
+      mockScanDirectory.mockReset().mockResolvedValue(scanWithSingleNew);
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+      mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'completed', total: 1, matched: 1, results: [durationMismatchResult] });
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.rows[0]!.matchResult?.reasonKind).toBe('duration-mismatch'); }, { timeout: 5000 });
+      return result;
+    }
+
+    it('re-picking the SAME (out-of-band) edition keeps the row in Review, not green', async () => {
+      const result = await seedMismatchRow();
+
+      // BookEditModal spreads the pick into a FRESH object — same values, new reference.
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Official', author: 'Author A', series: '',
+          metadata: { title: 'Official', authors: [{ name: 'Author A' }], duration: 898 },
+        });
+      });
+
+      const match = result.current.state.rows[0]!.matchResult;
+      expect(match?.confidence).toBe('medium');
+      expect(match?.reasonKind).toBe('duration-mismatch');
+      expect(match?.reason).toBe('Duration mismatch — scanned 14h 53m vs expected 14h 58m');
+      expect(match?.scannedSeconds).toBe(53580);
+    });
+
+    it('re-picking an in-band edition legitimately clears the row to Matched', async () => {
+      const result = await seedMismatchRow();
+
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Official', author: 'Author A', series: '',
+          metadata: { title: 'Official', authors: [{ name: 'Author A' }], duration: 894 }, // 14h54m → Δ60s
+        });
+      });
+
+      const match = result.current.state.rows[0]!.matchResult;
+      expect(match?.confidence).toBe('high');
+      expect(match?.reason).toBeUndefined();
+      expect(match?.reasonKind).toBeUndefined();
+      expect(match?.scannedSeconds).toBe(53580);
     });
   });
 });

@@ -34,7 +34,17 @@ export type ImportMode = 'copy' | 'move';
  * existing library book but carries no decisive ASIN. Display-only; the match job
  * later replaces it with the authoritative recording verdict once narrators exist.
  */
-const SCAN_RECORDING_REVIEW_HINT = 'Possible match to an existing book — checking recording';
+export const SCAN_RECORDING_REVIEW_HINT = 'Possible match to an existing book — checking recording';
+
+/**
+ * Display-only within-scan hint (#1925): the second-and-later folder of a
+ * title+author collision *inside one scan* carries this so the user still notices
+ * two folders of the same title during triage. Distinct from
+ * `SCAN_RECORDING_REVIEW_HINT` (an *existing-library* collision) — a within-scan
+ * collision is a different situation and never a decision. Never affects selection,
+ * counts, or submission; the recording ladder decides identity at confirm time.
+ */
+export const SCAN_WITHIN_SCAN_REVIEW_HINT = 'Possible duplicate folder in this scan';
 
 /** An existing-library row in a pairwise dedup bucket (#1891), ordered by `id` asc. */
 interface ExistingTitleEntry {
@@ -42,9 +52,13 @@ interface ExistingTitleEntry {
   shape: TitleShape;
 }
 
-/** A prior scanned row in a within-scan dedup bucket (#1891), in scan order. */
+/**
+ * A prior scanned row in a within-scan dedup bucket (#1891), in scan order. Only the
+ * title `shape` is retained — the second-and-later row needs nothing but a shape to
+ * pairwise-match against for the display hint (#1925); the row's own path is no longer
+ * carried, since the first-path field it used to feed was removed (#1925 F6).
+ */
 interface WithinScanEntry {
-  path: string;
   shape: TitleShape;
 }
 
@@ -287,7 +301,7 @@ export class LibraryScanService {
       // can pairwise-match a row that was itself emitted as a within-scan duplicate.
       if (shape && bucketKey) {
         const arr = withinScanBucket.get(bucketKey) ?? [];
-        arr.push({ path: folder.path, shape });
+        arr.push({ shape });
         withinScanBucket.set(bucketKey, arr);
       }
     }
@@ -306,9 +320,10 @@ export class LibraryScanService {
 
   /**
    * Classify a single scanned folder into a `DiscoveredBook` (#1891). Ordered
-   * precedence, unchanged from the pre-#1891 inline chain: (1) path match, (2)
-   * decisive-ASIN match, (3) existing-library title+author review hint, (4)
-   * within-scan duplicate, (5) normal. The title+author branches now bucket by
+   * precedence: (1) path match, (2) decisive-ASIN match, (3) existing-library
+   * title+author review hint, (4) within-scan title+author collision (#1925 — a
+   * NORMAL candidate carrying a display-only hint, NOT a hard flag; recording
+   * identity is deferred to the confirm ladder), (5) normal. The title+author branches now bucket by
    * author+`colonBase` and pairwise-filter (the predicate is non-transitive), picking
    * the lowest existing `books.id` (bucket is id-ordered) and the first prior scan row
    * (bucket is scan-ordered). Registration into the within-scan bucket is the caller's
@@ -353,12 +368,18 @@ export class LibraryScanService {
         return buildDiscoveredBook(...base, { isDuplicate: false, existingBookId: existingMatch.id, reviewReason: reviewReason ?? SCAN_RECORDING_REVIEW_HINT });
       }
 
-      // (4) Within-scan duplicate (a prior scan row pairwise-matches). First prior row
-      // in sorted scan order wins (bucket is scan-ordered).
+      // (4) Within-scan title+author collision (#1925): a prior scan row pairwise-matches.
+      // NOT a hard duplicate — scan time has no narrators, so "same recording?" cannot be
+      // answered here; deciding it a second time (in disagreement with the confirm-time
+      // recording ladder) is exactly the bug. Emit a NORMAL candidate so both folders flow
+      // through the match job and the sequential confirm runner decides identity where
+      // narrators exist (same-recording → skip, different-recording → edition, unsure →
+      // held). Carry a display-only within-scan hint on the second-and-later folder so the
+      // user still notices the collision during triage; preserve any upstream reviewReason.
       const withinMatch = (maps.withinScanBucket.get(bucketKey) ?? []).find((e) => titlesMatchForDedup(e.shape, shape));
       if (withinMatch) {
-        this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (within-scan title+author match)');
-        return buildDiscoveredBook(...base, { isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: withinMatch.path, reviewReason });
+        this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Within-scan title+author match — deferring recording verdict to confirm ladder');
+        return buildDiscoveredBook(...base, { isDuplicate: false, reviewReason: reviewReason ?? SCAN_WITHIN_SCAN_REVIEW_HINT });
       }
     }
 
