@@ -22,6 +22,7 @@ const mockAudnexus = {
   type: 'audnexus',
   getBook: vi.fn().mockResolvedValue(null),
   getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
+  getChaptersDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
   getAuthor: vi.fn().mockResolvedValue(null),
 };
 
@@ -51,6 +52,7 @@ describe('MetadataService', () => {
     mockAudibleProvider.test.mockReset();
     mockAudnexus.getBook.mockReset();
     mockAudnexus.getBookDetailed.mockReset();
+    mockAudnexus.getChaptersDetailed.mockReset();
     mockAudnexus.getAuthor.mockReset();
     // Reset mock return values
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
@@ -60,6 +62,7 @@ describe('MetadataService', () => {
     mockAudibleProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
     mockAudnexus.getBookDetailed.mockResolvedValue({ kind: 'not_found' });
+    mockAudnexus.getChaptersDetailed.mockResolvedValue({ kind: 'not_found' });
     mockAudnexus.getAuthor.mockResolvedValue(null);
 
     mockLog = createMockLogger();
@@ -1322,6 +1325,82 @@ describe('MetadataService', () => {
       const result = await service.enrichBook('B000TEST');
       expect(result).toEqual(mockEnriched);
       expect(mockAudnexus.getBook).toHaveBeenCalledWith('B000TEST');
+    });
+  });
+
+  // #1932 (F9) — the duration-mismatch rescue delegates to Audnexus's
+  // getChaptersDetailed via a non-throwing service method with a two-point backoff
+  // check (F11). Returns the usable runtime (ms) or null; seeds shared backoff on 429.
+  describe('getChapterRuntimeMs (#1932)', () => {
+    it('delegates to the adapter and returns a usable runtime as a number', async () => {
+      mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'ok', runtimeMs: 33219490 });
+
+      const result = await service.getChapterRuntimeMs('B00CXXEX8W');
+      expect(result).toBe(33219490);
+      expect(mockAudnexus.getChaptersDetailed).toHaveBeenCalledWith('B00CXXEX8W');
+    });
+
+    it('returns null for a valid-but-unusable ok outcome (runtimeMs null)', async () => {
+      mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'ok', runtimeMs: null });
+
+      expect(await service.getChapterRuntimeMs('B_UNUSABLE')).toBeNull();
+    });
+
+    it('returns null on not_found / transient / invalid outcomes without touching backoff', async () => {
+      mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'transient_failure', message: 'boom' });
+      expect(await service.getChapterRuntimeMs('B_TRANSIENT')).toBeNull();
+
+      // Backoff untouched — the very next call still reaches the provider.
+      mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'ok', runtimeMs: 100 });
+      expect(await service.getChapterRuntimeMs('B_NEXT')).toBe(100);
+      expect(mockAudnexus.getChaptersDetailed).toHaveBeenCalledTimes(2);
+    });
+
+    it('fresh 429: records shared backoff, returns null (never throws), and skips the next call', async () => {
+      mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60000 });
+
+      await expect(service.getChapterRuntimeMs('B_429')).resolves.toBeNull();
+
+      // Active backoff now set → a second lookup returns null WITHOUT hitting the
+      // provider again (call count stays at 1).
+      expect(await service.getChapterRuntimeMs('B_AFTER')).toBeNull();
+      expect(mockAudnexus.getChaptersDetailed).toHaveBeenCalledTimes(1);
+    });
+
+    it('active backoff on entry: returns null and makes no provider call', async () => {
+      // Seed backoff with a fresh 429, then clear the spy and assert the next call
+      // never reaches the adapter.
+      mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60000 });
+      await service.getChapterRuntimeMs('B_SEED');
+      mockAudnexus.getChaptersDetailed.mockClear();
+
+      expect(await service.getChapterRuntimeMs('B_BLOCKED')).toBeNull();
+      expect(mockAudnexus.getChaptersDetailed).not.toHaveBeenCalled();
+    });
+
+    it('concurrent backoff establishment (F11): the post-acquire re-check keeps B out of the adapter', async () => {
+      // Call A resolves rate_limited and seeds backoff while call B is still waiting
+      // in the delay-only throttle. Both entry checks pass (no backoff yet), but B's
+      // SECOND (post-acquire) isRateLimited check short-circuits → adapter runs once.
+      mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60000 });
+
+      const [a, b] = await Promise.all([
+        service.getChapterRuntimeMs('B_A'),
+        service.getChapterRuntimeMs('B_B'),
+      ]);
+
+      expect(a).toBeNull();
+      expect(b).toBeNull();
+      // The overlap the pre-acquire-only sequence misses: adapter invoked exactly
+      // once (for A); B never reaches it.
+      expect(mockAudnexus.getChaptersDetailed).toHaveBeenCalledTimes(1);
+      expect(mockAudnexus.getChaptersDetailed).toHaveBeenCalledWith('B_A');
+    });
+
+    it('never throws even if the adapter unexpectedly throws', async () => {
+      mockAudnexus.getChaptersDetailed.mockRejectedValueOnce(new Error('surprise'));
+
+      await expect(service.getChapterRuntimeMs('B_THROW')).resolves.toBeNull();
     });
   });
 

@@ -7,7 +7,6 @@ import {
   RateLimitError,
   TransientError,
   type MetadataSearchProvider,
-  type MetadataEnrichmentProvider,
   type MetadataSearchResults,
   type BookMetadata,
   type AuthorMetadata,
@@ -21,6 +20,7 @@ import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { lookupForFixMatch as runFixMatchLookup, type FixMatchLookupResult } from './metadata-fix-match.js';
+import { lookupChapterRuntimeMs } from './metadata-chapter-runtime.js';
 import { resolveBook as runResolveBook, type ResolveBookInput } from './metadata-resolve-book.js';
 export type { FixMatchLookupResult } from './metadata-fix-match.js';
 export type { ResolveBookInput } from './metadata-resolve-book.js';
@@ -94,7 +94,11 @@ export class MetadataService {
   private static readonly KNOWN_PODCAST_TYPES = new Set(['PodcastParent', 'Periodical']);
 
   private providers: MetadataSearchProvider[] = [];
-  private audnexus: MetadataEnrichmentProvider;
+  // Concrete `AudnexusProvider` (#1932, F5), not the `MetadataEnrichmentProvider`
+  // interface — the chapter-runtime rescue needs `getChaptersDetailed`, which the
+  // enrichment interface deliberately does not expose. Private and constructed
+  // in-house, so this is the lowest-wiring option (no external mock/injection).
+  private audnexus: AudnexusProvider;
   private throttle = new RequestThrottle();
   private rateLimitUntil: Map<string, number> = new Map();
 
@@ -360,6 +364,23 @@ export class MetadataService {
       acquireThrottle: () => this.throttle.acquire(),
       isRateLimited: (name) => this.isRateLimited(name),
       getRateLimitRemainingMs: (name) => this.getRateLimitRemainingMs(name),
+      setRateLimited: (name, ms) => this.setRateLimited(name, ms),
+    }, asin);
+  }
+
+  /**
+   * Lazy Audnexus chapter-runtime lookup for the duration-mismatch rescue (#1932).
+   * Returns the usable chapter runtime in MILLISECONDS or `null`; never throws.
+   * The two-point backoff check and non-throwing contract live in
+   * {@link lookupChapterRuntimeMs} — this thin delegator wires the shared throttle
+   * and rate-limit bookkeeping, keeping the file under its `max-lines` budget.
+   */
+  getChapterRuntimeMs(asin: string): Promise<number | null> {
+    return lookupChapterRuntimeMs({
+      audnexus: this.audnexus,
+      log: this.log,
+      acquireThrottle: () => this.throttle.acquire(),
+      isRateLimited: (name) => this.isRateLimited(name),
       setRateLimited: (name, ms) => this.setRateLimited(name, ms),
     }, asin);
   }
