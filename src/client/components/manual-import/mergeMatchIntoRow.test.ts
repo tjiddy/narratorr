@@ -78,6 +78,26 @@ describe('mergeMatchIntoRow', () => {
     expect(merged.selected).toBe(true);
   });
 
+  it('a late match does NOT clobber a userEdited row\'s explicit series/position edit (#1927 AC8)', () => {
+    // The user edited Series to `The Dresden Files #10` BEFORE the (long-running) match arrived.
+    // The late bestMatch carries a DIFFERENT primary series; the userEdited guard must leave the
+    // user's series/position untouched so the edit is not silently discarded by the race.
+    const userEdited = makeRow({
+      userEdited: true,
+      selected: true,
+      edited: { title: 'Book Title', author: 'Author Name', series: 'The Dresden Files', seriesPosition: 10 },
+    });
+    const merged = mergeMatchIntoRow(
+      userEdited,
+      makeMatch({ confidence: 'high', bestMatch: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Wax and Wayne', position: 1 } } }),
+    );
+    expect(merged.edited.series).toBe('The Dresden Files');
+    expect(merged.edited.seriesPosition).toBe(10);
+    expect(merged.edited.metadata).toBeUndefined();
+    expect(merged.matchResult?.confidence).toBe('high');
+    expect(merged.selected).toBe(true);
+  });
+
   it('post-match duplicate deselects a selected high-confidence row and flags row.book (#1662 F8)', () => {
     const result = mergeMatchIntoRow(
       makeRow({ selected: true }),

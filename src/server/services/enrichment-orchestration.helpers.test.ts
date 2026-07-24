@@ -561,31 +561,77 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.publisher).toBeUndefined();
   });
 
-  it('meta.series[0].position: 0 wins over item.seriesPosition (provider-truth, regression guard for falsy)', async () => {
+  // #1927 — item-first, two-state, pair-locked series resolution (was #1071 metadata-first).
+  it('item supplies series + position → payload uses the ITEM values, not metadata (#1927 AC1)', async () => {
     const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
     const payload = buildBookCreatePayload(
-      { path: '/x', title: 'T', seriesPosition: 99 },
-      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 0 }] },
-      'importing',
-    );
-    expect(payload.seriesPosition).toBe(0);
-  });
-
-  it('meta.series[0].position wins over item.seriesPosition (#1071 provider-truth precedence)', async () => {
-    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
-    const payload = buildBookCreatePayload(
-      { path: '/x', title: 'T', seriesPosition: 99 },
+      { path: '/x', title: 'T', seriesName: 'The Dresden Files', seriesPosition: 10 },
       { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'Wax and Wayne', position: 1 }] },
       'importing',
     );
-    expect(payload.seriesPosition).toBe(1);
-    expect(payload.seriesName).toBe('Wax and Wayne');
+    expect(payload.seriesName).toBe('The Dresden Files');
+    expect(payload.seriesPosition).toBe(10);
   });
 
-  it('item.seriesPosition: 1.5 falls through when meta has no series', async () => {
+  it('item supplies series but NO position → item series with NO position, metadata position NOT grafted (#1927 AC3 pair-lock)', async () => {
     const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
     const payload = buildBookCreatePayload(
-      { path: '/x', title: 'T', seriesPosition: 1.5 },
+      { path: '/x', title: 'T', seriesName: 'Custom Saga' },
+      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'Provider Saga', position: 15 }] },
+      'importing',
+    );
+    expect(payload.seriesName).toBe('Custom Saga');
+    expect(payload.seriesPosition).toBeUndefined();
+  });
+
+  it('item supplies series + position 0 → item position 0 survives (#1927 AC3 falsy guard)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T', seriesName: 'Prequels', seriesPosition: 0 },
+      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'Provider Saga', position: 15 }] },
+      'importing',
+    );
+    expect(payload.seriesName).toBe('Prequels');
+    expect(payload.seriesPosition).toBe(0);
+  });
+
+  it('item OMITS series → defers to metadata primary, position 0 preserved (#1927 AC3/AC4 defer path)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 0 }] },
+      'importing',
+    );
+    expect(payload.seriesName).toBe('S');
+    expect(payload.seriesPosition).toBe(0);
+  });
+
+  it('item seriesName "   " (whitespace) → treated as absent, defers to metadata (#1927 AC5)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T', seriesName: '   ', seriesPosition: 99 },
+      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'Wax and Wayne', position: 1 }] },
+      'importing',
+    );
+    expect(payload.seriesName).toBe('Wax and Wayne');
+    expect(payload.seriesPosition).toBe(1);
+  });
+
+  it('item padded non-empty series " Saga " → item wins, name preserved VERBATIM (trim classifies only, #1927 AC5/F12)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T', seriesName: ' Saga ', seriesPosition: 3 },
+      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'Provider Saga', position: 15 }] },
+      'importing',
+    );
+    expect(payload.seriesName).toBe(' Saga ');
+    expect(payload.seriesPosition).toBe(3);
+  });
+
+  it('item.seriesPosition: 1.5 with a series falls through when meta has no series (#1927 item-first)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T', seriesName: 'Some Series', seriesPosition: 1.5 },
       { title: 'T', authors: [{ name: 'A' }] },
       'importing',
     );

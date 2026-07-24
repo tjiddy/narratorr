@@ -185,6 +185,59 @@ describe('BookEditModal', () => {
     });
   });
 
+  // #1927 Defect 2 — the Series Position field must not trap a stale value. Emptying
+  // the Series input CLEARS the position value in the UI (not merely disables it), and
+  // handleSave keeps series/position paired (position omitted when series is empty).
+  describe('series position field (#1927 Defect 2)', () => {
+    it('clearing the Series input clears the Series Position value (not just disables it)', async () => {
+      renderModal({ initial: makeEditState({ series: 'Series Name', seriesPosition: 15 }) });
+      const positionInput = screen.getByLabelText('Series Position') as HTMLInputElement;
+      expect(positionInput.value).toBe('15');
+
+      await userEvent.clear(screen.getByLabelText('Series'));
+      await waitFor(() => {
+        expect(positionInput.value).toBe('');
+      });
+      expect(positionInput).toBeDisabled();
+    });
+
+    it('reopening after a cleared save shows a blank, disabled position (no stale value)', () => {
+      renderModal({ initial: makeEditState({ series: '' }) });
+      const positionInput = screen.getByLabelText('Series Position') as HTMLInputElement;
+      expect(positionInput.value).toBe('');
+      expect(positionInput).toBeDisabled();
+    });
+
+    it('handleSave omits seriesPosition when the series is cleared', async () => {
+      const onSave = vi.fn();
+      renderModal({ onSave, initial: makeEditState({ series: 'Series Name', seriesPosition: 15 }) });
+
+      await userEvent.clear(screen.getByLabelText('Series'));
+      await userEvent.click(screen.getByText('Save'));
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+      const saved = onSave.mock.calls[0]![0];
+      expect(saved.series).toBe('');
+      expect(saved).not.toHaveProperty('seriesPosition');
+    });
+
+    it('handleSave includes the edited series and position when both are set', async () => {
+      const onSave = vi.fn();
+      renderModal({ onSave, initial: makeEditState({ series: '' }) });
+
+      await userEvent.type(screen.getByLabelText('Series'), 'The Dresden Files');
+      await userEvent.type(screen.getByLabelText('Series Position'), '10');
+      await userEvent.click(screen.getByText('Save'));
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+      const saved = onSave.mock.calls[0]![0];
+      expect(saved.series).toBe('The Dresden Files');
+      expect(saved.seriesPosition).toBe(10);
+    });
+  });
+
   describe('save behavior', () => {
     it('calls onSave with current field values', async () => {
       const onSave = vi.fn();

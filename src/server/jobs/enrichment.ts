@@ -172,11 +172,24 @@ function fillEmptyFields(book: ExistingBookFields, result: Record<string, unknow
 }
 
 /**
- * Fill series fields independently (matching library-scan.service.ts:432-433).
- * Prefers the Audnexus-derived `seriesPrimary` canonical ref, falling back to
- * `series[0]` only when `seriesPrimary` is absent — `series[0]` on Audible can
- * be a broader universe ref (e.g. Cosmere) rather than the real book series
- * (Stormlight Archive). (#1088 / #1097)
+ * Fill series fields as one atomic single-source pair (#1927 AC10). The `(name,
+ * position)` pair must always share ONE source, so enrichment never crosses a
+ * stored user series with a metadata position:
+ *
+ * - Stored `seriesName` present (any position) → write NEITHER field. The stored
+ *   pair is authoritative; a missing position on a named series is corrected via
+ *   Fix Match / the metadata editor, not by grafting a metadata position on.
+ * - Stored `seriesName` absent + metadata has a primary name → write BOTH
+ *   atomically: `seriesName = primary.name` and `seriesPosition = primary.position
+ *   ?? null`. NOT gated on the stored position, so a reachable orphan
+ *   `{ seriesName: null, seriesPosition: 5 }` (Manual Add / independent writes) has
+ *   its stale position overwritten or cleared to match the metadata name rather
+ *   than surviving as `Provider Saga #5`. Position 0 survives (`?? null` keeps 0).
+ * - No usable primary name → write nothing.
+ *
+ * Prefers the Audnexus-derived `seriesPrimary` canonical ref over `series[0]`
+ * (#1088 / #1097) — `series[0]` on Audible can be a broader universe ref (Cosmere)
+ * rather than the real book series (Stormlight Archive).
  */
 function fillSeriesFields(
   book: ExistingBookFields,
@@ -187,9 +200,9 @@ function fillSeriesFields(
 ): Record<string, unknown> {
   const updates: Record<string, unknown> = {};
   const primary = pickPrimarySeries(result);
-  if (!primary) return updates;
-  if (primary.name && !book.seriesName) updates.seriesName = primary.name;
-  if (primary.position != null && book.seriesPosition == null) updates.seriesPosition = primary.position;
+  if (!primary?.name || book.seriesName) return updates;
+  updates.seriesName = primary.name;
+  updates.seriesPosition = primary.position ?? null;
   return updates;
 }
 
