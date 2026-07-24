@@ -823,4 +823,117 @@ describe('AudnexusProvider', () => {
       expect(result).toBeNull();
     });
   });
+
+  // #1938 — chapter-runtime corroboration fetch. Returns the top-level
+  // runtimeLengthMs ONLY when finite and > 0; every no-data / not-found case is
+  // null. Rate-limit / transient failures surface the same discriminated way
+  // getBook does (thrown RateLimitError / TransientError).
+  describe('getChapterRuntimeMs', () => {
+    it('returns the chapter-sum runtime and requests /books/{asin}/chapters?region=us', async () => {
+      let requestedUrl = '';
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', ({ request }) => {
+          requestedUrl = request.url;
+          return HttpResponse.json({
+            asin: 'B00CXXEX8W',
+            runtimeLengthMs: 33219490,
+            chapters: [
+              { title: 'Opening Credits', lengthMs: 12000, startOffsetMs: 0 },
+              { title: 'Chapter 1', lengthMs: 1000000, startOffsetMs: 12000 },
+            ],
+          });
+        }),
+      );
+
+      const result = await provider.getChapterRuntimeMs('B00CXXEX8W');
+      expect(result).toBe(33219490);
+      const url = new URL(requestedUrl);
+      expect(url.pathname).toBe('/books/B00CXXEX8W/chapters');
+      expect(url.searchParams.get('region')).toBe('us');
+    });
+
+    it.each([
+      ['field absent', {}],
+      ['runtimeLengthMs null', { runtimeLengthMs: null }],
+      ['runtimeLengthMs zero', { runtimeLengthMs: 0 }],
+      ['runtimeLengthMs negative', { runtimeLengthMs: -5000 }],
+    ])('returns null when %s', async (_label, payload) => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => {
+          return HttpResponse.json({ asin: 'B00CXXEX8W', ...payload });
+        }),
+      );
+
+      const result = await provider.getChapterRuntimeMs('B00CXXEX8W');
+      expect(result).toBeNull();
+    });
+
+    it('returns null when runtimeLengthMs is non-finite (1e999 → Infinity)', async () => {
+      // JSON has no NaN/Infinity token, but 1e999 parses to Infinity — enough to
+      // exercise the Number.isFinite guard (the same branch rejects NaN).
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => {
+          return new HttpResponse('{"asin":"B00CXXEX8W","runtimeLengthMs":1e999}', {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }),
+      );
+
+      const result = await provider.getChapterRuntimeMs('B00CXXEX8W');
+      expect(result).toBeNull();
+    });
+
+    it('returns null on 404 (not found)', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => {
+          return new HttpResponse(null, { status: 404 });
+        }),
+      );
+
+      const result = await provider.getChapterRuntimeMs('B_MISSING');
+      expect(result).toBeNull();
+    });
+
+    it('throws RateLimitError on 429 with Retry-After (retryAfterMs = header × 1000)', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => {
+          return new HttpResponse(null, { status: 429, headers: { 'Retry-After': '30' } });
+        }),
+      );
+
+      const error = await provider.getChapterRuntimeMs('B00CXXEX8W').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RateLimitError);
+      expect((error as RateLimitError).retryAfterMs).toBe(30000);
+      expect((error as RateLimitError).provider).toBe('Audnexus');
+    });
+
+    it('throws TransientError on 5xx', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => {
+          return new HttpResponse(null, { status: 503 });
+        }),
+      );
+
+      await expect(provider.getChapterRuntimeMs('B00CXXEX8W')).rejects.toThrow(TransientError);
+    });
+
+    it('throws TransientError on network error', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => HttpResponse.error()),
+      );
+
+      await expect(provider.getChapterRuntimeMs('B00CXXEX8W')).rejects.toThrow(TransientError);
+    });
+
+    it('throws TransientError on timeout (F7)', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', async () => {
+          await delay('infinite');
+          return new HttpResponse(null, { status: 200 });
+        }),
+      );
+
+      await expect(provider.getChapterRuntimeMs('B00CXXEX8W')).rejects.toThrow(TransientError);
+    }, 20000);
+  });
 });

@@ -36,6 +36,9 @@ const mockAudnexus = {
   type: 'audnexus',
   getBook: vi.fn().mockResolvedValue(null),
   getAuthor: vi.fn().mockResolvedValue(null),
+  // #1938 (F5) — real MetadataService dispatches chapter-runtime lookups to this
+  // mock; default null-resolving so no test path hits an absent method.
+  getChapterRuntimeMs: vi.fn().mockResolvedValue(null),
 };
 
 vi.mock('../../core/index.js', async (importOriginal) => {
@@ -78,12 +81,14 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
     mockAudibleProvider.test.mockReset();
     mockAudnexus.getBook.mockReset();
     mockAudnexus.getAuthor.mockReset();
+    mockAudnexus.getChapterRuntimeMs.mockReset();
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
     mockAudibleProvider.searchSeries.mockResolvedValue([]);
     mockAudibleProvider.getBook.mockResolvedValue(null);
     mockAudibleProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
     mockAudnexus.getAuthor.mockResolvedValue(null);
+    mockAudnexus.getChapterRuntimeMs.mockResolvedValue(null);
 
     vi.mocked(scanAudioDirectory).mockReset();
 

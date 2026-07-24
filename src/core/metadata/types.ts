@@ -57,4 +57,14 @@ export interface MetadataEnrichmentProvider extends MetadataProviderBase {
   getBook(id: string): Promise<BookMetadata | null>;
   getBookDetailed(id: string): Promise<ProviderLookupResult>;
   getAuthor(id: string): Promise<AuthorMetadata | null>;
+  /**
+   * On-demand chapter-runtime corroboration (#1938). Fetches the edition's
+   * chapter table and returns the top-level `runtimeLengthMs` — the file's TRUE
+   * full runtime — ONLY when it is a finite number `> 0`; every no-data case
+   * (absent/null/0/negative/non-finite field, not-found, invalid shape) resolves
+   * to `null`. Rate-limit / transient failures surface the same discriminated way
+   * `getBook` does (thrown `RateLimitError` / `TransientError`), so the service
+   * gate can record backoff. Not a durable `BookMetadata` field.
+   */
+  getChapterRuntimeMs(asin: string): Promise<number | null>;
 }

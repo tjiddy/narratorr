@@ -23,6 +23,7 @@ const mockAudnexus = {
   getBook: vi.fn().mockResolvedValue(null),
   getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
   getAuthor: vi.fn().mockResolvedValue(null),
+  getChapterRuntimeMs: vi.fn().mockResolvedValue(null),
 };
 
 vi.mock('../../core/index.js', async (importOriginal) => {
@@ -52,6 +53,7 @@ describe('MetadataService', () => {
     mockAudnexus.getBook.mockReset();
     mockAudnexus.getBookDetailed.mockReset();
     mockAudnexus.getAuthor.mockReset();
+    mockAudnexus.getChapterRuntimeMs.mockReset();
     // Reset mock return values
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
     mockAudibleProvider.searchSeries.mockResolvedValue([]);
@@ -61,6 +63,7 @@ describe('MetadataService', () => {
     mockAudnexus.getBook.mockResolvedValue(null);
     mockAudnexus.getBookDetailed.mockResolvedValue({ kind: 'not_found' });
     mockAudnexus.getAuthor.mockResolvedValue(null);
+    mockAudnexus.getChapterRuntimeMs.mockResolvedValue(null);
 
     mockLog = createMockLogger();
     service = new MetadataService(inject<FastifyBaseLogger>(mockLog));
@@ -1322,6 +1325,54 @@ describe('MetadataService', () => {
       const result = await service.enrichBook('B000TEST');
       expect(result).toEqual(mockEnriched);
       expect(mockAudnexus.getBook).toHaveBeenCalledWith('B000TEST');
+    });
+  });
+
+  // #1938 (AC2) — chapter-runtime corroboration exposed through the same
+  // rate-limit/throttle gate as getAuthor/enrichBook, but NON-throwing: every
+  // rate-limited/transient/invalid/unknown outcome resolves to null.
+  describe('getChapterRuntimeMs', () => {
+    it('delegates to Audnexus and returns the chapter-sum runtime', async () => {
+      mockAudnexus.getChapterRuntimeMs.mockResolvedValueOnce(33219490);
+
+      const result = await service.getChapterRuntimeMs('B00CXXEX8W');
+      expect(result).toBe(33219490);
+      expect(mockAudnexus.getChapterRuntimeMs).toHaveBeenCalledWith('B00CXXEX8W');
+      expect(mockAudnexus.getChapterRuntimeMs).toHaveBeenCalledTimes(1);
+    });
+
+    it('is skipped and returns null when Audnexus is already rate limited', async () => {
+      // Trip the Audnexus backoff via a fresh RateLimitError, then confirm the
+      // next lookup short-circuits before touching the provider again.
+      mockAudnexus.getChapterRuntimeMs.mockRejectedValueOnce(new RateLimitError(30000, 'Audnexus'));
+      expect(await service.getChapterRuntimeMs('B000FIRST')).toBeNull();
+
+      const result = await service.getChapterRuntimeMs('B000SECOND');
+      expect(result).toBeNull();
+      // Only the first call reached the provider; the backoff gate skipped the second.
+      expect(mockAudnexus.getChapterRuntimeMs).toHaveBeenCalledTimes(1);
+    });
+
+    it('a fresh RateLimitError records backoff and resolves to null (never rejects)', async () => {
+      mockAudnexus.getChapterRuntimeMs.mockRejectedValueOnce(new RateLimitError(45000, 'Audnexus'));
+
+      await expect(service.getChapterRuntimeMs('B000TEST')).resolves.toBeNull();
+      // Backoff now armed — getAuthor (same Audnexus gate) is skipped too.
+      const author = await service.getAuthor('B000TEST');
+      expect(author).toBeNull();
+      expect(mockAudnexus.getAuthor).not.toHaveBeenCalled();
+    });
+
+    it('a transient provider error resolves to null (no rejection)', async () => {
+      mockAudnexus.getChapterRuntimeMs.mockRejectedValueOnce(new TransientError('Audnexus', 'Connection timed out'));
+
+      await expect(service.getChapterRuntimeMs('B000TEST')).resolves.toBeNull();
+    });
+
+    it('an unknown provider error resolves to null (no rejection)', async () => {
+      mockAudnexus.getChapterRuntimeMs.mockRejectedValueOnce(new Error('kaboom'));
+
+      await expect(service.getChapterRuntimeMs('B000TEST')).resolves.toBeNull();
     });
   });
 

@@ -46,6 +46,21 @@ const audnexusBookSchema = z.object({
   genres: z.array(z.object({ name: z.string().nullish(), type: z.string().nullish() }).passthrough()).nullish(),
 }).passthrough();
 
+// Chapter table (#1938). Only the top-level chapter-sum runtime is consumed as a
+// corroboration gate; the per-chapter array is validated loosely so a shape drift
+// there never fails the runtime read. `.nullish()` per the external-API contract —
+// Audnexus returns `null` (not just absent) for missing fields.
+const audnexusChaptersSchema = z.object({
+  asin: z.string().nullish(),
+  runtimeLengthMs: z.number().nullish(),
+  chapters: z.array(z.object({
+    lengthMs: z.number().nullish(),
+    startOffsetMs: z.number().nullish(),
+    startOffsetSec: z.number().nullish(),
+    title: z.string().nullish(),
+  }).passthrough()).nullish(),
+}).passthrough();
+
 const audnexusAuthorSchema = z.object({
   asin: z.string().nullish(),
   name: z.string().nullish(),
@@ -105,6 +120,30 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
       return { kind: 'invalid_record', source: 'mapped', cause: parsed.error, issues: parsed.error.issues };
     }
     return { kind: 'ok', book: parsed.data };
+  }
+
+  /**
+   * Chapter-derived runtime corroboration (#1938). Fetches
+   * `GET /books/{asin}/chapters?region={region}` and returns the top-level
+   * `runtimeLengthMs` only when it is finite and `> 0` (normalized at the
+   * boundary so the service/match layer receives `number | null`). Not-found and
+   * every no-data / invalid-shape case resolve to `null`; a 429 / 5xx / timeout
+   * surfaces the same discriminated failure `getBook` uses (thrown
+   * `RateLimitError` / `TransientError`), so the throttle gate records backoff.
+   */
+  async getChapterRuntimeMs(id: string): Promise<number | null> {
+    const raw = await this.fetchJsonDetailed(
+      `/books/${encodeURIComponent(id)}/chapters?region=${this.region}`,
+      audnexusChaptersSchema,
+    );
+    switch (raw.kind) {
+      case 'ok': return normalizeRuntimeMs(raw.data?.runtimeLengthMs);
+      case 'not_found':
+      case 'invalid_record':
+        return null;
+      case 'rate_limited': throw new RateLimitError(raw.retryAfterMs, 'Audnexus');
+      case 'transient_failure': throw new TransientError('Audnexus', raw.message);
+    }
   }
 
   async getAuthor(id: string): Promise<AuthorMetadata | null> {
@@ -193,6 +232,16 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
 // ---------------------------------------------------------------------------
 // Mapping helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Normalize the chapter-sum runtime (#1938) at the adapter boundary: only a
+ * finite, strictly-positive number is a usable corroboration value. `null`,
+ * `undefined`, `0`, negatives, and non-finite (`NaN`/`Infinity`) all collapse to
+ * `null` so the match layer never has to re-guard.
+ */
+function normalizeRuntimeMs(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
 
 function mapAuthor(d: AudnexusAuthorDetail): Record<string, unknown> {
   return {

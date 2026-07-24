@@ -222,23 +222,49 @@ export class MetadataService {
     return { books: filtered, warnings };
   }
 
-  async getAuthor(id: string): Promise<AuthorMetadata | null> {
+  /**
+   * Shared Audnexus read-through gate (#1938): rate-limit skip → throttle → call,
+   * collapsing every rate-limited / transient / invalid / unknown outcome to
+   * `null` — it NEVER rejects. A fresh `RateLimitError` records backoff before
+   * returning `null`; a successful call acquires the throttle exactly once.
+   * `getAuthor` and `getChapterRuntimeMs` share it so the two on-demand Audnexus
+   * reads can't drift in their throttle/backoff handling.
+   */
+  private async audnexusReadThrough<T>(
+    fn: () => Promise<T | null>,
+    skip: Record<string, unknown>,
+    skipMessage: string,
+    failMessage: string,
+  ): Promise<T | null> {
     if (this.isRateLimited('Audnexus')) {
-      this.log.warn({ id }, 'Author lookup skipped — Audnexus rate limited');
+      this.log.warn(skip, skipMessage);
       return null;
     }
-
     try {
       await this.throttle.acquire();
-      return await this.audnexus.getAuthor(id);
+      return await fn();
     } catch (error: unknown) {
       if (error instanceof RateLimitError) {
         this.setRateLimited(error.provider, error.retryAfterMs);
         return null;
       }
-      this.log.warn({ error: serializeError(error) }, 'Audnexus getAuthor failed');
+      this.log.warn({ error: serializeError(error) }, failMessage);
       return null;
     }
+  }
+
+  getAuthor(id: string): Promise<AuthorMetadata | null> {
+    return this.audnexusReadThrough(() => this.audnexus.getAuthor(id), { id }, 'Author lookup skipped — Audnexus rate limited', 'Audnexus getAuthor failed');
+  }
+
+  /**
+   * On-demand chapter-runtime corroboration lookup (#1938), gated through the
+   * same Audnexus throttle/rate-limit path as `getAuthor`. NEVER rejects out of
+   * the match flow: a rate-limited, transient, invalid, or unknown provider
+   * outcome all resolve to `null` ("no corroboration available").
+   */
+  getChapterRuntimeMs(asin: string): Promise<number | null> {
+    return this.audnexusReadThrough(() => this.audnexus.getChapterRuntimeMs(asin), { asin }, 'Chapter-runtime lookup skipped — Audnexus rate limited', 'Audnexus chapter-runtime lookup failed');
   }
 
   async getAuthorBooks(id: string): Promise<BookMetadata[]> {

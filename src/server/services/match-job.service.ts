@@ -16,6 +16,7 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, tagTitleScore, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
+import { tryChapterRuntimeUpgrade } from './match-job.chapter-corroboration.js';
 
 
 // Data contracts live in match-job.types.ts (#1864 file-size cap); re-exported so the
@@ -201,8 +202,7 @@ class MatchJob {
     // confidence (incl. 'none'/title-floor/error exits) so the client can re-evaluate a
     // medium re-pick. Declared outside the try so the catch's error result honors it too.
     let scannedSeconds: number | undefined;
-    const withScanned = (result: MatchResult): MatchResult =>
-      scannedSeconds && scannedSeconds > 0 ? { ...result, scannedSeconds } : result;
+    const withScanned = (result: MatchResult): MatchResult => scannedSeconds && scannedSeconds > 0 ? { ...result, scannedSeconds } : result;
     try {
       // Scan audio files for duration (used for runtime disambiguation) AND tag fields
       let duration: number | undefined;
@@ -336,13 +336,22 @@ class MatchJob {
         }
       }
 
+      // Chapter-runtime fallback corroboration (#1938) — the ONLY new fetch, and
+      // only on the false-positive-prone duration-mismatch branch for a candidate
+      // carrying an ASIN (the guard lives in the helper; the happy path returns
+      // unchanged without a fetch). The scalar `runtimeLengthMin` can understate
+      // the edition's own chapter table; when the chapter-sum runtime agrees with
+      // the scan inside the same band, the file is complete and correctly matched,
+      // so the mismatch is upgraded to `high`. Routed BEFORE the single
+      // `applyNarratorCap` chokepoint so a wrong edition with an in-band chapter
+      // runtime is still re-capped high → medium by the narrator guard (AC3/AC8).
+      ({ result: resolved, ctx: capCtx } = await tryChapterRuntimeUpgrade(resolved, capCtx, scannedSeconds, (asin) => this.metadataService.getChapterRuntimeMs(asin), this.log));
+
       // Single cap chokepoint (#1650/#1652) — every high-producing branch above
       // funnels here; non-high outcomes returned early and never reach it.
-      const capped = applyNarratorCap(resolved, audioResult, capCtx);
-
       // Post-match library-duplicate pass (#1662) — keyed off the MATCHED metadata,
       // so a no-author filename that resolves to an owned book is flagged at review.
-      return withScanned(await applyLibraryDuplicate(capped, this.bookService, this.log));
+      return withScanned(await applyLibraryDuplicate(applyNarratorCap(resolved, audioResult, capCtx), this.bookService, this.log));
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), path: book.path, title: book.title }, 'Match failed for book');
       return withScanned({
