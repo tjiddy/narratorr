@@ -210,6 +210,25 @@ describe('ImportCard', () => {
       expect(screen.getByText('Standalone Saga')).toBeInTheDocument();
     });
 
+    it('renders a padded edited series name VERBATIM (no trim) so the row matches the mapper/DB record (#1927 AC5/AC6/F12)', () => {
+      const paddedName = ' Padded Saga ';
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult(),
+          // Padded edited series with a DIFFERENT metadata primary — the row must render the item's
+          // ORIGINAL padded value (edited.series is trimmed only to classify present-vs-absent, never
+          // rewritten), matching what toConfirmItem ships and the DB stores. A `.trim()` in the render
+          // path would drop the surrounding whitespace and re-introduce row/server disagreement.
+          edited: { title: 'Book Title', author: 'Author Name', series: paddedName, seriesPosition: 5, metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Different Primary', position: 9 } } },
+        })}
+      />);
+      // getByText normalizes for the lookup; textContent is the raw, un-normalized render.
+      const seriesLine = screen.getByText(/Padded Saga/);
+      expect(seriesLine.textContent).toBe(`${paddedName} #5`);
+      expect(screen.queryByText('Different Primary #9')).not.toBeInTheDocument();
+    });
+
     it('renders a series position of 0 as #0 on the defer path (not swallowed — #1028 guard)', () => {
       render(<ImportCard
         {...defaultProps}

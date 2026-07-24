@@ -100,6 +100,24 @@ describe('copyToLibrary — token precedence (#1028)', () => {
     expect(path.targetPath).toBe(targetPath);
   });
 
+  it('item series with NO position → folder path uses item series, metadata position NOT grafted (#1927 AC3 pair-lock)', async () => {
+    const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
+    // The user edited Series to `Custom Saga` with no position; provider match says `Provider Saga #15`.
+    // Pair-lock: the folder token must carry the item series with NO position — the metadata position
+    // must NOT be borrowed at this boundary (mirrors the DB-create case). The renderer emits a bare
+    // `#` for the empty position token; the assertion is that `#15` (and `Provider Saga`) never appear.
+    const targetPath = '/library/Author/Custom Saga #/Title';
+    const path = await copyToLibrary(
+      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Custom Saga' },
+      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Provider Saga', position: 15 }] },
+      'copy',
+      deps,
+    );
+    expect(path.targetPath).toBe(targetPath);
+    expect(path.targetPath).not.toContain('#15');
+    expect(path.targetPath).not.toContain('Provider Saga');
+  });
+
   it('item OMITS series → folder path defers to meta.series[0], position 0 preserved (#1927 AC3 defer path)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
     // No user series edit; provider says position 0 (prequel). Defer → metadata pair, 0 preserved.
