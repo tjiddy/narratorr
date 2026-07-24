@@ -797,6 +797,39 @@ describe('AudnexusProvider', () => {
       if (result.kind === 'ok') expect(result.runtimeMs).toBe(33219490);
     });
 
+    // F1 (AC1) — the request must hit the /chapters path with the provider's
+    // CONFIGURED region, not a dropped/hard-coded one. Capture the URL for a
+    // non-default region so a `?region=` regression is caught (mirrors the
+    // getBook/getAuthor region tests above).
+    it('sends the matched ASIN + configured region on the chapters path', async () => {
+      const ukProvider = new AudnexusProvider({ region: 'uk' });
+      let capturedUrl = '';
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ runtimeLengthMs: 33219490, isAccurate: true });
+        }),
+      );
+
+      await ukProvider.getChaptersDetailed('B00CXXEX8W');
+      const url = new URL(capturedUrl);
+      expect(url.pathname).toBe('/books/B00CXXEX8W/chapters');
+      expect(url.searchParams.get('region')).toBe('uk');
+    });
+
+    it('sends ?region=us on the chapters path when constructed with no config (default)', async () => {
+      let capturedUrl = '';
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ runtimeLengthMs: 33219490, isAccurate: true });
+        }),
+      );
+
+      await provider.getChaptersDetailed('B00CXXEX8W');
+      expect(new URL(capturedUrl).searchParams.get('region')).toBe('us');
+    });
+
     it('ok + isAccurate:false → not usable (runtimeMs null), kind stays ok', async () => {
       chapters({ runtimeLengthMs: 33219490, isAccurate: false });
       const result = await provider.getChaptersDetailed('B_INACCURATE');

@@ -1130,6 +1130,14 @@ describe('MatchJobService', () => {
       expect(result.confidence).toBe('medium');
       expect(result.reason).toContain('Narrator mismatch');
       expect(result.reason).not.toContain('Duration mismatch');
+      // F4 (AC6) — the rescue set the derived narrator-cap signal to true; the cap
+      // log must carry `durationVerified: true`, or a regression that reverts
+      // `capCtx.durationVerified` to false would leave this test green
+      // (`applyNarratorCap` demotes regardless of the boolean).
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ matchSource: 'filename-single', durationVerified: true }),
+        expect.stringContaining('Narrator wrong-edition cap fired'),
+      );
     });
 
     it('rescued match + recording-identity review → keeps reviewReason after the rescue (F13)', async () => {

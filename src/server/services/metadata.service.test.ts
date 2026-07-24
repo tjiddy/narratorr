@@ -1378,24 +1378,13 @@ describe('MetadataService', () => {
       expect(mockAudnexus.getChaptersDetailed).not.toHaveBeenCalled();
     });
 
-    it('concurrent backoff establishment (F11): the post-acquire re-check keeps B out of the adapter', async () => {
-      // Call A resolves rate_limited and seeds backoff while call B is still waiting
-      // in the delay-only throttle. Both entry checks pass (no backoff yet), but B's
-      // SECOND (post-acquire) isRateLimited check short-circuits → adapter runs once.
-      mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60000 });
-
-      const [a, b] = await Promise.all([
-        service.getChapterRuntimeMs('B_A'),
-        service.getChapterRuntimeMs('B_B'),
-      ]);
-
-      expect(a).toBeNull();
-      expect(b).toBeNull();
-      // The overlap the pre-acquire-only sequence misses: adapter invoked exactly
-      // once (for A); B never reaches it.
-      expect(mockAudnexus.getChaptersDetailed).toHaveBeenCalledTimes(1);
-      expect(mockAudnexus.getChaptersDetailed).toHaveBeenCalledWith('B_A');
-    });
+    // F2 — the concurrent post-acquire re-check (the sibling-429 overlap) is covered
+    // DETERMINISTICALLY at the helper layer, where `acquireThrottle` is a controllable
+    // barrier, in metadata-chapter-runtime.test.ts ('post-acquire re-check keeps a
+    // queued sibling out of the adapter'). Driving it through the real `RequestThrottle`
+    // here made the outcome depend on host scheduling (a pause ≥ the throttle interval
+    // could let both calls pass the post-acquire check before backoff was seeded), so
+    // that flaky service-level variant was removed in favour of the barrier test.
 
     it('never throws even if the adapter unexpectedly throws', async () => {
       mockAudnexus.getChaptersDetailed.mockRejectedValueOnce(new Error('surprise'));
