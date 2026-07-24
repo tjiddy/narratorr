@@ -4,6 +4,7 @@ import type { MetadataService } from './metadata.service.js';
 import type { BookService } from './book.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { Confidence, MatchCandidate, MatchResult, MatchJobStatus } from './match-job.types.js';
+import type { MatchReasonKind } from '../../shared/match-reason-kind.js';
 import { scanAudioDirectory, type AudioScanResult } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
@@ -196,6 +197,13 @@ class MatchJob {
 
   // eslint-disable-next-line complexity -- audio-scan + tag-pass + filename-pass + scoring branches with conditional-spread on MatchResult
   async matchSingleBook(book: MatchCandidate): Promise<MatchResult> {
+    // Raw unrounded scanner seconds (#1929) — threaded onto EVERY assembled result
+    // (regardless of confidence, incl. the 'none'/title-floor/error exits) so the
+    // client can re-evaluate any medium re-pick against the picked edition. Declared
+    // outside the try so the catch-block error result honors the same contract.
+    let scannedSeconds: number | undefined;
+    const withScanned = (result: MatchResult): MatchResult =>
+      scannedSeconds && scannedSeconds > 0 ? { ...result, scannedSeconds } : result;
     try {
       // Scan audio files for duration (used for runtime disambiguation) AND tag fields
       let duration: number | undefined;
@@ -211,6 +219,7 @@ class MatchJob {
         if (audioResult && audioResult.totalDuration > 0) {
           // Convert seconds → minutes to match Audible's runtime_length_min
           duration = Math.round(audioResult.totalDuration / 60);
+          scannedSeconds = audioResult.totalDuration;
           this.log.debug({ path: book.path, duration: `${duration}min` }, 'Audio duration scanned');
         }
       } catch (error: unknown) {
@@ -241,7 +250,7 @@ class MatchJob {
 
         if (trace.results.length === 0) {
           this.log.debug({ path: book.path }, 'No search results returned');
-          return { path: book.path, confidence: 'none', bestMatch: null, alternatives: [] };
+          return withScanned({ path: book.path, confidence: 'none', bestMatch: null, alternatives: [] });
         }
 
         this.log.debug({ path: book.path, resultCount: trace.results.length, swapRetry: trace.swapRetry }, 'Search returned results');
@@ -267,7 +276,7 @@ class MatchJob {
             { path: book.path, cancelled: this.isCancelled, resultCount: trace.results.length },
             'No scored results after ranking — cancelled mid-flight or all filtered',
           );
-          return { path: book.path, confidence: 'none', bestMatch: null, alternatives: [] };
+          return withScanned({ path: book.path, confidence: 'none', bestMatch: null, alternatives: [] });
         }
 
         // Title similarity floor: below 50% → confidence 'none'
@@ -279,12 +288,12 @@ class MatchJob {
             { path: book.path, titleSimilarity: titleSimilarity.toFixed(2), bestTitle: topScored.meta.title },
             'Top result below title similarity floor — none confidence',
           );
-          return {
+          return withScanned({
             path: book.path,
             confidence: 'none',
             bestMatch: topScored.meta,
             alternatives: scored.slice(1).map(s => s.meta),
-          };
+          });
         }
 
         if (scored.length === 1) {
@@ -302,7 +311,7 @@ class MatchJob {
           // (text score, with duration only breaking a score tie, #1882); this
           // step reads confidence off that top candidate's runtime agreement.
           // Unrounded seconds (#1850); `duration` (minutes) below is logging only.
-          const { confidence, reason } = resolveConfidenceFromDuration(scored, audioResult?.totalDuration);
+          const { confidence, reason, reasonKind } = resolveConfidenceFromDuration(scored, audioResult?.totalDuration);
           this.log.debug(
             {
               path: book.path,
@@ -321,6 +330,7 @@ class MatchJob {
             bestMatch: topScored.meta,
             alternatives: scored.slice(1).map(s => s.meta),
             ...(reason !== undefined && { reason }),
+            ...(reasonKind !== undefined && { reasonKind }),
           };
           // `resolveConfidenceFromDuration` returning 'high' IS the duration corroboration.
           capCtx = { log: this.log, matchSource: 'filename-duration-resolved', durationVerified: confidence === 'high' };
@@ -333,16 +343,17 @@ class MatchJob {
 
       // Post-match library-duplicate pass (#1662) — keyed off the MATCHED metadata,
       // so a no-author filename that resolves to an owned book is flagged at review.
-      return await applyLibraryDuplicate(capped, this.bookService, this.log);
+      const deduped = await applyLibraryDuplicate(capped, this.bookService, this.log);
+      return withScanned(deduped);
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), path: book.path, title: book.title }, 'Match failed for book');
-      return {
+      return withScanned({
         path: book.path,
         confidence: 'none',
         bestMatch: null,
         alternatives: [],
         error: getErrorMessage(error),
-      };
+      });
     }
   }
 
@@ -377,8 +388,8 @@ class MatchJob {
     const durationVerified = isDurationVerified(top.meta, scannedSeconds);
     // #1266 — when the scanned runtime verifies the top candidate, bypass the strip `medium` cap and keep `high`.
     const capBypassedByDuration = attempt.maxConfidence === 'medium' && durationVerified;
-    const cap = (raw: Confidence, reason: string | undefined): { confidence: Confidence; reason?: string } =>
-      capBypassedByDuration ? { confidence: 'high' } : applyAttemptCap(raw, attempt.maxConfidence, reason);
+    const cap = (raw: Confidence, reason: string | undefined, reasonKind: MatchReasonKind | undefined): { confidence: Confidence; reason?: string; reasonKind?: MatchReasonKind } =>
+      capBypassedByDuration ? { confidence: 'high' } : applyAttemptCap(raw, attempt.maxConfidence, reason, reasonKind);
 
     const single = scored.length === 1;
     // #1821 — corroborate the single tag-result (incl. the ASIN kill-shot) against
@@ -386,8 +397,8 @@ class MatchJob {
     // below: a mismatch → raw `medium` survives (durationVerified false, so
     // capBypassedByDuration false); a missing runtime → raw `high`, clamped to
     // `medium` by a `maxConfidence: 'medium'` attempt exactly as before.
-    const { confidence, reason } = single ? resolveSingleResultConfidence(top.meta, scannedSeconds) : resolveConfidenceFromDuration(scored, scannedSeconds);
-    const result: MatchResult = { path: book.path, ...cap(confidence, reason), bestMatch: top.meta, alternatives: single ? [] : scored.slice(1).map(s => s.meta) };
+    const { confidence, reason, reasonKind } = single ? resolveSingleResultConfidence(top.meta, scannedSeconds) : resolveConfidenceFromDuration(scored, scannedSeconds);
+    const result: MatchResult = { path: book.path, ...cap(confidence, reason, reasonKind), bestMatch: top.meta, alternatives: single ? [] : scored.slice(1).map(s => s.meta) };
     return { result, ctx: { log: this.log, matchSource: attempt.source, durationVerified } };
   }
 

@@ -6,6 +6,7 @@ import { compareNarratorSignals, diceCoefficient, normalizeNarrator, scoreResult
 import { normalizeProductionType } from '../../core/metadata/production-type.js';
 import { cleanTagTitle, extractYear, hasTagSeriesMarker, isPureVolumeMarker } from '../utils/folder-parsing.js';
 import type { Confidence, MatchCandidate, MatchResult } from './match-job.types.js';
+import type { MatchReasonKind } from '../../shared/match-reason-kind.js';
 import type { MatchSource } from './tag-search-planner.js';
 import type { BookService } from './book.service.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -105,15 +106,29 @@ export function capConfidence(c: Confidence, cap: 'high' | 'medium'): Confidence
 
 // Cap-driven downgrades from a planner attempt need a user-facing tooltip
 // reason; without one the amber Review pill renders with no explanation (#1052).
-export function applyAttemptCap(raw: Confidence, cap: 'high' | 'medium', durationReason: string | undefined): { confidence: Confidence; reason?: string } {
+export function applyAttemptCap(
+  raw: Confidence,
+  cap: 'high' | 'medium',
+  durationReason: string | undefined,
+  durationReasonKind?: MatchReasonKind,
+): { confidence: Confidence; reason?: string; reasonKind?: MatchReasonKind } {
   const confidence = capConfidence(raw, cap);
   const reason = durationReason ?? (confidence === 'medium' ? CAPPED_ATTEMPT_REASON : undefined);
-  return reason !== undefined ? { confidence, reason } : { confidence };
+  const base = reason !== undefined ? { confidence, reason } : { confidence };
+  // `reasonKind` rides only when the DURATION reason survives (it pairs with
+  // `durationReason`). A cap-synthesized `CAPPED_ATTEMPT_REASON` carries no kind,
+  // matching the spec's "attempt-cap rows have no reasonKind" (#1929).
+  return durationReasonKind !== undefined && reason === durationReason
+    ? { ...base, reasonKind: durationReasonKind }
+    : base;
 }
 
 export interface DurationConfidenceResult {
   confidence: Confidence;
   reason?: string;
+  /** Structured discriminator paired with `reason` (#1929) — one of the three
+   * duration-derived kinds, or absent on a `high` result. */
+  reasonKind?: MatchReasonKind;
 }
 
 /**
@@ -159,7 +174,7 @@ export function resolveConfidenceFromDuration(
   scannedSeconds: number | undefined,
 ): DurationConfidenceResult {
   if (!scannedSeconds || scannedSeconds <= 0) {
-    return { confidence: 'medium', reason: 'Multiple results — no duration data to disambiguate' };
+    return { confidence: 'medium', reason: 'Multiple results — no duration data to disambiguate', reasonKind: 'no-duration-data' };
   }
   const topResult = scored[0]!;
   if (topResult.meta.duration && topResult.meta.duration > 0) {
@@ -167,9 +182,10 @@ export function resolveConfidenceFromDuration(
     return {
       confidence: 'medium',
       reason: `Duration mismatch — scanned ${formatDurationSeconds(scannedSeconds)} vs expected ${formatDurationSeconds(topResult.meta.duration * 60)}`,
+      reasonKind: 'duration-mismatch',
     };
   }
-  return { confidence: 'medium', reason: 'Best match missing duration — cannot verify' };
+  return { confidence: 'medium', reason: 'Best match missing duration — cannot verify', reasonKind: 'missing-duration' };
 }
 
 /**
@@ -194,6 +210,7 @@ export function resolveSingleResultConfidence(
     return {
       confidence: 'medium',
       reason: `Duration mismatch — scanned ${formatDurationSeconds(scannedSeconds)} vs expected ${formatDurationSeconds(meta.duration! * 60)}`,
+      reasonKind: 'duration-mismatch',
     };
   }
   return { confidence: 'high' };
