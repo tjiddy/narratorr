@@ -35,6 +35,8 @@ const mockAudnexus = {
   name: 'Audnexus',
   type: 'audnexus',
   getBook: vi.fn().mockResolvedValue(null),
+  getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
+  getChaptersDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
   getAuthor: vi.fn().mockResolvedValue(null),
 };
 
@@ -77,12 +79,16 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
     mockAudibleProvider.getBook.mockReset();
     mockAudibleProvider.test.mockReset();
     mockAudnexus.getBook.mockReset();
+    mockAudnexus.getBookDetailed.mockReset();
+    mockAudnexus.getChaptersDetailed.mockReset();
     mockAudnexus.getAuthor.mockReset();
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
     mockAudibleProvider.searchSeries.mockResolvedValue([]);
     mockAudibleProvider.getBook.mockResolvedValue(null);
     mockAudibleProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
+    mockAudnexus.getBookDetailed.mockResolvedValue({ kind: 'not_found' });
+    mockAudnexus.getChaptersDetailed.mockResolvedValue({ kind: 'not_found' });
     mockAudnexus.getAuthor.mockResolvedValue(null);
 
     vi.mocked(scanAudioDirectory).mockReset();
@@ -143,5 +149,45 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
     // gate (or if MetadataService's `isRateLimited` short-circuit broke), this
     // would be ≥ 2.
     expect(mockAudibleProvider.searchBooks).toHaveBeenCalledTimes(1);
+  });
+
+  // #1932 (F9) — the duration-mismatch chapter rescue participates in the SAME
+  // shared Audnexus backoff. A fresh 429 from the first rescue seeds the backoff;
+  // once active, no further chapter provider call is issued.
+  it('chapter-rescue fan-out: a 429 seeds Audnexus backoff and the next mismatch makes no chapter call', async () => {
+    // No tags → filename-single path. Scanned 36000s vs scalar 650min (39000s) →
+    // Δ3000 out of band → duration-mismatch → rescue triggers on the matched ASIN.
+    vi.mocked(scanAudioDirectory).mockResolvedValue({
+      codec: 'AAC', bitrate: 128000, sampleRate: 44100, channels: 2,
+      bitrateMode: 'cbr' as const, fileFormat: 'm4b', totalDuration: 36000,
+      totalSize: 100_000_000, fileCount: 1, hasCoverArt: false,
+    });
+    mockAudibleProvider.searchBooks.mockResolvedValue({
+      books: [{ title: 'The Way of Kings', asin: 'B_ASIN', duration: 650, authors: [{ name: 'Brandon Sanderson' }] }],
+    });
+    // The first rescue's chapter call is rate-limited; every later one is skipped
+    // by the active shared backoff.
+    mockAudnexus.getChaptersDetailed.mockResolvedValue({ kind: 'rate_limited', retryAfterMs: 60_000 });
+
+    const fullSettings = inject<SettingsService>({
+      get: vi.fn().mockResolvedValue({ ffmpegPath: '', languages: [], minDurationMinutes: 0, rejectWords: '' }),
+    });
+    matchService = new MatchJobService(metadataService, inject<FastifyBaseLogger>(mockLog), fullSettings, inject<import('./book.service.js').BookService>({ findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false }) }));
+
+    const candidate: MatchCandidate = { path: '/audiobooks/The Way of Kings', title: 'The Way of Kings', author: 'Brandon Sanderson' };
+
+    const id1 = matchService.createJob([candidate]);
+    await waitForJob(matchService, id1);
+    // First rescue reached the provider (and got a 429) but the flag still stands.
+    expect(matchService.getJob(id1)!.results[0]!.confidence).toBe('medium');
+    expect(matchService.getJob(id1)!.results[0]!.reasonKind).toBe('duration-mismatch');
+
+    const id2 = matchService.createJob([candidate]);
+    await waitForJob(matchService, id2);
+    expect(matchService.getJob(id2)!.results[0]!.confidence).toBe('medium');
+
+    // The load-bearing assertion: the chapter provider was hit EXACTLY ONCE — the
+    // active Audnexus backoff short-circuited the second mismatch's rescue.
+    expect(mockAudnexus.getChaptersDetailed).toHaveBeenCalledTimes(1);
   });
 });

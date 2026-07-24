@@ -4,7 +4,6 @@ import type { MetadataService } from './metadata.service.js';
 import type { BookService } from './book.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { Confidence, MatchCandidate, MatchResult, MatchJobStatus } from './match-job.types.js';
-import type { MatchReasonKind } from '../../shared/match-reason-kind.js';
 import { scanAudioDirectory, type AudioScanResult } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
@@ -14,8 +13,9 @@ import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, tagTitleScore, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
+import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, fetchCandidateDetails, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, tagTitleScore, type DurationConfidenceResult, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
+import { applyChapterRuntimeRescue, type ChapterRescueOutput } from './match-job-duration-rescue.js';
 
 
 // Data contracts live in match-job.types.ts (#1864 file-size cap); re-exported so the
@@ -303,14 +303,21 @@ class MatchJob {
           // disproven) — never inferred from the resolved confidence.
           // Unrounded scanned seconds (#1850) — the tolerance check compares
           // full-precision seconds (the minute-rounded `duration` is logging only).
-          resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...resolveSingleResultConfidence(topScored.meta, audioResult?.totalDuration) };
-          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: isDurationVerified(topScored.meta, audioResult?.totalDuration) };
+          // #1932 — a scalar mismatch is re-checked against the edition's chapter
+          // table before it flags; a chapter-corroborated scan clears the false positive.
+          const single = await this.rescueDuration(topScored.meta, resolveSingleResultConfidence(topScored.meta, audioResult?.totalDuration), audioResult?.totalDuration);
+          resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...single.verdict };
+          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: single.durationVerified };
         } else {
           // Multiple results — the winner was already chosen by `rankResults`
           // (text score, with duration only breaking a score tie, #1882); this
           // step reads confidence off that top candidate's runtime agreement.
           // Unrounded seconds (#1850); `duration` (minutes) below is logging only.
-          const { confidence, reason, reasonKind } = resolveConfidenceFromDuration(scored, audioResult?.totalDuration);
+          // #1932 — rescue a scalar mismatch against the chapter table (zero-call on
+          // any non-mismatch verdict); `confidence`/`reason`/`reasonKind` are read off
+          // the possibly-rescued verdict.
+          const multi = await this.rescueDuration(topScored.meta, resolveConfidenceFromDuration(scored, audioResult?.totalDuration), audioResult?.totalDuration);
+          const { confidence, reason, reasonKind } = multi.verdict;
           this.log.debug(
             {
               path: book.path,
@@ -331,8 +338,7 @@ class MatchJob {
             ...(reason !== undefined && { reason }),
             ...(reasonKind !== undefined && { reasonKind }),
           };
-          // `resolveConfidenceFromDuration` returning 'high' IS the duration corroboration.
-          capCtx = { log: this.log, matchSource: 'filename-duration-resolved', durationVerified: confidence === 'high' };
+          capCtx = { log: this.log, matchSource: 'filename-duration-resolved', durationVerified: multi.durationVerified };
         }
       }
 
@@ -378,25 +384,22 @@ class MatchJob {
     const { scored, attempt } = outcome;
     const top = scored[0]!;
 
-    // #1652 (F6) — genuine runtime corroboration of the chosen edition for EVERY
-    // tag source (the `/import-uat` signal logged by the cap). Distinct from
-    // `capBypassedByDuration`, which is gated on `maxConfidence === 'medium'` and
-    // only governs the strip-attempt cap bypass — an exact/ASIN attempt
-    // (`maxConfidence: 'high'`) can be durationVerified while capBypassed is false.
-    const durationVerified = isDurationVerified(top.meta, scannedSeconds);
-    // #1266 — when the scanned runtime verifies the top candidate, bypass the strip `medium` cap and keep `high`.
-    const capBypassedByDuration = attempt.maxConfidence === 'medium' && durationVerified;
-    const cap = (raw: Confidence, reason: string | undefined, reasonKind: MatchReasonKind | undefined): { confidence: Confidence; reason?: string; reasonKind?: MatchReasonKind } =>
-      capBypassedByDuration ? { confidence: 'high' } : applyAttemptCap(raw, attempt.maxConfidence, reason, reasonKind);
-
+    // #1821 — corroborate the tag-result against the scanned runtime, then #1932 —
+    // re-check a scalar mismatch against the edition's chapter table. `rescueDuration`
+    // returns the possibly-rescued verdict AND the final `durationVerified` flag
+    // (scalar-verified OR chapter-rescued) that the cap-bypass and the narrator cap read.
     const single = scored.length === 1;
-    // #1821 — corroborate the single tag-result (incl. the ASIN kill-shot) against
-    // the scanned runtime. The raw value still flows through the attempt `cap()`
-    // below: a mismatch → raw `medium` survives (durationVerified false, so
-    // capBypassedByDuration false); a missing runtime → raw `high`, clamped to
-    // `medium` by a `maxConfidence: 'medium'` attempt exactly as before.
-    const { confidence, reason, reasonKind } = single ? resolveSingleResultConfidence(top.meta, scannedSeconds) : resolveConfidenceFromDuration(scored, scannedSeconds);
-    const result: MatchResult = { path: book.path, ...cap(confidence, reason, reasonKind), bestMatch: top.meta, alternatives: single ? [] : scored.slice(1).map(s => s.meta) };
+    const pure = single ? resolveSingleResultConfidence(top.meta, scannedSeconds) : resolveConfidenceFromDuration(scored, scannedSeconds);
+    const { verdict, durationVerified } = await this.rescueDuration(top.meta, pure, scannedSeconds);
+
+    // #1266/#1652 (F6) — when the runtime verifies the top candidate (scalar or
+    // chapter-rescued), bypass the strip `medium` cap and keep `high`; an exact/ASIN
+    // attempt (`maxConfidence: 'high'`) is likewise a high duration verdict.
+    const capBypassedByDuration = attempt.maxConfidence === 'medium' && durationVerified;
+    const capped = capBypassedByDuration
+      ? { confidence: 'high' as Confidence }
+      : applyAttemptCap(verdict.confidence, attempt.maxConfidence, verdict.reason, verdict.reasonKind);
+    const result: MatchResult = { path: book.path, ...capped, bestMatch: top.meta, alternatives: single ? [] : scored.slice(1).map(s => s.meta) };
     return { result, ctx: { log: this.log, matchSource: attempt.source, durationVerified } };
   }
 
@@ -529,26 +532,27 @@ class MatchJob {
     return true;
   }
 
-  private async fetchDetails(results: BookMetadata[]): Promise<BookMetadata[]> {
-    const detailed: BookMetadata[] = [];
-    for (const result of results) {
-      if (this.isCancelled) break;
-      if (result.providerId && !result.asin) {
-        try {
-          this.log.debug({ providerId: result.providerId, title: result.title }, 'Fetching full detail for candidate');
-          const detail = await this.metadataService.getBook(result.providerId);
-          if (detail) {
-            this.log.debug({ providerId: result.providerId, asin: detail.asin, duration: detail.duration }, 'Detail fetched');
-            detailed.push({ ...result, ...detail, title: result.title });
-            continue;
-          }
-        } catch (error: unknown) {
-          this.log.debug({ error: serializeError(error), providerId: result.providerId }, 'Detail fetch failed, using search result');
-        }
-      }
-      detailed.push(result);
-    }
-    return detailed;
+  private fetchDetails(results: BookMetadata[]): Promise<BookMetadata[]> {
+    return fetchCandidateDetails(results, {
+      isCancelled: () => this.isCancelled,
+      getBook: (id) => this.metadataService.getBook(id),
+      log: this.log,
+    });
+  }
+
+  /**
+   * Chapter-runtime rescue (#1932): when a PURE duration verdict is a structured
+   * `duration-mismatch` and the matched edition has an ASIN, make one lazy Audnexus
+   * chapter-runtime call and clear the false positive if the scan corroborates the
+   * chapter table. Non-triggering verdicts pass through untouched (zero calls). The
+   * decision itself lives in {@link applyChapterRuntimeRescue}; this threads the
+   * service call and the scalar-verified flag.
+   */
+  private rescueDuration(meta: BookMetadata, verdict: DurationConfidenceResult, scannedSeconds: number | undefined): Promise<ChapterRescueOutput> {
+    return applyChapterRuntimeRescue(
+      { getChapterRuntimeMs: (asin) => this.metadataService.getChapterRuntimeMs(asin), log: this.log },
+      { verdict, bestMatch: meta, scannedSeconds, scalarVerified: isDurationVerified(meta, scannedSeconds) },
+    );
   }
 }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
 vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -45,6 +45,9 @@ function createMockMetadataService(): MetadataService {
   return inject<MetadataService>({
     searchBooks: vi.fn().mockResolvedValue([]),
     getBook: vi.fn().mockResolvedValue(null),
+    // #1932 — the duration-mismatch chapter rescue. Defaults to null (no rescue),
+    // so existing scalar-mismatch expectations are unaffected.
+    getChapterRuntimeMs: vi.fn().mockResolvedValue(null),
     search: vi.fn(),
     searchSeries: vi.fn(),
     getAuthor: vi.fn(),
@@ -984,6 +987,211 @@ describe('MatchJobService', () => {
       const result = service.getJob(id)!.results[0];
       expect(result!.confidence).toBe('high');
       expect(result!.reason).toBeUndefined();
+    });
+  });
+
+  // #1932 — chapter-runtime rescue: a scalar mismatch on a MATCHED ASIN is
+  // re-checked against the edition's Audnexus chapter table before it flags. A
+  // chapter-corroborated scan clears the false positive (Fablehaven); a scan that
+  // disagrees with both references still flags. Assembly across all three paths.
+  describe('#1932 chapter-runtime duration-mismatch rescue', () => {
+    // `scanAudioDirectory` is a module-level mock that `clearAllMocks` does NOT
+    // reset (only calls, not implementations). These tests set tag-bearing scans;
+    // restore the default null scan afterward so the later leak-sensitive
+    // detail-fetching/error-handling tests inherit a clean state.
+    afterEach(() => { vi.mocked(scanAudioDirectory).mockResolvedValue(null); });
+
+    const asChapter = (fn: (asin: string) => number | null) =>
+      vi.mocked(metadataService.getChapterRuntimeMs).mockImplementation(async (asin: string) => fn(asin));
+
+    function richScan(overrides: Partial<Record<string, unknown>> = {}) {
+      return {
+        codec: 'AAC', bitrate: 128000, sampleRate: 44100, channels: 2,
+        bitrateMode: 'cbr' as const, fileFormat: 'm4b', totalSize: 100_000_000,
+        fileCount: 1, hasCoverArt: false, totalDuration: 33219, ...overrides,
+      };
+    }
+
+    it('single-result filename: scalar mismatch + chapter rescue → high, no reason, one chapter call (Fablehaven)', async () => {
+      // Scanned 33219s, scalar 539min (32340s, Δ879 out), chapter 33219490ms
+      // (33219.49s, Δ≈0.5 in) → rescued to high, duration reason cleared.
+      vi.mocked(scanAudioDirectory).mockResolvedValue(richScan());
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', asin: 'B00CXXEX8W', duration: 539 }),
+      ]);
+      asChapter(() => 33219490);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('high');
+      expect(result.reason).toBeUndefined();
+      expect(result.reasonKind).toBeUndefined();
+      expect(metadataService.getChapterRuntimeMs).toHaveBeenCalledTimes(1);
+      expect(metadataService.getChapterRuntimeMs).toHaveBeenCalledWith('B00CXXEX8W');
+    });
+
+    it('single-result: scalar mismatch + chapter ALSO out of band → medium / duration-mismatch (true positive)', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(richScan({ totalDuration: 30000 }));
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', asin: 'B00CXXEX8W', duration: 539 }),
+      ]);
+      asChapter(() => 33219490); // 33219.49s vs 30000s → Δ~3219 out
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+      expect(result.reason).toContain('Duration mismatch');
+    });
+
+    it('multi-result: top candidate scalar-fails, chapter-rescues → high', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(richScan());
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', asin: 'B00CXXEX8W', duration: 539 }),
+        makeBookMetadata({ title: 'The Way of Kings (Unabridged)', providerId: 'p2', asin: 'B_ALT', duration: 700 }),
+      ]);
+      asChapter(() => 33219490);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('high');
+      expect(result.reason).toBeUndefined();
+    });
+
+    it('no ASIN on the matched edition → NO chapter call, scalar mismatch preserved', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(richScan());
+      // No asin; providerId present so fetchDetails runs but getBook returns null →
+      // the search result (still asin-less) is kept.
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', duration: 539 }),
+      ]);
+      vi.mocked(metadataService.getBook).mockResolvedValue(null);
+      asChapter(() => 33219490);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+      expect(metadataService.getChapterRuntimeMs).not.toHaveBeenCalled();
+    });
+
+    it('scalar PASSES → NO chapter call (zero-call branch), result high', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(richScan({ totalDuration: 32340 })); // == 539min
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', asin: 'B00CXXEX8W', duration: 539 }),
+      ]);
+      asChapter(() => 33219490);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('high');
+      expect(metadataService.getChapterRuntimeMs).not.toHaveBeenCalled();
+    });
+
+    it('multi-result no-signal (top missing scalar → missing-duration) → NO chapter call (F12)', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(richScan());
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', asin: 'B00CXXEX8W' }), // no duration
+        makeBookMetadata({ title: 'The Way of Kings (Unabridged)', providerId: 'p2', asin: 'B_ALT', duration: 700 }),
+      ]);
+      asChapter(() => 33219490);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.reasonKind).toBe('missing-duration');
+      expect(metadataService.getChapterRuntimeMs).not.toHaveBeenCalled();
+    });
+
+    it('rescued match + narrator mismatch → medium with narrator reason, duration reason absent (F13)', async () => {
+      // Scan corroborates the chapter table (rescue → duration high, verified) but
+      // the file narrator contradicts the edition → applyNarratorCap still demotes.
+      vi.mocked(scanAudioDirectory).mockResolvedValue(richScan({ tagNarrator: 'Adriel Brandt' }));
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', asin: 'B00CXXEX8W', duration: 539, narrators: ['Michael Kramer'] }),
+      ]);
+      asChapter(() => 33219490);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('medium');
+      expect(result.reason).toContain('Narrator mismatch');
+      expect(result.reason).not.toContain('Duration mismatch');
+    });
+
+    it('rescued match + recording-identity review → keeps reviewReason after the rescue (F13)', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(richScan());
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', asin: 'B00CXXEX8W', duration: 539 }),
+      ]);
+      asChapter(() => 33219490);
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'review', book: { id: 9, title: 'The Way of Kings' }, hasIncumbent: true });
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      // Duration reason cleared by the rescue; recording-review pass still fires.
+      expect(result.confidence).toBe('high');
+      expect(result.reason).toBeUndefined();
+      expect(result.reviewReason).toBeDefined();
+      expect(result.recordingVerdict).toBe('review');
+    });
+
+    describe('tag-derived path', () => {
+      const taggedCandidate: MatchCandidate = { path: '/audiobooks/Imagine Me', title: 'Imagine Me', author: 'Tahereh Mafi' };
+
+      it('strip attempt (maxConfidence medium) + chapter rescue → high duration verdict (capBypassedByDuration)', async () => {
+        // Strip-trailing-part attempt caps at medium; a chapter-rescued duration
+        // verdict sets durationVerified → capBypassedByDuration → high, no reason.
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          richScan({ tagTitle: 'Imagine Me - Part 5', tagAuthor: 'Tahereh Mafi' }),
+        );
+        vi.mocked(metadataService.searchBooks)
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], asin: 'B00CXXEX8W', duration: 539 }),
+          ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+        asChapter(() => 33219490);
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0]!;
+        expect(result.confidence).toBe('high');
+        expect(result.reason).toBeUndefined();
+      });
+
+      it('ASIN kill-shot (maxConfidence high) + chapter rescue → high', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          richScan({ tagTitle: 'Imagine Me', tagAuthor: 'Tahereh Mafi', tagAsin: 'B00CXXEX8W' }),
+        );
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], asin: 'B00CXXEX8W', duration: 539 }),
+        );
+        asChapter(() => 33219490);
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0]!;
+        expect(result.confidence).toBe('high');
+        expect(result.reason).toBeUndefined();
+      });
     });
   });
 

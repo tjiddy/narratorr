@@ -571,6 +571,45 @@ export function narratorMismatchReason(
   return `Narrator mismatch — file: ${(fileNarratorRaw ?? '').trim()} · matched edition: ${editions.join(', ')}`;
 }
 
+/** Dependencies for the extracted {@link fetchCandidateDetails} (#1932, F17) —
+ * lifted out of `match-job.service.ts` to keep it under its `max-lines` budget. */
+export interface FetchDetailsDeps {
+  isCancelled: () => boolean;
+  getBook: (id: string) => Promise<BookMetadata | null>;
+  log: FastifyBaseLogger;
+}
+
+/**
+ * Fetch full detail (ASIN/duration) for search results that carry a `providerId`
+ * but no `asin` yet. Breaks on cancellation. A failed/empty detail lookup is
+ * non-fatal — the original search result is kept. Behaviour is byte-for-byte the
+ * former `MatchJob.fetchDetails`; only the `this`-bound collaborators are now deps.
+ */
+export async function fetchCandidateDetails(
+  results: BookMetadata[],
+  deps: FetchDetailsDeps,
+): Promise<BookMetadata[]> {
+  const detailed: BookMetadata[] = [];
+  for (const result of results) {
+    if (deps.isCancelled()) break;
+    if (result.providerId && !result.asin) {
+      try {
+        deps.log.debug({ providerId: result.providerId, title: result.title }, 'Fetching full detail for candidate');
+        const detail = await deps.getBook(result.providerId);
+        if (detail) {
+          deps.log.debug({ providerId: result.providerId, asin: detail.asin, duration: detail.duration }, 'Detail fetched');
+          detailed.push({ ...result, ...detail, title: result.title });
+          continue;
+        }
+      } catch (error: unknown) {
+        deps.log.debug({ error: serializeError(error), providerId: result.providerId }, 'Detail fetch failed, using search result');
+      }
+    }
+    detailed.push(result);
+  }
+  return detailed;
+}
+
 /**
  * Explicit context the cap needs to emit its observability log (#1652). The
  * `MatchResult` alone carries no `matchSource`/`durationVerified` — those live
