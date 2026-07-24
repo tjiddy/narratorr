@@ -241,6 +241,27 @@ export class MetadataService {
     }
   }
 
+  /**
+   * Chapter-table runtime in MILLISECONDS for an edition (#1936), or `null` when
+   * unavailable. The bridge `MatchJobService` calls to corroborate a would-be
+   * duration mismatch, reusing the shared Audnexus throttle/`rateLimitUntil` state
+   * like {@link getAuthor}/{@link enrichBook}. Fail-safe: a rate-limit (fresh 429 or
+   * active backoff) and every other lookup error return `null`, so the caller falls
+   * back to the scalar verdict instead of throwing through the per-book match.
+   */
+  async getChapterRuntimeMs(asin: string): Promise<number | null> {
+    // Pre-emptive backoff skip mirrors getAuthor/enrichBook; setRateLimited logs the arm.
+    if (this.isRateLimited('Audnexus')) return null;
+    try {
+      await this.throttle.acquire();
+      return await this.audnexus.getChapterRuntimeMs(asin);
+    } catch (error: unknown) {
+      if (error instanceof RateLimitError) this.setRateLimited(error.provider, error.retryAfterMs);
+      else this.log.warn({ error: serializeError(error), asin }, 'Audnexus chapter-runtime lookup failed');
+      return null;
+    }
+  }
+
   async getAuthorBooks(id: string): Promise<BookMetadata[]> {
     // Resolve author name via Audnexus, then search Audible by name
     const author = await this.getAuthor(id);

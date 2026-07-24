@@ -57,4 +57,11 @@ export interface MetadataEnrichmentProvider extends MetadataProviderBase {
   getBook(id: string): Promise<BookMetadata | null>;
   getBookDetailed(id: string): Promise<ProviderLookupResult>;
   getAuthor(id: string): Promise<AuthorMetadata | null>;
+  /**
+   * Chapter-table runtime in MILLISECONDS for one edition (#1936), or `null`
+   * when unavailable. A second, more accurate runtime than the `duration`
+   * (`runtimeLengthMin`) scalar — the lazy duration-mismatch corroboration
+   * reaches it through the typed `MetadataService.audnexus` field.
+   */
+  getChapterRuntimeMs(id: string): Promise<number | null>;
 }

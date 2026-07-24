@@ -46,6 +46,15 @@ const audnexusBookSchema = z.object({
   genres: z.array(z.object({ name: z.string().nullish(), type: z.string().nullish() }).passthrough()).nullish(),
 }).passthrough();
 
+// Chapter-table payload (`GET /books/{asin}/chapters`). Tolerant `.passthrough()`
+// so the per-chapter array and every other field are ignored — we read only the
+// top-level `runtimeLengthMs`, a SECOND (more accurate) runtime for the same
+// edition than `runtimeLengthMin`, used to corroborate a would-be duration
+// mismatch (#1936).
+const audnexusChaptersSchema = z.object({
+  runtimeLengthMs: z.number().nullish(),
+}).passthrough();
+
 const audnexusAuthorSchema = z.object({
   asin: z.string().nullish(),
   name: z.string().nullish(),
@@ -105,6 +114,28 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
       return { kind: 'invalid_record', source: 'mapped', cause: parsed.error, issues: parsed.error.issues };
     }
     return { kind: 'ok', book: parsed.data };
+  }
+
+  /**
+   * Chapter-table runtime for one edition (#1936). Reads `runtimeLengthMs` off
+   * `GET /books/{asin}/chapters` — the sum of the edition's chapter durations,
+   * a second and more accurate runtime than the `runtimeLengthMin` scalar. Used
+   * lazily to corroborate a would-be duration mismatch before it flags a
+   * pristine, correctly-matched file.
+   *
+   * Follows the existing `fetchJson` typed-error discipline unchanged: `429 →
+   * RateLimitError`, `5xx` and any fetch/redirect(3xx) failure → `TransientError`,
+   * `404`/other returned non-2xx 4xx → `null`, malformed body → `MetadataError`.
+   * A missing or non-positive `runtimeLengthMs` returns `null` (no usable second
+   * runtime — caller falls back to the scalar verdict).
+   */
+  async getChapterRuntimeMs(id: string): Promise<number | null> {
+    const data = await this.fetchJson(
+      `/books/${encodeURIComponent(id)}/chapters?region=${this.region}`,
+      audnexusChaptersSchema,
+    );
+    const ms = data?.runtimeLengthMs;
+    return typeof ms === 'number' && ms > 0 ? ms : null;
   }
 
   async getAuthor(id: string): Promise<AuthorMetadata | null> {

@@ -823,4 +823,124 @@ describe('AudnexusProvider', () => {
       expect(result).toBeNull();
     });
   });
+
+  // #1936 — chapter-table runtime lookup used to corroborate a would-be duration
+  // mismatch. Follows the same typed-error discipline as getBook/getAuthor.
+  describe('getChapterRuntimeMs (#1936)', () => {
+    it('parses runtimeLengthMs from a representative /chapters payload', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => {
+          return HttpResponse.json({
+            asin: 'B00CXXEX8W',
+            brandIntroDurationMs: 2043,
+            brandOutroDurationMs: 5041,
+            isAccurate: true,
+            runtimeLengthMs: 33219490,
+            runtimeLengthSec: 33219,
+            chapters: [{ lengthMs: 1660000, startOffsetMs: 0, startOffsetSec: 0, title: 'Chapter 1' }],
+          });
+        }),
+      );
+
+      const ms = await provider.getChapterRuntimeMs('B00CXXEX8W');
+      expect(ms).toBe(33219490);
+    });
+
+    it('tolerates extra/unknown fields via .passthrough()', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => {
+          return HttpResponse.json({
+            runtimeLengthMs: 12345678,
+            someBrandNewField: 'ignored',
+            nested: { anything: [1, 2, 3] },
+          });
+        }),
+      );
+
+      const ms = await provider.getChapterRuntimeMs('B_EXTRA');
+      expect(ms).toBe(12345678);
+    });
+
+    it('sends ?region=uk when constructed with region uk', async () => {
+      const ukProvider = new AudnexusProvider({ region: 'uk' });
+      let capturedUrl = '';
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ runtimeLengthMs: 100 });
+        }),
+      );
+
+      await ukProvider.getChapterRuntimeMs('B00CXXEX8W');
+      expect(capturedUrl).toContain('/books/B00CXXEX8W/chapters');
+      expect(capturedUrl).toContain('?region=uk');
+    });
+
+    it('missing runtimeLengthMs → null (no usable second runtime)', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => {
+          return HttpResponse.json({ asin: 'B_NORT', chapters: [] });
+        }),
+      );
+      expect(await provider.getChapterRuntimeMs('B_NORT')).toBeNull();
+    });
+
+    it('zero runtimeLengthMs → null', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => {
+          return HttpResponse.json({ runtimeLengthMs: 0 });
+        }),
+      );
+      expect(await provider.getChapterRuntimeMs('B_ZERO')).toBeNull();
+    });
+
+    it('404 → null', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => new HttpResponse(null, { status: 404 })),
+      );
+      expect(await provider.getChapterRuntimeMs('B_404')).toBeNull();
+    });
+
+    it('429 → throws RateLimitError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => new HttpResponse(null, { status: 429, headers: { 'Retry-After': '5' } })),
+      );
+      await expect(provider.getChapterRuntimeMs('B_429')).rejects.toBeInstanceOf(RateLimitError);
+    });
+
+    it('5xx → throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => new HttpResponse(null, { status: 503 })),
+      );
+      await expect(provider.getChapterRuntimeMs('B_503')).rejects.toBeInstanceOf(TransientError);
+    });
+
+    it('302 redirect → throws TransientError (NOT null — redirect protection)', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => new HttpResponse(null, {
+          status: 302,
+          headers: { Location: 'https://auth.internal/login' },
+        })),
+      );
+      const error = await provider.getChapterRuntimeMs('B_302').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(TransientError);
+      expect((error as TransientError).message).toMatch(/redirect/i);
+    });
+
+    it('network error → throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => HttpResponse.error()),
+      );
+      await expect(provider.getChapterRuntimeMs('B_NET')).rejects.toBeInstanceOf(TransientError);
+    });
+
+    it('malformed body (non-numeric runtimeLengthMs) → throws MetadataError, never an unhandled throw', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () => {
+          return HttpResponse.json({ runtimeLengthMs: 'oops' });
+        }),
+      );
+      await expect(provider.getChapterRuntimeMs('B_BAD')).rejects.toBeInstanceOf(MetadataError);
+    });
+  });
 });

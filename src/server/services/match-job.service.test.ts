@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
 vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -45,6 +45,9 @@ function createMockMetadataService(): MetadataService {
   return inject<MetadataService>({
     searchBooks: vi.fn().mockResolvedValue([]),
     getBook: vi.fn().mockResolvedValue(null),
+    // #1936 — default null: chapter corroboration is fail-safe, so a would-be
+    // mismatch falls back to the scalar verdict unless a test opts into a value.
+    getChapterRuntimeMs: vi.fn().mockResolvedValue(null),
     search: vi.fn(),
     searchSeries: vi.fn(),
     getAuthor: vi.fn(),
@@ -984,6 +987,286 @@ describe('MatchJobService', () => {
       const result = service.getJob(id)!.results[0];
       expect(result!.confidence).toBe('high');
       expect(result!.reason).toBeUndefined();
+    });
+  });
+
+  // #1936 — a would-be duration mismatch is corroborated against the matched
+  // edition's chapter-table runtime (`runtimeLengthMs / 1000`, via the
+  // MetadataService.getChapterRuntimeMs bridge) before the Review flag lands. The
+  // Fablehaven class: Audible's `runtimeLengthMin` scalar understates its own
+  // chapter table, so a pristine, correctly-matched file false-flagged.
+  describe('#1936 chapter-table duration corroboration', () => {
+    // `vi.clearAllMocks()` (root beforeEach) clears call history but NOT module-mock
+    // implementations, so a tagged scan set here would leak into downstream tests
+    // that rely on the untagged/null default (e.g. `detail fetching`). Restore the
+    // module default after each case so this block stays order-independent.
+    afterEach(() => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(null);
+    });
+
+    // The live Fablehaven numbers: scalar 539min (32340s), chapter table
+    // 33219490ms (33219.49s), file 33219.47s.
+    const FABLEHAVEN_SCANNED = 33219.47;
+    const FABLEHAVEN_SCALAR_MIN = 539;
+    const FABLEHAVEN_CHAPTER_MS = 33219490;
+
+    function makeTaggedScan(tagTitle: string, tagAuthor: string, totalDuration: number) {
+      return {
+        codec: 'AAC', bitrate: 128000, sampleRate: 44100, channels: 2,
+        bitrateMode: 'cbr' as const, fileFormat: 'm4b', totalSize: 100_000_000,
+        fileCount: 1, hasCoverArt: false, totalDuration, tagTitle, tagAuthor,
+      };
+    }
+
+    // ── AC1 / AC6 filename-single: scalar mismatches, chapters rescue → high ──
+    it('AC1 filename-single — Fablehaven: scalar mismatch, chapters agree → high, no Review flag', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: FABLEHAVEN_SCANNED, files: [] });
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], asin: 'B00CXXEX8W', duration: FABLEHAVEN_SCALAR_MIN }),
+      ]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(FABLEHAVEN_CHAPTER_MS);
+
+      const id = service.createJob([{ path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('high');
+      expect(result.reason).toBeUndefined();
+      expect(result.reasonKind).toBeUndefined();
+      // Corroboration reached the chapter bridge exactly once for the winning ASIN.
+      expect(metadataService.getChapterRuntimeMs).toHaveBeenCalledTimes(1);
+      expect(metadataService.getChapterRuntimeMs).toHaveBeenCalledWith('B00CXXEX8W');
+    });
+
+    // ── AC1 / AC6 filename-multi ──
+    it('AC1 filename-multi — scalar mismatch on top candidate, chapters agree → high', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: FABLEHAVEN_SCANNED, files: [] });
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], asin: 'B00CXXEX8W', duration: FABLEHAVEN_SCALAR_MIN }),
+        makeBookMetadata({ title: 'Fablehaven (Unabridged)', authors: [{ name: 'Brandon Mull' }], asin: 'B0OTHEREDN', duration: 800 }),
+      ]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(FABLEHAVEN_CHAPTER_MS);
+
+      const id = service.createJob([{ path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.bestMatch?.asin).toBe('B00CXXEX8W');
+      expect(result.confidence).toBe('high');
+      expect(result.reasonKind).toBeUndefined();
+      expect(metadataService.getChapterRuntimeMs).toHaveBeenCalledWith('B00CXXEX8W');
+    });
+
+    // ── AC2 true-positive: mismatch against BOTH sources still flags ──
+    it('AC2 filename-single — defective file: scalar AND chapters disagree → medium + duration-mismatch', async () => {
+      // A truncated/defective rip: scanned 30000s. Scalar 32340s (Δ2340) and the
+      // chapter table 33219s (Δ3219) both fall outside the band → still flags.
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 30000, files: [] });
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], asin: 'B00CXXEX8W', duration: FABLEHAVEN_SCALAR_MIN }),
+      ]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(FABLEHAVEN_CHAPTER_MS);
+
+      const id = service.createJob([{ path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+      expect(result.reason).toContain('Duration mismatch');
+      expect(metadataService.getChapterRuntimeMs).toHaveBeenCalledWith('B00CXXEX8W');
+    });
+
+    // ── AC3 happy path: scalar agrees → NO chapters call, verdict unchanged ──
+    it('AC3 — scalar already verifies → no chapters fetch is attempted', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 36050, files: [] }); // Δ50s from 600min
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', asin: 'B00SCALAR', duration: 600 }),
+      ]);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('high');
+      expect(metadataService.getChapterRuntimeMs).not.toHaveBeenCalled();
+    });
+
+    // ── AC4 fail-safe: winning candidate has no ASIN → no fetch, mismatch stands ──
+    it('AC4 — winning candidate has no ASIN → no chapters fetch, scalar mismatch stands', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: FABLEHAVEN_SCANNED, files: [] });
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], duration: FABLEHAVEN_SCALAR_MIN }),
+      ]);
+      vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+      const id = service.createJob([{ path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+      expect(metadataService.getChapterRuntimeMs).not.toHaveBeenCalled();
+    });
+
+    // ── AC4 fail-safe: bridge returns null (any failure mode) → mismatch stands ──
+    it('AC4 — chapters bridge returns null (404/transient/rate-limit/redirect/zero) → falls back to scalar mismatch', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: FABLEHAVEN_SCANNED, files: [] });
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], asin: 'B00CXXEX8W', duration: FABLEHAVEN_SCALAR_MIN }),
+      ]);
+      // The bridge collapses every lookup failure to null (see metadata.service.test.ts).
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(null);
+
+      const id = service.createJob([{ path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+      expect(metadataService.getChapterRuntimeMs).toHaveBeenCalledWith('B00CXXEX8W');
+    });
+
+    // ── AC5 units: the chapter figure is ms → seconds (/1000), never × 60 ──
+    it('AC5 units — a chapters value that would falsely pass if × 60 must NOT rescue (/1000 is compared)', async () => {
+      // scanned 33219s. Provider scalar 500min (30000s) → Δ3219 mismatch.
+      // chapterMs = 554: correct `/1000` = 0.554s → Δ33218, out of band (no rescue).
+      // A buggy `× 60` would give 33240s → Δ21, inside band (false rescue). The
+      // assertion that this stays medium proves the ms→s conversion is /1000.
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 33219, files: [] });
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], asin: 'B00CXXEX8W', duration: 500 }),
+      ]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(554);
+
+      const id = service.createJob([{ path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+    });
+
+    // ── AC5 boundary: Δ = 240s (inclusive) rescues, Δ = 241s does not ──
+    it('AC5 boundary — chapter-derived Δ = 240s rescues (inclusive)', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 33219, files: [] });
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], asin: 'B00CXXEX8W', duration: 500 }),
+      ]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue((33219 + 240) * 1000);
+
+      const id = service.createJob([{ path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull' }]);
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)!.results[0]!.confidence).toBe('high');
+    });
+
+    it('AC5 boundary — chapter-derived Δ = 241s does NOT rescue', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 33219, files: [] });
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], asin: 'B00CXXEX8W', duration: 500 }),
+      ]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue((33219 + 241) * 1000);
+
+      const id = service.createJob([{ path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+    });
+
+    // ── AC6 tag-single: medium-capped strip attempt, chapters rescue → high, cap bypassed ──
+    it('AC6 tag — medium-capped strip attempt: scalar mismatch, chapters agree → high, no cap reason (cap bypass fired)', async () => {
+      // Exact attempt returns []; strip-trailing-part ('Fablehaven') wins with a
+      // single result → maxConfidence 'medium'. Scalar 539min mismatches the
+      // 33219.47s scan, but the chapter runtime agrees → durationVerified true →
+      // capBypassedByDuration → high with no cap and no duration reason.
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeTaggedScan('Fablehaven - Part 1', 'Brandon Mull', FABLEHAVEN_SCANNED),
+      );
+      vi.mocked(metadataService.searchBooks)
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], asin: 'B00CXXEX8W', duration: FABLEHAVEN_SCALAR_MIN }),
+        ]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(FABLEHAVEN_CHAPTER_MS);
+
+      const id = service.createJob([{ path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('high');
+      expect(result.reason).toBeUndefined();
+      expect(result.reasonKind).toBeUndefined();
+    });
+
+    it('AC6 tag — companion: chapters ALSO disagree keeps the medium cap and its duration reason', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeTaggedScan('Fablehaven - Part 1', 'Brandon Mull', 30000),
+      );
+      vi.mocked(metadataService.searchBooks)
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], asin: 'B00CXXEX8W', duration: FABLEHAVEN_SCALAR_MIN }),
+        ]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(FABLEHAVEN_CHAPTER_MS); // 33219s vs 30000s → Δ3219 out
+
+      const id = service.createJob([{ path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+      expect(result.reason).toContain('Duration mismatch');
+    });
+
+    // ── AC6 tag-multi ──
+    it('AC6 tag-multi — scalar mismatch on top candidate, chapters agree → high', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeTaggedScan('Fablehaven', 'Brandon Mull', FABLEHAVEN_SCANNED),
+      );
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], asin: 'B00CXXEX8W', duration: FABLEHAVEN_SCALAR_MIN }),
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], asin: 'B0OTHEREDN', duration: 800 }),
+      ]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(FABLEHAVEN_CHAPTER_MS);
+
+      const id = service.createJob([{ path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('high');
+      expect(result.reasonKind).toBeUndefined();
+    });
+
+    // ── AC6 — the corroborated durationVerified flows into NarratorCapContext.
+    // The narrator-cap observability log carries `durationVerified`; a chapter
+    // rescue must set it true even though the scalar disagrees. ──
+    it('AC6 — chapter-rescued match threads durationVerified:true into the narrator-cap context', async () => {
+      // Scalar 539min (32340s) mismatches the 33219.47s scan, but the chapter
+      // runtime agrees → durationVerified corroborated true. A mismatching file
+      // narrator then demotes high → medium and logs durationVerified: true — the
+      // proof that NarratorCapContext read the CORROBORATED boolean, not scalar-only.
+      vi.mocked(scanAudioDirectory).mockResolvedValue({
+        ...makeTaggedScan('Fablehaven', 'Brandon Mull', FABLEHAVEN_SCANNED),
+        tagNarrator: 'Someone Else',
+      } as never);
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], narrators: ['E. B. Stevens'], asin: 'B00CXXEX8W', duration: FABLEHAVEN_SCALAR_MIN }),
+      ]);
+      vi.mocked(metadataService.getChapterRuntimeMs).mockResolvedValue(FABLEHAVEN_CHAPTER_MS);
+
+      const id = service.createJob([{ path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.confidence).toBe('medium');
+      expect(result.reason).toContain('Narrator mismatch');
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ durationVerified: true }),
+        expect.stringContaining('Narrator wrong-edition cap fired'),
+      );
     });
   });
 

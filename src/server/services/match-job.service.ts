@@ -14,7 +14,8 @@ import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, tagTitleScore, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
+import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, tagTitleScore, type DurationConfidenceResult, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
+import { corroborateDurationVerdict } from './match-job.duration-corroboration.js';
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
 
 
@@ -303,24 +304,22 @@ class MatchJob {
           // disproven) — never inferred from the resolved confidence.
           // Unrounded scanned seconds (#1850) — the tolerance check compares
           // full-precision seconds (the minute-rounded `duration` is logging only).
-          resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...resolveSingleResultConfidence(topScored.meta, audioResult?.totalDuration) };
-          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: isDurationVerified(topScored.meta, audioResult?.totalDuration) };
+          // #1936 — corroborate a would-be mismatch against the chapter-table
+          // runtime (shared chokepoint); the corroborated flag feeds the cap ctx.
+          const { verdict, durationVerified } = await this.corroborateDuration(topScored.meta, audioResult?.totalDuration, resolveSingleResultConfidence(topScored.meta, audioResult?.totalDuration));
+          resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...verdict };
+          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified };
         } else {
           // Multiple results — the winner was already chosen by `rankResults`
           // (text score, with duration only breaking a score tie, #1882); this
           // step reads confidence off that top candidate's runtime agreement.
           // Unrounded seconds (#1850); `duration` (minutes) below is logging only.
-          const { confidence, reason, reasonKind } = resolveConfidenceFromDuration(scored, audioResult?.totalDuration);
+          // #1936 — corroborate a would-be mismatch on the top candidate before
+          // flagging; `durationVerified` is now the corroborated boolean.
+          const { verdict, durationVerified } = await this.corroborateDuration(topScored.meta, audioResult?.totalDuration, resolveConfidenceFromDuration(scored, audioResult?.totalDuration));
+          const { confidence, reason, reasonKind } = verdict;
           this.log.debug(
-            {
-              path: book.path,
-              confidence,
-              resultCount: scored.length,
-              topScore: topScored.score.toFixed(2),
-              bestTitle: topScored.meta.title,
-              hasDuration: !!duration,
-              matchDuration: topScored.meta.duration,
-            },
+            { path: book.path, confidence, resultCount: scored.length, topScore: topScored.score.toFixed(2), bestTitle: topScored.meta.title, hasDuration: !!duration, matchDuration: topScored.meta.duration },
             confidence === 'high' ? 'Duration-verified high confidence' : reason ?? 'Multiple results — medium confidence',
           );
           resolved = {
@@ -331,8 +330,8 @@ class MatchJob {
             ...(reason !== undefined && { reason }),
             ...(reasonKind !== undefined && { reasonKind }),
           };
-          // `resolveConfidenceFromDuration` returning 'high' IS the duration corroboration.
-          capCtx = { log: this.log, matchSource: 'filename-duration-resolved', durationVerified: confidence === 'high' };
+          // The chapter-corroborated boolean (#1936), not the scalar-only `confidence === 'high'`.
+          capCtx = { log: this.log, matchSource: 'filename-duration-resolved', durationVerified };
         }
       }
 
@@ -353,6 +352,15 @@ class MatchJob {
         error: getErrorMessage(error),
       });
     }
+  }
+
+  /**
+   * The single async duration-corroboration seam (#1936) all four verdict
+   * branches funnel through — delegates to {@link corroborateDurationVerdict},
+   * supplying the `MetadataService` chapter bridge (AC8) and the logger.
+   */
+  private corroborateDuration(meta: BookMetadata, scannedSeconds: number | undefined, base: DurationConfidenceResult): Promise<{ verdict: DurationConfidenceResult; durationVerified: boolean }> {
+    return corroborateDurationVerdict(meta, scannedSeconds, base, (asin) => this.metadataService.getChapterRuntimeMs(asin), this.log);
   }
 
   // Pass 1 — tag-derived match (#984, #1036). Returns null on any failure
@@ -378,24 +386,29 @@ class MatchJob {
     const { scored, attempt } = outcome;
     const top = scored[0]!;
 
+    const single = scored.length === 1;
+    // #1821 — corroborate the single tag-result (incl. the ASIN kill-shot) against
+    // the scanned runtime. #1936 — a would-be `duration-mismatch` is then re-checked
+    // against the edition's chapter-table runtime via the shared chokepoint, which
+    // returns the corroborated `durationVerified`.
+    const { verdict, durationVerified } = await this.corroborateDuration(top.meta, scannedSeconds, single ? resolveSingleResultConfidence(top.meta, scannedSeconds) : resolveConfidenceFromDuration(scored, scannedSeconds));
+
     // #1652 (F6) — genuine runtime corroboration of the chosen edition for EVERY
     // tag source (the `/import-uat` signal logged by the cap). Distinct from
     // `capBypassedByDuration`, which is gated on `maxConfidence === 'medium'` and
     // only governs the strip-attempt cap bypass — an exact/ASIN attempt
     // (`maxConfidence: 'high'`) can be durationVerified while capBypassed is false.
-    const durationVerified = isDurationVerified(top.meta, scannedSeconds);
-    // #1266 — when the scanned runtime verifies the top candidate, bypass the strip `medium` cap and keep `high`.
+    // #1936 — this reads the chapter-corroborated boolean, so a scalar-mismatch
+    // whose chapters agree bypasses the strip `medium` cap and keeps `high`.
     const capBypassedByDuration = attempt.maxConfidence === 'medium' && durationVerified;
     const cap = (raw: Confidence, reason: string | undefined, reasonKind: MatchReasonKind | undefined): { confidence: Confidence; reason?: string; reasonKind?: MatchReasonKind } =>
       capBypassedByDuration ? { confidence: 'high' } : applyAttemptCap(raw, attempt.maxConfidence, reason, reasonKind);
 
-    const single = scored.length === 1;
-    // #1821 — corroborate the single tag-result (incl. the ASIN kill-shot) against
-    // the scanned runtime. The raw value still flows through the attempt `cap()`
-    // below: a mismatch → raw `medium` survives (durationVerified false, so
-    // capBypassedByDuration false); a missing runtime → raw `high`, clamped to
+    // The raw value still flows through the attempt `cap()`: a mismatch neither
+    // scalar nor chapters rescue → raw `medium` survives (durationVerified false,
+    // so capBypassedByDuration false); a missing runtime → raw `high`, clamped to
     // `medium` by a `maxConfidence: 'medium'` attempt exactly as before.
-    const { confidence, reason, reasonKind } = single ? resolveSingleResultConfidence(top.meta, scannedSeconds) : resolveConfidenceFromDuration(scored, scannedSeconds);
+    const { confidence, reason, reasonKind } = verdict;
     const result: MatchResult = { path: book.path, ...cap(confidence, reason, reasonKind), bestMatch: top.meta, alternatives: single ? [] : scored.slice(1).map(s => s.meta) };
     return { result, ctx: { log: this.log, matchSource: attempt.source, durationVerified } };
   }

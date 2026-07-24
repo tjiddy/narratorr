@@ -16,6 +16,10 @@ export const audnexusHandlers = [
     return HttpResponse.json(authorFixture);
   }),
 
+  http.get('https://api.audnex.us/books/:asin/chapters', () => {
+    return HttpResponse.json({ asin: 'B0030DL4GK', runtimeLengthMs: 162840000, chapters: [] });
+  }),
+
   http.get('https://api.audnex.us/books/:asin', () => {
     return HttpResponse.json(bookFixture);
   }),
