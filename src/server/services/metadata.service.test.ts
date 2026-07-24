@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES, NARRATOR_PLACEHOLDERS } from '../../core/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -1355,25 +1355,39 @@ describe('MetadataService', () => {
       await expect(service.getChapterRuntimeMs('B_THROW')).resolves.toBeNull();
     });
 
-    it('F5: seeds the SHARED Audnexus backoff on a rate_limited outcome and short-circuits siblings', async () => {
-      mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60000 });
-      const first = await service.getChapterRuntimeMs('B_FIRST');
-      expect(first).toBeNull();
+    // F4 — the shared backoff reads Date.now() via rateLimitUntil; pin the clock so
+    // a long CI scheduler pause can't expire the 60s window between assertions.
+    // (A fixed epoch also keeps RequestThrottle's `elapsed` huge — lastRequest=0 —
+    // so no setTimeout fires and the awaits resolve on the microtask queue.)
+    describe('shared Audnexus backoff (deterministic clock)', () => {
+      beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-07-24T00:00:00Z'));
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+      });
 
-      // Second lookup during the active backoff must short-circuit BEFORE hitting
-      // the provider again — the backoff is shared and pre-emptive.
-      const second = await service.getChapterRuntimeMs('B_SECOND');
-      expect(second).toBeNull();
-      expect(mockAudnexus.getChaptersDetailed).toHaveBeenCalledTimes(1);
-    });
+      it('F5: seeds the SHARED Audnexus backoff on a rate_limited outcome and short-circuits siblings', async () => {
+        mockAudnexus.getChaptersDetailed.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60000 });
+        const first = await service.getChapterRuntimeMs('B_FIRST');
+        expect(first).toBeNull();
 
-    it('F5: an existing Audnexus backoff (seeded by enrichBook) short-circuits the chapter lookup', async () => {
-      mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60000, 'Audnexus'));
-      await expect(service.enrichBook('B000FIRST')).rejects.toThrow(RateLimitError);
+        // Second lookup during the active backoff must short-circuit BEFORE hitting
+        // the provider again — the backoff is shared and pre-emptive.
+        const second = await service.getChapterRuntimeMs('B_SECOND');
+        expect(second).toBeNull();
+        expect(mockAudnexus.getChaptersDetailed).toHaveBeenCalledTimes(1);
+      });
 
-      const result = await service.getChapterRuntimeMs('B_DURING_BACKOFF');
-      expect(result).toBeNull();
-      expect(mockAudnexus.getChaptersDetailed).not.toHaveBeenCalled();
+      it('F5: an existing Audnexus backoff (seeded by enrichBook) short-circuits the chapter lookup', async () => {
+        mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60000, 'Audnexus'));
+        await expect(service.enrichBook('B000FIRST')).rejects.toThrow(RateLimitError);
+
+        const result = await service.getChapterRuntimeMs('B_DURING_BACKOFF');
+        expect(result).toBeNull();
+        expect(mockAudnexus.getChaptersDetailed).not.toHaveBeenCalled();
+      });
     });
   });
 

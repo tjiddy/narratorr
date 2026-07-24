@@ -863,6 +863,24 @@ describe('AudnexusProvider', () => {
       expect(result.kind).toBe('invalid_record');
     });
 
+    it('F2: malformed non-JSON body (HTML interstitial) → transient_failure, does NOT throw', async () => {
+      // Distinct transport branch from the wrong-typed-JSON case above: here
+      // `response.json()` itself REJECTS (the body is not JSON), which the
+      // detailed fetch must catch and convert to a non-throwing outcome rather
+      // than let escape out of the match path. A 200 status with an HTML body is
+      // the real-world Audnexus/Cloudflare interstitial shape.
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', () =>
+          new HttpResponse('<html><body>Just a moment…</body></html>', {
+            status: 200,
+            headers: { 'Content-Type': 'text/html' },
+          }),
+        ),
+      );
+      const result = await provider.getChaptersDetailed('B_HTML');
+      expect(result.kind).toBe('transient_failure');
+    });
+
     it('HTTP 429 with Retry-After → rate_limited preserved (not a plain miss), carrying retryAfterMs', async () => {
       server.use(
         http.get('https://api.audnex.us/books/:asin/chapters', () =>
@@ -877,6 +895,35 @@ describe('AudnexusProvider', () => {
     it('never throws under any error path', async () => {
       chapters(null, 500);
       await expect(provider.getChaptersDetailed('B_5xx')).resolves.toBeDefined();
+    });
+
+    it('F3: requests the /chapters path with the configured region (non-default)', async () => {
+      const ukProvider = new AudnexusProvider({ region: 'uk' });
+      let capturedUrl = '';
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ runtimeLengthMs: 33219490, isAccurate: true });
+        }),
+      );
+
+      await ukProvider.getChaptersDetailed('B00CXXEX8W');
+      // Pin both the endpoint shape and the region query — deleting either the
+      // `/chapters` suffix or `?region=${this.region}` fails this assertion.
+      expect(capturedUrl).toBe('https://api.audnex.us/books/B00CXXEX8W/chapters?region=uk');
+    });
+
+    it('F3: requests ?region=us for the default provider', async () => {
+      let capturedUrl = '';
+      server.use(
+        http.get('https://api.audnex.us/books/:asin/chapters', ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ runtimeLengthMs: 33219490, isAccurate: true });
+        }),
+      );
+
+      await provider.getChaptersDetailed('B00CXXEX8W');
+      expect(capturedUrl).toContain('/books/B00CXXEX8W/chapters?region=us');
     });
   });
 
