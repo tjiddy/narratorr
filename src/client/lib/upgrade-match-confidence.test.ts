@@ -301,7 +301,7 @@ describe('upgradeMatchConfidence', () => {
         confidence: 'medium',
         reason: 'Multiple results — no duration data to disambiguate',
         reasonKind: 'no-duration-data',
-        scannedSeconds: undefined,
+        // scannedSeconds absent (no scanned runtime) — the ambiguity class.
       });
       const newMetadata = baseMetadata();
 

@@ -197,10 +197,9 @@ class MatchJob {
 
   // eslint-disable-next-line complexity -- audio-scan + tag-pass + filename-pass + scoring branches with conditional-spread on MatchResult
   async matchSingleBook(book: MatchCandidate): Promise<MatchResult> {
-    // Raw unrounded scanner seconds (#1929) — threaded onto EVERY assembled result
-    // (regardless of confidence, incl. the 'none'/title-floor/error exits) so the
-    // client can re-evaluate any medium re-pick against the picked edition. Declared
-    // outside the try so the catch-block error result honors the same contract.
+    // Raw scanner seconds (#1929) threaded onto EVERY assembled result regardless of
+    // confidence (incl. 'none'/title-floor/error exits) so the client can re-evaluate a
+    // medium re-pick. Declared outside the try so the catch's error result honors it too.
     let scannedSeconds: number | undefined;
     const withScanned = (result: MatchResult): MatchResult =>
       scannedSeconds && scannedSeconds > 0 ? { ...result, scannedSeconds } : result;
@@ -343,8 +342,7 @@ class MatchJob {
 
       // Post-match library-duplicate pass (#1662) — keyed off the MATCHED metadata,
       // so a no-author filename that resolves to an owned book is flagged at review.
-      const deduped = await applyLibraryDuplicate(capped, this.bookService, this.log);
-      return withScanned(deduped);
+      return withScanned(await applyLibraryDuplicate(capped, this.bookService, this.log));
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), path: book.path, title: book.title }, 'Match failed for book');
       return withScanned({
