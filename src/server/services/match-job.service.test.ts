@@ -1385,6 +1385,37 @@ describe('MatchJobService', () => {
       expect(getBookCalls).toBeLessThanOrEqual(2);
     });
 
+    // #1929 F1 (carried F9) — the empty-scored/cancellation exit is a SEPARATE result
+    // exit from the no-results/title-floor/catch ones; it must also carry the raw
+    // scanned seconds unconditionally. This fails if `withScanned` is dropped from the
+    // empty-scored return (match-job.service.ts:278) while every other test stays green.
+    it('empty-scored (cancellation) none exit still carries positive scannedSeconds (#1929)', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 36000, files: [] });
+      const results = Array.from({ length: 5 }, (_, i) =>
+        makeBookMetadata({ title: `Book ${i}`, providerId: `prov-${i}` }),
+      );
+      // Cancel WHILE the search resolves so `fetchDetails` sees `isCancelled` on its very
+      // first iteration and returns an empty `detailed` → `scored` is empty even though the
+      // search returned 5 results → the empty-scored exit (not no-results/title-floor) fires.
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        service.cancelJob('test-job-id');
+        return results;
+      });
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+      // The empty-scored result is pushed in the microtask cascade following the cancel;
+      // let it settle before snapshotting.
+      await flushPromises();
+
+      const result = service.getJob(id)!.results[0]!;
+      // The empty-scored none exit — bestMatch null, but getBook was never reached.
+      expect(result.confidence).toBe('none');
+      expect(result.bestMatch).toBeNull();
+      expect(metadataService.getBook).not.toHaveBeenCalled();
+      expect(result.scannedSeconds).toBe(36000);
+    });
+
     it('polling mid-job shows incremental progress', async () => {
       let resolveFirst!: (v: BookMetadata[]) => void;
       let resolveSecond!: (v: BookMetadata[]) => void;

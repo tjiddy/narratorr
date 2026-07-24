@@ -178,6 +178,28 @@ describe('upgradeMatchConfidence', () => {
       expect(result?.scannedSeconds).toBe(SCANNED_14H53M);
     });
 
+    // F2 — a picked edition duration of ZERO (not undefined) is a non-positive runtime
+    // and must classify as cannot-verify, NOT a mismatch against 0h 0m. Pins the
+    // `pickedMinutes <= 0` half of the precedence-2 guard (dropping it would render a
+    // false "Duration mismatch — scanned 14h 53m vs expected 0h 0m").
+    it('missing-duration → re-pick to an edition whose duration is 0 stays medium with the best-match-missing string', () => {
+      const matchResult = baseMatchResult({
+        confidence: 'medium',
+        reason: 'Best match missing duration — cannot verify',
+        reasonKind: 'missing-duration',
+        scannedSeconds: SCANNED_14H53M,
+      });
+      const newMetadata = baseMetadata({ duration: 0 }); // zero, not undefined
+
+      const result = upgradeMatchConfidence(matchResult, newMetadata, baseMetadata());
+
+      expect(result?.confidence).toBe('medium');
+      expect(result?.reasonKind).toBe('missing-duration');
+      expect(result?.reason).toBe('Best match missing duration — cannot verify');
+      expect(result?.reason).not.toContain('0h 0m');
+      expect(result?.scannedSeconds).toBe(SCANNED_14H53M);
+    });
+
     it('missing-duration → re-pick to an in-band edition clears to high', () => {
       const matchResult = baseMatchResult({
         confidence: 'medium',
@@ -245,6 +267,28 @@ describe('upgradeMatchConfidence', () => {
 
       expect(result?.confidence).toBe('medium');
       expect(result?.reasonKind).toBe('missing-duration');
+      expect(result?.reason).toBe('Scanned duration unavailable — cannot verify');
+    });
+
+    // F3 — when BOTH runtimes are missing, scanner-first precedence (precedence 1
+    // before 2) must select the scanner-side message. If the two guards were reversed
+    // the row would blame the best match instead of the unavailable scan; the other
+    // cases (scanner-missing+picked-present, picked-missing+scanner-present) can't
+    // distinguish the order, so this both-absent case is the one that pins it.
+    it('duration-mismatch with BOTH scannedSeconds and picked duration missing → scanner-side string (scanner-first precedence)', () => {
+      const matchResult = baseMatchResult({
+        confidence: 'medium',
+        reason: 'Duration mismatch — scanned 14h 53m vs expected 14h 58m',
+        reasonKind: 'duration-mismatch',
+        // scannedSeconds absent (missing/corrupt transport)
+      });
+      const newMetadata = baseMetadata({ duration: undefined }); // picked runtime also absent
+
+      const result = upgradeMatchConfidence(matchResult, newMetadata, baseMetadata());
+
+      expect(result?.confidence).toBe('medium');
+      expect(result?.reasonKind).toBe('missing-duration');
+      // Scanner-side message, NOT the best-match-missing string — scanner is checked first.
       expect(result?.reason).toBe('Scanned duration unavailable — cannot verify');
     });
 
