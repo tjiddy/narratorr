@@ -574,6 +574,36 @@ describe('useMatchJob', () => {
     expect(result.current.recovering).toBe(true);
   });
 
+  // #1929 — a restart re-issues a fresh job; the server recomputes scannedSeconds +
+  // reasonKind (they are derived, not persisted). Those fields must survive the
+  // MatchEngine ingest of the restart-produced status unchanged.
+  it('restart-produced result carrying scannedSeconds/reasonKind survives MatchEngine ingest (#1929)', async () => {
+    const enriched: MatchResult = {
+      path: '/b',
+      confidence: 'medium',
+      bestMatch: null,
+      alternatives: [],
+      reason: 'Duration mismatch — scanned 14h 53m vs expected 14h 58m',
+      reasonKind: 'duration-mismatch',
+      scannedSeconds: 53580,
+    };
+    mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+    mockGetMatchJob
+      .mockResolvedValueOnce(completed('job-1', [R('/a')]))
+      .mockResolvedValue(completed('job-2', [enriched]));
+    const { result } = renderHook(() => useMatchJob());
+
+    await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+    await advance(POLL);
+    await act(async () => { result.current.restart([{ path: '/b', title: 'B' }]); });
+    await advance(POLL);
+
+    const merged = result.current.results.find(r => r.path === '/b');
+    expect(merged?.scannedSeconds).toBe(53580);
+    expect(merged?.reasonKind).toBe('duration-mismatch');
+    expect(merged?.reason).toBe('Duration mismatch — scanned 14h 53m vs expected 14h 58m');
+  });
+
   // #1864 F1 — automatic recovery activates the fail-closed `recovering` gate.
   describe('recovering gate during automatic recovery (F1)', () => {
     it('is false during a healthy initial poll (keeps the selective-CTA #1102 behavior)', async () => {
