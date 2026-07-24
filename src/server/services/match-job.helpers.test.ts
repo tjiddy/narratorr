@@ -909,7 +909,7 @@ describe('resolveConfidenceFromDuration', () => {
 
   it('returns medium when scanned seconds is undefined', () => {
     const result = resolveConfidenceFromDuration([{ meta: topMeta }], undefined);
-    expect(result).toEqual({ confidence: 'medium', reason: expect.stringContaining('no duration data') });
+    expect(result).toEqual({ confidence: 'medium', reason: expect.stringContaining('no duration data'), reasonKind: 'no-duration-data' });
   });
 
   it('returns medium when scanned seconds is zero', () => {
@@ -920,7 +920,7 @@ describe('resolveConfidenceFromDuration', () => {
   it('returns medium "cannot verify" when top result has no duration', () => {
     const noDuration = makeBook();
     const result = resolveConfidenceFromDuration([{ meta: noDuration }], 3600);
-    expect(result).toEqual({ confidence: 'medium', reason: expect.stringContaining('cannot verify') });
+    expect(result).toEqual({ confidence: 'medium', reason: expect.stringContaining('cannot verify'), reasonKind: 'missing-duration' });
   });
 
   it('returns high when scanned seconds is within the 90s band', () => {
@@ -934,6 +934,7 @@ describe('resolveConfidenceFromDuration', () => {
     const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 60 }) }], 3900);
     expect(result.confidence).toBe('medium');
     expect(result.reason).toContain('Duration mismatch');
+    expect(result.reasonKind).toBe('duration-mismatch');
   });
 
   it('does not relax on long books — a 30h book 5min off is medium, no score tier rescues it', () => {
@@ -1023,6 +1024,7 @@ describe('resolveSingleResultConfidence', () => {
     const result = resolveSingleResultConfidence(makeBook({ duration: 807 }), 33360);
     expect(result.confidence).toBe('medium');
     expect(result.reason).toBe('Duration mismatch — scanned 9h 16m vs expected 13h 27m');
+    expect(result.reasonKind).toBe('duration-mismatch');
   });
 
   it('both present + within 90s → high, no reason', () => {
@@ -1030,12 +1032,14 @@ describe('resolveSingleResultConfidence', () => {
     const result = resolveSingleResultConfidence(makeBook({ duration: 60 }), 3650);
     expect(result.confidence).toBe('high');
     expect(result.reason).toBeUndefined();
+    expect(result.reasonKind).toBeUndefined();
   });
 
   it('scanned seconds missing → high, no reason (absent data does not demote)', () => {
     const result = resolveSingleResultConfidence(makeBook({ duration: 60 }), undefined);
     expect(result.confidence).toBe('high');
     expect(result.reason).toBeUndefined();
+    expect(result.reasonKind).toBeUndefined();
   });
 
   it('scanned seconds zero → high, no reason', () => {

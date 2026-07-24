@@ -4,6 +4,7 @@ import type { BookMetadata } from './books.js';
 export type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem } from '../../../shared/schemas/library-scan.js';
 import type { DiscoveredBook, DuplicateReason } from '../../../shared/schemas/library-scan.js';
 import type { RecordingVerdict } from '../../../shared/schemas/recording-verdict.js';
+import type { MatchReasonKind } from '../../../shared/match-reason-kind.js';
 
 export interface ImportConfirmItem {
   path: string;
@@ -48,6 +49,21 @@ export interface MatchResult {
   alternatives: BookMetadata[];
   error?: string;
   reason?: string;
+  /**
+   * Structured discriminator for the duration-confidence Review reason (#1929).
+   * Mirrors the server `MatchResult`. Paired with `reason` (never parsed from it);
+   * `upgradeMatchConfidence` branches on it to decide whether an explicit re-pick
+   * re-evaluates the duration evidence (`duration-mismatch`/`missing-duration`) or
+   * clears to high as today (`no-duration-data` / `undefined` legacy).
+   */
+  reasonKind?: MatchReasonKind;
+  /**
+   * Raw unrounded scanner runtime in SECONDS (#1929). Mirrors the server
+   * `MatchResult`. Threaded onto every result the scanner gave a positive runtime,
+   * so `upgradeMatchConfidence` can re-check a picked edition's `duration * 60`
+   * against it on a medium re-pick. Absent when the scan found no positive runtime.
+   */
+  scannedSeconds?: number;
   /**
    * Post-match library-duplicate flags (#1662). Mirrors the server `MatchResult`.
    * `mergeMatchIntoRow` propagates these onto `row.book` so the existing

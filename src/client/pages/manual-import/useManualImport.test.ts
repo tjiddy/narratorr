@@ -2012,6 +2012,49 @@ describe('match merge — boundary values (#185)', () => {
     }
   });
 
+  // #1929 — re-picking the same duration-mismatch edition on the manual surface must
+  // NOT turn the row green; it re-checks the picked edition against the scanned runtime.
+  it('re-picking the same out-of-band edition on a duration-mismatch row keeps it in Review (#1929)', async () => {
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'medium',
+          bestMatch: { title: 'Official Title', authors: [{ name: 'Author A' }], duration: 898 }, // 14h58m
+          alternatives: [],
+          reason: 'Duration mismatch — scanned 14h 53m vs expected 14h 58m',
+          reasonKind: 'duration-mismatch',
+          scannedSeconds: 53580, // 14h53m — Δ300s, out of band
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+      await tickPoll();
+      await waitFor(() => { expect(result.current.state.rows[0]!.matchResult?.reasonKind).toBe('duration-mismatch'); });
+
+      // BookEditModal spreads the pick into a fresh object — same edition, new reference.
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Official Title', author: 'Author A', series: '',
+          metadata: { title: 'Official Title', authors: [{ name: 'Author A' }], duration: 898 },
+        });
+      });
+
+      const match = result.current.state.rows[0]!.matchResult;
+      expect(match?.confidence).toBe('medium');
+      expect(match?.reasonKind).toBe('duration-mismatch');
+      expect(match?.reason).toBe('Duration mismatch — scanned 14h 53m vs expected 14h 58m');
+      expect(match?.scannedSeconds).toBe(53580);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('high confidence does NOT re-select a row the user had deselected (#1318 parity)', async () => {
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);

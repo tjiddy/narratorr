@@ -1841,4 +1841,70 @@ describe('empty result edge case', () => {
       expect(result.current.state.rows[0]!.edited).not.toHaveProperty('seriesPosition');
     });
   });
+
+  // #1929 — re-picking a match on a duration-mismatch Review row must re-check the
+  // picked edition against the scanned runtime, never blanket-clear to green.
+  describe('#1929 re-pick re-evaluates duration evidence (library surface)', () => {
+    const scanWithSingleNew: ScanResult = {
+      discoveries: [
+        { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+      ],
+      totalFolders: 1,
+    };
+    // scanned 14h53m vs the seeded 14h58m edition (Δ300s, out of band).
+    const durationMismatchResult = {
+      path: '/audiobooks/AuthorA/Book1',
+      confidence: 'medium' as const,
+      bestMatch: { title: 'Official', authors: [{ name: 'Author A' }], duration: 898 },
+      alternatives: [],
+      reason: 'Duration mismatch — scanned 14h 53m vs expected 14h 58m',
+      reasonKind: 'duration-mismatch' as const,
+      scannedSeconds: 53580,
+    };
+
+    async function seedMismatchRow() {
+      mockScanDirectory.mockReset().mockResolvedValue(scanWithSingleNew);
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+      mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'completed', total: 1, matched: 1, results: [durationMismatchResult] });
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+      await waitFor(() => { expect(result.current.state.step).toBe('review'); });
+      await waitFor(() => { expect(result.current.state.rows[0]!.matchResult?.reasonKind).toBe('duration-mismatch'); }, { timeout: 5000 });
+      return result;
+    }
+
+    it('re-picking the SAME (out-of-band) edition keeps the row in Review, not green', async () => {
+      const result = await seedMismatchRow();
+
+      // BookEditModal spreads the pick into a FRESH object — same values, new reference.
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Official', author: 'Author A', series: '',
+          metadata: { title: 'Official', authors: [{ name: 'Author A' }], duration: 898 },
+        });
+      });
+
+      const match = result.current.state.rows[0]!.matchResult;
+      expect(match?.confidence).toBe('medium');
+      expect(match?.reasonKind).toBe('duration-mismatch');
+      expect(match?.reason).toBe('Duration mismatch — scanned 14h 53m vs expected 14h 58m');
+      expect(match?.scannedSeconds).toBe(53580);
+    });
+
+    it('re-picking an in-band edition legitimately clears the row to Matched', async () => {
+      const result = await seedMismatchRow();
+
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Official', author: 'Author A', series: '',
+          metadata: { title: 'Official', authors: [{ name: 'Author A' }], duration: 894 }, // 14h54m → Δ60s
+        });
+      });
+
+      const match = result.current.state.rows[0]!.matchResult;
+      expect(match?.confidence).toBe('high');
+      expect(match?.reason).toBeUndefined();
+      expect(match?.reasonKind).toBeUndefined();
+      expect(match?.scannedSeconds).toBe(53580);
+    });
+  });
 });

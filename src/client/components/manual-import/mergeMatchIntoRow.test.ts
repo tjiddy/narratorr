@@ -48,6 +48,16 @@ describe('mergeMatchIntoRow', () => {
     expect(mergeMatchIntoRow(makeRow({ userEdited: true, selected: true }), makeMatch({ confidence: 'none', bestMatch: null })).selected).toBe(true);
   });
 
+  it('threads scannedSeconds + reasonKind through onto row.matchResult (#1929)', () => {
+    const merged = mergeMatchIntoRow(
+      makeRow(),
+      makeMatch({ confidence: 'medium', reason: 'Duration mismatch — scanned 14h 53m vs expected 14h 58m', reasonKind: 'duration-mismatch', scannedSeconds: 53580 }),
+    );
+    expect(merged.matchResult?.scannedSeconds).toBe(53580);
+    expect(merged.matchResult?.reasonKind).toBe('duration-mismatch');
+    expect(merged.matchResult?.reason).toBe('Duration mismatch — scanned 14h 53m vs expected 14h 58m');
+  });
+
   it('auto-populates edited fields only when the row has no prior metadata', () => {
     const fresh = mergeMatchIntoRow(makeRow(), makeMatch({ confidence: 'high' }));
     expect(fresh.edited.title).toBe('Official');
