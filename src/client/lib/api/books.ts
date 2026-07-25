@@ -82,6 +82,10 @@ export interface CreateBookPayload {
 
 
 export interface BookIdentifier {
+  // Required, not optional (#1916): consumers that render a link to the owned
+  // book (the Add-Book search card) read `entry.id` off the match. An optional
+  // `id` would let that silently fall back to null with no type error.
+  id: number;
   asin: string | null;
   title: string;
   authorName: string | null;

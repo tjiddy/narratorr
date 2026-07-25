@@ -189,7 +189,7 @@ describe('isBookInLibrary — authorless matching (#246)', () => {
 
   it('matches by title when both search result and BookIdentifier library book have authorName: null', () => {
     const book: BookMetadata = { title: 'Shogun', authors: [] };
-    const libBook: BookIdentifier = { asin: null, title: 'Shogun', authorName: null, authorSlug: null };
+    const libBook: BookIdentifier = { id: 1, asin: null, title: 'Shogun', authorName: null, authorSlug: null };
     expect(isBookInLibrary(book, [libBook])).toBe(true);
   });
 
@@ -460,6 +460,7 @@ describe('findLibraryMatch (#1150, #1907)', () => {
 
   it('generic preserves the BookIdentifier branch of the LibraryEntry union', () => {
     const bookId: BookIdentifier = {
+      id: 5,
       asin: 'B003P2WO5E',
       title: 'The Way of Kings',
       authorName: 'Brandon Sanderson',
@@ -474,5 +475,36 @@ describe('findLibraryMatch (#1150, #1907)', () => {
     expect(match).not.toBeNull();
     // Narrowed back to BookIdentifier — exposes authorName, not authors array.
     expect(match!.entry.authorName).toBe('Brandon Sanderson');
+  });
+
+  // #1916 — the search page now matches against BookIdentifier rows, so the
+  // `entry.id` the card links at has to come off the narrow union branch too.
+  describe('BookIdentifier entries expose entry.id (#1916)', () => {
+    const book: BookMetadata = {
+      title: 'The Way of Kings',
+      asin: 'B003P2WO5E',
+      authors: [{ name: 'Brandon Sanderson' }],
+    };
+
+    it('returns the exact-ASIN BookIdentifier entry with its id', () => {
+      const titleIdentity: BookIdentifier = {
+        id: 1, asin: 'B00OTHERED', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson',
+      };
+      const exactAsin: BookIdentifier = {
+        id: 42, asin: 'B003P2WO5E', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson',
+      };
+      const match = findLibraryMatch(book, [titleIdentity, exactAsin]);
+      expect(match!.kind).toBe('exact-asin');
+      expect(match!.entry.id).toBe(42);
+    });
+
+    it('returns the title-identity BookIdentifier entry with its id', () => {
+      const titleIdentity: BookIdentifier = {
+        id: 9, asin: 'B00OTHERED', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson',
+      };
+      const match = findLibraryMatch(book, [titleIdentity]);
+      expect(match!.kind).toBe('title-identity');
+      expect(match!.entry.id).toBe(9);
+    });
   });
 });

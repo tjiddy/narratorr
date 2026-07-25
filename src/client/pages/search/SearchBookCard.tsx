@@ -4,7 +4,7 @@ import { AddBookPopover } from '@/components/AddBookPopover';
 import { InLibraryBadge } from '@/components/InLibraryBadge';
 import { Badge } from '@/components/Badge';
 import { useMutation, type useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, type BookMetadata, type BookWithAuthor } from '@/lib/api';
+import { api, ApiError, type BookMetadata, type BookIdentifier, type BookWithAuthor } from '@/lib/api';
 import { toast } from 'sonner';
 import { mapBookMetadataToPayload, findLibraryMatch, type LibraryMatch } from '@/lib/helpers';
 import { formatDurationMinutes } from '@/lib/format';
@@ -24,7 +24,7 @@ import {
 // links to nothing until an add/409 completes, so it keeps its Add control and shows
 // the related-edition badge instead of ever linking to the incumbent edition (AC5).
 function deriveOwnership(
-  libraryMatch: LibraryMatch<BookWithAuthor> | null,
+  libraryMatch: LibraryMatch<BookIdentifier | BookWithAuthor> | null,
   justAddedBookId: number | null,
 ): { inLibraryBookId: number | null; showRelatedEditionBadge: boolean } {
   const inLibraryBookId = justAddedBookId ?? (libraryMatch?.kind === 'exact-asin' ? libraryMatch.entry.id : null);
@@ -42,7 +42,9 @@ export function SearchBookCard({
 }: {
   book: BookMetadata;
   index: number;
-  libraryBooks?: BookWithAuthor[] | undefined;
+  // Ownership union (#1916): the search page supplies the unpaginated
+  // `BookIdentifier[]`; both branches carry the `id` the badge links at.
+  libraryBooks?: (BookIdentifier | BookWithAuthor)[] | undefined;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [justAddedBookId, setJustAddedBookId] = useState<number | null>(null);

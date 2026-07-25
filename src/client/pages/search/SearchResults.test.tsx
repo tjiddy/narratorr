@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { SearchResults } from './SearchResults';
 import { createMockBookMetadata, createMockAuthorMetadata } from '@/__tests__/factories';
+import type { BookIdentifier } from '@/lib/api';
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -12,7 +13,10 @@ vi.mock('@/lib/api', async (importOriginal) => {
     ...actual,
     api: {
       ...(actual.api as Record<string, unknown>),
-      getBooks: vi.fn().mockResolvedValue([]),
+      // Kept as a spy (never as the real function) so the #1916 negative
+      // assertion below is a real mock-call check rather than a no-op.
+      getBooks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+      getBookIdentifiers: vi.fn().mockResolvedValue([]),
       addBook: vi.fn(),
     },
   };
@@ -25,6 +29,8 @@ vi.mock('sonner', () => ({
     error: vi.fn(),
   },
 }));
+
+import { api } from '@/lib/api';
 
 function renderResults(props: Partial<Parameters<typeof SearchResults>[0]> = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -257,6 +263,56 @@ describe('SearchResults', () => {
       });
       expect(screen.getByText('No books found')).toBeInTheDocument();
       expect(screen.getByText(/add manually/i)).toBeInTheDocument();
+    });
+  });
+
+  // #1916 — ownership on the search page must come from the unpaginated
+  // identifiers endpoint, not from the 120-row-capped `/api/books` page.
+  describe('#1916 ownership source', () => {
+    const results = { books: [createMockBookMetadata()], authors: [] };
+
+    it('reads ownership from getBookIdentifiers and never calls the capped getBooks', async () => {
+      renderResults({ searchTerm: 'fantasy', results });
+
+      await waitFor(() => {
+        expect(api.getBookIdentifiers).toHaveBeenCalledTimes(1);
+      });
+      expect(api.getBooks).not.toHaveBeenCalled();
+    });
+
+    it('passes the identifiers array through to BooksTabContent so cards derive ownership from it', async () => {
+      const book = createMockBookMetadata();
+      const identifiers: BookIdentifier[] = [
+        { id: 77, asin: book.asin ?? null, title: book.title, authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson' },
+      ];
+      vi.mocked(api.getBookIdentifiers).mockResolvedValue(identifiers);
+
+      renderResults({ searchTerm: 'fantasy', results: { books: [book], authors: [] } });
+
+      // The card only reaches the linked In-Library state if it received the array.
+      const link = await screen.findByRole('link', { name: /view this book in your library/i });
+      expect(link).toHaveAttribute('href', '/books/77');
+    });
+
+    // F2 — loading/failure is deliberately fail-open: ownership is a hint, and
+    // the server's 409-with-incumbent verdict is the real duplicate backstop.
+    it('falls open to the Add control while identifiers are still loading', () => {
+      vi.mocked(api.getBookIdentifiers).mockReturnValue(new Promise(() => {}));
+      renderResults({ searchTerm: 'fantasy', results });
+
+      expect(screen.getByRole('button', { name: /add book/i })).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /view this book in your library/i })).not.toBeInTheDocument();
+    });
+
+    it('falls open to the Add control when the identifiers request fails', async () => {
+      vi.mocked(api.getBookIdentifiers).mockRejectedValue(new Error('Network error'));
+      renderResults({ searchTerm: 'fantasy', results });
+
+      await waitFor(() => {
+        expect(api.getBookIdentifiers).toHaveBeenCalled();
+      });
+      expect(screen.getByRole('button', { name: /add book/i })).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /view this book in your library/i })).not.toBeInTheDocument();
     });
   });
 });
