@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES, NARRATOR_PLACEHOLDERS } from '../../core/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -23,6 +23,8 @@ const mockAudnexus = {
   getBook: vi.fn().mockResolvedValue(null),
   getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
   getAuthor: vi.fn().mockResolvedValue(null),
+  // #1942 — the chapter-runtime lookup the corroborator bridges to.
+  getChapterRuntime: vi.fn().mockResolvedValue({ kind: 'not_found' }),
 };
 
 vi.mock('../../core/index.js', async (importOriginal) => {
@@ -52,6 +54,7 @@ describe('MetadataService', () => {
     mockAudnexus.getBook.mockReset();
     mockAudnexus.getBookDetailed.mockReset();
     mockAudnexus.getAuthor.mockReset();
+    mockAudnexus.getChapterRuntime.mockReset();
     // Reset mock return values
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
     mockAudibleProvider.searchSeries.mockResolvedValue([]);
@@ -61,6 +64,7 @@ describe('MetadataService', () => {
     mockAudnexus.getBook.mockResolvedValue(null);
     mockAudnexus.getBookDetailed.mockResolvedValue({ kind: 'not_found' });
     mockAudnexus.getAuthor.mockResolvedValue(null);
+    mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'not_found' });
 
     mockLog = createMockLogger();
     service = new MetadataService(inject<FastifyBaseLogger>(mockLog));
@@ -1969,6 +1973,127 @@ describe('MetadataService', () => {
       new MetadataService(inject<FastifyBaseLogger>(createMockLogger()), { audibleRegion: 'uk' });
 
       expect(audnexusCtor).toHaveBeenCalledWith({ region: 'uk' });
+    });
+  });
+
+  // #1942 — the chapter-runtime bridge. These run against a REAL MetadataService
+  // (only the provider is mocked), so they prove the corroborator is genuinely
+  // wired to the service's shared throttle and provider-wide 429 backoff rather
+  // than reaching Audnexus on its own.
+  describe('getChapterRuntimeSeconds bridge (#1942)', () => {
+    const ASIN = 'B00CXXEX8W';
+
+    it('returns the trusted chapter runtime in SECONDS', async () => {
+      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
+
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+      expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledExactlyOnceWith(ASIN);
+    });
+
+    it('a returned 429 sets the shared backoff, so the IMMEDIATELY subsequent Audnexus call short-circuits', async () => {
+      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'rate_limited', retryAfterMs: 60_000 });
+
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        { provider: 'Audnexus', retryAfterMs: 60_000 },
+        'Provider rate limited',
+      );
+
+      // The gate is provider-wide, not per-ASIN: the very next Audnexus lookup
+      // (a different call, a different ASIN) is skipped without a request.
+      await expect(service.getAuthor('B001H6UJO8')).resolves.toBeNull();
+      expect(mockAudnexus.getAuthor).not.toHaveBeenCalled();
+      // And the chapter path itself does not re-request during the window...
+      await service.getChapterRuntimeSeconds('B_OTHER');
+      expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
+    });
+
+    it('the backoff window is FINITE — a NaN window would make the gate a silent no-op (F16)', async () => {
+      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'rate_limited', retryAfterMs: Number.NaN });
+
+      await service.getChapterRuntimeSeconds(ASIN);
+
+      // A NaN window leaves `Date.now() + NaN` = NaN, which `isRateLimited` reads
+      // as "not limited" — so the provider WOULD be retried immediately. The
+      // adapter guarantees finite windows; this pins the failure signature so a
+      // regression there surfaces here as an un-gated retry.
+      await service.getChapterRuntimeSeconds('B_OTHER');
+      expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
+    });
+
+    // The backoff deadline is `Date.now() + retryAfterMs`, so a real-time sleep
+    // can only ever approximate the transition. Freezing Date (and ONLY Date —
+    // `toFake: ['Date']` leaves the throttle's and the runner's real timers alone)
+    // lets the window be stepped exactly, pinning both sides of the boundary
+    // instead of just "eventually expired".
+    describe('backoff window expiry, frozen clock', () => {
+      const NOW = Date.parse('2026-07-25T12:00:00.000Z');
+
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+      });
+      afterEach(() => { vi.useRealTimers(); });
+
+      it('holds the gate up to the last millisecond of the window, then retries and promotes', async () => {
+        mockAudnexus.getChapterRuntime.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60_000 });
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+        expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
+
+        // 1ms short of the deadline — still gated, no request.
+        vi.setSystemTime(NOW + 59_999);
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+        expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
+
+        // Exactly at the deadline — the gate releases and the provider is retried.
+        vi.setSystemTime(NOW + 60_000);
+        mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+        expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
+
+        // ...and the promotion settles, so a fourth lookup issues no request.
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+        expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
+      });
+
+      it('a rate-limited lookup leaves no cache entry, so the post-window retry is a real request', async () => {
+        mockAudnexus.getChapterRuntime.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60_000 });
+        await service.getChapterRuntimeSeconds(ASIN);
+
+        vi.setSystemTime(NOW + 60_000);
+        mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'not_found' });
+
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+        // Two real requests for the SAME ASIN: the 429 is transient, so it left no
+        // settled verdict for the post-window call to short-circuit against.
+        expect(mockAudnexus.getChapterRuntime.mock.calls).toEqual([[ASIN], [ASIN]]);
+      });
+    });
+
+    it('an active backoff from ANOTHER path skips the chapter lookup entirely', async () => {
+      mockAudnexus.getBook.mockRejectedValue(new RateLimitError(60_000, 'Audnexus'));
+      await expect(service.enrichBook(ASIN)).rejects.toBeInstanceOf(RateLimitError);
+
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+      expect(mockAudnexus.getChapterRuntime).not.toHaveBeenCalled();
+    });
+
+    it('never throws — a provider that rejects degrades to "no usable runtime"', async () => {
+      mockAudnexus.getChapterRuntime.mockRejectedValue(new Error('boom'));
+
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+    });
+
+    it('cache state is per-service-instance, so a second service performs its own lookup (F14)', async () => {
+      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
+      await service.getChapterRuntimeSeconds(ASIN);
+      await service.getChapterRuntimeSeconds(ASIN);
+      expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
+
+      const other = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()), { audibleRegion: 'uk' });
+      await other.getChapterRuntimeSeconds(ASIN);
+
+      expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
     });
   });
 

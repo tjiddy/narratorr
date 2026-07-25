@@ -10,12 +10,13 @@ import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js
 import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 import type { SettingsService } from './settings.service.js';
 import { Semaphore } from '../utils/semaphore.js';
-import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.js';
+import { diceCoefficient } from '../../core/utils/similarity.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, tagTitleScore, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
+import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, runAsinKillShot, tagPassPredicatesPass, TITLE_SIMILARITY_FLOOR, type DurationConfidenceResult, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
+import { corroborateDurationVerdict, type CorroboratedDuration } from './chapter-corroboration.js';
 
 
 // Data contracts live in match-job.types.ts (#1864 file-size cap); re-exported so the
@@ -24,8 +25,6 @@ export type { Confidence, MatchCandidate, MatchResult, MatchJobStatus } from './
 
 const MAX_CONCURRENCY = 5;
 const TTL_MS = 10 * 60 * 1000; // 10 minutes after completion
-const TITLE_SIMILARITY_FLOOR = 0.5; // Below this, confidence is 'none'
-const TAG_AUTHOR_PREDICATE_FLOOR = 0.7; // Tag-pass author-name dice threshold (#984)
 
 // `capConfidence`/`applyAttemptCap` moved to match-job.helpers.ts (#1662, file-size cap);
 // re-exported so the public surface (capConfidence is asserted in tests) is unchanged.
@@ -295,6 +294,7 @@ class MatchJob {
           });
         }
 
+        const scanned = audioResult?.totalDuration;
         if (scored.length === 1) {
           // #1821 — corroborate the single result against the scanned runtime: a
           // grossly-off duration demotes high → medium (Review); a MISSING runtime
@@ -303,14 +303,24 @@ class MatchJob {
           // disproven) — never inferred from the resolved confidence.
           // Unrounded scanned seconds (#1850) — the tolerance check compares
           // full-precision seconds (the minute-rounded `duration` is logging only).
-          resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...resolveSingleResultConfidence(topScored.meta, audioResult?.totalDuration) };
-          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: isDurationVerified(topScored.meta, audioResult?.totalDuration) };
+          const { verdict, chapterSeconds } = await this.corroborateDuration(
+            book, topScored.meta,
+            resolveSingleResultConfidence(topScored.meta, scanned),
+            cs => resolveSingleResultConfidence(topScored.meta, scanned, cs),
+          );
+          resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...verdict };
+          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: isDurationVerified(topScored.meta, scanned, chapterSeconds) };
         } else {
           // Multiple results — the winner was already chosen by `rankResults`
           // (text score, with duration only breaking a score tie, #1882); this
           // step reads confidence off that top candidate's runtime agreement.
           // Unrounded seconds (#1850); `duration` (minutes) below is logging only.
-          const { confidence, reason, reasonKind } = resolveConfidenceFromDuration(scored, audioResult?.totalDuration);
+          const { verdict } = await this.corroborateDuration(
+            book, topScored.meta,
+            resolveConfidenceFromDuration(scored, scanned),
+            cs => resolveConfidenceFromDuration(scored, scanned, cs),
+          );
+          const { confidence, reason, reasonKind } = verdict;
           this.log.debug(
             {
               path: book.path,
@@ -355,6 +365,29 @@ class MatchJob {
     }
   }
 
+  /**
+   * Lazy chapter-runtime corroboration of a would-be duration mismatch (#1942).
+   * Thin delegator — the trigger rule, the cache/single-flight, and the throttled
+   * Audnexus bridge all live in `chapter-corroboration.ts` / `MetadataService`.
+   * Runs BEFORE `applyNarratorCap` so the narrator wrong-edition guard evaluates
+   * against the corroborated verdict.
+   */
+  private corroborateDuration(
+    book: MatchCandidate,
+    meta: BookMetadata,
+    verdict: DurationConfidenceResult,
+    recheck: (chapterSeconds: number) => DurationConfidenceResult,
+  ): Promise<CorroboratedDuration> {
+    return corroborateDurationVerdict({
+      verdict,
+      asin: meta.asin,
+      path: book.path,
+      log: this.log,
+      lookupChapterSeconds: asin => this.metadataService.getChapterRuntimeSeconds(asin),
+      recheck,
+    });
+  }
+
   // Pass 1 — tag-derived match (#984, #1036). Returns null on any failure
   // (no tags, zero results across all attempts, floor fail, predicate fail,
   // unexpected throw); caller falls through to filename-derived. Bypasses
@@ -378,24 +411,31 @@ class MatchJob {
     const { scored, attempt } = outcome;
     const top = scored[0]!;
 
-    // #1652 (F6) — genuine runtime corroboration of the chosen edition for EVERY
-    // tag source (the `/import-uat` signal logged by the cap). Distinct from
-    // `capBypassedByDuration`, which is gated on `maxConfidence === 'medium'` and
-    // only governs the strip-attempt cap bypass — an exact/ASIN attempt
-    // (`maxConfidence: 'high'`) can be durationVerified while capBypassed is false.
-    const durationVerified = isDurationVerified(top.meta, scannedSeconds);
-    // #1266 — when the scanned runtime verifies the top candidate, bypass the strip `medium` cap and keep `high`.
-    const capBypassedByDuration = attempt.maxConfidence === 'medium' && durationVerified;
-    const cap = (raw: Confidence, reason: string | undefined, reasonKind: MatchReasonKind | undefined): { confidence: Confidence; reason?: string; reasonKind?: MatchReasonKind } =>
-      capBypassedByDuration ? { confidence: 'high' } : applyAttemptCap(raw, attempt.maxConfidence, reason, reasonKind);
-
     const single = scored.length === 1;
     // #1821 — corroborate the single tag-result (incl. the ASIN kill-shot) against
     // the scanned runtime. The raw value still flows through the attempt `cap()`
     // below: a mismatch → raw `medium` survives (durationVerified false, so
     // capBypassedByDuration false); a missing runtime → raw `high`, clamped to
     // `medium` by a `maxConfidence: 'medium'` attempt exactly as before.
-    const { confidence, reason, reasonKind } = single ? resolveSingleResultConfidence(top.meta, scannedSeconds) : resolveConfidenceFromDuration(scored, scannedSeconds);
+    const resolveVerdict = (chapterSeconds?: number): DurationConfidenceResult => single
+      ? resolveSingleResultConfidence(top.meta, scannedSeconds, chapterSeconds)
+      : resolveConfidenceFromDuration(scored, scannedSeconds, chapterSeconds);
+    // #1942 — a would-be duration mismatch gets one lazy second opinion from the
+    // edition's chapter table BEFORE the attempt cap and the narrator cap see it.
+    const { verdict, chapterSeconds } = await this.corroborateDuration(book, top.meta, resolveVerdict(), resolveVerdict);
+
+    // #1652 (F6) — genuine runtime corroboration of the chosen edition for EVERY
+    // tag source (the `/import-uat` signal logged by the cap). Distinct from
+    // `capBypassedByDuration`, which is gated on `maxConfidence === 'medium'` and
+    // only governs the strip-attempt cap bypass — an exact/ASIN attempt
+    // (`maxConfidence: 'high'`) can be durationVerified while capBypassed is false.
+    const durationVerified = isDurationVerified(top.meta, scannedSeconds, chapterSeconds);
+    // #1266 — when the scanned runtime verifies the top candidate, bypass the strip `medium` cap and keep `high`.
+    const capBypassedByDuration = attempt.maxConfidence === 'medium' && durationVerified;
+    const cap = (raw: Confidence, reason: string | undefined, reasonKind: MatchReasonKind | undefined): { confidence: Confidence; reason?: string; reasonKind?: MatchReasonKind } =>
+      capBypassedByDuration ? { confidence: 'high' } : applyAttemptCap(raw, attempt.maxConfidence, reason, reasonKind);
+
+    const { confidence, reason, reasonKind } = verdict;
     const result: MatchResult = { path: book.path, ...cap(confidence, reason, reasonKind), bestMatch: top.meta, alternatives: single ? [] : scored.slice(1).map(s => s.meta) };
     return { result, ctx: { log: this.log, matchSource: attempt.source, durationVerified } };
   }
@@ -411,7 +451,7 @@ class MatchJob {
     tagQuery: TagQuery,
   ): Promise<TagSearchOutcome | null> {
     if (audioResult.tagAsin) {
-      const asinHit = await this.tryAsinKillShot(book, audioResult.tagAsin, tagQuery);
+      const asinHit = await runAsinKillShot(this.metadataService, this.log, book.path, audioResult.tagAsin, tagQuery);
       if (asinHit) return asinHit;
     }
 
@@ -427,30 +467,6 @@ class MatchJob {
       { path: book.path, tagTitle: tagQuery.title, attemptCount: attempts.length },
       'Tag-search planner exhausted all attempts — falling through',
     );
-    return null;
-  }
-
-  /** ASIN kill-shot. Returns outcome when getBook succeeds; null on miss/throw. */
-  private async tryAsinKillShot(
-    book: MatchCandidate,
-    tagAsin: string,
-    tagQuery: TagQuery,
-  ): Promise<TagSearchOutcome | null> {
-    try {
-      const found = await this.metadataService.getBook(tagAsin);
-      if (found) {
-        this.log.debug({ path: book.path, tagAsin, title: found.title }, 'Tag-search ASIN kill-shot hit');
-        return {
-          scored: [{ meta: found, score: 1.0 }],
-          attempt: { title: found.title ?? tagQuery.title, author: tagQuery.author, source: 'asin-tag', maxConfidence: 'high' },
-        };
-      }
-    } catch (error: unknown) {
-      this.log.warn(
-        { error: serializeError(error), path: book.path, tagAsin },
-        'tag-search provider error — falling through to filename-derived path',
-      );
-    }
     return null;
   }
 
@@ -492,41 +508,13 @@ class MatchJob {
     const top = scored[0];
     if (!top) return null;
 
-    if (!this.tagPassPredicatesPass(book, attemptQuery, top)) return null;
+    if (!tagPassPredicatesPass(this.log, book.path, attemptQuery, top)) return null;
 
     this.log.debug(
       { path: book.path, source: attempt.source, originalTagTitle: tagQuery.title, attemptTitle: attempt.title, bestTitle: top.meta.title },
       'Tag-search attempt won',
     );
     return { scored, attempt };
-  }
-
-  /** AC5 — title floor + author predicate gate for the tag pass. Logs at debug on failure. */
-  private tagPassPredicatesPass(
-    book: MatchCandidate,
-    tagQuery: TagQuery,
-    top: { meta: BookMetadata; score: number },
-  ): boolean {
-    const titleFloor = tagTitleScore(tagQuery.title, top.meta);
-    if (titleFloor < TITLE_SIMILARITY_FLOOR) {
-      this.log.debug(
-        { path: book.path, titleSimilarity: titleFloor.toFixed(2), bestTitle: top.meta.title },
-        'Tag-derived top result below title floor — falling through',
-      );
-      return false;
-    }
-    const topAuthor = top.meta.authors?.[0]?.name;
-    const authorScore = topAuthor
-      ? diceCoefficient(normalizeNarrator(topAuthor), normalizeNarrator(tagQuery.author))
-      : 0;
-    if (authorScore < TAG_AUTHOR_PREDICATE_FLOOR) {
-      this.log.debug(
-        { path: book.path, topResultAuthor: topAuthor, tagAuthor: tagQuery.author, score: authorScore.toFixed(2) },
-        'tag-author predicate failed — falling through to filename-derived path',
-      );
-      return false;
-    }
-    return true;
   }
 
   private async fetchDetails(results: BookMetadata[]): Promise<BookMetadata[]> {

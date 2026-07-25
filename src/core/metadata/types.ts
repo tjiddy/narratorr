@@ -37,6 +37,34 @@ export type ProviderLookupResult =
   | { kind: 'invalid_record'; source: 'mapped' | 'raw'; cause?: unknown; issues?: ZodIssue[] }
   | { kind: 'transient_failure'; message: string };
 
+/**
+ * Typed outcome union for the chapter-runtime lookup (#1942). The chapter table
+ * is a strictly more authoritative runtime than the `runtimeLengthMin` scalar,
+ * so the owner caches a derived verdict from it — which makes the *classification*
+ * load-bearing, not just the payload:
+ *
+ * - **Definitive** (safe to cache): `ok` — and ONLY when the 200 body is the
+ *   requested edition's COMPLETE chapter record (`asin` strictly equal to the
+ *   requested ASIN AND a present `chapters` array) — plus `not_found`, emitted
+ *   for the documented HTTP 400/404 only.
+ * - **Transient** (never cached; a later call may succeed): everything else —
+ *   `invalid_record` for a 200 that fails the record predicate (empty, non-JSON,
+ *   JSON primitive, schema-invalid, fieldless/error envelope, wrong-`asin`, or no
+ *   chapter array), `rate_limited` for a 429, and `transient_failure` for a
+ *   pre-header fetch rejection (incl. the 3xx redirect throw), a post-header body
+ *   read/abort/decode failure, any 5xx, and any other non-success or non-200 2xx
+ *   status.
+ *
+ * `runtimeLengthMs`/`isAccurate` ride raw and nullable: the trust gate that turns
+ * them into a usable runtime belongs to the service, not the transport.
+ */
+export type ChapterRuntimeOutcome =
+  | { kind: 'ok'; runtimeLengthMs: number | null | undefined; isAccurate: boolean | null | undefined }
+  | { kind: 'not_found' }
+  | { kind: 'invalid_record'; reason: string }
+  | { kind: 'rate_limited'; retryAfterMs: number }
+  | { kind: 'transient_failure'; message: string };
+
 /** Shared fields for all metadata providers. */
 export interface MetadataProviderBase {
   readonly name: string;
@@ -57,4 +85,9 @@ export interface MetadataEnrichmentProvider extends MetadataProviderBase {
   getBook(id: string): Promise<BookMetadata | null>;
   getBookDetailed(id: string): Promise<ProviderLookupResult>;
   getAuthor(id: string): Promise<AuthorMetadata | null>;
+  /**
+   * Edition chapter-runtime lookup (#1942) — never throws; owns no cache and no
+   * throttling (both belong to the calling service). See {@link ChapterRuntimeOutcome}.
+   */
+  getChapterRuntime(id: string): Promise<ChapterRuntimeOutcome>;
 }
