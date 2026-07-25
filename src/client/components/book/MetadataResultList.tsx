@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { BookMetadata, BookIdentifier, BookWithAuthor } from '@/lib/api';
+import type { BookMetadata, LibraryEntry } from '@/lib/api';
 import { MetadataResultItem } from './MetadataResultItem';
 
 export interface MetadataResultListProps {
@@ -11,7 +11,7 @@ export interface MetadataResultListProps {
   showSeries?: boolean | undefined;
   showDuration?: boolean | undefined;
   showLibraryBadge?: boolean | undefined;
-  libraryBooks?: (BookIdentifier | BookWithAuthor)[] | undefined;
+  libraryBooks?: LibraryEntry[] | undefined;
   placeholderIcon?: ReactNode;
   coverSize?: 'sm' | 'md' | undefined;
   itemClassName?: string | undefined;

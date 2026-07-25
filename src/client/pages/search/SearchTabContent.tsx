@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { useQueryClient } from '@tanstack/react-query';
-import type { BookMetadata, AuthorMetadata, BookIdentifier, BookWithAuthor } from '@/lib/api';
+import type { BookMetadata, AuthorMetadata, LibraryEntry } from '@/lib/api';
 import { bookMetadataKey, authorMetadataKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { SearchBookCard } from './SearchBookCard.js';
 import { SearchAuthorCard } from './SearchAuthorCard.js';
@@ -13,9 +13,9 @@ export function BooksTabContent({
   searchTerm,
 }: {
   books: BookMetadata[];
-  // Same ownership union as SeriesSection / MetadataResultList (#1916) — the
-  // search page feeds this the unpaginated `/api/books/identifiers` list.
-  libraryBooks: (BookIdentifier | BookWithAuthor)[] | undefined;
+  // The canonical ownership-entry type (#1916) — the search page feeds this
+  // the unpaginated `/api/books/identifiers` list.
+  libraryBooks: LibraryEntry[] | undefined;
   queryClient: ReturnType<typeof useQueryClient>;
   searchTerm?: string;
 }) {

@@ -29,13 +29,13 @@ vi.mock('sonner', () => ({
   },
 }));
 
-import { api, ApiError, type BookIdentifier, type BookWithAuthor } from '@/lib/api';
+import { api, ApiError, type BookIdentifier, type LibraryEntry } from '@/lib/api';
 import { toast } from 'sonner';
 import { queryKeys } from '@/lib/queryKeys';
 
-// `libraryBooks` accepts the `BookIdentifier | BookWithAuthor` union (#1916) —
+// `libraryBooks` accepts the canonical `LibraryEntry` ownership type (#1916) —
 // the search page now feeds it the unpaginated identifiers list.
-function renderCard(bookOverrides = {}, libraryBooks?: (BookIdentifier | BookWithAuthor)[]) {
+function renderCard(bookOverrides = {}, libraryBooks?: LibraryEntry[]) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries');
   const book = createMockBookMetadata(bookOverrides);

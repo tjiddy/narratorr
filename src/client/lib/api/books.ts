@@ -92,6 +92,22 @@ export interface BookIdentifier {
   authorSlug: string | null;
 }
 
+/**
+ * The one ownership-input contract for "is this search result already in the
+ * library?" — the narrow unpaginated `/api/books/identifiers` row or a full
+ * book row, whichever a surface happens to already hold.
+ *
+ * Canonical and exported (#1916 review F2): every ownership surface — the
+ * search page/card, the author page's series sections, the metadata pickers,
+ * and the bulk-add hook — takes THIS type rather than restating the union, and
+ * `findLibraryMatch` / `isBookInLibrary` in `@/lib/helpers` constrain against
+ * it. Both branches carry `id`, `asin`, `title`, and an author name, which is
+ * the whole matching surface; widening the concept is a one-line edit here
+ * instead of eight manually synchronized declarations that can drift apart
+ * while still compiling.
+ */
+export type LibraryEntry = BookIdentifier | BookWithAuthor;
+
 export interface BookFile {
   name: string;
   size: number;

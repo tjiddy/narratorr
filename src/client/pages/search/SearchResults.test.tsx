@@ -31,6 +31,7 @@ vi.mock('sonner', () => ({
 }));
 
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 
 function renderResults(props: Partial<Parameters<typeof SearchResults>[0]> = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -40,13 +41,16 @@ function renderResults(props: Partial<Parameters<typeof SearchResults>[0]> = {})
     queryClient,
     ...props,
   };
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
-        <SearchResults {...defaultProps} />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+  return {
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SearchResults {...defaultProps} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+    queryClient,
+  };
 }
 
 describe('SearchResults', () => {
@@ -304,13 +308,22 @@ describe('SearchResults', () => {
       expect(screen.queryByRole('link', { name: /view this book in your library/i })).not.toBeInTheDocument();
     });
 
-    it('falls open to the Add control when the identifiers request fails', async () => {
+    it('falls open to the Add control after the identifiers request settles as an error', async () => {
       vi.mocked(api.getBookIdentifiers).mockRejectedValue(new Error('Network error'));
-      renderResults({ searchTerm: 'fantasy', results });
+      const { queryClient } = renderResults({ searchTerm: 'fantasy', results });
 
+      // Waiting on the mock's invocation would resolve while the query is still
+      // pending, so the assertions below would only re-prove the loading case
+      // above. Wait for TanStack Query to publish the SETTLED error state —
+      // `status: 'error'` with no fetch in flight — so a regression that hides
+      // Add once the query fails is actually caught.
       await waitFor(() => {
-        expect(api.getBookIdentifiers).toHaveBeenCalled();
+        const state = queryClient.getQueryState(queryKeys.bookIdentifiers());
+        expect(state?.status).toBe('error');
+        expect(state?.fetchStatus).toBe('idle');
       });
+      expect(queryClient.getQueryState(queryKeys.bookIdentifiers())?.error).toBeInstanceOf(Error);
+
       expect(screen.getByRole('button', { name: /add book/i })).toBeInTheDocument();
       expect(screen.queryByRole('link', { name: /view this book in your library/i })).not.toBeInTheDocument();
     });
