@@ -369,10 +369,19 @@ export class BookListService {
     }
   }
 
-  /** Lightweight list of all book identifiers for duplicate detection (no pagination). */
-  async getIdentifiers(): Promise<{ asin: string | null; title: string; authorName: string | null; authorSlug: string | null }[]> {
+  /**
+   * Lightweight list of all book identifiers for duplicate detection (no pagination).
+   *
+   * `id` is part of the projection (#1916) because this is also the client's
+   * ownership source for the Add-Book search card, which links its "In Library"
+   * badge at the matched book. Deliberately has no `where`, no `limit`, and no
+   * `ORDER BY`: it must stay status-blind and uncapped, and every consumer
+   * matches by identity rather than depending on row order.
+   */
+  async getIdentifiers(): Promise<{ id: number; asin: string | null; title: string; authorName: string | null; authorSlug: string | null }[]> {
     const results = await this.db
       .select({
+        id: books.id,
         asin: books.asin,
         title: books.title,
         authorName: authors.name,

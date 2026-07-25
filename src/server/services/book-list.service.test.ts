@@ -4,6 +4,7 @@ import { createMockDb, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookListService } from './book-list.service.js';
 import type { Db } from '../../db/index.js';
+import { books } from '../../db/schema.js';
 import { BOOK_STATUSES, LIBRARY_FILTER_BUCKETS, type LibraryFilterBucket, type BookStatus } from '../../shared/schemas/book.js';
 
 // Serialize a Drizzle SQL expression to a raw SQL string + bound params so the
@@ -1037,33 +1038,47 @@ describe('BookListService', () => {
   });
 
   describe('getIdentifiers', () => {
-    it('returns asin, title, and author name for all books', async () => {
+    it('returns id, asin, title, and author name for all books', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
-        { asin: 'B001', title: 'Book One', authorName: 'Author A' },
-        { asin: null, title: 'Book Two', authorName: null },
+        { id: 1, asin: 'B001', title: 'Book One', authorName: 'Author A' },
+        { id: 2, asin: null, title: 'Book Two', authorName: null },
       ]));
 
       const result = await service.getIdentifiers();
       expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({ asin: 'B001', title: 'Book One', authorName: 'Author A' });
-      expect(result[1]).toEqual({ asin: null, title: 'Book Two', authorName: null });
+      expect(result[0]).toEqual({ id: 1, asin: 'B001', title: 'Book One', authorName: 'Author A' });
+      expect(result[1]).toEqual({ id: 2, asin: null, title: 'Book Two', authorName: null });
+    });
+
+    // #1916 — the search page links its "In Library" badge at `entry.id`, so the
+    // projection itself (not just the mocked row shape) has to carry `books.id`.
+    it('projects books.id so the identity source can link to the owned book (#1916)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      await service.getIdentifiers();
+
+      const projection = db.select.mock.calls[0]![0] as Record<string, unknown>;
+      expect(Object.keys(projection).sort()).toEqual(['asin', 'authorName', 'authorSlug', 'id', 'title']);
+      expect(projection.id).toBe(books.id);
     });
 
     it('returns null authorName for books without authors', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
-        { asin: 'B001', title: 'Solo Book', authorName: null },
+        { id: 3, asin: 'B001', title: 'Solo Book', authorName: null, authorSlug: null },
       ]));
 
       const result = await service.getIdentifiers();
+      expect(result[0]!.id).toBe(3);
       expect(result[0]!.authorName).toBeNull();
     });
 
     it('returns null asin for books without ASIN', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
-        { asin: null, title: 'No ASIN', authorName: 'Author' },
+        { id: 4, asin: null, title: 'No ASIN', authorName: 'Author' },
       ]));
 
       const result = await service.getIdentifiers();
+      expect(result[0]!.id).toBe(4);
       expect(result[0]!.asin).toBeNull();
     });
 

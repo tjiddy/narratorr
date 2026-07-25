@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createE2EApp, type E2EApp } from './e2e-helpers.js';
+import { books } from '../../db/schema.js';
+import { generatePublicId } from '../utils/public-id.js';
+import { BOOK_STATUSES } from '../../shared/schemas/book.js';
+import { DEFAULT_LIMITS } from '../../shared/schemas/common.js';
 
 describe('Books E2E', () => {
   let e2e: E2EApp;
@@ -115,5 +119,58 @@ describe('Books E2E', () => {
   it('DELETE /api/books/:id returns 404 for non-existent book', async () => {
     const res = await e2e.app.inject({ method: 'DELETE', url: '/api/books/99999' });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+// #1916 — the Add-Book search page derives ownership from this endpoint, so it
+// must stay unpaginated and status-blind. `/api/books` caps at DEFAULT_LIMITS.books
+// (120) and orders created-at-descending; if identifiers ever grew a limit or a
+// status predicate, the search card would silently regress to the wrong affordance
+// for any book outside the visible page.
+describe('GET /api/books/identifiers — unpaginated and status-blind (#1916)', () => {
+  let e2e: E2EApp;
+  const SEEDED = 131;
+
+  beforeAll(async () => {
+    e2e = await createE2EApp();
+    const statuses = BOOK_STATUSES;
+    await e2e.db.insert(books).values(
+      Array.from({ length: SEEDED }, (_, i) => ({
+        publicId: generatePublicId('bk'),
+        title: `Seeded Book ${i}`,
+        asin: `B${String(i).padStart(9, '0')}`,
+        status: statuses[i % statuses.length]!,
+      })),
+    );
+  });
+
+  afterAll(async () => {
+    await e2e.cleanup();
+  });
+
+  it('returns every seeded book across all statuses, well past the 120-row /api/books cap', async () => {
+    const res = await e2e.app.inject({ method: 'GET', url: '/api/books/identifiers' });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { id: number; asin: string | null; title: string }[];
+    expect(body).toHaveLength(SEEDED);
+    expect(body.every((row) => typeof row.id === 'number')).toBe(true);
+
+    // Every seeded ASIN is present — including the ones that fall outside the
+    // most-recent 120 rows that `/api/books` would have returned.
+    const returnedAsins = new Set(body.map((row) => row.asin));
+    for (let i = 0; i < SEEDED; i++) {
+      expect(returnedAsins.has(`B${String(i).padStart(9, '0')}`)).toBe(true);
+    }
+    expect(BOOK_STATUSES.length).toBeGreaterThan(1);
+  });
+
+  it('returns strictly more rows than the default /api/books page', async () => {
+    const capped = await e2e.app.inject({ method: 'GET', url: '/api/books' });
+    const identifiers = await e2e.app.inject({ method: 'GET', url: '/api/books/identifiers' });
+
+    const cappedRows = capped.json().data as unknown[];
+    expect(cappedRows).toHaveLength(DEFAULT_LIMITS.books);
+    expect((identifiers.json() as unknown[]).length).toBeGreaterThan(cappedRows.length);
   });
 });
