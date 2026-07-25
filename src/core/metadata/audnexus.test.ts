@@ -823,4 +823,285 @@ describe('AudnexusProvider', () => {
       expect(result).toBeNull();
     });
   });
+
+  // #1942 — chapter-runtime adapter. The Audnexus chapter table is a strictly
+  // more authoritative runtime than the `runtimeLengthMin` scalar; this thin,
+  // never-throw lookup is the corroborating second source. Definitive outcomes
+  // (`ok` on the requested edition's complete record, `not_found` on a documented
+  // 400/404) are the ONLY kinds the service may cache — everything else is transient.
+  describe('getChapterRuntime — chapter-runtime adapter (#1942)', () => {
+    const FABLEHAVEN = 'B00CXXEX8W';
+
+    /** Live-verified Fablehaven Book 1 chapter record (2026-07-25). */
+    function chapterRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      return {
+        asin: FABLEHAVEN,
+        region: 'us',
+        runtimeLengthMs: 33219490,
+        runtimeLengthSec: 33219,
+        isAccurate: true,
+        chapters: [{ title: 'Opening Credits', startOffsetMs: 0, lengthMs: 21000 }],
+        ...overrides,
+      };
+    }
+
+    function chaptersHandler(responder: Parameters<typeof http.get>[1]) {
+      return http.get('https://api.audnex.us/books/:asin/chapters', responder);
+    }
+
+    describe('definitive — the requested edition\'s complete record', () => {
+      it('200 with matching asin + chapters array → ok carrying runtimeLengthMs and isAccurate', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json(chapterRecord())));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+
+        expect(result.kind).toBe('ok');
+        if (result.kind === 'ok') {
+          expect(result.runtimeLengthMs).toBe(33219490);
+          expect(result.isAccurate).toBe(true);
+        }
+      });
+
+      it('a complete record with isAccurate false still parses as ok (the trust gate is the service\'s job)', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json(chapterRecord({ isAccurate: false }))));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+
+        expect(result.kind).toBe('ok');
+        if (result.kind === 'ok') expect(result.isAccurate).toBe(false);
+      });
+
+      it('a complete record with null runtime/trust fields still parses as ok (.nullish external fields)', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json(chapterRecord({ runtimeLengthMs: null, isAccurate: null }))));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+
+        expect(result.kind).toBe('ok');
+        if (result.kind === 'ok') {
+          expect(result.runtimeLengthMs).toBeNull();
+          expect(result.isAccurate).toBeNull();
+        }
+      });
+
+      it('an empty chapters array still satisfies the shape half of the predicate', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json(chapterRecord({ chapters: [] }))));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('ok');
+      });
+
+      it.each([400, 404])('documented HTTP %i → not_found', async (status) => {
+        server.use(chaptersHandler(() => new HttpResponse(null, { status })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('not_found');
+      });
+    });
+
+    describe('transient — a 200 that is NOT the requested edition\'s complete record (F18/F20)', () => {
+      it('chapters array but MISMATCHED asin → invalid_record (a wrong-edition body is never authoritative)', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json(chapterRecord({ asin: 'B_OTHER_EDITION' }))));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('invalid_record');
+      });
+
+      it('chapters array but ABSENT asin → invalid_record', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json({ chapters: [], runtimeLengthMs: 33219490, isAccurate: true })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('invalid_record');
+      });
+
+      it('matching asin but NO chapters array → invalid_record (partial/error object)', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json({ asin: FABLEHAVEN, message: 'temporarily unavailable' })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('invalid_record');
+      });
+
+      it('matching asin with a null chapters field → invalid_record', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json(chapterRecord({ chapters: null }))));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('invalid_record');
+      });
+
+      it('fieldless {} envelope → invalid_record', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json({})));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('invalid_record');
+      });
+
+      it('HTML interstitial body → invalid_record', async () => {
+        server.use(chaptersHandler(() => new HttpResponse('<html><body>Just a moment…</body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('invalid_record');
+      });
+
+      it('empty 200 body → invalid_record', async () => {
+        server.use(chaptersHandler(() => new HttpResponse('', { status: 200 })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('invalid_record');
+      });
+
+      it('JSON primitive body → invalid_record', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json(42)));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('invalid_record');
+      });
+
+      it('schema-invalid body (runtimeLengthMs is a string) → invalid_record', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json(chapterRecord({ runtimeLengthMs: 'oops' }))));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('invalid_record');
+      });
+    });
+
+    describe('transient — incomplete or inconclusive exchanges (F15/F17/F19)', () => {
+      it('post-header body-stream failure → transient_failure, NOT invalid_record', async () => {
+        server.use(chaptersHandler(() => {
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"asin":"B00CX'));
+              controller.error(new Error('stream aborted mid-body'));
+            },
+          });
+          return new HttpResponse(stream, { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('transient_failure');
+      });
+
+      it.each([401, 403, 408, 410, 422])('unexpected non-success HTTP %i → transient_failure (never not_found)', async (status) => {
+        server.use(chaptersHandler(() => new HttpResponse(null, { status })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('transient_failure');
+      });
+
+      it.each([202, 204])('ok-but-non-200 HTTP %i → transient_failure (the definitive branch gates on status === 200)', async (status) => {
+        server.use(chaptersHandler(() => new HttpResponse(null, { status })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('transient_failure');
+      });
+
+      it.each([500, 503])('HTTP %i → transient_failure', async (status) => {
+        server.use(chaptersHandler(() => new HttpResponse(null, { status })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('transient_failure');
+      });
+
+      it('3xx redirect (thrown by fetchWithTimeout after headers) → transient_failure', async () => {
+        server.use(chaptersHandler(() => new HttpResponse(null, { status: 302, headers: { Location: 'https://example.test/login' } })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('transient_failure');
+      });
+
+      it('pre-header network failure → transient_failure', async () => {
+        server.use(chaptersHandler(() => HttpResponse.error()));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('transient_failure');
+      });
+
+      it('never throws on any failure path', async () => {
+        server.use(chaptersHandler(() => new HttpResponse(null, { status: 500 })));
+
+        await expect(provider.getChapterRuntime(FABLEHAVEN)).resolves.toBeDefined();
+      });
+    });
+
+    describe('429 retry-window normalization (F16)', () => {
+      it('Retry-After delay-seconds → seconds × 1000', async () => {
+        server.use(chaptersHandler(() => new HttpResponse(null, { status: 429, headers: { 'Retry-After': '30' } })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('rate_limited');
+        if (result.kind === 'rate_limited') expect(result.retryAfterMs).toBe(30_000);
+      });
+
+      it('Retry-After as a valid HTTP-date → a finite, non-negative window (never NaN)', async () => {
+        const future = new Date(Date.now() + 120_000).toUTCString();
+        server.use(chaptersHandler(() => new HttpResponse(null, { status: 429, headers: { 'Retry-After': future } })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('rate_limited');
+        if (result.kind === 'rate_limited') {
+          expect(Number.isFinite(result.retryAfterMs)).toBe(true);
+          expect(result.retryAfterMs).toBeGreaterThan(0);
+          expect(result.retryAfterMs).toBeLessThanOrEqual(120_000);
+        }
+      });
+
+      it.each([
+        ['absent', undefined],
+        ['empty', ''],
+        ['non-numeric', 'not-a-number'],
+        ['negative', '-30'],
+      ])('Retry-After %s → the finite 60000ms default', async (_label, header) => {
+        server.use(chaptersHandler(() => new HttpResponse(null, {
+          status: 429,
+          ...(header !== undefined && { headers: { 'Retry-After': header } }),
+        })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('rate_limited');
+        if (result.kind === 'rate_limited') {
+          expect(result.retryAfterMs).toBe(60_000);
+          expect(result.retryAfterMs).not.toBeNaN();
+        }
+      });
+
+      it('Retry-After of 0 seconds → a finite 0ms window', async () => {
+        server.use(chaptersHandler(() => new HttpResponse(null, { status: 429, headers: { 'Retry-After': '0' } })));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+        expect(result.kind).toBe('rate_limited');
+        if (result.kind === 'rate_limited') expect(result.retryAfterMs).toBe(0);
+      });
+    });
+
+    describe('request shape', () => {
+      it('requests /books/{asin}/chapters with the provider\'s configured region', async () => {
+        const ukProvider = new AudnexusProvider({ region: 'uk' });
+        let capturedUrl = '';
+        server.use(chaptersHandler(({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json(chapterRecord());
+        }));
+
+        await ukProvider.getChapterRuntime(FABLEHAVEN);
+
+        expect(capturedUrl).toContain(`/books/${FABLEHAVEN}/chapters`);
+        expect(capturedUrl).toContain('region=uk');
+        expect(capturedUrl).not.toContain('region=us');
+      });
+
+      it('defaults to region=us and URL-encodes the ASIN path segment', async () => {
+        let capturedUrl = '';
+        server.use(chaptersHandler(({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json(chapterRecord({ asin: 'B 0030' }));
+        }));
+
+        await provider.getChapterRuntime('B 0030');
+
+        expect(capturedUrl).toContain('/books/B%200030/chapters');
+        expect(capturedUrl).toContain('region=us');
+      });
+    });
+  });
 });

@@ -9,6 +9,7 @@ import type {
   MetadataEnrichmentProvider,
   BookMetadata,
   AuthorMetadata,
+  ChapterRuntimeOutcome,
   ProviderLookupResult,
 } from './types.js';
 
@@ -45,6 +46,45 @@ const audnexusBookSchema = z.object({
   runtimeLengthMin: z.number().nullish(),
   genres: z.array(z.object({ name: z.string().nullish(), type: z.string().nullish() }).passthrough()).nullish(),
 }).passthrough();
+
+/**
+ * Chapter-endpoint raw schema (#1942). Only the top-level fields matter — the
+ * endpoint publishes its own `runtimeLengthMs`, so the chapter entries are never
+ * summed client-side and stay `z.unknown()`. `runtimeLengthMs`/`isAccurate` are
+ * `.nullish()` (external-API convention) so a GENUINE record with a null trust
+ * field still validates and settles as a definitive trust-fail; the identity +
+ * shape predicate below — not these two fields — is what proves authority.
+ */
+const audnexusChaptersSchema = z.object({
+  asin: z.string().nullish(),
+  runtimeLengthMs: z.number().nullish(),
+  isAccurate: z.boolean().nullish(),
+  chapters: z.array(z.unknown()).nullish(),
+}).passthrough();
+
+const DEFAULT_RETRY_AFTER_MS = 60_000;
+
+/**
+ * Normalize a `Retry-After` header to a FINITE, non-negative millisecond window.
+ *
+ * RFC 9110 permits both delay-seconds and an HTTP-date; the book path's
+ * `parseInt(header, 10) * 1000` yields `NaN` for the latter, and a `NaN` window
+ * makes the service's `setRateLimited(Date.now() + NaN)` backoff gate a silent
+ * no-op. Absent, unparseable, and negative values fall back to the same 60s
+ * default the absent-header case has always used.
+ */
+export function parseRetryAfterMs(header: string | null): number {
+  const raw = header?.trim();
+  if (!raw) return DEFAULT_RETRY_AFTER_MS;
+  if (/^[+-]?\d+$/.test(raw)) {
+    const seconds = Number(raw);
+    return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : DEFAULT_RETRY_AFTER_MS;
+  }
+  const dateMs = Date.parse(raw);
+  if (Number.isNaN(dateMs)) return DEFAULT_RETRY_AFTER_MS;
+  const delta = dateMs - Date.now();
+  return delta >= 0 ? delta : DEFAULT_RETRY_AFTER_MS;
+}
 
 const audnexusAuthorSchema = z.object({
   asin: z.string().nullish(),
@@ -105,6 +145,59 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
       return { kind: 'invalid_record', source: 'mapped', cause: parsed.error, issues: parsed.error.issues };
     }
     return { kind: 'ok', book: parsed.data };
+  }
+
+  /**
+   * Edition chapter-runtime lookup (#1942) — `GET /books/{asin}/chapters`, region
+   * forwarded exactly as the book/author lookups do (the endpoint defaults to `us`,
+   * so a bare path would silently answer with US chapters for a non-US edition).
+   *
+   * Deliberately does NOT reuse `fetchJsonDetailed`: that helper collapses three
+   * distinctions this feature's cache depends on (see {@link ChapterRuntimeOutcome}).
+   *   - It maps every non-OK status to `not_found`, which would settle a temporary
+   *     401/403/408 as a permanent "no runtime" for the service lifetime.
+   *   - It branches on `response.ok`, true for all of 200–299, so a null-body
+   *     202/204 would enter the record parser.
+   *   - It folds every `response.json()` rejection into `transient_failure`, which
+   *     conflates a body-stream abort (the exchange never completed) with a
+   *     completed-but-unparseable body.
+   *
+   * Never throws; owns no cache and no throttle.
+   */
+  async getChapterRuntime(id: string): Promise<ChapterRuntimeOutcome> {
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(
+        `${BASE_URL}/books/${encodeURIComponent(id)}/chapters?region=${encodeURIComponent(this.region)}`,
+        {},
+        REQUEST_TIMEOUT_MS,
+      );
+    } catch (error: unknown) {
+      // Pre-header rejection — network/DNS/TLS/timeout, and the 3xx redirect that
+      // `fetchWithTimeout` throws rather than returning.
+      return { kind: 'transient_failure', message: getErrorMessage(error) };
+    }
+
+    if (response.status === 429) {
+      return { kind: 'rate_limited', retryAfterMs: parseRetryAfterMs(response.headers.get('Retry-After')) };
+    }
+    // The ONLY statuses Audnexus documents as "this ASIN is absent/invalid".
+    if (response.status === 400 || response.status === 404) return { kind: 'not_found' };
+    // Exact-200 gate, not `response.ok`.
+    if (response.status !== 200) {
+      return { kind: 'transient_failure', message: `HTTP ${response.status} ${response.statusText}` };
+    }
+
+    // Split at the body boundary: `fetchWithTimeout` returns the Response with its
+    // timeout signal still attached, so the stream can reject AFTER headers.
+    let body: string;
+    try {
+      body = await response.text();
+    } catch (error: unknown) {
+      return { kind: 'transient_failure', message: getErrorMessage(error) };
+    }
+
+    return classifyChapterBody(body, id);
   }
 
   async getAuthor(id: string): Promise<AuthorMetadata | null> {
@@ -193,6 +286,39 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
 // ---------------------------------------------------------------------------
 // Mapping helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The authority predicate (#1942, F18/F20). A fully-read 200 is NOT an
+ * authoritative statement about an edition just because its bytes arrived — this
+ * boundary routinely sees HTML interstitials, rate-limit pages, and upstream shape
+ * changes. A body is the requested edition's COMPLETE chapter record only when
+ * BOTH hold:
+ *
+ *  1. **Identity** — `asin` strictly equals the requested ASIN, and
+ *  2. **Shape** — a `chapters` array is present.
+ *
+ * The AND is load-bearing. An OR would admit a wrong-`asin` chapter record (another
+ * edition, whose runtime could falsely clear a genuine mismatch) and an ASIN-only
+ * error envelope (`{ asin, message: 'temporarily unavailable' }`, which would settle
+ * as a permanent trust-fail). Both are `invalid_record` → transient → never cached.
+ */
+function classifyChapterBody(body: string, requestedAsin: string): ChapterRuntimeOutcome {
+  if (body.trim().length === 0) return { kind: 'invalid_record', reason: 'empty-body' };
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(body);
+  } catch {
+    return { kind: 'invalid_record', reason: 'non-json-body' };
+  }
+
+  const parsed = audnexusChaptersSchema.safeParse(raw);
+  if (!parsed.success) return { kind: 'invalid_record', reason: 'schema-invalid' };
+  if (parsed.data.asin !== requestedAsin) return { kind: 'invalid_record', reason: 'asin-mismatch' };
+  if (!Array.isArray(parsed.data.chapters)) return { kind: 'invalid_record', reason: 'missing-chapters' };
+
+  return { kind: 'ok', runtimeLengthMs: parsed.data.runtimeLengthMs, isAccurate: parsed.data.isAccurate };
+}
 
 function mapAuthor(d: AudnexusAuthorDetail): Record<string, unknown> {
   return {
