@@ -118,10 +118,7 @@ export class MetadataService {
     this.chapterCorroborator = createChapterCorroborator({
       provider: this.audnexus,
       log: this.log,
-      acquireThrottle: () => this.throttle.acquire(),
-      isRateLimited: (name) => this.isRateLimited(name),
-      getRateLimitRemainingMs: (name) => this.getRateLimitRemainingMs(name),
-      setRateLimited: (name, ms) => this.setRateLimited(name, ms),
+      ...this.throttleCollaborators(),
     });
   }
 
@@ -133,6 +130,22 @@ export class MetadataService {
    */
   getChapterRuntimeSeconds(asin: string): Promise<number | undefined> {
     return this.chapterCorroborator.getChapterRuntimeSeconds(asin);
+  }
+
+  /**
+   * The throttle/backoff collaborators every extracted sibling borrows. One home
+   * (DRY-3): `lookupForFixMatch`, `resolveBook`, and the chapter corroborator all
+   * mediate Audnexus/Audible through the SAME shared throttle slot and the SAME
+   * provider-wide `rateLimitUntil` gate, so a copy that drifts would silently
+   * un-throttle one path.
+   */
+  private throttleCollaborators() {
+    return {
+      acquireThrottle: () => this.throttle.acquire(),
+      isRateLimited: (name: string) => this.isRateLimited(name),
+      getRateLimitRemainingMs: (name: string) => this.getRateLimitRemainingMs(name),
+      setRateLimited: (name: string, ms: number) => this.setRateLimited(name, ms),
+    };
   }
 
   async search(query: string): Promise<MetadataSearchResults> {
@@ -381,10 +394,7 @@ export class MetadataService {
       audible: this.providers[0],
       audnexus: this.audnexus,
       log: this.log,
-      acquireThrottle: () => this.throttle.acquire(),
-      isRateLimited: (name) => this.isRateLimited(name),
-      getRateLimitRemainingMs: (name) => this.getRateLimitRemainingMs(name),
-      setRateLimited: (name, ms) => this.setRateLimited(name, ms),
+      ...this.throttleCollaborators(),
     }, asin);
   }
 
@@ -430,10 +440,7 @@ export class MetadataService {
     return runResolveBook({
       provider: this.providers[0],
       enrichBook: (asin) => this.enrichBook(asin),
-      acquireThrottle: () => this.throttle.acquire(),
-      isRateLimited: (name) => this.isRateLimited(name),
-      getRateLimitRemainingMs: (name) => this.getRateLimitRemainingMs(name),
-      setRateLimited: (name, ms) => this.setRateLimited(name, ms),
+      ...this.throttleCollaborators(),
       applyBookFilters: (books) => this.applyBookFilters(books),
       logParseDrop: (result, name) => this.logParseDrop(result, name),
       log: this.log,
