@@ -65,25 +65,36 @@ const audnexusChaptersSchema = z.object({
 const DEFAULT_RETRY_AFTER_MS = 60_000;
 
 /**
+ * A backoff window is only usable if it is finite and non-negative — every arm of
+ * `parseRetryAfterMs` funnels its arithmetic RESULT through here so no branch can
+ * return a window the caller cannot honor.
+ *
+ * The finiteness check must be on the product, not the operand: `1e306` written
+ * out in digits is a perfectly finite Number, but `× 1000` overflows to
+ * `Infinity`, and `setRateLimited(Date.now() + Infinity)` is a deadline that never
+ * expires — a malformed-but-numeric upstream header would then suppress every
+ * Audnexus lookup for the life of the process.
+ */
+function finiteWindowMs(candidateMs: number): number {
+  return Number.isFinite(candidateMs) && candidateMs >= 0 ? candidateMs : DEFAULT_RETRY_AFTER_MS;
+}
+
+/**
  * Normalize a `Retry-After` header to a FINITE, non-negative millisecond window.
  *
  * RFC 9110 permits both delay-seconds and an HTTP-date; the book path's
  * `parseInt(header, 10) * 1000` yields `NaN` for the latter, and a `NaN` window
  * makes the service's `setRateLimited(Date.now() + NaN)` backoff gate a silent
- * no-op. Absent, unparseable, and negative values fall back to the same 60s
- * default the absent-header case has always used.
+ * no-op. Absent, unparseable, negative, and overflowing values all fall back to
+ * the same 60s default the absent-header case has always used.
  */
 export function parseRetryAfterMs(header: string | null): number {
   const raw = header?.trim();
   if (!raw) return DEFAULT_RETRY_AFTER_MS;
-  if (/^[+-]?\d+$/.test(raw)) {
-    const seconds = Number(raw);
-    return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : DEFAULT_RETRY_AFTER_MS;
-  }
+  if (/^[+-]?\d+$/.test(raw)) return finiteWindowMs(Number(raw) * 1000);
   const dateMs = Date.parse(raw);
   if (Number.isNaN(dateMs)) return DEFAULT_RETRY_AFTER_MS;
-  const delta = dateMs - Date.now();
-  return delta >= 0 ? delta : DEFAULT_RETRY_AFTER_MS;
+  return finiteWindowMs(dateMs - Date.now());
 }
 
 const audnexusAuthorSchema = z.object({

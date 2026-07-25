@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AudnexusProvider } from './audnexus.js';
@@ -1025,25 +1025,51 @@ describe('AudnexusProvider', () => {
     });
 
     describe('429 retry-window normalization (F16)', () => {
-      it('Retry-After delay-seconds → seconds × 1000', async () => {
-        server.use(chaptersHandler(() => new HttpResponse(null, { status: 429, headers: { 'Retry-After': '30' } })));
+      /**
+       * Read the `retryAfterMs` off a 429 chapters response, asserting the
+       * discriminant first so a mis-classified outcome fails loudly here rather
+       * than silently skipping the window assertion.
+       */
+      async function retryAfterMsFor(header?: string): Promise<number> {
+        server.use(chaptersHandler(() => new HttpResponse(null, {
+          status: 429,
+          ...(header !== undefined && { headers: { 'Retry-After': header } }),
+        })));
 
         const result = await provider.getChapterRuntime(FABLEHAVEN);
         expect(result.kind).toBe('rate_limited');
-        if (result.kind === 'rate_limited') expect(result.retryAfterMs).toBe(30_000);
+        return (result as Extract<typeof result, { kind: 'rate_limited' }>).retryAfterMs;
+      }
+
+      it('Retry-After delay-seconds → seconds × 1000', async () => {
+        expect(await retryAfterMsFor('30')).toBe(30_000);
       });
 
-      it('Retry-After as a valid HTTP-date → a finite, non-negative window (never NaN)', async () => {
-        const future = new Date(Date.now() + 120_000).toUTCString();
-        server.use(chaptersHandler(() => new HttpResponse(null, { status: 429, headers: { 'Retry-After': future } })));
+      // The clock is frozen (Date only — `toFake: ['Date']` leaves MSW's and
+      // `AbortSignal.timeout`'s real timers alone) so the HTTP-date arm asserts an
+      // EXACT window instead of a range: production reads `Date.now()` at a
+      // different instant than the test builds the header, and an ambient-clock
+      // range assertion cannot distinguish a correct window from a lucky one.
+      describe('HTTP-date arm, frozen clock', () => {
+        const NOW = Date.parse('2026-07-25T12:00:00.000Z');
 
-        const result = await provider.getChapterRuntime(FABLEHAVEN);
-        expect(result.kind).toBe('rate_limited');
-        if (result.kind === 'rate_limited') {
-          expect(Number.isFinite(result.retryAfterMs)).toBe(true);
-          expect(result.retryAfterMs).toBeGreaterThan(0);
-          expect(result.retryAfterMs).toBeLessThanOrEqual(120_000);
-        }
+        beforeEach(() => {
+          vi.useFakeTimers({ toFake: ['Date'] });
+          vi.setSystemTime(NOW);
+        });
+        afterEach(() => { vi.useRealTimers(); });
+
+        it('a FUTURE HTTP-date → exactly the delta to that instant', async () => {
+          expect(await retryAfterMsFor(new Date(NOW + 120_000).toUTCString())).toBe(120_000);
+        });
+
+        it('an HTTP-date exactly NOW → a finite 0ms window', async () => {
+          expect(await retryAfterMsFor(new Date(NOW).toUTCString())).toBe(0);
+        });
+
+        it('a PAST HTTP-date → the finite 60000ms default, never a negative window', async () => {
+          expect(await retryAfterMsFor(new Date(NOW - 120_000).toUTCString())).toBe(60_000);
+        });
       });
 
       it.each([
@@ -1052,25 +1078,39 @@ describe('AudnexusProvider', () => {
         ['non-numeric', 'not-a-number'],
         ['negative', '-30'],
       ])('Retry-After %s → the finite 60000ms default', async (_label, header) => {
-        server.use(chaptersHandler(() => new HttpResponse(null, {
-          status: 429,
-          ...(header !== undefined && { headers: { 'Retry-After': header } }),
-        })));
-
-        const result = await provider.getChapterRuntime(FABLEHAVEN);
-        expect(result.kind).toBe('rate_limited');
-        if (result.kind === 'rate_limited') {
-          expect(result.retryAfterMs).toBe(60_000);
-          expect(result.retryAfterMs).not.toBeNaN();
-        }
+        const retryAfterMs = await retryAfterMsFor(header);
+        expect(retryAfterMs).toBe(60_000);
+        expect(retryAfterMs).not.toBeNaN();
       });
 
       it('Retry-After of 0 seconds → a finite 0ms window', async () => {
-        server.use(chaptersHandler(() => new HttpResponse(null, { status: 429, headers: { 'Retry-After': '0' } })));
+        expect(await retryAfterMsFor('0')).toBe(0);
+      });
 
-        const result = await provider.getChapterRuntime(FABLEHAVEN);
-        expect(result.kind).toBe('rate_limited');
-        if (result.kind === 'rate_limited') expect(result.retryAfterMs).toBe(0);
+      // F1 — the finiteness guard must apply to the PRODUCT, not the operand.
+      // `1e306` is a finite Number written in all digits, so an operand-side
+      // `Number.isFinite` check passes it straight through and `× 1000` overflows
+      // to Infinity. `setRateLimited(Date.now() + Infinity)` is then a deadline
+      // that never expires, permanently suppressing every Audnexus lookup.
+      it.each([
+        ['overflows only after ×1000 (1e306 in digits)', `1${'0'.repeat(306)}`],
+        ['overflows on parse alone (1e400 in digits)', `1${'0'.repeat(400)}`],
+        ['Number.MAX_VALUE in digits', BigInt(Number.MAX_SAFE_INTEGER).toString().repeat(40)],
+      ])('an all-digit Retry-After that %s → the finite 60000ms default', async (_label, header) => {
+        const retryAfterMs = await retryAfterMsFor(header);
+        expect(retryAfterMs).toBe(60_000);
+        expect(Number.isFinite(retryAfterMs)).toBe(true);
+      });
+
+      it('every Retry-After form yields a window MetadataService can honor (finite, non-negative)', async () => {
+        // The contract the provider-wide backoff gate depends on, asserted across
+        // the whole input space in one place.
+        const headers = [undefined, '', '0', '30', '-30', 'not-a-number', `1${'0'.repeat(306)}`];
+        for (const header of headers) {
+          const retryAfterMs = await retryAfterMsFor(header);
+          expect(Number.isFinite(retryAfterMs)).toBe(true);
+          expect(retryAfterMs).toBeGreaterThanOrEqual(0);
+        }
       });
     });
 
