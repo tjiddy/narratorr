@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES, NARRATOR_PLACEHOLDERS } from '../../core/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -2021,15 +2021,53 @@ describe('MetadataService', () => {
       expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
     });
 
-    it('once the window elapses the provider is retried and a valid record promotes', async () => {
-      mockAudnexus.getChapterRuntime.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 1 });
-      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+    // The backoff deadline is `Date.now() + retryAfterMs`, so a real-time sleep
+    // can only ever approximate the transition. Freezing Date (and ONLY Date —
+    // `toFake: ['Date']` leaves the throttle's and the runner's real timers alone)
+    // lets the window be stepped exactly, pinning both sides of the boundary
+    // instead of just "eventually expired".
+    describe('backoff window expiry, frozen clock', () => {
+      const NOW = Date.parse('2026-07-25T12:00:00.000Z');
 
-      await new Promise(resolve => setTimeout(resolve, 5));
-      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+      });
+      afterEach(() => { vi.useRealTimers(); });
 
-      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
-      expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
+      it('holds the gate up to the last millisecond of the window, then retries and promotes', async () => {
+        mockAudnexus.getChapterRuntime.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60_000 });
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+        expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
+
+        // 1ms short of the deadline — still gated, no request.
+        vi.setSystemTime(NOW + 59_999);
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+        expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
+
+        // Exactly at the deadline — the gate releases and the provider is retried.
+        vi.setSystemTime(NOW + 60_000);
+        mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+        expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
+
+        // ...and the promotion settles, so a fourth lookup issues no request.
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+        expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
+      });
+
+      it('a rate-limited lookup leaves no cache entry, so the post-window retry is a real request', async () => {
+        mockAudnexus.getChapterRuntime.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60_000 });
+        await service.getChapterRuntimeSeconds(ASIN);
+
+        vi.setSystemTime(NOW + 60_000);
+        mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'not_found' });
+
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+        // Two real requests for the SAME ASIN: the 429 is transient, so it left no
+        // settled verdict for the post-window call to short-circuit against.
+        expect(mockAudnexus.getChapterRuntime.mock.calls).toEqual([[ASIN], [ASIN]]);
+      });
     });
 
     it('an active backoff from ANOTHER path skips the chapter lookup entirely', async () => {
