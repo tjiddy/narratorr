@@ -36,6 +36,9 @@ const mockAudnexus = {
   type: 'audnexus',
   getBook: vi.fn().mockResolvedValue(null),
   getAuthor: vi.fn().mockResolvedValue(null),
+  // #1942 — the chapter-runtime lookup the corroboration bridge calls on a
+  // would-be duration mismatch.
+  getChapterRuntime: vi.fn().mockResolvedValue({ kind: 'not_found' }),
 };
 
 vi.mock('../../core/index.js', async (importOriginal) => {
@@ -78,12 +81,14 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
     mockAudibleProvider.test.mockReset();
     mockAudnexus.getBook.mockReset();
     mockAudnexus.getAuthor.mockReset();
+    mockAudnexus.getChapterRuntime.mockReset();
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
     mockAudibleProvider.searchSeries.mockResolvedValue([]);
     mockAudibleProvider.getBook.mockResolvedValue(null);
     mockAudibleProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
     mockAudnexus.getAuthor.mockResolvedValue(null);
+    mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'not_found' });
 
     vi.mocked(scanAudioDirectory).mockReset();
 
@@ -143,5 +148,69 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
     // gate (or if MetadataService's `isRateLimited` short-circuit broke), this
     // would be ≥ 2.
     expect(mockAudibleProvider.searchBooks).toHaveBeenCalledTimes(1);
+  });
+
+  // #1942 — same boundary, for the chapter-runtime corroboration. The mock-service
+  // match-job test stubs `metadataService.getChapterRuntimeSeconds` directly, which
+  // cannot prove the lookup is throttled and 429-gated rather than reaching the
+  // provider on its own.
+  describe('chapter-runtime corroboration through the real service (#1942)', () => {
+    const FABLEHAVEN_ASIN = 'B00CXXEX8W';
+
+    function fablehavenScan() {
+      return {
+        codec: 'AAC',
+        bitrate: 128000,
+        sampleRate: 44100,
+        channels: 2,
+        bitrateMode: 'cbr' as const,
+        fileFormat: 'm4b',
+        totalDuration: 33219.47,
+        totalSize: 100_000_000,
+        fileCount: 1,
+        hasCoverArt: false,
+      };
+    }
+
+    const candidate: MatchCandidate = {
+      path: '/audiobooks/Fablehaven',
+      title: 'Fablehaven',
+      author: 'Brandon Mull',
+    };
+
+    async function runMatch() {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(fablehavenScan());
+      mockAudibleProvider.searchBooks.mockResolvedValue({
+        books: [{ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], duration: 539, asin: FABLEHAVEN_ASIN }],
+      });
+      const id = matchService.createJob([candidate]);
+      await waitForJob(matchService, id);
+      return matchService.getJob(id)!.results[0]!;
+    }
+
+    it('rescues the would-be mismatch through the real Audnexus bridge', async () => {
+      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
+
+      const result = await runMatch();
+
+      expect(result.confidence).toBe('high');
+      expect(result.reasonKind).toBeUndefined();
+      expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledExactlyOnceWith(FABLEHAVEN_ASIN);
+    });
+
+    it('a chapters 429 degrades to the scalar verdict and arms the shared provider backoff', async () => {
+      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'rate_limited', retryAfterMs: 60_000 });
+
+      const result = await runMatch();
+
+      // Degrades — it must NOT escape into matchSingleBook's catch as 'none'.
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+      expect(result.error).toBeUndefined();
+
+      // The provider-wide gate is armed, so the next Audnexus call short-circuits.
+      await expect(metadataService.getChapterRuntimeSeconds('B_ANY_OTHER')).resolves.toBeUndefined();
+      expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
+    });
   });
 });

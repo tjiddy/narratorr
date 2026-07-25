@@ -33,6 +33,7 @@ import {
   tagTitleScore,
   type NarratorCapContext,
 } from './match-job.helpers.js';
+import { DURATION_TOLERANCE_SECONDS } from '../../shared/duration-tolerance.js';
 
 // -------- Factories --------
 
@@ -954,6 +955,25 @@ describe('resolveConfidenceFromDuration', () => {
     expect(result.confidence).toBe('medium');
     expect(result.reason).toBe('Duration mismatch — scanned 29h 53m vs expected 29h 49m');
   });
+
+  describe('chapter-runtime corroboration (#1942)', () => {
+    it('Fablehaven: a usable in-band chapter runtime promotes the would-be mismatch to high with NO reason', () => {
+      const scored = [{ meta: makeBook({ duration: 539 }) }, { meta: makeBook({ duration: 700 }) }];
+      expect(resolveConfidenceFromDuration(scored, 33219.47)).toEqual({
+        confidence: 'medium',
+        reason: expect.stringContaining('Duration mismatch'),
+        reasonKind: 'duration-mismatch',
+      });
+      expect(resolveConfidenceFromDuration(scored, 33219.47, 33219.49)).toEqual({ confidence: 'high' });
+    });
+
+    it('an out-of-band chapter runtime leaves the mismatch reason intact (suppress-only)', () => {
+      const scored = [{ meta: makeBook({ duration: 539 }) }];
+      const result = resolveConfidenceFromDuration(scored, 33519.49, 33219.49);
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+    });
+  });
 });
 
 // ============================================================================
@@ -1011,6 +1031,48 @@ describe('isDurationVerified', () => {
   it('same-edition regression: 13.7h book Δ68s → verified', () => {
     // provider 822min → 49320s; scanned 49388s → Δ68s
     expect(isDurationVerified(makeBook({ duration: 822 }), 49388)).toBe(true);
+  });
+
+  // #1942 — the optional chapter-runtime corroborating second source. Suppress-only:
+  // it can turn a scalar disagreement into `verified`, never the reverse.
+  describe('chapter-runtime corroboration (#1942)', () => {
+    it('Fablehaven: scalar disagrees (Δ879s) but the chapter runtime agrees → verified', () => {
+      // scalar 539min → 32340s vs scanned 33219.47s → Δ879s (out of band);
+      // chapter runtime 33219.49s → Δ0.02s (in band).
+      expect(isDurationVerified(makeBook({ duration: 539 }), 33219.47)).toBe(false);
+      expect(isDurationVerified(makeBook({ duration: 539 }), 33219.47, 33219.49)).toBe(true);
+    });
+
+    it('reuses the shared band: exactly 240s from the chapter runtime verifies, 241s does not', () => {
+      const meta = makeBook({ duration: 539 });
+      expect(isDurationVerified(meta, 33219.47, 33219.47 + DURATION_TOLERANCE_SECONDS)).toBe(true);
+      expect(isDurationVerified(meta, 33219.47, 33219.47 + DURATION_TOLERANCE_SECONDS + 1)).toBe(false);
+    });
+
+    it('an out-of-band chapter runtime leaves the scalar disagreement standing', () => {
+      // scanned is 300s past BOTH references (truncated/padded file) — still unverified.
+      expect(isDurationVerified(makeBook({ duration: 539 }), 33519.49, 33219.49)).toBe(false);
+    });
+
+    it('never demotes: a scalar-verified match stays verified even with an off chapter runtime', () => {
+      expect(isDurationVerified(makeBook({ duration: 60 }), 3650, 1)).toBe(true);
+    });
+
+    it('a zero/negative/non-finite chapter runtime is ignored', () => {
+      const meta = makeBook({ duration: 539 });
+      expect(isDurationVerified(meta, 33219.47, 0)).toBe(false);
+      expect(isDurationVerified(meta, 33219.47, -33219.49)).toBe(false);
+      expect(isDurationVerified(meta, 33219.47, Number.NaN)).toBe(false);
+    });
+
+    it('still requires a scanned runtime — a chapter runtime alone cannot verify', () => {
+      expect(isDurationVerified(makeBook({ duration: 539 }), undefined, 33219.49)).toBe(false);
+      expect(isDurationVerified(makeBook({ duration: 539 }), 0, 33219.49)).toBe(false);
+    });
+
+    it('verifies off the chapter runtime even when the candidate has no scalar duration', () => {
+      expect(isDurationVerified(makeBook(), 33219.47, 33219.49)).toBe(true);
+    });
   });
 });
 
@@ -1076,6 +1138,21 @@ describe('resolveSingleResultConfidence', () => {
     const result = resolveSingleResultConfidence(makeBook({ duration: 1789 }), 107620);
     expect(result.confidence).toBe('medium');
     expect(result.reason).toBe('Duration mismatch — scanned 29h 53m vs expected 29h 49m');
+  });
+
+  describe('chapter-runtime corroboration (#1942)', () => {
+    it('Fablehaven: a usable in-band chapter runtime promotes the would-be mismatch to high with NO reason', () => {
+      const result = resolveSingleResultConfidence(makeBook({ duration: 539 }), 33219.47, 33219.49);
+      expect(result.confidence).toBe('high');
+      expect(result.reason).toBeUndefined();
+      expect(result.reasonKind).toBeUndefined();
+    });
+
+    it('an out-of-band chapter runtime leaves the mismatch reason intact (suppress-only)', () => {
+      const result = resolveSingleResultConfidence(makeBook({ duration: 539 }), 33519.49, 33219.49);
+      expect(result.confidence).toBe('medium');
+      expect(result.reasonKind).toBe('duration-mismatch');
+    });
   });
 });
 

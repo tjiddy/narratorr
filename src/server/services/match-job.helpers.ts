@@ -7,7 +7,7 @@ import { normalizeProductionType } from '../../core/metadata/production-type.js'
 import { cleanTagTitle, extractYear, hasTagSeriesMarker, isPureVolumeMarker } from '../utils/folder-parsing.js';
 import type { Confidence, MatchCandidate, MatchResult } from './match-job.types.js';
 import type { MatchReasonKind } from '../../shared/match-reason-kind.js';
-import type { MatchSource } from './tag-search-planner.js';
+import type { MatchSource, TagSearchOutcome } from './tag-search-planner.js';
 import type { BookService } from './book.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
@@ -152,8 +152,21 @@ export interface DurationConfidenceResult {
 export function isDurationVerified(
   meta: BookMetadata,
   scannedSeconds: number | undefined,
+  chapterSeconds?: number | undefined,
 ): boolean {
   if (!scannedSeconds || scannedSeconds <= 0) return false;
+  // #1942 — the edition's own chapter table is a strictly more authoritative
+  // runtime than the provider's `runtimeLengthMin` scalar (for Fablehaven
+  // B00CXXEX8W the scalar understates its own chapter table by ~14.6 min, so a
+  // pristine file flags). It is consulted as a CORROBORATING SECOND SOURCE, never
+  // a replacement: it is only ever passed in when the scalar check already
+  // disagreed, and the `||` shape means it can only ever ADD agreement. A file
+  // out of band against BOTH references still fails exactly as before. The
+  // caller converts `runtimeLengthMs` → seconds; the same shared band judges both.
+  if (chapterSeconds !== undefined && Number.isFinite(chapterSeconds) && chapterSeconds > 0
+    && withinDurationTolerance(chapterSeconds, scannedSeconds)) {
+    return true;
+  }
   if (!meta.duration || meta.duration <= 0) return false;
   return withinDurationTolerance(meta.duration * 60, scannedSeconds);
 }
@@ -168,17 +181,24 @@ export function isDurationVerified(
  * absolute band lives in exactly one place (#1266/#1850). `scannedSeconds` is the
  * unrounded scanner runtime in SECONDS; the mismatch reason renders it from
  * seconds and the provider side from minutes.
+ *
+ * `chapterSeconds` (#1942) is the optional corroborating chapter-table runtime in
+ * SECONDS, supplied only on a re-check after this function already returned
+ * `duration-mismatch`. It is suppress-only — see `isDurationVerified`. The
+ * mismatch reason still renders the SCALAR expectation, because that is the
+ * runtime the user sees on the catalog page.
  */
 export function resolveConfidenceFromDuration(
   scored: { meta: BookMetadata }[],
   scannedSeconds: number | undefined,
+  chapterSeconds?: number | undefined,
 ): DurationConfidenceResult {
   if (!scannedSeconds || scannedSeconds <= 0) {
     return { confidence: 'medium', reason: 'Multiple results — no duration data to disambiguate', reasonKind: 'no-duration-data' };
   }
   const topResult = scored[0]!;
   if (topResult.meta.duration && topResult.meta.duration > 0) {
-    if (isDurationVerified(topResult.meta, scannedSeconds)) return { confidence: 'high' };
+    if (isDurationVerified(topResult.meta, scannedSeconds, chapterSeconds)) return { confidence: 'high' };
     return {
       confidence: 'medium',
       reason: `Duration mismatch — scanned ${formatDurationSeconds(scannedSeconds)} vs expected ${formatDurationSeconds(topResult.meta.duration * 60)}`,
@@ -200,13 +220,18 @@ export function resolveConfidenceFromDuration(
  * the pre-existing attempt cap, which can clamp a raw `high` to final `medium` for
  * a `maxConfidence: 'medium'` attempt. The helper only ever demotes an otherwise-
  * `high` single; it never raises a capped attempt's ceiling.
+ *
+ * `chapterSeconds` (#1942) is the optional corroborating chapter-table runtime in
+ * SECONDS, supplied only on a re-check after this function already returned
+ * `duration-mismatch`. Suppress-only — see `isDurationVerified`.
  */
 export function resolveSingleResultConfidence(
   meta: BookMetadata,
   scannedSeconds: number | undefined,
+  chapterSeconds?: number | undefined,
 ): DurationConfidenceResult {
   const bothPresent = !!scannedSeconds && scannedSeconds > 0 && !!meta.duration && meta.duration > 0;
-  if (bothPresent && !isDurationVerified(meta, scannedSeconds)) {
+  if (bothPresent && !isDurationVerified(meta, scannedSeconds, chapterSeconds)) {
     return {
       confidence: 'medium',
       reason: `Duration mismatch — scanned ${formatDurationSeconds(scannedSeconds)} vs expected ${formatDurationSeconds(meta.duration! * 60)}`,
@@ -214,6 +239,77 @@ export function resolveSingleResultConfidence(
     };
   }
   return { confidence: 'high' };
+}
+
+/**
+ * Top-result title-similarity floor. Below this, the filename pass emits
+ * `confidence: 'none'` and the tag pass falls through to it.
+ */
+export const TITLE_SIMILARITY_FLOOR = 0.5;
+/** Tag-pass author-name dice threshold (#984). */
+export const TAG_AUTHOR_PREDICATE_FLOOR = 0.7;
+
+/**
+ * AC5 — title floor + author predicate gate for the tag pass. Logs at debug on
+ * failure. Lives here rather than on `MatchJobService` for the `max-lines` budget
+ * (#1942 F12); it needs nothing from the job beyond the logger and the path.
+ */
+export function tagPassPredicatesPass(
+  log: FastifyBaseLogger,
+  path: string,
+  tagQuery: TagQuery,
+  top: { meta: BookMetadata; score: number },
+): boolean {
+  const titleFloor = tagTitleScore(tagQuery.title, top.meta);
+  if (titleFloor < TITLE_SIMILARITY_FLOOR) {
+    log.debug(
+      { path, titleSimilarity: titleFloor.toFixed(2), bestTitle: top.meta.title },
+      'Tag-derived top result below title floor — falling through',
+    );
+    return false;
+  }
+  const topAuthor = top.meta.authors?.[0]?.name;
+  const authorScore = topAuthor
+    ? diceCoefficient(normalizeNarrator(topAuthor), normalizeNarrator(tagQuery.author))
+    : 0;
+  if (authorScore < TAG_AUTHOR_PREDICATE_FLOOR) {
+    log.debug(
+      { path, topResultAuthor: topAuthor, tagAuthor: tagQuery.author, score: authorScore.toFixed(2) },
+      'tag-author predicate failed — falling through to filename-derived path',
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
+ * ASIN kill-shot. Returns a single-candidate outcome when the tagged ASIN
+ * resolves; null on miss or provider throw (the caller falls through to the
+ * planner attempts). Same `max-lines` extraction as `tagPassPredicatesPass`.
+ */
+export async function runAsinKillShot(
+  metadataService: { getBook(id: string): Promise<BookMetadata | null> },
+  log: FastifyBaseLogger,
+  path: string,
+  tagAsin: string,
+  tagQuery: TagQuery,
+): Promise<TagSearchOutcome | null> {
+  try {
+    const found = await metadataService.getBook(tagAsin);
+    if (found) {
+      log.debug({ path, tagAsin, title: found.title }, 'Tag-search ASIN kill-shot hit');
+      return {
+        scored: [{ meta: found, score: 1.0 }],
+        attempt: { title: found.title ?? tagQuery.title, author: tagQuery.author, source: 'asin-tag', maxConfidence: 'high' },
+      };
+    }
+  } catch (error: unknown) {
+    log.warn(
+      { error: serializeError(error), path, tagAsin },
+      'tag-search provider error — falling through to filename-derived path',
+    );
+  }
+  return null;
 }
 
 export interface TagQuery {
