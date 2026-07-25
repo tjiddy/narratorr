@@ -22,6 +22,7 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { lookupForFixMatch as runFixMatchLookup, type FixMatchLookupResult } from './metadata-fix-match.js';
 import { resolveBook as runResolveBook, type ResolveBookInput } from './metadata-resolve-book.js';
+import { createChapterCorroborator, type ChapterCorroborator } from './chapter-corroboration.js';
 export type { FixMatchLookupResult } from './metadata-fix-match.js';
 export type { ResolveBookInput } from './metadata-resolve-book.js';
 
@@ -97,6 +98,8 @@ export class MetadataService {
   private audnexus: MetadataEnrichmentProvider;
   private throttle = new RequestThrottle();
   private rateLimitUntil: Map<string, number> = new Map();
+  /** Per-instance chapter-runtime cache + single-flight (#1942) — see {@link createChapterCorroborator}. */
+  private chapterCorroborator: ChapterCorroborator;
 
   constructor(private log: FastifyBaseLogger, config?: MetadataServiceConfig, private settingsService?: SettingsService) {
     const region = config?.audibleRegion ?? process.env.AUDIBLE_REGION ?? 'us';
@@ -109,6 +112,27 @@ export class MetadataService {
 
     this.audnexus = new AudnexusProvider({ region });
     this.log.info({ region }, 'Audnexus enrichment provider loaded');
+
+    // Instance-scoped, so the ASIN-only cache key can never answer a lookup with
+    // another region's chapter data (this service owns exactly one region).
+    this.chapterCorroborator = createChapterCorroborator({
+      provider: this.audnexus,
+      log: this.log,
+      acquireThrottle: () => this.throttle.acquire(),
+      isRateLimited: (name) => this.isRateLimited(name),
+      getRateLimitRemainingMs: (name) => this.getRateLimitRemainingMs(name),
+      setRateLimited: (name, ms) => this.setRateLimited(name, ms),
+    });
+  }
+
+  /**
+   * The matched edition's chapter-table runtime in SECONDS, or `undefined` when
+   * there is no usable one (#1942). Thin delegator — the cache, single-flight,
+   * throttle bridge, and outcome classification live in
+   * {@link createChapterCorroborator}. Never throws.
+   */
+  getChapterRuntimeSeconds(asin: string): Promise<number | undefined> {
+    return this.chapterCorroborator.getChapterRuntimeSeconds(asin);
   }
 
   async search(query: string): Promise<MetadataSearchResults> {
