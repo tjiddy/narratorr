@@ -4341,14 +4341,21 @@ describe('MatchJobService', () => {
         expect(chapterLookups()).toEqual([[FABLEHAVEN_ASIN]]);
       });
 
-      it('TAG assembly via the ASIN kill-shot: high, no duration-mismatch reason', async () => {
+      it('TAG assembly via the ASIN kill-shot: high, no duration-mismatch reason, exactly one lookup', async () => {
         vi.mocked(scanAudioDirectory).mockResolvedValue(tagScan({ tagAsin: FABLEHAVEN_ASIN }));
         vi.mocked(metadataService.getBook).mockResolvedValue(fablehaven());
 
         const result = await runSingle();
 
         expect(result.confidence).toBe('high');
+        // Both reason fields, not just the kind: a rescued row must not carry
+        // stale mismatch TEXT alongside its promoted confidence.
+        expect(result.reason).toBeUndefined();
         expect(result.reasonKind).toBeUndefined();
+        // The kill-shot short-circuits the planner, so it reaches the corroboration
+        // bridge by its own route — pin the count so duplicated or deleted wiring
+        // on that route fails here.
+        expect(chapterLookups()).toEqual([[FABLEHAVEN_ASIN]]);
       });
 
       it('without the corroboration the SAME inputs flag — the rescue is genuinely doing the work', async () => {
