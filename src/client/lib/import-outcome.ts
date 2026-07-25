@@ -9,6 +9,13 @@ import { getErrorMessage } from '@/lib/error-message.js';
  * severity/message decisions are made from COUNTS — identical pre-prune, truthful
  * post-prune, never a false green. `importSkipSummary` and `acceptedItemPaths` operate
  * over the per-row detail projection (retained columns survive `itemPayload` nulling).
+ *
+ * These are the SHARED primitives; the staged flow's toast builder composes them —
+ * `isCleanImport` and `importSkipSummary` are consumed by `staged-import/outcome.ts`
+ * (`isServerAggregateClean`, `buildStagedOutcomeToast`), which owns severity/message
+ * because it also weighs client-side local exclusions. Don't add a second toast
+ * builder here: the pre-cutover `buildOutcomeToast` was removed once the staged
+ * builder became the only production caller (#1919).
  */
 
 export interface OutcomeToast {
@@ -47,32 +54,6 @@ export function importSkipSummary(skipped: readonly SkipSummaryRow[]): string {
     parts.push(`${importing.length} already being imported`);
   }
   return parts.join(' · ');
-}
-
-/**
- * Build the consolidated accepted/skipped/failed toast purely from aggregate counts.
- * Held rows are surfaced separately (their recovery panel + warning), so a held-only
- * batch returns `null` here (this channel stays silent). `acceptedVerb` is the page's
- * word for an accepted item ("queued for import", "registered").
- */
-export function buildOutcomeToast(agg: SubmissionAggregates, acceptedVerb: string): OutcomeToast | null {
-  const { accepted, skipped, failed } = agg;
-
-  // Fully clean → green (nothing held/skipped/failed).
-  if (isCleanImport(agg)) {
-    return accepted > 0 ? { severity: 'success', message: `${accepted} book${accepted !== 1 ? 's' : ''} ${acceptedVerb}` } : null;
-  }
-
-  // Not clean, but only held items differ: the held items are surfaced by their own
-  // warning + recovery panel, so this channel stays silent rather than colouring amber.
-  if (skipped === 0 && failed === 0) return null;
-
-  const parts: string[] = [];
-  if (accepted > 0) parts.push(`${accepted} ${acceptedVerb}`);
-  if (skipped > 0) parts.push(`${skipped} skipped`);
-  if (failed > 0) parts.push(`${failed} failed`);
-
-  return { severity: failed > 0 ? 'error' : 'warning', message: parts.join(' · ') };
 }
 
 /**
