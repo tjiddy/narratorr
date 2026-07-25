@@ -625,3 +625,66 @@ Adding a nullable column to the `books` table (e.g. #1711 `edition_label`) break
 ---
 
 The scanner's two duration sources fail in disjoint ways, so neither is trustworthy alone. ffprobe's MP3 `format=duration` = filesize ÷ header bitrate: a file with a garbage Xing/Info header bitrate (e.g. The Rise of Endymion 001/118 at 827/746 bps) makes ffprobe report ~7.7–8.6 h for 4:00 files, inflating a book from ~30 h to ~46 h and raising a false duration-mismatch review flag. music-metadata derives MP3 length from the Xing frame count and reads those correctly, but historically halved ~1.7% of 64-bit-atom M4Bs (fixed in music-metadata v11.13.0) and returns no duration for version-1 `tkhd` M4Bs (ffprobe reads those). #1846 made music-metadata primary (free — already parsed for tags — and now trustworthy) with ffprobe as fallback/arbiter, gated by `isPlausibleDuration(duration, fileSize)` in src/core/utils/audio-probe.ts: implausible iff duration/fileSize non-finite-or-≤0, or implied bitrate `fileSize*8/duration` < 8000 bps AND duration > 1800 s (duration-gated floor so short low-bitrate files like e2e/assets/silent.m4b pass), or implied bitrate > 10_000_000 bps. When neither source is plausible the file's duration is omitted (never resurrect a known lie). The guard catches only gross lies — a subtle 2× halving inside the bitrate band is undetectable by bitrate alone; a downstream duration-mismatch comparison is the backstop where one exists. Constants are bps/seconds — never compare against kbps (see bitrate-bps-kbps-boundary).
+
+## zod-type-scoped-settings-transform
+
+**source:** #1879
+**added:** 2026-07-17
+**files:** src/shared/schemas/import-list.ts
+**tags:** zod, settings-schema, superRefine, transform
+
+---
+
+Per-adapter settings schemas that must emit ONLY the effective type's own keys (no stale foreign key from a prior type) should strip via a `.transform()` chained after `.superRefine()`, not a plain strict object (which keeps every present declared key). The server resolver (`validateSettingsPerType`, src/shared/schemas/import-list.ts) replaces `data.settings` with the schema's parsed output, so the transform's per-branch object becomes what is persisted. Zod runs a `.transform()` only when the preceding `.superRefine()` produced no issues (verified empirically on zod 4.4.1), so non-null assertions inside the transform for fields the refine guarantees present are safe. Declare the output as an explicit single wide optional-field type (not `z.infer`, which yields a discriminated union the registry factory can't index). Keep the discriminant (`listType`) optional with an omitted→default branch for backward compatibility. Prior art: `hardcoverSettingsSchema` (#1879). Related: settings-from-entity-registry-overlay, compat-surface-zod-strip-not-strict.
+
+## drizzle-schema-toplevel-deref-breaks-partial-mocks
+
+**source:** #1894
+**added:** 2026-07-21
+**files:** src/server/services/import-submission-report.service.ts
+**tags:** drizzle, vitest, vi-mock, db-schema, module-load
+
+---
+
+A module-level constant that dereferences Drizzle schema columns (e.g. `const PROJ = { disposition: importSubmissionItems.disposition }`) is evaluated at import time. Any suite that `vi.mock`s `db/schema` with a partial factory omitting that table will then crash on load of ANY module in the import graph — the error is `No "<table>" export is defined on the "../../db/schema.js" mock`, thrown from the const's line, not from the test. Existing services avoid this by only referencing tables inside method bodies (evaluated at call time). Build such column projections lazily (a function returning the object, called at query time). Symptom is invisible to typecheck and to the module's own focused tests; it only appears when an unrelated suite that partial-mocks the schema pulls the module into its graph — so validate with the full `vitest run`, not just the changed files. Seen: top-level `REPORT_ITEM_PROJECTION` in import-submission-report.service.ts vs the partial db/schema mock in tagging.service.test.ts (#1894). Related: vimock-barrel-replace-drops-named-exports.
+
+## react-query-mutation-callbacks-post-unmount
+
+**source:** #1905
+**added:** 2026-07-21
+**files:** src/client/hooks/useReplaceGrab.ts, src/client/components/SearchReleasesModal.tsx
+**tags:** react-query, tanstack-query, mutations, unmount, keyed-remount
+
+---
+
+TanStack Query v5's `useMutation({ onSuccess, onError, onSettled })` callbacks fire even after the component that called `mutate()` has unmounted — they are captured into the Mutation instance at build/mutate time and `mutation.execute()` invokes them regardless of whether the observer was removed. **This is the opposite of the `mutate(vars, { onSuccess })` form**, whose callbacks ARE skipped after unmount (`mutationObserver.js` gates them on `this.#mutateOptions && this.hasListeners()`); the docs describe that second form, so the two look contradictory unless you know which one you're holding. Consequence: unmounting a component (including a keyed remount on an id change) does NOT cancel a pending mutation's hook-level follow-up side effects. Any lifecycle-local effect (toast, modal close, setState on the unmounted tree's owner, confirm dialog) must be guarded — the established pattern here is a monotonic generation ref captured in `onMutate` and re-checked in the callbacks (see src/client/hooks/useReplaceGrab.ts), suppressing lifecycle-local effects for a stale generation while leaving unconditional cache invalidations in place. When the teardown is a keyed remount or close, advance that generation on a SYNCHRONOUS seam (a `useLayoutEffect` cleanup, which runs before the next instance is interactive), not a passive `useEffect` cleanup (which runs after the new instance has committed, leaving a stale-callback window). Verified in src/client/components/SearchReleasesModal.book-change.test.tsx. Related: rtl-layout-vs-passive-seam-testing (how to write a test that actually proves the seam).
+
+## rtl-layout-vs-passive-seam-testing
+
+**source:** #1905
+**added:** 2026-07-21
+**files:** src/client/components/SearchReleasesModal.book-change.test.tsx
+**tags:** useLayoutEffect, effect-ordering, act
+
+---
+
+React Testing Library's `render`/`rerender` wrap updates in `act`, which flushes passive effects synchronously before returning. Therefore a test that settles a held promise AFTER `rerender()` cannot distinguish a `useLayoutEffect` cleanup from a `useEffect` cleanup — the guarded state (e.g. a generation ref) is already advanced by the time the awaited callback runs, so the test passes for both seams and provides no protection. To prove a teardown runs on the synchronous (layout) seam, force the observation into the pre-passive window: (1) SYNCHRONOUS THENABLE — for a continuation attached directly to a promise, stub the awaited call to return a hand-rolled thenable whose `.resolve()` invokes queued `.then`/`.catch` synchronously, and trigger `.resolve()` from a sibling probe's `useLayoutEffect` setup (keyed alongside the swapped subtree) so the continuation runs in the layout phase; assert on the count of ALL constructed side-effect instances, not just live ones (a passive cleanup can construct-then-close within the same commit). (2) EFFECT-ORDERING MARKERS — when the continuation is inherently async (react-query awaits its mutationFn so its callbacks always run post-passive), technique 1 won't work; wrap the teardown hook via `vi.mock(m, importOriginal)` (memoize the wrapper to keep identity stable so the layout effect doesn't re-run), push a marker from the teardown and another from the incoming component's `useLayoutEffect` setup, and assert order `[teardown, interactive]` — React runs all layout cleanups before all layout setups, and a passive cleanup reverses that order. Non-negotiable: confirm each such test FAILS when the production seam is temporarily reverted to the passive form. Example: src/client/components/SearchReleasesModal.book-change.test.tsx (#1905).
+
+## fetch-status-classification-for-cached-outcomes
+
+**source:** #1942
+**added:** 2026-07-25
+**files:** src/core/utils/network-service.ts, src/core/metadata/audnexus.ts
+**tags:** fetch, http-status, network-service, provider-adapters, caching
+
+---
+
+Any adapter whose outcome gets CACHED must classify the response deliberately; the shortcuts in the uncached adapters are unsafe there.
+
+- **`response.ok` is not `status === 200`.** The Fetch Standard defines `ok` as 200-299, so a null-body 202/204/206 passes `if (response.ok)` and reaches the JSON parser. Gate a definitive/cacheable branch on `response.status === 200` exactly.
+- **Never fold all non-OK statuses into a 'not found'.** `audnexus.ts` `fetchJsonDetailed` does `if (!response.ok) return { kind: 'not_found' }`, which is fine for a throwaway result but would cache a temporary 401/403/408/auth-proxy error as a permanent absence. Map only the statuses the upstream API DOCUMENTS as absence (Audnexus: 400 and 404); everything else is transient.
+- **3xx never arrives as a status.** `fetchWithTimeout` (src/core/utils/network-service.ts) sets `redirect: 'manual'` and throws for 300-399 before returning, so redirects surface via the pre-header catch. No 3xx arm is needed — but that catch must classify as transient, not as a miss.
+- **Split at the body boundary.** `fetchWithTimeout` returns the Response with its `AbortSignal.timeout` still attached, so the body stream can reject after headers. `response.json()` reads AND parses in one call, conflating 'the exchange never completed' with 'the body arrived and is garbage'. Do `await response.text()` (rejection → transient) then `JSON.parse` (failure → invalid-record).
+- **Bytes arriving is not authority.** This boundary explicitly expects HTML interstitials, rate-limit pages, and upstream shape changes. If the cached verdict is about a specific entity, require an identity predicate (`body.asin === requestedAsin`) AND a shape predicate (the expected collection is present) — an OR admits both wrong-entity records and error envelopes.
+
+Reference implementation and full status/body test matrix: `AudnexusProvider.getChapterRuntime` / `classifyChapterBody` in src/core/metadata/audnexus.ts, tests in audnexus.test.ts ('getChapterRuntime — chapter-runtime adapter (#1942)'). Related: zod-nullish-external-api (optional external fields alone cannot prove a record is genuine).
