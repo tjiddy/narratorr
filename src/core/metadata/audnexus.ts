@@ -82,11 +82,14 @@ function finiteWindowMs(candidateMs: number): number {
 /**
  * Normalize a `Retry-After` header to a FINITE, non-negative millisecond window.
  *
- * RFC 9110 permits both delay-seconds and an HTTP-date; the book path's
- * `parseInt(header, 10) * 1000` yields `NaN` for the latter, and a `NaN` window
- * makes the service's `setRateLimited(Date.now() + NaN)` backoff gate a silent
- * no-op. Absent, unparseable, negative, and overflowing values all fall back to
- * the same 60s default the absent-header case has always used.
+ * The single home for `Retry-After` interpretation in this file — all three 429
+ * arms (chapters, book, author) route through it, so no path can hand the service
+ * a window it cannot honor. RFC 9110 permits both delay-seconds and an HTTP-date,
+ * and a naive seconds-only read of the date form produces `NaN`; `NaN` is falsy at
+ * `MetadataService.isRateLimited`, so `setRateLimited(Date.now() + NaN)` leaves the
+ * backoff gate dead rather than merely mis-timed and a rate-limited Audnexus keeps
+ * being retried. Absent, unparseable, negative, and overflowing values all fall
+ * back to the same 60s default the absent-header case has always used.
  */
 export function parseRetryAfterMs(header: string | null): number {
   const raw = header?.trim();
@@ -228,9 +231,7 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
     try {
       const response = await fetchWithTimeout(`${BASE_URL}${path}`, {}, REQUEST_TIMEOUT_MS);
       if (response.status === 429) {
-        const retryAfter = response.headers.get('Retry-After');
-        const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;
-        throw new RateLimitError(waitMs, 'Audnexus');
+        throw new RateLimitError(parseRetryAfterMs(response.headers.get('Retry-After')), 'Audnexus');
       }
       if (response.status >= 500) {
         throw new TransientError('Audnexus', `HTTP ${response.status} ${response.statusText}`);
@@ -272,9 +273,7 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
       return { kind: 'transient_failure', message: getErrorMessage(error) };
     }
     if (response.status === 429) {
-      const retryAfter = response.headers.get('Retry-After');
-      const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;
-      return { kind: 'rate_limited', retryAfterMs };
+      return { kind: 'rate_limited', retryAfterMs: parseRetryAfterMs(response.headers.get('Retry-After')) };
     }
     if (response.status >= 500) {
       return { kind: 'transient_failure', message: `HTTP ${response.status} ${response.statusText}` };
