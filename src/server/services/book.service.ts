@@ -258,7 +258,12 @@ export class BookService {
     const resolved = await this.resolveCreateInput(data);
     const bookId = await this.createResolved(resolved);
 
-    this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: data.asin }, 'Book added to library');
+    // Report the ASIN the row was actually persisted with (#1898): read it off
+    // `resolved` so the enrich branch isn't logged as `undefined`, and run it
+    // through the same write-boundary canonicalization `createResolved` applied,
+    // so the line greps against the stored `books.asin` value. A miss logs an
+    // explicit `null` rather than a leftover input string.
+    this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: canonicalizeAsin(resolved.asin) }, 'Book added to library');
     this.trackUnmatchedGenres(data.genres).catch((error) => this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres'));
     return this.getById(bookId) as Promise<BookWithAuthor>;
   }

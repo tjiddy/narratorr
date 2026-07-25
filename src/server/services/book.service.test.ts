@@ -758,6 +758,26 @@ describe('BookService', () => {
       );
     });
 
+    it('logs the provider-resolved ASIN on the success line, not the caller\'s absent one (#1898/AC1)', async () => {
+      const infoLog = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(infoLog), inject<MetadataService>(mockMetadata));
+      mockMetadata.getBook.mockResolvedValueOnce({ title: 'Book', authors: [], asin: 'B_ENRICHED' });
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: 'B_ENRICHED' }, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await svc.create({ title: 'Test', authors: [], providerId: 'hc-123' });
+
+      // The whole point of this breadcrumb is to record the ASIN the row was
+      // added with; reading `data.asin` here logs `undefined` on the enrich path.
+      expect(infoLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: 'B_ENRICHED' }),
+        'Book added to library',
+      );
+    });
+
     it('uses provided ASIN and skips enrichment', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
@@ -789,6 +809,11 @@ describe('BookService', () => {
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
       const infoMock = infoLog.info as Mock;
       expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
+      // #1898/AC4 — the success line reports the persisted absence explicitly.
+      expect(infoLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: null }),
+        'Book added to library',
+      );
     });
 
     it('creates book when getBook throws', async () => {
@@ -823,6 +848,11 @@ describe('BookService', () => {
         'ASIN enrichment failed',
       );
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
+      // #1898/AC4 — a swallowed provider failure still logs the persisted null.
+      expect(warnLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: null }),
+        'Book added to library',
+      );
     });
 
     it('inserts null asin when getBook resolves metadata with an ABSENT asin, and emits no enrichment-success log (AC4/F9)', async () => {
@@ -842,6 +872,11 @@ describe('BookService', () => {
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
       const infoMock = infoLog.info as Mock;
       expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
+      // #1898/AC4 — an ASIN-less provider detail logs the persisted null.
+      expect(infoLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: null }),
+        'Book added to library',
+      );
     });
 
     // #1893 — the extracted `resolveCreateInput` primitive that the staged-import
@@ -892,6 +927,11 @@ describe('BookService', () => {
       // F3 — the empty-string boundary must not emit the enrichment-success log.
       const infoMock = infoLog.info as Mock;
       expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
+      // #1898/AC4 — an empty provider ASIN logs the persisted null, not `''`.
+      expect(infoLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: null }),
+        'Book added to library',
+      );
     });
   });
 
@@ -1742,6 +1782,50 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ authors: ['Brandon Sanderson'], asin: 'B003P2WO5E' }),
+        'Book added to library',
+      );
+    });
+
+    it('create log carries the canonical ASIN that was persisted, not the caller\'s casing (#1898/AC2)', async () => {
+      const log = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: 'B003P2WO5E' }, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      await svc.create({ title: 'The Way of Kings', authors: [], asin: 'b003p2wo5e' });
+
+      // Asserting the pair in one test is what pins log-equals-persisted rather
+      // than log-happens-to-be-uppercase.
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: 'B003P2WO5E' }));
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: 'B003P2WO5E' }),
+        'Book added to library',
+      );
+    });
+
+    it('create log reports null for a whitespace-only caller ASIN, matching the persisted column (#1898/AC2)', async () => {
+      const log = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: null }, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      await svc.create({ title: 'Blank ASIN', authors: [], asin: '   ' });
+
+      // The falsy/coercion trap: `'   '` is truthy, so a raw passthrough would
+      // log whitespace against a row that stored null.
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: null }),
         'Book added to library',
       );
     });
