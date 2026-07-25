@@ -1,4 +1,4 @@
-import type { BookMetadata, BookWithAuthor, BookIdentifier, CreateBookPayload } from '@/lib/api';
+import type { BookMetadata, BookWithAuthor, LibraryEntry, CreateBookPayload } from '@/lib/api';
 import { matchesLibraryIdentity } from '../../shared/dedup.js';
 // ES imports are file-scoped — `dedup.ts`'s private import does NOT re-export
 // `canonicalizeAsin`, so pull it directly from the shared ASIN module (#1907).
@@ -29,8 +29,6 @@ export function mapBookMetadataToPayload(
     searchImmediately: qualityDefaults?.searchImmediately,
   };
 }
-
-type LibraryEntry = BookIdentifier | BookWithAuthor;
 
 function getAuthorName(entry: LibraryEntry): string | null | undefined {
   if ('authorName' in entry) return entry.authorName;

@@ -205,7 +205,7 @@ describe('MetadataResultItem', () => {
       renderItem({
         meta: createMockBookMetadata({ asin: 'B003P2WO5E', narrators: ['Michael Kramer'] }),
         showLibraryBadge: true,
-        libraryBooks: [{ asin: 'B003P2WO5E', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson' }],
+        libraryBooks: [{ id: 1, asin: 'B003P2WO5E', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson' }],
       });
       // CheckCircleIcon is a direct child of the button (not nested inside the metadata div)
       const button = screen.getByRole('button');
@@ -216,7 +216,7 @@ describe('MetadataResultItem', () => {
     it('hides library badge when showLibraryBadge is false (default)', () => {
       renderItem({
         meta: createMockBookMetadata({ asin: 'B003P2WO5E' }),
-        libraryBooks: [{ asin: 'B003P2WO5E', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson' }],
+        libraryBooks: [{ id: 1, asin: 'B003P2WO5E', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson' }],
       });
       // Only the cover placeholder and metadata text — no trailing CheckCircle icon
       const button = screen.getByRole('button');
@@ -228,7 +228,7 @@ describe('MetadataResultItem', () => {
       renderItem({
         meta: createMockBookMetadata({ asin: 'B003P2WO5E' }),
         showLibraryBadge: true,
-        libraryBooks: [{ asin: 'DIFFERENT', title: 'Other Book', authorName: 'Other Author', authorSlug: 'other-author' }],
+        libraryBooks: [{ id: 2, asin: 'DIFFERENT', title: 'Other Book', authorName: 'Other Author', authorSlug: 'other-author' }],
       });
       const button = screen.getByRole('button');
       const svgs = button.querySelectorAll(':scope > svg');

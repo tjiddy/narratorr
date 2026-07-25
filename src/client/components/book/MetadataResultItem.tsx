@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { BookMetadata, BookIdentifier, BookWithAuthor } from '@/lib/api';
+import type { BookMetadata, LibraryEntry } from '@/lib/api';
 import { resolveUrl } from '@/lib/url-utils';
 import { isBookInLibrary } from '@/lib/helpers';
 import { formatDurationMinutes } from '@/lib/format';
@@ -13,7 +13,7 @@ export interface MetadataResultItemProps {
   showSeries?: boolean | undefined;
   showDuration?: boolean | undefined;
   showLibraryBadge?: boolean | undefined;
-  libraryBooks?: (BookIdentifier | BookWithAuthor)[] | undefined;
+  libraryBooks?: LibraryEntry[] | undefined;
   placeholderIcon?: ReactNode;
   coverSize?: 'sm' | 'md' | undefined;
   className?: string | undefined;

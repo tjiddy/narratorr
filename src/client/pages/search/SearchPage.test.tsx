@@ -5,7 +5,18 @@ import { renderWithProviders } from '../../__tests__/helpers';
 import { SearchPage } from './SearchPage';
 import { api, ApiError } from '@/lib/api';
 import { createMockBook } from '@/__tests__/factories';
-import type { BookMetadata } from '@/lib/api';
+import type { BookIdentifier, BookMetadata, BookWithAuthor } from '@/lib/api';
+
+/** Project a full library book down to the identifiers DTO the page now reads (#1916). */
+function toIdentifier(book: BookWithAuthor): BookIdentifier {
+  return {
+    id: book.id,
+    asin: book.asin ?? null,
+    title: book.title,
+    authorName: book.authors[0]?.name ?? null,
+    authorSlug: book.authors[0]?.slug ?? null,
+  };
+}
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -15,7 +26,9 @@ vi.mock('@/lib/api', async (importOriginal) => {
     api: {
       ...originalApi,
       searchMetadata: vi.fn(),
-      getBooks: vi.fn(),
+      // #1916 — ownership on the search page comes from the unpaginated
+      // identifiers endpoint, not the 120-row-capped getBooks page.
+      getBookIdentifiers: vi.fn(),
       addBook: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
         quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, rejectWords: '', requiredWords: '' },
@@ -46,7 +59,7 @@ const mockLibraryBook = createMockBook({
 describe('SearchPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [mockLibraryBook], total: 1 });
+    (api.getBookIdentifiers as ReturnType<typeof vi.fn>).mockResolvedValue([toIdentifier(mockLibraryBook)]);
     (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
       books: [mockBookMetadata],
       authors: [],
@@ -59,7 +72,7 @@ describe('SearchPage', () => {
   });
 
   it('shows Add button for books not in library', async () => {
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0 });
+    (api.getBookIdentifiers as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     renderWithProviders(<SearchPage />);
     const user = userEvent.setup();
@@ -82,7 +95,7 @@ describe('SearchPage', () => {
       title: 'The Way of Kings',
       author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
     };
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [libraryBookWithAsin], total: 1 });
+    (api.getBookIdentifiers as ReturnType<typeof vi.fn>).mockResolvedValue([toIdentifier(libraryBookWithAsin)]);
 
     renderWithProviders(<SearchPage />);
     const user = userEvent.setup();
@@ -97,7 +110,7 @@ describe('SearchPage', () => {
   });
 
   it('calls addBook on Add button click and shows success toast', async () => {
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0 });
+    (api.getBookIdentifiers as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (api.addBook as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: 2,
       title: 'The Way of Kings',
@@ -169,7 +182,7 @@ describe('SearchPage', () => {
       books: [mockBookMetadata, secondBook],
       authors: [],
     });
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0 });
+    (api.getBookIdentifiers as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     renderWithProviders(<SearchPage />);
     const user = userEvent.setup();
@@ -188,7 +201,7 @@ describe('SearchPage', () => {
   });
 
   it('handles 409 duplicate gracefully', async () => {
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0 });
+    (api.getBookIdentifiers as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (api.addBook as ReturnType<typeof vi.fn>).mockRejectedValue(
       new ApiError(409, { id: 1, title: 'The Way of Kings' }),
     );

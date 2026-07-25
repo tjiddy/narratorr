@@ -1,4 +1,4 @@
-import { type BookMetadata, type BookWithAuthor, type BookIdentifier } from '@/lib/api';
+import { type BookMetadata, type LibraryEntry } from '@/lib/api';
 import { isBookInLibrary } from '@/lib/helpers';
 import { PlusIcon, LoadingSpinner, LibraryIcon } from '@/components/icons';
 import { BookRow } from './BookRow.js';
@@ -14,7 +14,7 @@ export function SeriesSection({
 }: {
   name: string;
   books: BookMetadata[];
-  libraryBooks?: (BookIdentifier | BookWithAuthor)[] | undefined;
+  libraryBooks?: LibraryEntry[] | undefined;
   onAddBook: (book: BookMetadata, overrides?: { searchImmediately: boolean }) => void;
   onAddAll: () => void;
   addingAsins: Set<string>;
