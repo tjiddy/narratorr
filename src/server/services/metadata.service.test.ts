@@ -1743,6 +1743,14 @@ describe('MetadataService', () => {
       expect(result2).toBeNull();
       // getAuthor should only have been called once (second was skipped)
       expect(mockAudnexus.getAuthor).toHaveBeenCalledTimes(1);
+      // #1944 — the operator-visible signal must carry the finite window too. A `NaN`
+      // window pino-serialises to `null`, so the one log line that says this is
+      // happening would itself be misleading. Not the `ExactlyOnce` variant: the
+      // second, gated lookup emits its own 'Author lookup skipped' warn.
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        { provider: 'Audnexus', retryAfterMs: 30000 },
+        'Provider rate limited',
+      );
     });
 
     it('enrichBook(): Audnexus TransientError returns null and logs warning', async () => {
