@@ -35,6 +35,30 @@ function stringLeaves(value: unknown, acc: string[] = []): string[] {
   return acc;
 }
 
+/**
+ * Assert a logged `error` value is the output of `serializeError`, not the caught `Error`.
+ *
+ * The own-ENUMERABLE key set is what makes this discriminating. On a real `Error`, `message`
+ * and `stack` are non-enumerable, so `Object.keys(rawError)` yields only the assigned `code`;
+ * a `toMatchObject`/`objectContaining({ message })` matcher reads through to the non-enumerable
+ * property and passes on a raw `Error` too, which is exactly the hole this closes. Pino
+ * serializes own-enumerable properties only, so the key set is also what actually reaches the
+ * log line. Mirrors the repository precedent at `indexer-search.service.test.ts:715-724`.
+ */
+function expectSerializedError(logged: unknown, original: Error, expected: { code?: string }): void {
+  expect(logged).not.toBe(original);
+  expect(logged).not.toBeInstanceOf(Error);
+  expect(Object.keys(logged as object).sort()).toEqual(
+    expected.code === undefined ? ['message', 'stack', 'type'] : ['code', 'message', 'stack', 'type'],
+  );
+  expect(logged).toEqual({
+    message: original.message,
+    stack: expect.stringContaining(original.message),
+    type: 'Error',
+    ...(expected.code !== undefined && { code: expected.code }),
+  });
+}
+
 const isLinux = process.platform === 'linux';
 
 describe('openCompanionEbook', () => {
@@ -139,8 +163,30 @@ describe('openCompanionEbook', () => {
   });
 
   describe('missing', () => {
-    it('classifies a vanished file as missing', async () => {
+    it('classifies an already-vanished file as missing at the lstat step', async () => {
       await expect(call('book.epub')).resolves.toEqual({ outcome: 'missing' });
+    });
+
+    // The case that actually exercises the ENOENT-REJECTING containment variant. The test
+    // above exits at `lstat` and never reaches it, so on its own it cannot tell the strict
+    // guard from the legacy swallow-on-ENOENT sibling.
+    it('rejects a file that disappears between a successful lstat and the containment check', async () => {
+      const filePath = join(bookPath, 'book.epub');
+      await writeFile(filePath, 'bytes');
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      vi.mocked(lstat).mockImplementationOnce((async (target: string) => {
+        const stats = await actual.lstat(target);
+        await actual.rm(target); // vanishes before containment canonicalises the path
+        return stats;
+      }) as unknown as typeof lstat);
+
+      await expect(call('book.epub')).resolves.toEqual({ outcome: 'missing' });
+
+      // THE discriminator. `assertRealPathInsideLibraryStrict` propagates the realpath ENOENT,
+      // so the helper classifies and returns without ever opening. Swap in the legacy
+      // `assertRealPathInsideLibrary` and the ENOENT is swallowed, containment "passes", and
+      // `open` runs — same `missing` outcome, so only this assertion catches the regression.
+      expect(vi.mocked(open)).not.toHaveBeenCalled();
     });
 
     it('classifies a book path that is not a directory as missing (ENOTDIR)', async () => {
@@ -213,13 +259,43 @@ describe('openCompanionEbook', () => {
 
       expect(logger.spies.debug).toHaveBeenCalledTimes(1);
       const [record] = logger.spies.debug.mock.calls[0] as [Record<string, unknown>, string];
-      expect(record).toMatchObject({
-        bookId: 42,
-        path: filePath,
-        error: expect.objectContaining({ message: expect.stringContaining('EACCES') }),
+      expect(record).toMatchObject({ bookId: 42, path: filePath });
+
+      // The load-bearing half: `error` is the SERIALIZED plain object, not the caught Error.
+      expectSerializedError(record.error, eacces, { code: 'EACCES' });
+
+      // …and the serialized record still carries the path verbatim in both message and stack,
+      // which is the point F16 settled: a path-free `serializeError` is not expressible.
+      expect(stringLeaves(record.error).join('\n')).toContain(filePath);
+      expect(logger.spies.warn).not.toHaveBeenCalled();
+      expect(logger.spies.error).not.toHaveBeenCalled();
+    });
+
+    // AC2's never-throws guarantee reaches the cleanup path too: abandoning a handle whose
+    // own `close()` rejects must still resolve to the classified outcome and still log.
+    it('absorbs and serializes a rejection from closing an abandoned handle', async () => {
+      const filePath = join(bookPath, 'book.epub');
+      await writeFile(filePath, 'bytes');
+      const closeError = Object.assign(new Error('EBADF: bad file descriptor, close'), { code: 'EBADF' });
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      vi.mocked(open).mockImplementationOnce(async (...args: Parameters<typeof actual.open>) => {
+        const handle = await actual.open(...args);
+        await handle.close(); // release the real descriptor; the test drives the failure below
+        handle.stat = (() =>
+          Promise.reject(Object.assign(new Error('EIO: i/o error, fstat'), { code: 'EIO' }))) as typeof handle.stat;
+        handle.close = () => Promise.reject(closeError);
+        return handle;
       });
-      // The error was serialized, not passed raw: `serializeError` keeps message + stack.
-      expect(stringLeaves(record.error).join('\n')).toContain('EACCES');
+
+      // Never throws — the close rejection does not escape as an unhandled reason.
+      await expect(call('book.epub')).resolves.toEqual({ outcome: 'unreadable' });
+
+      const closeRecord = logger.spies.debug.mock.calls.find(
+        ([, message]) => typeof message === 'string' && message.includes('handle close failed'),
+      ) as [Record<string, unknown>, string] | undefined;
+      expect(closeRecord).toBeDefined();
+      expect(closeRecord![0]).toMatchObject({ bookId: 42, path: filePath });
+      expectSerializedError(closeRecord![0].error, closeError, { code: 'EBADF' });
       expect(logger.spies.warn).not.toHaveBeenCalled();
       expect(logger.spies.error).not.toHaveBeenCalled();
     });

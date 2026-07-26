@@ -31,6 +31,30 @@ function errno(code: string): NodeJS.ErrnoException {
   return Object.assign(new Error(`${code}: forced by test`), { code });
 }
 
+/**
+ * Assert a logged `error` value is the output of `serializeError`, not the caught `Error`.
+ *
+ * The own-ENUMERABLE key set is what makes this discriminating. On a real `Error`, `message`
+ * and `stack` are non-enumerable, so `Object.keys(rawError)` yields only the assigned `code`;
+ * a `toMatchObject`/`objectContaining({ message })` matcher reads through to the non-enumerable
+ * property and passes on a raw `Error` too, which is exactly the hole this closes. Pino
+ * serializes own-enumerable properties only, so the key set is also what actually reaches the
+ * log line. Mirrors the repository precedent at `indexer-search.service.test.ts:715-724`.
+ */
+function expectSerializedError(logged: unknown, original: Error, expected: { code?: string }): void {
+  expect(logged).not.toBe(original);
+  expect(logged).not.toBeInstanceOf(Error);
+  expect(Object.keys(logged as object).sort()).toEqual(
+    expected.code === undefined ? ['message', 'stack', 'type'] : ['code', 'message', 'stack', 'type'],
+  );
+  expect(logged).toEqual({
+    message: original.message,
+    stack: expect.stringContaining(original.message),
+    type: 'Error',
+    ...(expected.code !== undefined && { code: expected.code }),
+  });
+}
+
 const isLinux = process.platform === 'linux';
 
 describe('findCompanionEbookCandidates', () => {
@@ -193,22 +217,23 @@ describe('findCompanionEbookCandidates', () => {
   });
 
   describe('logging (AC13 — every catch logs before the error is erased)', () => {
-    it('logs the readdir failure at debug in the helper shape', async () => {
-      vi.mocked(readdir).mockRejectedValueOnce(errno('EACCES'));
+    it('logs the readdir failure at debug, with the error serialized', async () => {
+      const failure = errno('EACCES');
+      vi.mocked(readdir).mockRejectedValueOnce(failure);
       await call();
 
       expect(logger.spies.debug).toHaveBeenCalledTimes(1);
       const [record] = logger.spies.debug.mock.calls[0] as [Record<string, unknown>, string];
-      expect(record).toMatchObject({
-        bookId: 7,
-        path: bookPath,
-        error: expect.objectContaining({ message: expect.stringContaining('EACCES') }),
-      });
+      expect(record).toMatchObject({ bookId: 7, path: bookPath });
+      // The result union discards the caught value, so this record is the ONLY trail back to
+      // it — a raw `Error` here would serialize to `{}` in the JSON log and erase the cause.
+      expectSerializedError(record.error, failure, { code: 'EACCES' });
     });
 
-    it('logs a SKIPPED per-entry ENOENT even though the call still returns ok', async () => {
+    it('logs a SKIPPED per-entry ENOENT, with the error serialized, even though the call still returns ok', async () => {
       await touch('a.epub', 'b.epub');
-      vi.mocked(lstat).mockRejectedValueOnce(errno('ENOENT'));
+      const failure = errno('ENOENT');
+      vi.mocked(lstat).mockRejectedValueOnce(failure);
 
       const result = await call();
 
@@ -216,11 +241,8 @@ describe('findCompanionEbookCandidates', () => {
       expect(result.outcome).toBe('ok');
       expect(logger.spies.debug).toHaveBeenCalledTimes(1);
       const [record] = logger.spies.debug.mock.calls[0] as [Record<string, unknown>, string];
-      expect(record).toMatchObject({
-        bookId: 7,
-        path: join(bookPath, 'a.epub'),
-        error: expect.objectContaining({ message: expect.stringContaining('ENOENT') }),
-      });
+      expect(record).toMatchObject({ bookId: 7, path: join(bookPath, 'a.epub') });
+      expectSerializedError(record.error, failure, { code: 'ENOENT' });
     });
 
     it('never logs above debug', async () => {
