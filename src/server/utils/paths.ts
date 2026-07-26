@@ -86,6 +86,33 @@ export async function assertRealPathInsideLibrary(bookPath: string, libraryRoot:
   }
 }
 
+/**
+ * The ENOENT-**rejecting** twin of {@link assertRealPathInsideLibrary} (#1974 AC4), for the
+ * companion-ebook open-and-verify helper.
+ *
+ * Identical in every respect — lexical containment first and unconditional, then the
+ * `realpath`-canonicalized re-check through the same `isOutsideRoot` predicate, catching a
+ * **parent-directory** symlink escape and not only a final-component one — except that a
+ * `realpath` ENOENT **propagates** instead of being swallowed.
+ *
+ * That difference is the whole point. The sibling's swallow-and-return is deliberate and its
+ * callers depend on it (they pass DB paths whose absence their own logic surfaces), but a
+ * serve-time file opener must never conclude "contained" from "vanished": the caller
+ * classifies the propagated errno as a `missing` outcome instead. The sibling's behaviour and
+ * callers are untouched.
+ */
+export async function assertRealPathInsideLibraryStrict(bookPath: string, libraryRoot: string): Promise<void> {
+  assertPathInsideLibrary(bookPath, libraryRoot);
+
+  // No ENOENT branch: every realpath failure, absence included, is the caller's to classify.
+  const realRoot = await realpath(libraryRoot);
+  const realBook = await realpath(bookPath);
+
+  if (isOutsideRoot(relative(realRoot, realBook))) {
+    throw new PathOutsideLibraryError(bookPath, libraryRoot);
+  }
+}
+
 /** Minimal book shape required by renameFilesWithTemplate. */
 export interface RenameableBook {
   title: string;

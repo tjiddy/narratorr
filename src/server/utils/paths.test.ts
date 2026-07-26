@@ -3,7 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Dirent } from 'node:fs';
 import { basename } from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { renameFilesWithTemplate, planFileRenames, padWidth, buildBookNameTokens, assertPathInsideLibrary, assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
+import { renameFilesWithTemplate, planFileRenames, padWidth, buildBookNameTokens, assertPathInsideLibrary, assertRealPathInsideLibrary, assertRealPathInsideLibraryStrict, PathOutsideLibraryError } from './paths.js';
 import type { RenameableBook } from './paths.js';
 import { renderFilename } from '../../core/utils/naming.js';
 import { compareAudioNames, disambiguateStems } from '../../core/utils/collect-audio-files.js';
@@ -149,6 +149,50 @@ describe('assertRealPathInsideLibrary', () => {
     expect((caught as PathOutsideLibraryError).code).toBe('PATH_OUTSIDE_LIBRARY');
     expect((caught as PathOutsideLibraryError).bookPath).toBe('/library/link');
     expect((caught as PathOutsideLibraryError).libraryRoot).toBe('/library');
+  });
+});
+
+describe('assertRealPathInsideLibraryStrict', () => {
+  beforeEach(() => {
+    vi.mocked(realpath).mockReset();
+  });
+
+  // The one behavioural difference from the sibling — and the reason it exists (#1974 AC4).
+  it('propagates a realpath ENOENT instead of swallowing it', async () => {
+    vi.mocked(realpath).mockRejectedValue(enoent());
+    await expect(assertRealPathInsideLibraryStrict('/library/Author/Missing.epub', '/library'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  // Everything else is identical to `assertRealPathInsideLibrary`.
+  it('rejects a lexical escape before any realpath call', async () => {
+    await expect(assertRealPathInsideLibraryStrict('/tmp/external', '/library')).rejects.toThrow(PathOutsideLibraryError);
+    expect(vi.mocked(realpath)).not.toHaveBeenCalled();
+  });
+
+  it('rejects equality with the library root', async () => {
+    await expect(assertRealPathInsideLibraryStrict('/library', '/library')).rejects.toThrow(PathOutsideLibraryError);
+  });
+
+  it('rejects a parent-directory symlink whose realpath canonicalizes outside the root', async () => {
+    vi.mocked(realpath)
+      .mockResolvedValueOnce('/library')
+      .mockResolvedValueOnce('/elsewhere/book/book.epub');
+    await expect(assertRealPathInsideLibraryStrict('/library/book/book.epub', '/library'))
+      .rejects.toThrow(PathOutsideLibraryError);
+  });
+
+  it('passes an in-library path whose realpath stays inside the root', async () => {
+    vi.mocked(realpath)
+      .mockResolvedValueOnce('/library')
+      .mockResolvedValueOnce('/library/Author/Title/book.epub');
+    await expect(assertRealPathInsideLibraryStrict('/library/Author/Title/book.epub', '/library'))
+      .resolves.toBeUndefined();
+  });
+
+  it('propagates a non-ENOENT realpath error', async () => {
+    vi.mocked(realpath).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    await expect(assertRealPathInsideLibraryStrict('/library/Author/Title', '/library')).rejects.toThrow('EACCES');
   });
 });
 
