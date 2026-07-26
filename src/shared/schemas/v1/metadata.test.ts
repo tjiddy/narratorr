@@ -183,11 +183,12 @@ describe('metadataSearchResultV1Schema (fail-closed, .strict())', () => {
   });
 
   describe('library cross-reference (#1537)', () => {
-    it('accepts a result carrying a valid library { bookId, status }', () => {
-      const result = metadataSearchResultV1Schema.safeParse({
-        ...valid,
-        library: { bookId: 'bk_abc123', status: 'imported' },
-      });
+    // #1961 — every valid `library` object now carries the REQUIRED (nullable)
+    // `companionEbook` member.
+    const library = { bookId: 'bk_abc123', status: 'imported', companionEbook: null };
+
+    it('accepts a result carrying a valid library { bookId, status, companionEbook }', () => {
+      const result = metadataSearchResultV1Schema.safeParse({ ...valid, library });
       expect(result.success).toBe(true);
     });
 
@@ -199,7 +200,7 @@ describe('metadataSearchResultV1Schema (fail-closed, .strict())', () => {
     it('rejects an out-of-enum library.status (must be a BOOK_STATUSES value)', () => {
       const result = metadataSearchResultV1Schema.safeParse({
         ...valid,
-        library: { bookId: 'bk_abc123', status: 'archived' },
+        library: { ...library, status: 'archived' },
       });
       expect(result.success).toBe(false);
     });
@@ -207,9 +208,43 @@ describe('metadataSearchResultV1Schema (fail-closed, .strict())', () => {
     it('rejects an unknown key inside library (strict)', () => {
       const result = metadataSearchResultV1Schema.safeParse({
         ...valid,
-        library: { bookId: 'bk_abc123', status: 'imported', leak: 'x' },
+        library: { ...library, leak: 'x' },
       });
       expect(result.success).toBe(false);
+    });
+
+    describe('companionEbook (#1961)', () => {
+      it('accepts an exposed companion object nested in library', () => {
+        const result = metadataSearchResultV1Schema.safeParse({
+          ...valid,
+          library: { ...library, companionEbook: { format: 'epub', sizeBytes: 123456 } },
+        });
+        expect(result.success).toBe(true);
+      });
+
+      it('rejects a library object MISSING companionEbook (required, not optional)', () => {
+        const result = metadataSearchResultV1Schema.safeParse({
+          ...valid,
+          library: { bookId: 'bk_abc123', status: 'imported' },
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('rejects a non-epub format (single-value literal)', () => {
+        const result = metadataSearchResultV1Schema.safeParse({
+          ...valid,
+          library: { ...library, companionEbook: { format: 'pdf', sizeBytes: 1 } },
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('rejects an unknown key inside companionEbook (strict)', () => {
+        const result = metadataSearchResultV1Schema.safeParse({
+          ...valid,
+          library: { ...library, companionEbook: { format: 'epub', sizeBytes: 1, path: '/leak.epub' } },
+        });
+        expect(result.success).toBe(false);
+      });
     });
   });
 });
