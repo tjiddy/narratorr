@@ -238,6 +238,71 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
   });
 
   // ---------------------------------------------------------------------------
+  // The NOT NULL / DEFAULT premises the CHECK predicates are built on
+  // ---------------------------------------------------------------------------
+
+  describe('status is NOT NULL — the premise that keeps every other CHECK total', () => {
+    // Rule 1 of the never-NULL policy. If `.notNull()` were dropped from the column and
+    // the migration, a NULL status would make `status <> 'x'` / `status NOT IN (...)`
+    // evaluate to NULL in six of the eight predicates — and SQLite treats a NULL CHECK
+    // result as SATISFIED, so the row would be accepted. Testing unknown *strings* does
+    // not cover that: an unknown string is a value the domain CHECK can see and reject,
+    // a NULL is not.
+
+    it('rejects an insert that omits status', async () => {
+      const bookId = await seedBook();
+      const message = await rejectionMessage(() =>
+        db.run(sql`INSERT INTO companion_ebooks (book_id, candidate_count) VALUES (${bookId}, 0)`),
+      );
+      expect(message).toContain('NOT NULL constraint failed: companion_ebooks.status');
+    });
+
+    it('rejects an explicit NULL status', async () => {
+      const bookId = await seedBook();
+      const message = await rejectionMessage(() =>
+        db.run(sql`INSERT INTO companion_ebooks (book_id, status, candidate_count) VALUES (${bookId}, NULL, 0)`),
+      );
+      expect(message).toContain('NOT NULL constraint failed: companion_ebooks.status');
+    });
+
+    it('rejects an explicit NULL candidate_count', async () => {
+      // The other half of rule 1: `typeof(candidate_count) = 'integer'` is total, but the
+      // per-status arms (`candidate_count = 0`, `>= 2`, `>= 1`) are not.
+      const bookId = await seedBook();
+      const message = await rejectionMessage(() =>
+        db.run(sql`INSERT INTO companion_ebooks (book_id, status, candidate_count) VALUES (${bookId}, 'none', NULL)`),
+      );
+      expect(message).toContain('NOT NULL constraint failed: companion_ebooks.candidate_count');
+    });
+
+    it('types status as required and candidateCount as optional in $inferInsert', () => {
+      // @ts-expect-error — status must be REQUIRED. It has no default, so every write
+      // states it; a `.default(...)` added here would silently make it omissible.
+      const missingStatus: typeof companionEbooks.$inferInsert = { bookId: 1 };
+      void missingStatus;
+
+      // ...while candidateCount must stay omissible, because the DB supplies the default.
+      const omittedCount: typeof companionEbooks.$inferInsert = { bookId: 1, status: 'none' };
+      void omittedCount;
+
+      expect(companionEbooks.status.notNull).toBe(true);
+      expect(companionEbooks.status.hasDefault).toBe(false);
+      expect(companionEbooks.candidateCount.notNull).toBe(true);
+      expect(companionEbooks.candidateCount.hasDefault).toBe(true);
+    });
+
+    it('defaults candidate_count to 0 in the migrated DB when the column is omitted', async () => {
+      // Pins the DDL default independently of Drizzle: this INSERT names no
+      // candidate_count column at all, so only the migration's `DEFAULT 0` can supply it.
+      const bookId = await seedBook();
+      await db.run(sql`INSERT INTO companion_ebooks (book_id, status) VALUES (${bookId}, 'none')`);
+
+      const res = await db.run(sql`SELECT candidate_count FROM companion_ebooks WHERE book_id = ${bookId}`);
+      expect(res.rows[0]![0]).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Status domain (F1)
   // ---------------------------------------------------------------------------
 
@@ -541,11 +606,21 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
       expect(res.rows[0]![3]).toBe('integer');
     });
 
-    it('accepts a typed Drizzle insert and applies the timestamp defaults', async () => {
+    it('accepts a typed Drizzle insert that omits candidateCount and applies every default', async () => {
+      // Deliberately omits candidateCount: this is the shape a real writer uses for a
+      // `none` observation, and it pins the Drizzle half of `.default(0)` — both that the
+      // column stays omissible in `$inferInsert` and that the value lands as 0.
+      //
+      // It does NOT cover the DB half: Drizzle INLINES its schema-level default into the
+      // INSERT rather than omitting the column, so this row is written with an explicit
+      // `candidate_count = 0` and survives even if the migration's `DEFAULT 0` is
+      // deleted (measured). The migrated DDL default is pinned separately by the raw
+      // insert in the NOT NULL / DEFAULT block above.
       const bookId = await seedBook();
-      await db.insert(companionEbooks).values({ bookId, status: 'none', candidateCount: 0 });
+      await db.insert(companionEbooks).values({ bookId, status: 'none' });
 
       const [stored] = await db.select().from(companionEbooks).where(eq(companionEbooks.bookId, bookId));
+      expect(stored!.candidateCount).toBe(0);
       expect(stored!.createdAt).toBeInstanceOf(Date);
       expect(stored!.updatedAt).toBeInstanceOf(Date);
     });
