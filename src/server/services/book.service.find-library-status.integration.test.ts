@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { vi } from 'vitest';
 import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { books, companionEbooks } from '../../db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
