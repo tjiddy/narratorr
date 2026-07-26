@@ -57,9 +57,17 @@ function logOutcome(request: FastifyRequest, bookId: number, outcome: string, me
  * The stream is created with **`autoClose: false`** and ONE idempotent application-owned
  * closer is wired to stream `end`, stream `error`, and response `close` (which covers a client
  * abort). Node 24 documents `autoClose: true` as the default for
- * `filehandle.createReadStream()`, so layering explicit close listeners on top of the default
- * is exactly how a double close appears; owning it here makes exactly-once a property of this
- * code rather than of a Node default that could change.
+ * `filehandle.createReadStream()`, so layering close handling on top of the default is exactly
+ * how a double close appears; with it off, nothing tears the stream down implicitly and
+ * teardown happens if and only if `release` runs.
+ *
+ * **`release` destroys the stream rather than calling `handle.close()`, and that is
+ * load-bearing.** Measured on Node 24.18: a FileHandle-backed `ReadStream` registers itself on
+ * the handle's `close` event, so an application `handle.close()` destroys the stream, whose
+ * `_destroy` then closes the handle a SECOND time — two `close()` calls on both the `end` and
+ * the abort path. Destroying the stream closes the underlying handle exactly once on every
+ * path. (`autoClose` only governs whether the stream self-destroys at `end`; an explicit
+ * `destroy()` closes the fd either way.)
  */
 function streamCompanionEbook(
   bookId: number,
@@ -70,32 +78,26 @@ function streamCompanionEbook(
 ): FastifyReply {
   const stream = opened.handle.createReadStream({ autoClose: false });
 
-  let closed = false;
-  const closeHandle = (): void => {
-    if (closed) return;
-    closed = true;
-    void opened.handle.close().catch((error: unknown) => {
-      request.log.debug({ bookId, error: serializeError(error) }, 'Companion ebook handle close failed');
-    });
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    if (!stream.destroyed) stream.destroy();
   };
 
-  stream.once('end', closeHandle);
+  stream.once('end', release);
   stream.once('error', (error: unknown) => {
     request.log.debug({ bookId, error: serializeError(error) }, 'Companion ebook stream error');
     logOutcome(request, bookId, 'stream_error', 'Companion ebook stream failed');
-    if (!stream.destroyed) stream.destroy();
-    closeHandle();
+    release();
     // `error-handler.ts` ends in an unconditional `reply.status(500).send(...)` with no
     // `headersSent` check, so letting it run here would append a JSON body to a response that
     // already committed to `200` + `Content-Length` — a truncated body under a success status.
     // Contained locally: destroying the socket is the only honest signal left. Editing the
     // shared handler is out of scope (every route in the app is downstream of it).
-    if (reply.raw.headersSent) reply.raw.socket?.destroy();
+    if (reply.raw.headersSent && !reply.raw.writableEnded) reply.raw.socket?.destroy();
   });
-  reply.raw.once('close', () => {
-    if (!stream.destroyed) stream.destroy();
-    closeHandle();
-  });
+  reply.raw.once('close', release);
 
   // The existing sanitize idiom (`routes/system.ts`), so a comma, a space, or a non-ASCII
   // character in the stored basename cannot break out of the quoted header value.
