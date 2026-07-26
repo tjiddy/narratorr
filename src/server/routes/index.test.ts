@@ -76,20 +76,24 @@ vi.mock('./retry-import.js', () => ({ retryImportRoute: vi.fn() }));
 // this issue changed are pinned: `v1CapabilitiesRoutes` (new) and
 // `v1MetadataRoutes` (gained `settingsService`).
 vi.mock('./v1/capabilities.js', () => ({ v1CapabilitiesRoutes: vi.fn() }));
+// #1974 — same technique for the new companion-ebook module: the length bump proves an entry
+// exists, not what its closure hands the factory (including the `db` third argument, which
+// carries the observation read).
+vi.mock('./companion-ebook.js', () => ({ companionEbookRoutes: vi.fn() }));
 vi.mock('./v1/metadata.js', () => ({ v1MetadataRoutes: vi.fn() }));
 vi.mock('../config.js', () => ({ config: { configPath: '/tmp/config', dbPath: '/tmp/db.sqlite' } }));
 vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(), probeFfmpeg: vi.fn() }));
 vi.mock('../../core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
 
 describe('routeRegistry', () => {
-  it('contains all 37 route factories', () => {
-    // books, bookFiles, bookPreview, search, activity, importJobs, indexers, downloadClients,
+  it('contains all 38 route factories', () => {
+    // books, bookFiles, bookPreview, companionEbook, search, activity, importJobs, indexers, downloadClients,
     // settings, metadata, libraryScan, importSubmissions, system, notifiers, connectors, blacklist,
     // auth, remotePathMapping, filesystem, eventHistory, events, searchStream,
     // prowlarrCompat, importLists, discover, bulkOperations, retryImport, importPreview,
     // v1Books, v1Authors, v1Narrators, v1Series, v1Downloads, v1Actions, v1Metadata, v1System,
     // v1Capabilities
-    expect(routeRegistry).toHaveLength(37);
+    expect(routeRegistry).toHaveLength(38);
   });
 
   it('every entry is a function', () => {
@@ -103,7 +107,7 @@ describe('routeRegistry', () => {
   // (other factories reach for a real Fastify instance and throw — that is fine
   // and expected) so each mocked route factory records the exact deps object its
   // production closure built.
-  async function driveCompositionRoot(): Promise<{ app: FastifyInstance; services: Services }> {
+  async function driveCompositionRoot(): Promise<{ app: FastifyInstance; services: Services; db: Db }> {
     const stubs = new Map<string, object>();
     const services = new Proxy({}, {
       get(_t, prop: string) {
@@ -121,13 +125,34 @@ describe('routeRegistry', () => {
         // Every other factory reaches for a real Fastify instance and throws.
       }
     }
-    return { app, services };
+    return { app, services, db };
   }
 
   /** Read a service stub off the proxy by identity, for deps-object comparison. */
   function svc(services: Services, name: string): object {
     return (services as unknown as Record<string, object>)[name]!;
   }
+
+  // #1974 AC30 — the deps object is asserted with object-CONTAINING matching, not exact
+  // equality, on purpose: #1976 adds its own service dependency to this same closure when it
+  // lands the selection PUT, and that must extend this assertion rather than fail it. The
+  // `db` third argument IS pinned exactly — the observation read depends on it.
+  it('composes companionEbookRoutes exactly once, with { bookService, settingsService } and the db', async () => {
+    const { companionEbookRoutes } = await import('./companion-ebook.js');
+    (companionEbookRoutes as unknown as Mock).mockClear();
+
+    const { app, services, db } = await driveCompositionRoot();
+
+    expect(companionEbookRoutes as unknown as Mock).toHaveBeenCalledTimes(1);
+    expect(companionEbookRoutes as unknown as Mock).toHaveBeenCalledWith(
+      app,
+      expect.objectContaining({
+        bookService: svc(services, 'book'),
+        settingsService: svc(services, 'settings'),
+      }),
+      db,
+    );
+  });
 
   it('composes v1CapabilitiesRoutes exactly once, with { settingsService: services.settings }', async () => {
     const { v1CapabilitiesRoutes } = await import('./v1/capabilities.js');

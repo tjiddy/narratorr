@@ -180,7 +180,8 @@ describe('openCompanionEbook', () => {
         const handle = await actual.open(...args);
         const originalClose = handle.close.bind(handle);
         handle.close = async () => { closeSpy(); return originalClose(); };
-        handle.stat = () => Promise.reject(Object.assign(new Error('EIO'), { code: 'EIO' }));
+        handle.stat = (() =>
+          Promise.reject(Object.assign(new Error('EIO'), { code: 'EIO' }))) as typeof handle.stat;
         return handle;
       });
 

@@ -43,6 +43,7 @@ import fsp from 'fs/promises';
 import { booksRoutes } from './books.js';
 import { bookFilesRoute } from './book-files.js';
 import { bookPreviewRoute } from './book-preview.js';
+import { companionEbookRoutes } from './companion-ebook.js';
 import { searchRoutes } from './search.js';
 import { activityRoutes } from './activity.js';
 import { importJobsRoutes } from './import-jobs.js';
@@ -241,6 +242,13 @@ const routeRegistry: RouteFactory[] = [
   }),
   (app, s) => bookFilesRoute(app, s.book, s.settings, s.connector),
   (app, s) => bookPreviewRoute(app, s.book),
+  // Companion ebooks (#1974) — its own module, not `books.ts` (360/400 lines). `db` carries
+  // the observation read: the routes call `findCompanionEbook(db, bookId)` directly, a free
+  // function over `DbOrTx`, so no `BookService` join and no new `Services` member is needed.
+  (app, s, db) => companionEbookRoutes(app, {
+    bookService: s.book,
+    settingsService: s.settings,
+  }, db),
   (app, s) => searchRoutes(app, s.downloadOrchestrator),
   (app, s) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, s.bookImport, () => s.importQueueWorker.nudge()),
   (app, s) => importJobsRoutes(app, s.bookImport),
