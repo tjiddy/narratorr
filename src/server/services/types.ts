@@ -2,6 +2,7 @@ import type {
   blacklist,
   bookEvents,
   books,
+  companionEbooks,
   downloadClients,
   downloads,
   connectors,
@@ -29,6 +30,7 @@ import type { ConnectorType } from '../../shared/connector-registry.js';
 import type { IndexerType } from '../../shared/indexer-registry.js';
 import type { NotifierType } from '../../shared/notifier-registry.js';
 import type { SuggestionReason } from '../../shared/schemas/discovery.js';
+import type { CompanionEbookStatus } from '../../shared/schemas/companion-ebook.js';
 
 // Drizzle's $inferSelect widens enum columns to bare `string` (CLAUDE.md gotcha).
 // Re-narrow the status / enrichmentStatus columns so callers can consume
@@ -93,6 +95,13 @@ export type ImportJobRow = Omit<typeof importJobs.$inferSelect, 'type' | 'status
   type: ImportJobType;
   status: ImportJobStatus;
   phase: ImportJobPhase | null;
+};
+
+// `validationCode` deliberately stays `string | null`: its authority is
+// `EpubValidationCode` (src/core/epub, #1956), which does not exist yet. Narrowing it
+// is 1.5/1.6 work, not this issue's.
+export type CompanionEbookRow = Omit<typeof companionEbooks.$inferSelect, 'status'> & {
+  status: CompanionEbookStatus;
 };
 
 export type SeriesRow = typeof series.$inferSelect;
