@@ -10,6 +10,7 @@ import authPlugin from '../../plugins/auth.js';
 import type { AuthService } from '../../services/auth.service.js';
 import type { MetadataService } from '../../services/metadata.service.js';
 import type { BookService } from '../../services/book.service.js';
+import type { SettingsService } from '../../services/settings.service.js';
 import { v1MetadataRoutes } from './metadata.js';
 import { metadataSearchResultV1Schema } from '../../../shared/schemas/v1/metadata.js';
 import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
@@ -52,6 +53,14 @@ const authService = {
 
 const metadataService = { search: vi.fn() } as unknown as MetadataService;
 const bookService = { findLibraryStatusByAsins: vi.fn() } as unknown as BookService;
+const settingsService = { get: vi.fn() } as unknown as SettingsService;
+
+/** A library annotation as the service returns it (#1961 added `companionEbook`). */
+function annotation(overrides?: Record<string, unknown>) {
+  return { bookId: 'bk_abc123', status: 'imported', companionEbook: null, ...overrides };
+}
+
+const EPUB = { format: 'epub', sizeBytes: 123456 };
 
 describe('v1 metadata routes', () => {
   let app: FastifyInstance;
@@ -62,7 +71,7 @@ describe('v1 metadata routes', () => {
     app.setSerializerCompiler(serializerCompiler);
     await app.register(cookie);
     await app.register(authPlugin, { authService });
-    await v1MetadataRoutes(app, { metadataService, bookService });
+    await v1MetadataRoutes(app, { metadataService, bookService, settingsService });
     await app.ready();
   });
 
@@ -74,6 +83,7 @@ describe('v1 metadata routes', () => {
     (authService.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
     (metadataService.search as Mock).mockResolvedValue({ books: [], authors: [], series: [] });
     (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(new Map());
+    (settingsService.get as Mock).mockResolvedValue({ enabled: false });
   });
 
   describe('GET /api/v1/metadata/search', () => {
@@ -161,15 +171,15 @@ describe('v1 metadata routes', () => {
     it('annotates a result whose ASIN matches an imported library book', async () => {
       (metadataService.search as Mock).mockResolvedValue({ books: [providerBook()], authors: [], series: [] });
       (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(
-        new Map([['B00ASIN', { bookId: 'bk_abc123', status: 'imported' }]]),
+        new Map([['B00ASIN', annotation()]]),
       );
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/search?q=wool', headers: keyHeaders });
 
       expect(res.statusCode).toBe(200);
       const item = res.json().data[0];
-      expect(item.library).toEqual({ bookId: 'bk_abc123', status: 'imported' });
-      expect(bookService.findLibraryStatusByAsins as Mock).toHaveBeenCalledWith(['B00ASIN']);
+      expect(item.library).toEqual({ bookId: 'bk_abc123', status: 'imported', companionEbook: null });
+      expect(bookService.findLibraryStatusByAsins as Mock).toHaveBeenCalledWith(['B00ASIN'], { companionEnabled: false });
     });
 
     it('leaves library absent for a result not in the library', async () => {
@@ -206,30 +216,33 @@ describe('v1 metadata routes', () => {
         authors: [],
         series: [],
       });
+      (settingsService.get as Mock).mockResolvedValue({ enabled: true });
       (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(
-        new Map([['B00HIT', { bookId: 'bk_hit', status: 'downloading' }]]),
+        new Map([['B00HIT', annotation({ bookId: 'bk_hit', status: 'imported', companionEbook: EPUB })]]),
       );
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/search?q=wool', headers: keyHeaders });
 
       expect(res.statusCode).toBe(200);
       const [hit, miss] = res.json().data;
-      expect(hit.library).toEqual({ bookId: 'bk_hit', status: 'downloading' });
+      // The annotated hit carries a non-null companion; the miss carries no
+      // `library` key at all (never `library: { companionEbook: null }`).
+      expect(hit.library).toEqual({ bookId: 'bk_hit', status: 'imported', companionEbook: EPUB });
       expect(miss).not.toHaveProperty('library');
-      expect(bookService.findLibraryStatusByAsins as Mock).toHaveBeenCalledWith(['B00HIT', 'B00MISS']);
+      expect(bookService.findLibraryStatusByAsins as Mock).toHaveBeenCalledWith(['B00HIT', 'B00MISS'], { companionEnabled: true });
     });
 
     it('matches a case-drifted ASIN via the uppercased map key', async () => {
       (metadataService.search as Mock).mockResolvedValue({ books: [providerBook({ asin: 'b00asin' })], authors: [], series: [] });
       // Service normalizes keys to uppercase; the route looks up with toUpperCase().
       (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(
-        new Map([['B00ASIN', { bookId: 'bk_drift', status: 'imported' }]]),
+        new Map([['B00ASIN', annotation({ bookId: 'bk_drift' })]]),
       );
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/search?q=wool', headers: keyHeaders });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json().data[0].library).toEqual({ bookId: 'bk_drift', status: 'imported' });
+      expect(res.json().data[0].library).toEqual({ bookId: 'bk_drift', status: 'imported', companionEbook: null });
     });
 
     it('returns the normal { data, total } payload with no library fields and no 5xx when the lookup throws, and logs the failure', async () => {
@@ -254,6 +267,124 @@ describe('v1 metadata routes', () => {
         'v1 metadata-search library enrichment failed',
       );
       warnSpy.mockRestore();
+    });
+  });
+
+  // #1961 — the nested annotation is the LIVE consumer surface for the whole
+  // companion feature. The route reads the flag once per request and passes it
+  // down; the service owns the batch load and the shared exposure->DTO mapper.
+  describe('companionEbook on the library annotation (#1961)', () => {
+    const search = async () =>
+      app.inject({ method: 'GET', url: '/api/v1/metadata/search?q=wool', headers: keyHeaders });
+
+    beforeEach(() => {
+      (metadataService.search as Mock).mockResolvedValue({ books: [providerBook()], authors: [], series: [] });
+    });
+
+    it('emits the companion object for an enabled hit with an available observation', async () => {
+      (settingsService.get as Mock).mockResolvedValue({ enabled: true });
+      (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(
+        new Map([['B00ASIN', annotation({ companionEbook: EPUB })]]),
+      );
+
+      const res = await search();
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data[0].library).toEqual({
+        bookId: 'bk_abc123',
+        status: 'imported',
+        companionEbook: { format: 'epub', sizeBytes: 123456 },
+      });
+    });
+
+    // F14 — pin the EXACT settings wiring: one read, the right category, and the
+    // `true` value actually reaching the service. Without this, a generic service
+    // mock returning a companion regardless of the supplied option would pass.
+    it('reads companionEpub EXACTLY ONCE per request and passes companionEnabled: true through', async () => {
+      (settingsService.get as Mock).mockResolvedValue({ enabled: true });
+      (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(
+        new Map([['B00ASIN', annotation({ companionEbook: EPUB })]]),
+      );
+
+      await search();
+
+      expect(settingsService.get as Mock).toHaveBeenCalledTimes(1);
+      expect(settingsService.get as Mock).toHaveBeenCalledWith('companionEpub');
+      expect(bookService.findLibraryStatusByAsins as Mock).toHaveBeenCalledTimes(1);
+      expect(bookService.findLibraryStatusByAsins as Mock).toHaveBeenCalledWith(
+        ['B00ASIN'],
+        { companionEnabled: true },
+      );
+    });
+
+    it('emits companionEbook: null (library still present) for an enabled hit with no observation', async () => {
+      (settingsService.get as Mock).mockResolvedValue({ enabled: true });
+      (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(
+        new Map([['B00ASIN', annotation()]]),
+      );
+
+      const res = await search();
+
+      expect(res.statusCode).toBe(200);
+      const { library } = res.json().data[0];
+      expect(library).toBeTruthy();
+      expect(library.companionEbook).toBeNull();
+    });
+
+    it('passes companionEnabled: false and annotates every hit with null when the feature is disabled', async () => {
+      (settingsService.get as Mock).mockResolvedValue({ enabled: false });
+      (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(
+        new Map([['B00ASIN', annotation()]]),
+      );
+
+      const res = await search();
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data[0].library.companionEbook).toBeNull();
+      expect(bookService.findLibraryStatusByAsins as Mock).toHaveBeenCalledWith(
+        ['B00ASIN'],
+        { companionEnabled: false },
+      );
+    });
+
+    // AC 18 — the new dependency must not grow the enrichment's blast radius:
+    // the settings failure is caught SEPARATELY, so the `library` annotation
+    // itself survives.
+    it('still annotates library (companionEbook: null) with a warn and a 200 when the settings read rejects', async () => {
+      (settingsService.get as Mock).mockRejectedValue(new Error('settings db down'));
+      (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(
+        new Map([['B00ASIN', annotation()]]),
+      );
+      const warnSpy = vi.spyOn(app.log, 'warn');
+
+      const res = await search();
+
+      expect(res.statusCode).toBe(200);
+      const { library } = res.json().data[0];
+      expect(library).toEqual({ bookId: 'bk_abc123', status: 'imported', companionEbook: null });
+      expect(bookService.findLibraryStatusByAsins as Mock).toHaveBeenCalledWith(
+        ['B00ASIN'],
+        { companionEnabled: false },
+      );
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.anything() }),
+        expect.stringContaining('companionEpub settings read failed'),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('issues no library lookup at all for a result set with no ASINs, even with the feature read in place', async () => {
+      (metadataService.search as Mock).mockResolvedValue({
+        books: [providerBook({ asin: undefined })],
+        authors: [],
+        series: [],
+      });
+
+      const res = await search();
+
+      expect(res.statusCode).toBe(200);
+      expect(bookService.findLibraryStatusByAsins as Mock).not.toHaveBeenCalled();
+      expect(res.json().data[0]).not.toHaveProperty('library');
     });
   });
 

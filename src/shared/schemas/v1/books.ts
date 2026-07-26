@@ -6,6 +6,7 @@ import {
   type BookStatus,
 } from '../book.js';
 import { v1PaginationParamsSchema, v1ErrorEnvelopeSchema } from './common.js';
+import { companionEbookV1Schema, type CompanionEbookV1 } from './companion-ebook.js';
 
 // ============================================================================
 // Public API v1 — Books (S3 — #1449)
@@ -51,9 +52,12 @@ export const bookV1SeriesSchema = z
 
 /**
  * The public Book DTO. Exposes ONLY `{ id, title, authors, narrators, series,
- * status }`. `.strict()` is load-bearing: it is what makes Fastify response-
- * schema enforcement fail closed on any internal field a projector regression
- * might leak (nested `.strict()` on person/series catches nested leaks too).
+ * status, companionEbook }`. `.strict()` is load-bearing: it is what makes
+ * Fastify response-schema enforcement fail closed on any internal field a
+ * projector regression might leak (nested `.strict()` on person/series/companion
+ * catches nested leaks too) — and, for the REQUIRED `companionEbook`, what makes
+ * a producer that forgets to emit the key fail serialization rather than ship a
+ * partial DTO.
  */
 export const bookV1Schema = z
   .object({
@@ -63,6 +67,24 @@ export const bookV1Schema = z
     narrators: z.array(bookV1PersonSchema),
     series: bookV1SeriesSchema,
     status: bookStatusSchema,
+    /**
+     * Companion ebook availability (#1961). Required and nullable.
+     *
+     * **This field is contract-pinned but DORMANT: its only Phase-1 consumer is
+     * a test.** Decision record: `docs/plans/companion-ebook-support.md` §8,
+     * `[R2-3]`, decision A (resolved 2026-07-25) — an in-repo, versioned record
+     * rather than external `file:line` coordinates this repo cannot verify. The
+     * substance recorded there: narratorr-requests polls Narratorr books only
+     * for `acquiring` requests, at which point the book is not `imported` and
+     * `toCompanionEbookV1`'s exposure terms necessarily force `null`; the
+     * `acquiring → available` transition payload is discarded apart from
+     * `{ status, narratorrBookId }`. It ships anyway as additive,
+     * contract-stable substrate. The LIVE consumer surface is the nested
+     * `library.companionEbook` annotation on `GET /api/v1/metadata/search`
+     * (`./metadata.ts`) — nobody should later "fix" the missing consumer here by
+     * inventing one.
+     */
+    companionEbook: companionEbookV1Schema,
   })
   .strict();
 
@@ -164,8 +186,19 @@ export interface BookV1Source {
  * the authoritative `row.status` (books.status is authoritative per S2c #1446 —
  * the DTO does NOT recompute lifecycle state). Author/narrator ordering is
  * preserved (the service already returns them primary-first).
+ *
+ * `companionEbook` is passed IN, already mapped by `toCompanionEbookV1`
+ * (`./companion-ebook.ts`) — never looked up and never re-derived here. That
+ * keeps this projector synchronous and `src/shared` server-import-free, and it
+ * keeps the exposure decision in exactly one place. `BookV1Source` is
+ * deliberately NOT extended with a companion field.
+ *
+ * **Never call this as a bare `Array.map` reference.** `data.map(toBookV1)`
+ * passes the array INDEX as the second argument, so a list would ship a numeric
+ * `companionEbook`. Call sites use an explicit closure:
+ * `data.map((row) => toBookV1(row, toCompanionEbookV1({ ... })))`.
  */
-export function toBookV1(row: BookV1Source): BookV1 {
+export function toBookV1(row: BookV1Source, companionEbook: CompanionEbookV1 | null): BookV1 {
   return {
     id: row.publicId,
     title: row.title,
@@ -175,5 +208,6 @@ export function toBookV1(row: BookV1Source): BookV1 {
       ? { name: row.seriesName, position: row.seriesPosition ?? null }
       : null,
     status: row.status,
+    companionEbook,
   };
 }

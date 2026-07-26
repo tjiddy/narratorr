@@ -19,6 +19,7 @@ import { v1DownloadsRoutes } from './downloads.js';
 import { v1ActionsRoutes } from './actions.js';
 import { v1MetadataRoutes } from './metadata.js';
 import { v1SystemRoutes } from './system.js';
+import { v1CapabilitiesRoutes } from './capabilities.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors books.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
@@ -52,6 +53,10 @@ const downloadService = { getAll: vi.fn().mockResolvedValue({ data: [], total: 0
 const indexerSearchService = { searchAll: vi.fn().mockResolvedValue([]) };
 const downloadOrchestrator = { grab: vi.fn() };
 const metadataService = { search: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }) };
+const settingsService = { get: vi.fn().mockResolvedValue({ enabled: false }) };
+/** A DEDICATED stub for the capabilities route only, so "the public docs surface
+ *  never reads the setting" (#1961 AC 9 / F9) is assertable in isolation. */
+const capabilitiesSettingsService = { get: vi.fn().mockResolvedValue({ enabled: true }) };
 
 /**
  * Build a Fastify app mirroring `src/server/index.ts` composition: swagger is
@@ -78,7 +83,7 @@ async function buildApp(urlBase = ''): Promise<FastifyInstance> {
       indexerSearchService: indexerSearchService as never,
       indexerService: {} as never,
       blacklistService: {} as never,
-      settingsService: {} as never,
+      settingsService: settingsService as never,
       eventHistory: {} as never,
     }, db);
     await v1AuthorsRoutes(scoped, { referenceReadService: refRead as never }, db);
@@ -94,8 +99,13 @@ async function buildApp(urlBase = ''): Promise<FastifyInstance> {
       settingsService: {} as never,
       indexerService: {} as never,
     }, db);
-    await v1MetadataRoutes(scoped, { metadataService: metadataService as never, bookService: bookService as never });
+    await v1MetadataRoutes(scoped, {
+      metadataService: metadataService as never,
+      bookService: bookService as never,
+      settingsService: settingsService as never,
+    });
     await v1SystemRoutes(scoped);
+    await v1CapabilitiesRoutes(scoped, { settingsService: capabilitiesSettingsService as never });
     // Non-v1 decoys (must be ABSENT from the public spec).
     scoped.get('/api/books', async () => ({ ok: true }));
     scoped.get('/api/v1/system/status', async () => ({ ok: true })); // Prowlarr-compat shim
@@ -120,7 +130,7 @@ const READ_PATHS = [
 const ACTION_PATHS = ['/api/v1/books/{publicId}/search', '/api/v1/books/{publicId}/grab'];
 // Singleton resources — no `{publicId}` detail and no list `{ data, total }`
 // envelope, so they sit outside READ_PATHS' DETAIL/LIST 400/404 assertions.
-const SINGLETON_PATHS = ['/api/v1/system'];
+const SINGLETON_PATHS = ['/api/v1/system', '/api/v1/capabilities'];
 const DETAIL_PATHS = READ_PATHS.filter((p) => p.endsWith('{publicId}'));
 const LIST_PATHS = READ_PATHS.filter((p) => !p.endsWith('{publicId}'));
 
@@ -237,6 +247,80 @@ describe('v1 OpenAPI spec generation', () => {
     expect(library.anyOf).toBeUndefined();
     expect(library.oneOf).toBeUndefined();
   });
+
+  // #1961 — the capability endpoint. Only the SHAPE is public.
+  describe('GET /api/v1/capabilities (#1961)', () => {
+    function capabilitySchema() {
+      return spec.paths['/api/v1/capabilities'].get.responses['200'].content['application/json'].schema;
+    }
+
+    it('documents the endpoint at the RELATIVE path key with a 200 exposing companionEpub.enabled as a boolean', () => {
+      // Relative path key (NOT URL_BASE-prefixed) — the base lives in
+      // servers[].url (learning fastify-swagger-servers-strips-path-prefix).
+      expect(spec.paths).toHaveProperty(['/api/v1/capabilities']);
+      expect(spec.paths['/api/v1/capabilities'].get.responses).toHaveProperty(['200']);
+      const enabled = capabilitySchema().properties.companionEpub.properties.enabled;
+      expect(enabled.type).toBe('boolean');
+    });
+
+    // AC 9 / F9 — the emitted `enabled` schema must publish NO value-shaped hint.
+    // This is the assertion that fails if someone reuses
+    // `companionEpubSettingsSchema`, whose `.default(false)` would surface here.
+    it.each(['default', 'example', 'examples', 'const', 'enum'])(
+      'never publishes the enabled VALUE — the emitted schema carries no %s',
+      (key) => {
+        expect(capabilitySchema().properties.companionEpub.properties.enabled).not.toHaveProperty([key]);
+      },
+    );
+
+    it('generates the spec without ever reading the companionEpub setting', () => {
+      // The public docs surface is unauthenticated; it must describe the shape
+      // without consulting the owner's configuration.
+      expect(capabilitiesSettingsService.get).not.toHaveBeenCalled();
+    });
+  });
+
+  // #1961 — `companionEbook` on both producers: required and nullable.
+  describe('companionEbook on both producers (#1961)', () => {
+    function bookItem() {
+      return spec.paths['/api/v1/books'].get.responses['200'].content['application/json'].schema
+        .properties.data.items;
+    }
+    function libraryObject() {
+      return spec.paths['/api/v1/metadata/search'].get.responses['200'].content['application/json'].schema
+        .properties.data.items.properties.library;
+    }
+
+    it('documents it as a REQUIRED nullable member of the book item', () => {
+      const item = bookItem();
+      expect(item.properties).toHaveProperty('companionEbook');
+      expect(item.required).toContain('companionEbook');
+      expect(item.properties.companionEbook.nullable).toBe(true);
+    });
+
+    it('documents it as a REQUIRED nullable member INSIDE the metadata-search library annotation', () => {
+      const library = libraryObject();
+      expect(library.properties).toHaveProperty('companionEbook');
+      expect(library.required).toContain('companionEbook');
+      expect(library.properties.companionEbook.nullable).toBe(true);
+    });
+
+    it('keeps library itself optional even though its members are required', () => {
+      const item = spec.paths['/api/v1/metadata/search'].get.responses['200'].content['application/json'].schema
+        .properties.data.items;
+      expect(item.required ?? []).not.toContain('library');
+    });
+
+    it.each([
+      ['book item', () => bookItem().properties.companionEbook],
+      ['library annotation', () => libraryObject().properties.companionEbook],
+    ])('describes the same { format: epub, sizeBytes } shape on the %s', (_label, get) => {
+      const schema = get() as { properties: Record<string, { type: string; enum?: string[] }>; required: string[] };
+      expect(schema.properties.format!.enum).toEqual(['epub']);
+      expect(schema.properties.sizeBytes!.type).toBe('number');
+      expect(schema.required.sort()).toEqual(['format', 'sizeBytes']);
+    });
+  });
 });
 
 describe('v1 docs surface — public (no API key)', () => {
@@ -305,6 +389,9 @@ describe('v1 docs surface — URL_BASE honored', () => {
     // relative to it. Full URL = servers.url + path = `/narratorr/api/v1/books`.
     expect(spec.servers).toEqual([{ url: URL_BASE }]);
     expect(spec.paths).toHaveProperty(['/api/v1/books']);
+    // #1961 — the new capability route follows the same rule.
+    expect(spec.paths).toHaveProperty(['/api/v1/capabilities']);
+    expect(spec.paths).not.toHaveProperty([`${URL_BASE}/api/v1/capabilities`]);
   });
 
   it('does NOT duplicate URL_BASE — no path key carries the prefix, and the composed URL has it exactly once', () => {
