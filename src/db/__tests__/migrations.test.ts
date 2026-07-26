@@ -21,6 +21,7 @@ const CORE_TABLES = [
   'books',
   'book_authors',
   'book_events',
+  'companion_ebooks',
   'downloads',
   'indexers',
   'download_clients',
