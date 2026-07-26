@@ -1,9 +1,10 @@
-import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey, check } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { CLIENT_STATUSES, PIPELINE_STAGES } from '../shared/schemas/activity';
 import { SUGGESTION_REASONS } from '../shared/schemas/discovery';
 import { BOOK_STATUSES, ENRICHMENT_STATUSES, PRODUCTION_TYPES } from '../shared/schemas/book';
 import { BLACKLIST_REASONS } from '../shared/schemas/blacklist';
+import { COMPANION_EBOOK_STATUSES } from '../shared/schemas/companion-ebook';
 import { INDEXER_TYPES } from '../shared/indexer-registry';
 import { DOWNLOAD_CLIENT_TYPES } from '../shared/download-client-registry';
 import { NOTIFIER_TYPES } from '../shared/notifier-registry';
@@ -140,6 +141,106 @@ export const bookNarrators = sqliteTable('book_narrators', {
 }, (table) => [
   primaryKey({ columns: [table.bookId, table.narratorId] }),
   index('idx_book_narrators_narrator_id').on(table.narratorId),
+]);
+
+// ============ COMPANION EBOOKS ============
+
+// Literal list for `ck_companion_ebooks_status_domain`, derived from the canonical
+// tuple so the DB-level domain can never drift from the TS one. It goes through
+// `sql.raw` below because a `${...}` interpolation would emit a bound parameter,
+// which is not valid inside a CHECK in the generated DDL.
+const COMPANION_EBOOK_STATUS_LITERALS = COMPANION_EBOOK_STATUSES.map((s) => `'${s}'`).join(', ');
+
+/**
+ * One-to-one companion-ebook observation per book (#1957, plan §2).
+ *
+ * `book_id` is `NOT NULL UNIQUE`, deliberately **not** `.primaryKey()`: on SQLite an
+ * `INTEGER PRIMARY KEY` is a rowid alias, so an insert that omits the column (or passes
+ * NULL) gets a value *generated* for it and silently attaches the observation to some
+ * other real book — and Drizzle marks such columns `primaryKeyHasDefault`, making
+ * `bookId` optional in `$inferInsert`. `.unique()` emits the separate
+ * `companion_ebooks_book_id_unique` index, which is what serves lookups by book.
+ *
+ * Unit split: `created_at`/`updated_at` are `mode: 'timestamp'` (unix **seconds**, repo
+ * convention), while `mtime_ms`/`ctime_ms` are raw **milliseconds** straight off
+ * `fs.Stats` — writers must `Math.trunc` them, on both write and comparison, or the
+ * fingerprint short-circuit silently never matches.
+ *
+ * Every CHECK predicate below must evaluate to 0 or 1 and never to NULL — SQLite treats
+ * a NULL CHECK as satisfied, so a naive form lets half-set rows through. That holds
+ * because `status`/`candidate_count` are NOT NULL, `ck_companion_ebooks_status_domain`
+ * closes the status domain (so the `<>`/`NOT IN` guards are never vacuously true for an
+ * unrecognised value), and every reference to a nullable column goes through a total
+ * operator (`IS NULL`, `IS NOT NULL`, `typeof(...)`) or is guarded by an `IS NOT NULL`
+ * term in the same conjunction.
+ */
+export const companionEbooks = sqliteTable('companion_ebooks', {
+  bookId: integer('book_id').notNull().unique().references(() => books.id, { onDelete: 'cascade' }),
+  status: text('status', { enum: COMPANION_EBOOK_STATUSES }).notNull(),
+  /** Top-level basename only, never a path. */
+  filename: text('filename'),
+  sizeBytes: integer('size_bytes'),
+  mtimeMs: integer('mtime_ms'),
+  ctimeMs: integer('ctime_ms'),
+  /** Authority is `EpubValidationCode` (src/core/epub, #1956); narrowed at the repository boundary. */
+  validationCode: text('validation_code'),
+  candidateCount: integer('candidate_count').notNull().default(0),
+  /** The owner's pick when more than one candidate exists. */
+  selectedFilename: text('selected_filename'),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+}, (t) => [
+  // No constraint name may be a prefix of another: rejection tests assert *which*
+  // invariant fired, and SQLite reports only the first failing constraint.
+  check(
+    'ck_companion_ebooks_status_domain',
+    sql`${t.status} IN (${sql.raw(COMPANION_EBOOK_STATUS_LITERALS)})`,
+  ),
+  check(
+    'ck_companion_ebooks_file_present',
+    sql`${t.status} NOT IN ('available', 'invalid', 'drm_protected') OR (${t.filename} IS NOT NULL AND ${t.sizeBytes} IS NOT NULL AND ${t.mtimeMs} IS NOT NULL AND ${t.ctimeMs} IS NOT NULL)`,
+  ),
+  check(
+    'ck_companion_ebooks_file_absent',
+    sql`${t.status} NOT IN ('none', 'ambiguous') OR (${t.filename} IS NULL AND ${t.sizeBytes} IS NULL AND ${t.mtimeMs} IS NULL AND ${t.ctimeMs} IS NULL)`,
+  ),
+  check(
+    'ck_companion_ebooks_validation_code',
+    sql`(${t.status} <> 'invalid' OR ${t.validationCode} IS NOT NULL) AND (${t.status} = 'invalid' OR ${t.validationCode} IS NULL)`,
+  ),
+  // `typeof(...) = 'integer'` is the only thing that pins integer storage: a plain
+  // `integer()` column has no mapToDriverValue and SQLite's INTEGER affinity keeps a
+  // genuinely fractional value as a REAL.
+  check(
+    'ck_companion_ebooks_candidate_count',
+    sql`typeof(${t.candidateCount}) = 'integer' AND ${t.candidateCount} >= 0 AND (${t.status} <> 'none' OR ${t.candidateCount} = 0) AND (${t.status} <> 'ambiguous' OR ${t.candidateCount} >= 2) AND (${t.status} NOT IN ('available', 'invalid', 'drm_protected') OR ${t.candidateCount} >= 1)`,
+  ),
+  // Forward implication: a selection, if present, is well-formed. Positive membership
+  // plus the explicit `filename IS NOT NULL` guard is what keeps the trailing equality
+  // from ever being reached with a NULL operand. Deliberately does not require
+  // `candidate_count >= 2` — deleting the unselected sibling of a pair leaves a live
+  // selection at count 1.
+  check(
+    'ck_companion_ebooks_selection',
+    sql`${t.selectedFilename} IS NULL OR (${t.status} IN ('available', 'invalid', 'drm_protected') AND ${t.filename} IS NOT NULL AND ${t.selectedFilename} = ${t.filename})`,
+  ),
+  // Reverse implication: a row that resolved to one file while more than one candidate
+  // is still on disk must record whose pick it was.
+  check(
+    'ck_companion_ebooks_multi_candidate_selection',
+    sql`${t.status} NOT IN ('available', 'invalid', 'drm_protected') OR ${t.candidateCount} < 2 OR ${t.selectedFilename} IS NOT NULL`,
+  ),
+  // Timestamps are deliberately not floored at 0 — filesystem times are signed and a
+  // user-preserved pre-1970 mtime is legitimate. Nonnegativity is a real invariant for
+  // `size_bytes` only.
+  check(
+    'ck_companion_ebooks_fingerprint',
+    sql`(${t.sizeBytes} IS NULL OR (typeof(${t.sizeBytes}) = 'integer' AND ${t.sizeBytes} >= 0)) AND (${t.mtimeMs} IS NULL OR typeof(${t.mtimeMs}) = 'integer') AND (${t.ctimeMs} IS NULL OR typeof(${t.ctimeMs}) = 'integer')`,
+  ),
 ]);
 
 // ============ SERIES ============

@@ -22,7 +22,8 @@ import {
   itemDispositionSchema, ITEM_DISPOSITIONS,
   submissionSourceSchema, SUBMISSION_SOURCES,
 } from '../core/import-staging/schemas.js';
-import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents, connectors, importJobs, importSubmissions, importSubmissionItems } from '../db/schema.js';
+import { companionEbookStatusSchema, COMPANION_EBOOK_STATUSES } from './schemas/companion-ebook.js';
+import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents, connectors, importJobs, importSubmissions, importSubmissionItems, companionEbooks } from '../db/schema.js';
 
 describe('schema-DB alignment', () => {
   describe('adapter type enums derive from registries', () => {
@@ -78,6 +79,14 @@ describe('schema-DB alignment', () => {
 
     it('books.enrichmentStatus DB column enum matches ENRICHMENT_STATUSES', () => {
       expect([...books.enrichmentStatus.enumValues].sort()).toEqual([...ENRICHMENT_STATUSES].sort());
+    });
+
+    // Guards the TypeScript surfaces (Drizzle column metadata + the Zod enum) against
+    // tuple drift. The DB-level *stored* value set is guarded separately by
+    // ck_companion_ebooks_status_domain, whose literal list derives from the same tuple.
+    it('companionEbooks.status DB column enum matches COMPANION_EBOOK_STATUSES and the Zod enum', () => {
+      expect([...companionEbooks.status.enumValues].sort()).toEqual([...COMPANION_EBOOK_STATUSES].sort());
+      expect([...companionEbookStatusSchema.options].sort()).toEqual([...COMPANION_EBOOK_STATUSES].sort());
     });
 
     // #1710: SQLite text-enums emit no DB CHECK (drizzle-sqlite-text-enum-no-db-check),
@@ -249,6 +258,13 @@ describe('schema-DB alignment', () => {
     it('protocol values match original hardcoded enum', () => {
       const original = ['torrent', 'usenet'];
       expect([...protocolSchema.options].sort()).toEqual(original.sort());
+    });
+
+    // The companion-ebook plan freezes this vocabulary — #1963 maps each value to
+    // owner-facing copy, so a value added or renamed here is a contract change.
+    it('companion ebook status values match the frozen contract list', () => {
+      const original = ['available', 'none', 'ambiguous', 'invalid', 'drm_protected'];
+      expect([...companionEbookStatusSchema.options].sort()).toEqual(original.sort());
     });
   });
 });
