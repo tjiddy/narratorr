@@ -5,6 +5,7 @@ import { ImportSettingsSection } from './ImportSettingsSection';
 import { NetworkSettingsSection } from './NetworkSettingsSection';
 import { AppearanceSettingsSection } from './AppearanceSettingsSection';
 import { DiscoverySettingsSection } from '../discover/DiscoverySettingsSection';
+import { EbooksSettingsSection } from './EbooksSettingsSection';
 import { SettingsSection } from './SettingsSection';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { WelcomeModal } from '@/components/WelcomeModal';
@@ -37,6 +38,7 @@ export function GeneralSettings() {
       <ImportSettingsSection />
       <NetworkSettingsSection />
       <DiscoverySettingsSection />
+      <EbooksSettingsSection />
       <AppearanceSettingsSection />
       <SettingsSection
         icon={<EyeIcon className="w-5 h-5 text-primary" />}
