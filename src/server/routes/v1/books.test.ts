@@ -605,6 +605,52 @@ describe('v1 books routes', () => {
       (settingsService.get as Mock).mockResolvedValue({ enabled: true, searchImmediately: false });
     }
 
+    // The settings category both GETs read is a bare string argument, and it is
+    // NOT self-checking: `tagging` (src/shared/schemas/settings/tagging.ts:7) and
+    // `discovery` (discovery.ts:5) also expose a boolean `enabled`, so swapping
+    // the key for either one typechecks and leaves every other test in this
+    // describe green while the endpoints start gating on an unrelated flag.
+    // These assertions pin the exact key AND the call count per request.
+    describe('reads the companionEpub settings category by exact key', () => {
+      it.each([
+        ['list', '/api/v1/books'],
+        ['detail', '/api/v1/books/bk_test000000000000000'],
+      ])('the %s GET issues exactly one settings read, for companionEpub', async (_label, url) => {
+        enableFeature();
+        const row = hydratedRow({ id: 1, status: 'imported' });
+        (bookListService.getAll as Mock).mockResolvedValue({ data: [row], total: 1 });
+        db.select.mockReturnValue(mockDbChain([{ id: 1 }]));
+        (bookService.getById as Mock).mockResolvedValue(row);
+        (findCompanionEbooksByBookIds as Mock).mockResolvedValue(new Map([[1, observation(1)]]));
+
+        const res = await app.inject({ method: 'GET', url, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        // The whole call list, so a second read or a different category fails.
+        expect((settingsService.get as Mock).mock.calls).toEqual([['companionEpub']]);
+        // The read is load-bearing, not incidental — this request did expose a
+        // companion, so the key that was read is the one that gated it.
+        expect(res.json().companionEbook ?? res.json().data[0].companionEbook).toEqual(EPUB);
+      });
+
+      it.each([
+        ['list', '/api/v1/books'],
+        ['detail', '/api/v1/books/bk_test000000000000000'],
+      ])('the %s GET reads companionEpub even when the feature is off (one read, no companion query)', async (_label, url) => {
+        (settingsService.get as Mock).mockResolvedValue({ enabled: false });
+        const row = hydratedRow({ id: 1, status: 'imported' });
+        (bookListService.getAll as Mock).mockResolvedValue({ data: [row], total: 1 });
+        db.select.mockReturnValue(mockDbChain([{ id: 1 }]));
+        (bookService.getById as Mock).mockResolvedValue(row);
+
+        const res = await app.inject({ method: 'GET', url, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        expect((settingsService.get as Mock).mock.calls).toEqual([['companionEpub']]);
+        expect(findCompanionEbooksByBookIds as Mock).not.toHaveBeenCalled();
+      });
+    });
+
     describe('GET /api/v1/books (list)', () => {
       const three = [
         hydratedRow({ id: 1, publicId: 'bk_one00000000000000000', status: 'imported' }),
