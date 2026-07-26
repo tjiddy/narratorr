@@ -284,7 +284,7 @@ describe('companion ebook owner routes', () => {
       expect((await state()).statusCode).toBe(404);
     });
 
-    it.each([
+    it.each<[string, Record<string, unknown>]>([
       ['a non-imported book', { status: 'missing' }],
       ['a blank path', { path: '   ' }],
       ['a path outside the library root', { path: '/tmp/somewhere-else' }],

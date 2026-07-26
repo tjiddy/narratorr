@@ -644,13 +644,20 @@ archives. [R2-19]
 
 Owner routes — registered in their **own route module**, not `routes/books.ts` (measured 360/400):
 
-- `GET /api/books/:id/companion-epub` — download
-- `GET /api/books/:id/companion-epub/metadata` — OPF metadata + TOC (feeds the chapter count)
-- `GET /api/books/:id/companion-epub/cover` — validated embedded cover
+- `GET /api/books/:id/companion-epub` — download · **#1974**
+- `GET /api/books/:id/companion-epub/state` — the owner observation read and, for `ambiguous`
+  only, the candidate list that issues the selection indices · **#1974**
+- `GET /api/books/:id/companion-epub/metadata` — OPF metadata + TOC (feeds the chapter
+  count) · **#1976**
+- `GET /api/books/:id/companion-epub/cover` — validated embedded cover · **#1976**
 - `PUT /api/books/:id/companion-epub/selection` — the `ambiguous` picker; body carries a
-  server-issued candidate index, range-checked, never a path
+  server-issued candidate index, range-checked, never a path · **#1976**, together with the
+  revalidate-and-persist work behind it
 
-All four go through the §5 resolver.
+Every route that opens a companion file goes through the §5 resolver: download, metadata,
+cover, and selection. `/state` is the exception: it reads the stored observation and, for
+`ambiguous` only, enumerates candidate basenames with `readdir` + `lstat`. It opens no
+companion file, so the resolver does not apply to it.
 
 ## 8. Public v1 API
 
@@ -885,9 +892,10 @@ inflate is rejected by the counting transform, not the declared value.
 absolute entry paths; duplicate normalized entries; malformed XML; entity expansion; each limit at
 its exact boundary; truncated copy.
 
-**Resolver** — symlink rejection asserted via the **dev/ino mismatch outcome** (never "the open
-throws"); a **parent-directory** swap, not only a final-component one; ENOENT-safe containment does
-not pass on a vanished path; close on success, abort, and error.
+**Resolver** — symlink rejection asserted via the **`not_regular_file` outcome** (never "the open
+throws", and never a dev/ino comparison — §5 declines that binding, and this line was a v3 leftover
+that contradicted it); a **parent-directory** swap, not only a final-component one; ENOENT-safe
+containment does not pass on a vanished path; close on success, abort, and error.
 
 **Exposure** — the frozen predicate, one test per term. A book transitioned `imported → missing` with
 path and companion row untouched emits `companionEbook: null` on **both** producers on the very next
@@ -956,7 +964,7 @@ section or `$review-spec` soft-warns. [R2-38]
 | 1.2c | **Reconciler** | `withBookAdmissionLock` per book, coalescing `reconcileAll()`, fingerprint short-circuit incl. `ctime`. Conditional writes keyed on `(bookId, path, status, fingerprint)`. [R2-13, R2-27] |
 | 1.3 | **Trigger wiring** | The `processJob` success-tail extraction **first** (lint budget + failure isolation), the scan-lock wrapper, the three rename callers, wrong release, `finally`-shaping. Foreign-file regressions. [R2-4, R2-7, R2-10, R2-11, R2-20, R2-34] |
 | 1.4 | **Public v1 contract** | `/api/v1/capabilities`; `companionEbook` on both producers; `findLibraryStatusByAsins` gains `books.id` + `books.path`; all four `toBookV1` touchpoints; batch-load; OpenAPI fixtures. **AC:** the nested annotation is the live surface; the top-level field is pinned but dormant. [R2-3, R2-5, R2-17, R2-37] |
-| 1.5 | **Companion read routes** | Public stream, owner download, owner metadata, owner cover, and the `ambiguous` selection `PUT` — own route module. `lstat` + containment, `Content-Length` from `fstat`, `headersSent` guard, stream semaphore. [R2-18*, R2-21, R2-23, R2-24] |
+| 1.5 | **Companion read routes** — split three ways, own route module | **#1974**: the shared open-and-verify helper (`lstat` + regular-file + containment, `Content-Length` from `fstat`), the shared candidate-discovery function, the owner download, and the owner `/state` read. **#1975**: the public stream, its `headersSent` guard in `routes/v1/_helpers.ts`, and the stream semaphore. **#1976**: owner metadata, owner cover, and the `ambiguous` selection `PUT` — route *and* the revalidate-and-persist write behind it, which needs the validator's verdict because `ck_companion_ebooks_selection` refuses a `selected_filename` on an `ambiguous` row. [R2-18*, R2-21, R2-23, R2-24] |
 | 1.6 | **Owner panel** (presentational only) | Five states plus the `ambiguous` picker. No `ineligible` surface, no stale/degraded states. Depends on 1.4 and 1.5. [R2-26, R2-112] |
 
 **Phase 1 exit:** an owner places one EPUB, runs Refresh & Scan, sees its state and metadata,
@@ -1019,7 +1027,10 @@ deploys, so filing in step beats building ahead.
 - Symlinks, traversal, archive bombs, entity expansion, unbounded parsing, and stale path
   associations fail closed.
 - Streaming revalidates the live file through one handle; DB discovery is never authorization.
-- Logs carry public book IDs and stable error codes — never paths, API keys, or EPUB content.
+- Logs above `debug` carry public book IDs and stable error codes — never paths, API keys, or
+  EPUB content. `debug` records may carry a library path, matching the treatment
+  `classifyProbeFailure` and `isCompanionEbookEligible` already use. Key material, API keys, and
+  EPUB content never appear at any level.
 - **Foreign-file preservation** — managed is an allowlist of **three** classes, not two: audio at any
   depth, the root cover sidecar (`delete-managed-files.ts:55-58`), **and a provenance-confirmed root
   `metadata.opf`** (`classifyRootOpf` at `:60-81`, dispatched at `:122-126`, which reads the file and

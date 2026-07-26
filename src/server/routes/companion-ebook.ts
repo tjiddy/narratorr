@@ -272,7 +272,7 @@ export async function companionEbookRoutes(
       const row = await findCompanionEbook(db, id);
       if (row?.status === 'ambiguous') {
         // Eligibility already proved the path is a non-blank directory inside the root.
-        return await resolveAmbiguousState(id, book.path!, request, reply);
+        return resolveAmbiguousState(id, book.path!, request, reply);
       }
 
       return reply.status(200).send(projectStoredState(row));
