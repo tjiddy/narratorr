@@ -37,9 +37,14 @@ a display cache, not an authority — which makes a batch counter, a failure cou
 timestamps, and a path snapshot unnecessary. Cutting `exposure_generation` dissolves the review's
 joint-strongest finding (12/12 lenses said it had nowhere valid to live). §2. **[R2-15 dissolved]**
 
-**4. The staleness ceiling is redundant.** Two lenses raised two findings and nobody read them
-together: once the exposure predicate requires `books.status === 'imported'`, an unreachable mount
-already stops exposure, because the audiobook goes `missing` first. **[R2-8 subsumes R2-14]**
+**4. The staleness ceiling is cut — but not for the reason v4 first gave.** v4 argued redundancy: an
+unreachable mount flips the book to `missing`, so the predicate's status term kills exposure first.
+**#1955 deliberately stopped that flip** — a transient errno now performs no `books` write at all — so
+the redundancy argument does not hold. #1958 shipped the cut anyway on better grounds, pinned in a
+test: the stale window is **accepted**, because the failure is a clean `404
+companion_epub_unavailable` at click time, it self-heals on the next reconcile, and during such an
+outage the audiobook is unreachable too, so a stale ebook badge is not a distinct harm.
+**[R2-14 accepted, not subsumed]**
 
 **5. The panel is five states, headed "Ebook".** Down from eight rendered cards. `ineligible` was
 three unreachable reasons plus a misconfiguration plus one the import scanner cannot produce;
@@ -154,8 +159,13 @@ One owner-controlled value: `companionEpub.enabled: boolean`, default `false`.
 
 A settings **registry category** (`src/shared/schemas/settings/registry.ts:19-96` — `defineCategory`
 derives the schema map, defaults, form schema, and `SETTINGS_CATEGORIES` from one entry), **rendered
-as a section inside the existing Library settings tab**. A top-level tab for one checkbox isn't
-warranted.
+as its own section inside the General settings tab**, alongside Library, Naming, Import, Network,
+Discovery and Appearance (`src/client/pages/settings/GeneralSettings.tsx`). A top-level tab for one
+checkbox isn't warranted.
+
+*Corrected after #1958 shipped: there is no "Library settings tab". `GeneralSettings.tsx` is the
+General tab and Library is one section within it. The implementation read the intent correctly and
+mounted Ebooks as a peer section at `GeneralSettings.tsx:41`, between Discovery and Appearance.*
 
 Adding a category trips two existing tests — `registry.test.ts:65` hard-codes the category list and
 asserts set equality, and `create-mock-settings.fixtures.test.ts` iterates `SETTINGS_CATEGORIES`.
@@ -200,10 +210,12 @@ Nine columns. v3 had sixteen. What went, and why:
   joint-strongest finding — twelve of twelve lenses said it had no valid storage home. The cleanest
   fix for a mechanism with nowhere to live is to not need it. [R2-15]
 - **`consecutive_failure_count` + the staleness ceiling** — restored in v3 from v1's D-8 to stop a
-  dead observation advertising forever. Largely redundant once the exposure predicate requires
-  `books.status === 'imported'`: if a mount dies the audiobook is unreachable too, `library-scan`
-  flips the book to `missing`, and exposure dies on that term first. Two findings from two different
-  lenses, and nobody read them against each other. [R2-8 subsumes R2-14]
+  dead observation advertising forever, then cut. **Note the original justification was wrong:** it
+  claimed redundancy because an unreachable mount flips the book to `missing`, but #1955 exists
+  precisely to stop that flip, so the status term does not cover the case. The cut still stands on the
+  ground #1958 shipped and pinned in a test — the stale window is *accepted*: a clean
+  `404 companion_epub_unavailable` at click time, self-healing on the next reconcile, and during the
+  outage the audiobook is unreachable too. [R2-14 accepted]
 - **`last_scan_attempt_at`** — its only consumer was the degraded indicator, which the design pass
   deleted. A column nothing reads.
 - **`last_successful_scan_at`** — diagnostic only, and `updated_at` already answers "when did we last
@@ -353,9 +365,12 @@ The rule:
 
 Malformed structure is a **definitive** `invalid`. `EACCES` / `EIO` / an unavailable library root are
 **transient**: log a redacted diagnostic and **retain the last successful observation** rather than
-clobbering it. There is no failure counter and no staleness ceiling — the exposure predicate's
-`books.status === 'imported'` term already covers the case that mattered (an unreachable mount takes
-the audiobook down with it), and the live open covers the rest.
+clobbering it. There is no failure counter and no staleness ceiling. Be precise about why: the
+predicate's `books.status === 'imported'` term does **not** cover an unreachable mount, because #1955
+stops the `missing` flip on a transient errno. The stale window is instead **accepted** — the live
+open fails closed, so the worst outcome is a clean `404 companion_epub_unavailable` at click time on a
+book whose audio is equally unreachable. `src/shared/companion-ebook-exposure.ts` documents this and a
+test pins it so it cannot be mistaken for an oversight.
 
 Validation promises nothing about Kindle conversion compatibility and does not remove DRM.
 
@@ -937,7 +952,7 @@ section or `$review-spec` soft-warns. [R2-38]
 |---|---|---|
 | 1.1 | **EPUB limits + validator** | `core/epub/`: `limits.ts`, `validate.ts` via `unzipper.Open.file()`, `paths.ts` (archive path normalisation), `xml.ts` (cheerio `xmlMode` + the XXE regression fixtures), `extract.ts` (cover / OPF / TOC). Size cap by `stat` before open; counting transform on inflated bytes. The `encryption.xml` font-vs-DRM classifier, with the real library EPUB as a fixture. [R2-12, R2-19, R2-25] |
 | 1.2a | **Migration** | `companion_ebooks` (nine columns) via `drizzle-kit generate --custom`, never-NULL CHECKs, FK-cascade test, full `git add drizzle/`. [R2-16, R2-28] |
-| 1.2b | **Setting + repository + projections** | Registry category rendered in Library settings, the two test-file updates, repository, the exposure predicate as one shared function. No reconciler, no UI, no routes. [R2-38, R2-112] |
+| 1.2b | **Setting + repository + projections** | Registry category rendered as a peer section in General settings, the two test-file updates, repository, the exposure predicate as one shared function. No reconciler, no UI, no routes. [R2-38, R2-112] |
 | 1.2c | **Reconciler** | `withBookAdmissionLock` per book, coalescing `reconcileAll()`, fingerprint short-circuit incl. `ctime`. Conditional writes keyed on `(bookId, path, status, fingerprint)`. [R2-13, R2-27] |
 | 1.3 | **Trigger wiring** | The `processJob` success-tail extraction **first** (lint budget + failure isolation), the scan-lock wrapper, the three rename callers, wrong release, `finally`-shaping. Foreign-file regressions. [R2-4, R2-7, R2-10, R2-11, R2-20, R2-34] |
 | 1.4 | **Public v1 contract** | `/api/v1/capabilities`; `companionEbook` on both producers; `findLibraryStatusByAsins` gains `books.id` + `books.path`; all four `toBookV1` touchpoints; batch-load; OpenAPI fixtures. **AC:** the nested annotation is the live surface; the top-level field is pinned but dormant. [R2-3, R2-5, R2-17, R2-37] |
