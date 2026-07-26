@@ -230,6 +230,15 @@ describe('parseFolderStructure', () => {
 // LibraryScanService (mocked DB/FS)
 // ============================================================================
 
+/**
+ * A Node-shaped filesystem error. The reachability classifier (#1955) keys off
+ * `.code`, never the message, so a bare `new Error('ENOENT')` reads as
+ * *undetermined* and silently inverts any missing/restored assertion built on it.
+ */
+function fsError(code: string): Error {
+  return Object.assign(new Error(code), { code });
+}
+
 function createMockLogger() {
   return inject<FastifyBaseLogger>({
     info: vi.fn(),
@@ -785,7 +794,7 @@ describe('LibraryScanService', () => {
       ]);
       vi.mocked(access)
         .mockResolvedValueOnce(undefined) // library root check
-        .mockRejectedValueOnce(new Error('ENOENT'));
+        .mockRejectedValueOnce(fsError('ENOENT'));
 
       const result = await service.rescanLibrary();
 
@@ -809,7 +818,7 @@ describe('LibraryScanService', () => {
       (mockDb as Record<string, ReturnType<typeof vi.fn>>).returning!.mockResolvedValueOnce([]);
       vi.mocked(access)
         .mockResolvedValueOnce(undefined) // library root check
-        .mockRejectedValueOnce(new Error('ENOENT'));
+        .mockRejectedValueOnce(fsError('ENOENT'));
 
       const result = await service.rescanLibrary();
 
@@ -874,7 +883,7 @@ describe('LibraryScanService', () => {
       ]);
       vi.mocked(access)
         .mockResolvedValueOnce(undefined) // library root
-        .mockRejectedValueOnce(new Error('ENOENT')) // Book1 missing
+        .mockRejectedValueOnce(fsError('ENOENT')) // Book1 missing
         .mockResolvedValueOnce(undefined) // Book2 restored
         .mockResolvedValueOnce(undefined); // Book3 exists
 
@@ -951,9 +960,19 @@ describe('LibraryScanService', () => {
     });
 
     it('throws when library path is not accessible', async () => {
+      // The ROOT check is deliberately not errno-classified — any failure aborts
+      // the whole sweep, so a codeless rejection is still a LibraryPathError.
       vi.mocked(access).mockRejectedValueOnce(new Error('ENOENT'));
 
       await expect(service.rescanLibrary()).rejects.toThrow('Library path is not accessible');
+      expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).update).not.toHaveBeenCalled();
+    });
+
+    it('aborts the whole sweep on an EACCES root — the row loop never runs (#1955)', async () => {
+      vi.mocked(access).mockRejectedValueOnce(fsError('EACCES'));
+
+      await expect(service.rescanLibrary()).rejects.toThrow('Library path is not accessible');
+      expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).update).not.toHaveBeenCalled();
     });
 
     it('returns accurate summary counts with skipped entries', async () => {
@@ -967,12 +986,243 @@ describe('LibraryScanService', () => {
       vi.mocked(access)
         .mockResolvedValueOnce(undefined) // library root
         .mockResolvedValueOnce(undefined) // A exists
-        .mockRejectedValueOnce(new Error('ENOENT')) // B missing
+        .mockRejectedValueOnce(fsError('ENOENT')) // B missing
         .mockResolvedValueOnce(undefined); // C restored
 
       const result = await service.rescanLibrary();
 
       expect(result).toEqual({ scanned: 3, missing: 1, restored: 1 });
+    });
+
+    // ── #1955 transient filesystem errors ──────────────────────────────────
+    // A failed `access()` is not proof the book is gone. Only ENOENT/ENOTDIR
+    // flip a row; every other errno leaves the persisted status alone.
+    describe('transient filesystem errors', () => {
+      const BOOK = '/library/Author/Book';
+
+      /**
+       * Path-keyed `access` stub: the library root always resolves, each book path
+       * resolves or throws per `perPath`. Deliberately NOT a `mockRejectedValueOnce`
+       * queue — this suite's `beforeEach(vi.clearAllMocks)` does not drain Once
+       * queues, so an unconsumed queue leaks into the next test.
+       */
+      function mockAccess(perPath: Record<string, unknown>) {
+        vi.mocked(access).mockImplementation(async (target) => {
+          const outcome = perPath[String(target)];
+          if (outcome !== undefined) throw outcome;
+          return undefined;
+        });
+      }
+
+      function mockRows(list: Array<{ id: number; path: string | null; status: string; title?: string }>) {
+        (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce(list);
+      }
+
+      const dbUpdate = () => (mockDb as Record<string, ReturnType<typeof vi.fn>>).update!;
+
+      /** The `[payload, message]` pairs recorded on one level of the mocked logger. */
+      function logCalls(level: 'debug' | 'warn'): Array<[Record<string, unknown>, string]> {
+        const fn = log[level] as unknown as ReturnType<typeof vi.fn>;
+        return fn.mock.calls as Array<[Record<string, unknown>, string]>;
+      }
+
+      const noMissingWarn = () =>
+        expect(log.warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('missing from disk'));
+
+      it.each(['EACCES', 'EIO', 'ESTALE'])('retains an imported row when access fails with %s', async (code) => {
+        mockRows([{ id: 1, path: BOOK, status: 'imported', title: 'Book' }]);
+        mockAccess({ [BOOK]: fsError(code) });
+
+        const result = await service.rescanLibrary();
+
+        expect(result).toEqual({ scanned: 1, missing: 0, restored: 0 });
+        expect(dbUpdate()).not.toHaveBeenCalled();
+        noMissingWarn();
+      });
+
+      it('retains an imported row when the error carries no code at all', async () => {
+        mockRows([{ id: 1, path: BOOK, status: 'imported', title: 'Book' }]);
+        mockAccess({ [BOOK]: new Error('ENOENT') });
+
+        const result = await service.rescanLibrary();
+
+        expect(result).toEqual({ scanned: 1, missing: 0, restored: 0 });
+        expect(dbUpdate()).not.toHaveBeenCalled();
+        noMissingWarn();
+      });
+
+      it('retains an imported row and completes the sweep on a non-Error throw', async () => {
+        mockRows([{ id: 1, path: BOOK, status: 'imported', title: 'Book' }]);
+        mockAccess({ [BOOK]: 'ENOENT' });
+
+        const result = await service.rescanLibrary();
+
+        expect(result).toEqual({ scanned: 1, missing: 0, restored: 0 });
+        expect(dbUpdate()).not.toHaveBeenCalled();
+      });
+
+      it.each(['ENOENT', 'ENOTDIR'])('flips an imported row to missing on %s', async (code) => {
+        mockRows([{ id: 1, path: BOOK, status: 'imported', title: 'Book' }]);
+        mockAccess({ [BOOK]: fsError(code) });
+
+        const result = await service.rescanLibrary();
+
+        expect(result).toEqual({ scanned: 1, missing: 1, restored: 0 });
+        expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).set).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'missing' }),
+        );
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 1 }),
+          expect.stringContaining('missing from disk'),
+        );
+      });
+
+      it('leaves a missing row missing when access fails with EACCES', async () => {
+        mockRows([{ id: 2, path: BOOK, status: 'missing', title: 'Book' }]);
+        mockAccess({ [BOOK]: fsError('EACCES') });
+
+        const result = await service.rescanLibrary();
+
+        expect(result).toEqual({ scanned: 1, missing: 0, restored: 0 });
+        expect(dbUpdate()).not.toHaveBeenCalled();
+        expect(mockConnectorService.notifyRefresh).not.toHaveBeenCalled();
+      });
+
+      it('does not count a restore whose guarded write misses', async () => {
+        // Reachable row read as 'missing', but the guard matched nothing (a
+        // concurrent writer moved it) — no count, no info line, no connector work.
+        mockRows([{ id: 2, path: BOOK, status: 'missing', title: 'Book' }]);
+        mockAccess({});
+        (mockDb as Record<string, ReturnType<typeof vi.fn>>).returning!.mockResolvedValueOnce([]);
+
+        const result = await service.rescanLibrary();
+
+        expect(result).toEqual({ scanned: 1, missing: 0, restored: 0 });
+        expect(log.info).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('restored on disk'));
+        expect(mockConnectorService.notifyRefresh).not.toHaveBeenCalled();
+      });
+
+      it('does not flip the entire library when every probe hits EMFILE', async () => {
+        mockRows([
+          { id: 1, path: '/library/A', status: 'imported', title: 'A' },
+          { id: 2, path: '/library/B', status: 'imported', title: 'B' },
+          { id: 3, path: '/library/C', status: 'imported', title: 'C' },
+        ]);
+        mockAccess({
+          '/library/A': fsError('EMFILE'),
+          '/library/B': fsError('EMFILE'),
+          '/library/C': fsError('EMFILE'),
+        });
+
+        const result = await service.rescanLibrary();
+
+        expect(result).toEqual({ scanned: 3, missing: 0, restored: 0 });
+        expect(dbUpdate()).not.toHaveBeenCalled();
+        // One debug record per unreachable row — not one per sweep, not just the first.
+        const unreachableDebug = logCalls('debug').filter(([, msg]) => msg.includes('unreachable'));
+        expect(unreachableDebug).toHaveLength(3);
+        expect(unreachableDebug.map(([payload]) => payload)).toEqual([
+          expect.objectContaining({ bookId: 1, path: '/library/A' }),
+          expect.objectContaining({ bookId: 2, path: '/library/B' }),
+          expect.objectContaining({ bookId: 3, path: '/library/C' }),
+        ]);
+      });
+
+      it('classifies each row independently in a mixed sweep', async () => {
+        mockRows([
+          { id: 1, path: '/library/A', status: 'imported', title: 'A' },
+          { id: 2, path: '/library/B', status: 'imported', title: 'B' },
+          { id: 3, path: '/library/C', status: 'missing', title: 'C' },
+        ]);
+        mockAccess({ '/library/A': fsError('ENOENT'), '/library/B': fsError('EACCES') });
+
+        const result = await service.rescanLibrary();
+
+        expect(result).toEqual({ scanned: 3, missing: 1, restored: 1 });
+      });
+
+      it('emits one aggregate warn carrying the count and each observed code once', async () => {
+        mockRows([
+          { id: 1, path: '/library/A', status: 'imported', title: 'A' },
+          { id: 2, path: '/library/B', status: 'imported', title: 'B' },
+          { id: 3, path: '/library/C', status: 'imported', title: 'C' },
+        ]);
+        mockAccess({
+          '/library/A': fsError('EACCES'),
+          '/library/B': fsError('EACCES'),
+          '/library/C': fsError('EIO'),
+        });
+
+        await service.rescanLibrary();
+
+        const warns = logCalls('warn').filter(([, msg]) => msg.includes('could not reach'));
+        expect(warns).toHaveLength(1);
+        expect(warns[0]![0]).toEqual(expect.objectContaining({ unreachable: 3, codes: ['EACCES', 'EIO'] }));
+      });
+
+      it('reports an empty code list when no unreachable row carried an errno', async () => {
+        mockRows([{ id: 1, path: BOOK, status: 'imported', title: 'Book' }]);
+        mockAccess({ [BOOK]: new Error('boom') });
+
+        await service.rescanLibrary();
+
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ unreachable: 1, codes: [] }),
+          expect.stringContaining('could not reach'),
+        );
+      });
+
+      it('emits no aggregate warn when every row was reachable', async () => {
+        mockRows([{ id: 1, path: BOOK, status: 'imported', title: 'Book' }]);
+        mockAccess({});
+
+        await service.rescanLibrary();
+
+        expect(log.warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('could not reach'));
+      });
+
+      it('carries unreachable: 0 on the completion line for a clean sweep', async () => {
+        mockRows([{ id: 1, path: BOOK, status: 'imported', title: 'Book' }]);
+        mockAccess({});
+
+        await service.rescanLibrary();
+
+        expect(log.info).toHaveBeenCalledWith(
+          expect.objectContaining({ scanned: 1, unreachable: 0 }),
+          'Library rescan complete',
+        );
+      });
+
+      it('carries the true unreachable count on the completion line for a degraded sweep', async () => {
+        mockRows([
+          { id: 1, path: '/library/A', status: 'imported', title: 'A' },
+          { id: 2, path: '/library/B', status: 'imported', title: 'B' },
+        ]);
+        mockAccess({ '/library/A': fsError('EACCES'), '/library/B': fsError('EIO') });
+
+        await service.rescanLibrary();
+
+        expect(log.info).toHaveBeenCalledWith(
+          expect.objectContaining({ scanned: 2, missing: 0, restored: 0, unreachable: 2 }),
+          'Library rescan complete',
+        );
+      });
+
+      it('records the failed attempt with a serialized error carrying the code', async () => {
+        mockRows([{ id: 1, path: BOOK, status: 'imported', title: 'Book' }]);
+        mockAccess({ [BOOK]: fsError('EACCES') });
+
+        await service.rescanLibrary();
+
+        expect(log.debug).toHaveBeenCalledWith(
+          expect.objectContaining({
+            bookId: 1,
+            path: BOOK,
+            error: expect.objectContaining({ code: 'EACCES', message: 'EACCES' }),
+          }),
+          expect.stringContaining('unreachable'),
+        );
+      });
     });
   });
 
