@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { Db } from '../../../db/index.js';
 import { books } from '../../../db/schema.js';
-import { OwnedRecordingError, type BookService } from '../../services/book.service.js';
+import { OwnedRecordingError, type BookService, type BookWithAuthor } from '../../services/book.service.js';
 import type { BookListService } from '../../services/book-list.service.js';
 import type {
   MetadataService,
@@ -121,6 +121,79 @@ function mapLookupFailure(
       return { status: 429, code: 'rate_limited', message: 'Provider rate limited' };
     case 'transient_failure':
       return { status: 502, code: 'provider_unavailable', message: 'Provider lookup failed' };
+  }
+}
+
+/**
+ * Read `quality` ONCE, fail-open, for the add-by-ASIN path (#1545). On a
+ * successful read, gate the add on reject-words using the SAME predicate the
+ * search filter uses (`isRejectedByWords`) so the add gate and the search cannot
+ * drift, and capture `searchImmediately` to reuse after create. On a read
+ * failure, fail open (a preference, not a security boundary — mirrors the search
+ * filter's posture, #1004): proceed to create AND skip the immediate search. The
+ * single read is what makes a thrown read unable to create-then-500.
+ */
+async function resolveQualityGate(
+  deps: V1BooksRouteDeps,
+  book: BookMetadata,
+  asin: string,
+  log: FastifyBaseLogger,
+): Promise<{ rejected: boolean; searchImmediately: boolean }> {
+  try {
+    const quality = await deps.settingsService.get('quality');
+    if (isRejectedByWords(book, quality.rejectWords)) {
+      log.info({ asin }, 'v1 add-by-ASIN: edition rejected by reject-words filter');
+      return { rejected: true, searchImmediately: false };
+    }
+    return { rejected: false, searchImmediately: quality.searchImmediately };
+  } catch (err: unknown) {
+    log.warn(
+      { asin, error: serializeError(err) },
+      'v1 add-by-ASIN: failed to read quality settings — proceeding without reject gate, skipping immediate search',
+    );
+    return { rejected: false, searchImmediately: false };
+  }
+}
+
+/**
+ * Post-create tail: record the `manual` `book_added` event and, when the
+ * operator opted in, fire the immediate search. Both are FIRE-AND-FORGET — the
+ * caller returns `201` immediately and neither is awaited nor allowed to surface
+ * an error. `searchImmediately` is the value captured by the single quality read
+ * in `resolveQualityGate`.
+ */
+function recordCreateAndMaybeSearch(
+  book: BookWithAuthor,
+  searchImmediately: boolean,
+  asin: string,
+  deps: V1BooksRouteDeps,
+  log: FastifyBaseLogger,
+): void {
+  deps.eventHistory
+    .create({
+      bookId: book.id,
+      ...snapshotBookForEvent(book),
+      eventType: 'book_added',
+      source: 'manual',
+    })
+    .catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
+
+  log.info({ asin, publicId: book.publicId }, 'v1 add-by-ASIN: book created');
+
+  if (searchImmediately && book.status === 'wanted') {
+    triggerImmediateSearch(
+      book,
+      {
+        indexerSearchService: deps.indexerSearchService,
+        indexerService: deps.indexerService,
+        downloadOrchestrator: deps.downloadOrchestrator,
+        settingsService: deps.settingsService,
+        blacklistService: deps.blacklistService,
+        eventHistory: deps.eventHistory,
+        eventBroadcaster: deps.eventBroadcaster,
+      },
+      log,
+    );
   }
 }
 
@@ -329,28 +402,11 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
             return reply.status(mapped.status).send(envelope(mapped.code, mapped.message));
           }
 
-          // Read `quality` ONCE here, fail-open. On a successful read, gate the
-          // add on reject-words using the SAME predicate the search filter uses
-          // (`isRejectedByWords`) so the add gate and the search can't drift, and
-          // capture `searchImmediately` to reuse after create. On a read failure,
-          // fail open (preference, not a security boundary — mirrors the search
-          // filter's posture, #1004): proceed to create AND skip the immediate
-          // search. Single read ⇒ a thrown read can never create-then-500.
-          let searchImmediately = false;
-          try {
-            const quality = await deps.settingsService.get('quality');
-            if (isRejectedByWords(lookup.book, quality.rejectWords)) {
-              request.log.info({ asin }, 'v1 add-by-ASIN: edition rejected by reject-words filter');
-              return await reply
-                .status(422)
-                .send(envelope('edition_rejected', "This edition is excluded by the library owner's reject-words filter"));
-            }
-            searchImmediately = quality.searchImmediately;
-          } catch (err: unknown) {
-            request.log.warn(
-              { asin, error: serializeError(err) },
-              'v1 add-by-ASIN: failed to read quality settings — proceeding without reject gate, skipping immediate search',
-            );
+          const gate = await resolveQualityGate(deps, lookup.book, asin, request.log);
+          if (gate.rejected) {
+            return reply
+              .status(422)
+              .send(envelope('edition_rejected', "This edition is excluded by the library owner's reject-words filter"));
           }
 
           let book;
@@ -371,37 +427,7 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
             throw error;
           }
 
-          deps.eventHistory
-            .create({
-              bookId: book.id,
-              ...snapshotBookForEvent(book),
-              eventType: 'book_added',
-              source: 'manual',
-            })
-            .catch((err: unknown) =>
-              request.log.warn({ error: serializeError(err) }, 'Failed to record book_added event'),
-            );
-
-          request.log.info({ asin, publicId: book.publicId }, 'v1 add-by-ASIN: book created');
-
-          // Operator-gated, fire-and-forget — return 201 immediately; never await
-          // the search nor surface its error. Mirrors the import-list path. Reuses
-          // the `searchImmediately` captured from the single quality read above.
-          if (searchImmediately && book.status === 'wanted') {
-            triggerImmediateSearch(
-              book,
-              {
-                indexerSearchService: deps.indexerSearchService,
-                indexerService: deps.indexerService,
-                downloadOrchestrator: deps.downloadOrchestrator,
-                settingsService: deps.settingsService,
-                blacklistService: deps.blacklistService,
-                eventHistory: deps.eventHistory,
-                eventBroadcaster: deps.eventBroadcaster,
-              },
-              request.log,
-            );
-          }
+          recordCreateAndMaybeSearch(book, gate.searchImmediately, asin, deps, request.log);
 
           // Explicit `null`: a freshly created book is `wanted`, so the mapper's
           // `imported` term forces `null` regardless of feature state. No

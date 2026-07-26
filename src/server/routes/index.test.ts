@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { routeRegistry } from './index.js';
 import type { FastifyInstance } from 'fastify';
 import type { FastifyBaseLogger } from 'fastify';
@@ -69,24 +69,63 @@ vi.mock('../services/import-adapters/registry.js', () => ({
 vi.mock('../services/import-adapters/manual.js', () => ({ ManualImportAdapter: vi.fn() }));
 vi.mock('../services/import-adapters/auto.js', () => ({ AutoImportAdapter: vi.fn() }));
 vi.mock('./retry-import.js', () => ({ retryImportRoute: vi.fn() }));
+// #1961 F8 — mocked so the composition-root test can assert the registry closure
+// hands `v1CapabilitiesRoutes` the settings service. The generic `registerRoutes`
+// test below replaces every entry with an anonymous spy, so it proves invocation
+// ORDER only; it cannot see a closure's deps object.
+vi.mock('./v1/capabilities.js', () => ({ v1CapabilitiesRoutes: vi.fn() }));
 vi.mock('../config.js', () => ({ config: { configPath: '/tmp/config', dbPath: '/tmp/db.sqlite' } }));
 vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(), probeFfmpeg: vi.fn() }));
 vi.mock('../../core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
 
 describe('routeRegistry', () => {
-  it('contains all 36 route factories', () => {
+  it('contains all 37 route factories', () => {
     // books, bookFiles, bookPreview, search, activity, importJobs, indexers, downloadClients,
     // settings, metadata, libraryScan, importSubmissions, system, notifiers, connectors, blacklist,
     // auth, remotePathMapping, filesystem, eventHistory, events, searchStream,
     // prowlarrCompat, importLists, discover, bulkOperations, retryImport, importPreview,
-    // v1Books, v1Authors, v1Narrators, v1Series, v1Downloads, v1Actions, v1Metadata, v1System
-    expect(routeRegistry).toHaveLength(36);
+    // v1Books, v1Authors, v1Narrators, v1Series, v1Downloads, v1Actions, v1Metadata, v1System,
+    // v1Capabilities
+    expect(routeRegistry).toHaveLength(37);
   });
 
   it('every entry is a function', () => {
     for (const factory of routeRegistry) {
       expect(typeof factory).toBe('function');
     }
+  });
+
+  // #1961 F8 — the length bump detects a MISSING entry; it does not establish
+  // that the new closure passes `s.settings`. Invoke every entry against a
+  // memoizing service proxy (other factories throw on the stub app — that is
+  // fine and expected) and assert exactly one of them composed the capabilities
+  // route with the settings service.
+  it('composes v1CapabilitiesRoutes exactly once, with { settingsService: services.settings }', async () => {
+    const { v1CapabilitiesRoutes } = await import('./v1/capabilities.js');
+    (v1CapabilitiesRoutes as unknown as Mock).mockClear();
+
+    const stubs = new Map<string, object>();
+    const services = new Proxy({}, {
+      get(_t, prop: string) {
+        if (!stubs.has(prop)) stubs.set(prop, { __service: prop });
+        return stubs.get(prop);
+      },
+    }) as unknown as Services;
+    const app = {} as FastifyInstance;
+    const db = {} as Db;
+
+    for (const factory of routeRegistry) {
+      try {
+        await factory(app, services, db);
+      } catch {
+        // Every other factory reaches for a real Fastify instance and throws.
+      }
+    }
+
+    expect(v1CapabilitiesRoutes as unknown as Mock).toHaveBeenCalledTimes(1);
+    expect(v1CapabilitiesRoutes as unknown as Mock).toHaveBeenCalledWith(app, {
+      settingsService: (services as unknown as { settings: object }).settings,
+    });
   });
 });
 
