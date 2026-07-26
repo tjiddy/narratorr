@@ -11,7 +11,9 @@ describe('createMockSettings', () => {
       }
     });
 
-    it('no-arg call returns all 11 categories with all fields populated from DEFAULT_SETTINGS', () => {
+    // Deliberately count-free: the title used to name a category count that went stale
+    // the moment a category was added. SETTINGS_CATEGORIES is the assertion's own source.
+    it('no-arg call returns every registered category with all fields populated from DEFAULT_SETTINGS', () => {
       const settings = createMockSettings();
       expect(Object.keys(settings).sort()).toEqual(SETTINGS_CATEGORIES.slice().sort());
       for (const category of SETTINGS_CATEGORIES) {
@@ -63,6 +65,16 @@ describe('createMockSettings', () => {
       expect(a.processing).toEqual(DEFAULT_SETTINGS.processing);
       expect(b.processing.maxConcurrentProcessing).toBe(DEFAULT_SETTINGS.processing.maxConcurrentProcessing);
       expect(c.search.enabled).toBe(DEFAULT_SETTINGS.search.enabled);
+    });
+
+    // #1958 — the category is registry-derived, so the factory picks it up with no
+    // edit to create-mock-settings.fixtures.ts itself.
+    it('exposes companionEpub disabled by default', () => {
+      expect(createMockSettings().companionEpub.enabled).toBe(false);
+    });
+
+    it('lets a companionEpub override survive', () => {
+      expect(createMockSettings({ companionEpub: { enabled: true } }).companionEpub.enabled).toBe(true);
     });
 
     it('preserves falsy-but-valid values: minFreeSpaceGB: 0', () => {

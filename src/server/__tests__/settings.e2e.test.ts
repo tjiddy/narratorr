@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createE2EApp, type E2EApp } from './e2e-helpers.js';
+import { SECRET_CATEGORIES, SECRET_SETTINGS_CATEGORIES } from '../utils/secret-category-map.js';
 
 describe('Settings E2E', () => {
   let e2e: E2EApp;
@@ -83,6 +84,33 @@ describe('Settings E2E', () => {
     const getRes = await e2e.app.inject({ method: 'GET', url: '/api/settings' });
     expect(getRes.statusCode).toBe(200);
     expect(getRes.json().import.minSeedRatio).toBe(1.5);
+  });
+
+  // #1958 — the companion-ebook feature flag rides the generic settings route.
+  it('GET /api/settings returns companionEpub disabled on a fresh DB', async () => {
+    const res = await e2e.app.inject({ method: 'GET', url: '/api/settings' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().companionEpub).toEqual({ enabled: false });
+  });
+
+  it('PUT /api/settings persists companionEpub.enabled and GET reflects it', async () => {
+    const putRes = await e2e.app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      payload: { companionEpub: { enabled: true } },
+    });
+
+    expect(putRes.statusCode).toBe(200);
+    expect(putRes.json().companionEpub.enabled).toBe(true);
+
+    const getRes = await e2e.app.inject({ method: 'GET', url: '/api/settings' });
+    expect(getRes.statusCode).toBe(200);
+    expect(getRes.json().companionEpub.enabled).toBe(true);
+  });
+
+  it('companionEpub is not a secret category — it holds no credential', () => {
+    expect(SECRET_CATEGORIES).not.toHaveProperty('companionEpub');
+    expect(SECRET_SETTINGS_CATEGORIES.map((e) => e.key)).not.toContain('companionEpub');
   });
 
   it('PUT /api/settings rejects negative minSeedRatio', async () => {

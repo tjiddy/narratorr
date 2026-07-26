@@ -16,6 +16,7 @@ import { importSettingsSchema } from './import.js';
 import { processingSettingsSchema, processingFormSchema } from './processing.js';
 import { generalSettingsSchema, generalFormSchema } from './general.js';
 import { discoverySettingsSchema, discoveryFormSchema } from './discovery.js';
+import { companionEpubSettingsSchema, companionEpubFormSchema } from './companion-epub.js';
 import { qualityFormSchema, qualitySettingsSchema } from './quality.js';
 import { searchSettingsSchema, searchFormSchema } from './search.js';
 import { rssSettingsSchema } from './rss.js';
@@ -62,7 +63,7 @@ describe('settingsRegistry', () => {
     });
 
     it('exports exactly the expected category keys', () => {
-      const expected = ['library', 'search', 'import', 'general', 'metadata', 'processing', 'tagging', 'quality', 'network', 'rss', 'system', 'discovery'];
+      const expected = ['library', 'search', 'import', 'general', 'metadata', 'processing', 'tagging', 'quality', 'network', 'rss', 'system', 'discovery', 'companionEpub'];
       expect(SETTINGS_CATEGORIES.sort()).toEqual(expected.sort());
     });
 
@@ -120,6 +121,7 @@ describe('settingsRegistry', () => {
     const siblingSchemas = [
       { category: 'general', categorySchema: generalSettingsSchema, formSchema: generalFormSchema },
       { category: 'discovery', categorySchema: discoverySettingsSchema, formSchema: discoveryFormSchema },
+      { category: 'companionEpub', categorySchema: companionEpubSettingsSchema, formSchema: companionEpubFormSchema },
     ] as const;
 
     function expectedFormKeys(categorySchema: { shape: Record<string, unknown> }, allowlist: readonly string[]): string[] {
@@ -162,6 +164,7 @@ describe('settingsRegistry', () => {
     it('intentionally key-omitting form schemas are not registered as registry overrides', () => {
       expect(settingsRegistry.general.formSchema).toBeUndefined();
       expect(settingsRegistry.discovery.formSchema).toBeUndefined();
+      expect(settingsRegistry.companionEpub.formSchema).toBeUndefined();
     });
   });
 
