@@ -406,6 +406,32 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
       expect(row.mtimeMs).toBe(1_700_000_000_123);
     });
 
+    // `sizeBytes` has its OWN nonnegative → Math.trunc → safe-integer pipeline, separate from
+    // the shared time schema, so the mtimeMs case above does not pin it: deleting its
+    // transform leaves every other test green and turns an accepted fractional size into a
+    // rejection. Same reason ctimeMs is asserted here rather than inferred from mtimeMs — each
+    // field's wiring to a normalising schema is pinned at the field, not at the schema.
+    it('a fractional sizeBytes is ACCEPTED and normalised (4096.75 → 4096)', async () => {
+      const bookId = await seedBook();
+      const row = await upsertCompanionEbook(db, bookId, available({ sizeBytes: 4096.75 }));
+      expect(row.sizeBytes).toBe(4096);
+    });
+
+    it('a fractional ctimeMs is ACCEPTED and normalised', async () => {
+      const bookId = await seedBook();
+      const row = await upsertCompanionEbook(db, bookId, available({ ctimeMs: 1_700_000_000_987.654 }));
+      expect(row.ctimeMs).toBe(1_700_000_000_987);
+    });
+
+    it('a normalised fractional sizeBytes reaches SQLite with integer storage class', async () => {
+      const bookId = await seedBook();
+      await upsertCompanionEbook(db, bookId, available({ sizeBytes: 4096.75 }));
+      const res = await db.run(
+        sql`SELECT typeof(size_bytes), size_bytes FROM companion_ebooks WHERE book_id = ${bookId}`,
+      );
+      expect(Array.from(res.rows[0] as unknown as unknown[])).toEqual(['integer', 4096]);
+    });
+
     it('a fractional candidateCount is REJECTED (the asymmetry is deliberate)', async () => {
       await expectZodRejection(await seedBook(), available({ candidateCount: 1.5 }));
     });

@@ -63,12 +63,19 @@ describe('isCompanionEbookEligible', () => {
     const { log } = makeLog();
     await expect(isCompanionEbookEligible(input(), log)).resolves.toBe(true);
     expect(mockStat).toHaveBeenCalledTimes(1);
+    // Pin the probe TARGET, not just the call count: an ordinary stat double answers the
+    // same for any argument, so a regression to `stat(libraryRoot)` would otherwise stay green.
+    expect(mockStat).toHaveBeenCalledWith(BOOK_PATH);
   });
 
   it("is false when the stored path is a file rather than a directory", async () => {
-    mockStat.mockResolvedValue(file());
+    // Argument-sensitive on purpose. With a blanket `file()` double, an implementation that
+    // probed the library root instead of the book path would still return false here; with
+    // this one, that regression reports a file-backed book as ELIGIBLE and fails.
+    mockStat.mockImplementation((p: string) => Promise.resolve(p === BOOK_PATH ? file() : directory()));
     const { log } = makeLog();
     await expect(isCompanionEbookEligible(input(), log)).resolves.toBe(false);
+    expect(mockStat).toHaveBeenCalledWith(BOOK_PATH);
   });
 
   const NON_IMPORTED: BookStatus[] = ['wanted', 'downloading', 'importing', 'missing', 'failed', 'searching'];
@@ -206,6 +213,9 @@ describe('isCompanionEbookEligible', () => {
         isCompanionEbookEligible(input({ path: linked, libraryRoot: root }), log),
       ).resolves.toBe(true);
       expect(mockRealpath).not.toHaveBeenCalled();
+      // The linked path itself is what gets probed — `root` is also a directory here, so
+      // without this the symlink case would pass on a root-probing implementation too.
+      expect(mockStat).toHaveBeenCalledWith(linked);
     } finally {
       await realFs.rm(dir, { recursive: true, force: true });
     }
