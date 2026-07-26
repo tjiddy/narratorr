@@ -249,7 +249,7 @@ export class LibraryScanService {
     let probe: 'reachable' | 'absent' | 'unreachable' = 'reachable';
     try {
       await access(row.path);
-    } catch (error) {
+    } catch (error: unknown) {
       probe = this.classifyProbeFailure({ id: row.id, path: row.path }, error, unreachableCodes);
     }
     if (probe === 'unreachable') return 'unreachable';
