@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { bookStatusSchema } from '../book.js';
 import { pickPrimarySeries } from '../../pick-primary-series.js';
+import { companionEbookV1Schema } from './companion-ebook.js';
 
 // ============================================================================
 // Public API v1 — Metadata search (v1.1 — #1519)
@@ -63,8 +64,9 @@ export const metadataSearchResultV1SeriesSchema = z
  * array, never `undefined`.
  *
  * `library` is the narratorr-only cross-reference (#1537): when the result's
- * ASIN matches a book already in the library it carries `{ bookId, status }` —
- * the `bk_` publicId and the raw canonical `BookStatus`. It is additive,
+ * ASIN matches a book already in the library it carries
+ * `{ bookId, status, companionEbook }` — the `bk_` publicId, the raw canonical
+ * `BookStatus`, and (#1961) the companion-ebook availability. It is additive,
  * optional, and best-effort: the route fills it AFTER projection (the projector
  * keeps reading only public provider fields), so a library-lookup failure leaves
  * it absent rather than failing the search. `status` reuses `bookStatusSchema`
@@ -84,6 +86,15 @@ export const metadataSearchResultV1Schema = z
       .object({
         bookId: z.string(),
         status: bookStatusSchema,
+        /**
+         * Companion ebook availability (#1961). REQUIRED inside `library` and
+         * nullable — a result that is in the library always carries the key, so
+         * a consumer never has to distinguish "no ebook" from "old server". Note
+         * `library` ITSELF stays `.optional()`: a result not in the library still
+         * carries no `library` key at all. This nested annotation is the LIVE
+         * consumer surface for the whole companion feature.
+         */
+        companionEbook: companionEbookV1Schema,
       })
       .strict()
       .optional(),

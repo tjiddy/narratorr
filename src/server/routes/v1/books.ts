@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { Db } from '../../../db/index.js';
@@ -29,6 +29,9 @@ import {
   bookExistsV1Schema,
   toBookV1,
 } from '../../../shared/schemas/v1/books.js';
+import { toCompanionEbookV1 } from '../../../shared/schemas/v1/companion-ebook.js';
+import { findCompanionEbooksByBookIds } from '../../services/companion-ebook.repository.js';
+import type { CompanionEbookRow } from '../../services/types.js';
 import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
 import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
@@ -124,6 +127,53 @@ function mapLookupFailure(
 /** `:publicId` path param. `.strict()` per the v1 owned-schema convention. */
 const publicIdParamSchema = z.object({ publicId: z.string().min(1) }).strict();
 
+/** What `loadCompanionContext` resolves for a page (or a single row): the feature
+ *  flag plus the batch-loaded observations keyed by numeric `books.id`. */
+interface CompanionContext {
+  enabled: boolean;
+  byBookId: Map<number, CompanionEbookRow>;
+}
+
+/**
+ * Resolve `{ enabled, byBookId }` for a set of numeric book ids — the ONE
+ * best-effort guard for both book GETs (#1961 AC 23a).
+ *
+ * `GET /api/v1/books` and `GET /api/v1/books/:publicId` read no settings at all
+ * today (only `POST` does). Adding two dependencies to a working read endpoint
+ * without a guard would let a transient `SettingsService` DB failure or a
+ * companion-repository rejection propagate to `v1ErrorHandler`'s catch-all `500`
+ * and turn two previously-working reads into 500s — "purely additive" has to hold
+ * on the failure path too. So BOTH reads sit inside ONE try/catch: any rejection
+ * logs exactly one warn and degrades to `{ enabled: false, byBookId: empty }`,
+ * projecting `companionEbook: null` on every row and leaving the rest of the
+ * response byte-identical to today's.
+ *
+ * Scope limit: this covers the companion enrichment ONLY. A failure of the core
+ * book query still surfaces exactly as it does today.
+ *
+ * When the feature is disabled — or there are no rows — NO companion query is
+ * issued. Otherwise `findCompanionEbooksByBookIds` chunks at 480, so a max-page
+ * request (`limit=500`) costs two companion selects, not 500.
+ */
+async function loadCompanionContext(
+  db: Db,
+  settingsService: SettingsService,
+  bookIds: number[],
+  log: FastifyBaseLogger,
+): Promise<CompanionContext> {
+  try {
+    const { enabled } = await settingsService.get('companionEpub');
+    if (!enabled || bookIds.length === 0) return { enabled, byBookId: new Map() };
+    return { enabled, byBookId: await findCompanionEbooksByBookIds(db, bookIds) };
+  } catch (error: unknown) {
+    log.warn(
+      { error: serializeError(error) },
+      'v1 books: companion-ebook enrichment failed — projecting companionEbook: null',
+    );
+    return { enabled: false, byBookId: new Map() };
+  }
+}
+
 /**
  * Native public API v1 — Books (read). Registers `GET /api/v1/books` and
  * `GET /api/v1/books/:publicId` inside an ENCAPSULATED plugin so the v1-scoped
@@ -169,7 +219,24 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
             ...(sortDirection !== undefined && { sortDirection }),
           };
           const { data, total } = await deps.bookListService.getAll(status, pagination, options);
-          return { data: data.map(toBookV1), total };
+          const { enabled, byBookId } = await loadCompanionContext(
+            db,
+            deps.settingsService,
+            data.map((row) => row.id),
+            request.log,
+          );
+          // An explicit closure, NOT `data.map(toBookV1)`: `Array.map` passes the
+          // array INDEX as the second argument, which would ship a numeric
+          // `companionEbook`.
+          return {
+            data: data.map((row) =>
+              toBookV1(
+                row,
+                toCompanionEbookV1({ enabled, bookStatus: row.status, observation: byBookId.get(row.id) }),
+              ),
+            ),
+            total,
+          };
         },
       );
 
@@ -181,13 +248,35 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
             response: { 200: bookV1Schema, 400: v1ErrorEnvelopeSchema, 404: v1ErrorEnvelopeSchema },
           },
         },
+        // The companion load happens inside the ASYNC `fetch` callback, which
+        // returns a tuple; `project` then stays trivially synchronous. That is
+        // why `_helpers.ts`'s `project: (row) => TDto` contract — shared by five
+        // v1 routes — needs no change at all. A missing book still returns `null`
+        // from `fetch`, so the 404 behaviour is untouched.
         async (request) =>
           fetchByPublicId(
             db,
             books,
             request.params.publicId,
-            (rowid) => deps.bookService.getById(rowid),
-            toBookV1,
+            async (rowid) => {
+              const book = await deps.bookService.getById(rowid);
+              if (book === null) return null;
+              const { enabled, byBookId } = await loadCompanionContext(
+                db,
+                deps.settingsService,
+                [book.id],
+                request.log,
+              );
+              return {
+                book,
+                companionEbook: toCompanionEbookV1({
+                  enabled,
+                  bookStatus: book.status,
+                  observation: byBookId.get(book.id),
+                }),
+              };
+            },
+            ({ book, companionEbook }) => toBookV1(book, companionEbook),
           ),
       );
 
@@ -314,7 +403,10 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
             );
           }
 
-          return reply.status(201).send(toBookV1(book));
+          // Explicit `null`: a freshly created book is `wanted`, so the mapper's
+          // `imported` term forces `null` regardless of feature state. No
+          // settings read and no companion query is added to the create path.
+          return reply.status(201).send(toBookV1(book, null));
         },
       );
     },

@@ -12,8 +12,10 @@ import { replaceSeriesLink, upsertSeriesLink, type ReplaceSeriesLinkArgs } from 
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
-import type { BookRow } from './types.js';
+import type { BookRow, CompanionEbookRow } from './types.js';
 import { productionTypeSchema, type BookStatus } from '../../shared/schemas/book.js';
+import { findCompanionEbooksByBookIds } from './companion-ebook.repository.js';
+import { toCompanionEbookV1, type CompanionEbookV1 } from '../../shared/schemas/v1/companion-ebook.js';
 import { buildNewBookValues, type CreateBookInput, type ResolvedBookCreateInput } from './book-create.js';
 import { canonicalizeAsin } from '../../shared/asin.js';
 import { isUniqueViolation } from '../../shared/error-message.js';
@@ -102,6 +104,14 @@ export interface BookWithAuthor extends BookRow {
   importListName?: string | null;
 }
 
+/** One entry of `findLibraryStatusByAsins`'s map — the v1 metadata-search
+ *  `library` annotation, ready to assign onto a result. */
+export interface LibraryStatusByAsin {
+  bookId: string;
+  status: BookStatus;
+  companionEbook: CompanionEbookV1 | null;
+}
+
 export class BookService {
   constructor(
     private db: Db,
@@ -161,8 +171,9 @@ export class BookService {
   /**
    * Batch ASIN → library-status lookup for the v1 metadata-search cross-reference
    * (#1537). Given the result ASINs of a metadata search, returns a Map keyed by
-   * the UPPERCASED ASIN with `{ bookId: <bk_ publicId>, status }` for each owned
-   * book — so the caller does a plain `.get(result.asin?.toUpperCase())`.
+   * the UPPERCASED ASIN with `{ bookId: <bk_ publicId>, status, companionEbook }`
+   * for each owned book — so the caller does a plain
+   * `.get(result.asin?.toUpperCase())`.
    *
    * Case-insensitive by design: ASINs are NOT globally normalized in narratorr
    * (the parser uppercases, but API validators only `.trim()` and add-by-ASIN
@@ -175,20 +186,56 @@ export class BookService {
    *
    * Null-ASIN owned books cannot match (the unique index is partial,
    * `asin IS NOT NULL`); that limitation is accepted and documented in #1537.
+   *
+   * **Companion ebooks (#1961).** `companionEnabled` is supplied BY THE CALLER —
+   * this service takes no `SettingsService`, matching the convention
+   * `isCompanionEbookEligible` already sets. When it is false, or when no row
+   * matched, NO companion query is issued and every value carries
+   * `companionEbook: null`. Otherwise observations are batch-loaded by numeric
+   * `books.id` through `findCompanionEbooksByBookIds` (already chunked at 480),
+   * so the whole annotation costs one books select plus
+   * `ceil(matched / 480)` companion selects — never one per result.
+   *
+   * The select therefore also projects the numeric `books.id` (the companion FK).
+   * It does NOT project `books.path`: the exposure predicate takes exactly
+   * `{ enabled, bookStatus, observationStatus }` and must never grow a live/path
+   * term (see `src/shared/companion-ebook-exposure.ts`). The projection is built
+   * inside this method body, never as a module-level constant
+   * (`drizzle-schema-toplevel-deref-breaks-partial-mocks`).
    */
-  async findLibraryStatusByAsins(asins: string[]): Promise<Map<string, { bookId: string; status: BookStatus }>> {
-    const map = new Map<string, { bookId: string; status: BookStatus }>();
+  async findLibraryStatusByAsins(
+    asins: string[],
+    options: { companionEnabled: boolean },
+  ): Promise<Map<string, LibraryStatusByAsin>> {
+    const map = new Map<string, LibraryStatusByAsin>();
     if (asins.length === 0) return map;
 
     const lowered = asins.map((a) => a.toLowerCase());
     const rows = await this.db
-      .select({ bookId: books.publicId, status: books.status, asin: books.asin })
+      .select({ id: books.id, bookId: books.publicId, status: books.status, asin: books.asin })
       .from(books)
       .where(inArray(sql`lower(${books.asin})`, lowered));
 
+    const matchedIds = rows.filter((r) => r.asin != null).map((r) => r.id);
+    const companionByBookId: Map<number, CompanionEbookRow> =
+      options.companionEnabled && matchedIds.length > 0
+        ? await findCompanionEbooksByBookIds(this.db, matchedIds)
+        : new Map();
+
     for (const row of rows) {
       if (row.asin == null) continue;
-      map.set(row.asin.toUpperCase(), { bookId: row.bookId, status: row.status as BookStatus });
+      const status = row.status as BookStatus;
+      map.set(row.asin.toUpperCase(), {
+        bookId: row.bookId,
+        status,
+        // The exposure→DTO decision lives in exactly one place (#1961 AC 10a) —
+        // no term, no size guard, and no `'epub'` literal is re-spelled here.
+        companionEbook: toCompanionEbookV1({
+          enabled: options.companionEnabled,
+          bookStatus: status,
+          observation: companionByBookId.get(row.id),
+        }),
+      });
     }
     return map;
   }
