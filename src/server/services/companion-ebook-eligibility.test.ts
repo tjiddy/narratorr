@@ -176,6 +176,8 @@ describe('isCompanionEbookEligible', () => {
       expect(String((payload as { path: string }).path).split('\\').join('/')).toContain('elsewhere/book');
       // Expected control flow, not a failure: no `error:` key.
       expect(payload).not.toHaveProperty('error');
+      // A result-only assertion would still pass if this branch returned false silently.
+      expect(mockStat).not.toHaveBeenCalled();
     });
   });
 
