@@ -80,6 +80,22 @@ const fileFields = {
   selected: z.boolean(),
 };
 
+/**
+ * True when `name` is a basename the observation write boundary will accept (#1974 AC10).
+ *
+ * Defined *from* `filenameSchema` rather than restating its rules, so candidate discovery
+ * (`companion-ebook-discovery.ts`), the open-and-verify helper (`companion-ebook-open.ts`),
+ * and this write boundary share one domain **by construction** and cannot drift. Without it,
+ * discovery on Alpine could emit a legal-on-POSIX ` book.epub` or `sub\book.epub` that nothing
+ * downstream can store or open.
+ *
+ * Validates, never normalises: a rejected entry is skipped, not repaired — a trimmed name no
+ * longer names the real directory entry.
+ */
+export function isPersistableCompanionBasename(name: string): boolean {
+  return filenameSchema.safeParse(name).success;
+}
+
 export const companionEbookObservationSchema = z
   .discriminatedUnion('status', [
     z.strictObject({ status: z.literal('none') }),
