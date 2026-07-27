@@ -1106,25 +1106,23 @@ describe('CompanionEbookReconciler (#1959)', () => {
     });
 
     it('returns `stopped` from a book run that reaches the lock after stopping (case 40f)', async () => {
-      const gate = deferred();
-      const blocker = await insertBook();
       const late = await insertBook();
-      outcomes.set(blocker, async () => { await gate.promise; return OBSERVED; });
 
-      // Hold the LATE book's lock from outside so its run parks before check 3.
+      // Hold the book's lock from OUTSIDE the reconciler so its run is parked in the lock queue
+      // — accepted at check 1, but not yet at check 3 — when the drain begins.
       const lockGate = deferred();
       const actual = await vi.importActual<typeof import('./book-admission.js')>('./book-admission.js');
       const holding = actual.withBookAdmissionLock(late, async () => { await lockGate.promise; });
 
       const direct = reconciler.reconcileBook(late);
       await waitUntil(() => hoisted.events.includes(`lock.acquire:${late}`), 'the direct run to queue on the held lock');
-      void blocker;
 
       const stopping = reconciler.stop();
       lockGate.resolve();
-      gate.resolve();
       await Promise.all([holding, direct, stopping]);
 
+      // Zero filesystem and zero DB work after the lock was finally granted.
+      expect(hoisted.events).toContain(`lock.held:${late}`);
       expect(observeMock).not.toHaveBeenCalled();
       expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
     });
