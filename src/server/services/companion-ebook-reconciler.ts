@@ -564,6 +564,21 @@ export class CompanionEbookReconciler {
     // merely untriggered — no `UPDATE companion_ebooks SET selected_filename` exists anywhere.
     const committed = await this.commitObservation(bookId, snapshot, prior, revalidated.observation);
     if (committed.outcome === 'conflicted') return { outcome: 'conflicted' };
+
+    // CONTRIBUTING.md: every create/update/delete logs at `info`. This is the one persisted
+    // mutation in this feature with no other default-level signal — the SWEEP's writes are
+    // already `info`-visible through its per-run summary counters, which is why per-book detail
+    // there stays at `debug`, but a single owner-triggered selection produces no summary at all.
+    // Placed here rather than in `commitObservation` deliberately: that helper is shared with
+    // the sweep, and logging inside it would add one `info` line per book to every sweep.
+    //
+    // Safe fields only — a stored basename the owner already sees on `/state`, never the
+    // resolved path and never the library root. AC33's path-free rule governs the ROUTE
+    // boundary `warn` record, a different site; this is the service-level audit record.
+    this.log.info(
+      { bookId, filename, status: committed.row.status, candidateCount: candidates.length },
+      'Companion ebook selection persisted',
+    );
     return { outcome: 'selected', row: committed.row };
   }
 

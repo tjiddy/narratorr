@@ -1637,6 +1637,120 @@ describe('CompanionEbookReconciler (#1959)', () => {
     });
 
     // -----------------------------------------------------------------------
+    // The info-level mutation audit record (PR #2010 F1)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Every `info` record this selection emitted. The sweep summary is excluded by shape — it
+     * is the only other `info` record this service produces and it carries a `books`
+     * denominator, which a per-selection record never does.
+     */
+    function selectionInfoRecords(): Array<Record<string, unknown>> {
+      return spies.info.mock.calls
+        .map((call) => call[0] as Record<string, unknown>)
+        .filter((record) => record !== null && typeof record === 'object' && !('books' in record));
+    }
+
+    describe('the persisted-selection audit record', () => {
+      // CONTRIBUTING.md: every create/update/delete logs at `info`. A single owner-triggered
+      // selection produces no sweep summary, so without this record the default-level log
+      // cannot establish that the row changed at all.
+      it('emits exactly one info record with the safe fields on a successful persist', async () => {
+        const { bookId } = await seedCandidates(['a.epub', 'b.epub', 'c.epub']);
+        stubRevalidation();
+
+        await expect(reconciler.selectCompanionEbook(bookId, 2)).resolves.toMatchObject({ outcome: 'selected' });
+
+        const records = selectionInfoRecords();
+        expect(records).toHaveLength(1);
+        // The EXACT key set — a widened record that started carrying the resolved path or the
+        // library root fails here rather than in a leak review.
+        expect(Object.keys(records[0]!).sort()).toEqual(['bookId', 'candidateCount', 'filename', 'status']);
+        expect(records[0]).toEqual({
+          bookId,
+          filename: 'c.epub',
+          status: 'available',
+          candidateCount: 3,
+        });
+      });
+
+      it('carries the live candidate count and the persisted status, not the stored ones', async () => {
+        const { bookId } = await seedCandidates(['a.epub', 'b.epub']);
+        await seedRow(bookId, {
+          status: 'ambiguous', filename: null, sizeBytes: null, mtimeMs: null, ctimeMs: null, candidateCount: 7,
+        });
+        revalidateCompanionFileMock.mockImplementation(async ({ filename, candidateCount }) => ({
+          outcome: 'observed',
+          observation: {
+            status: 'invalid',
+            filename,
+            sizeBytes: 4096,
+            mtimeMs: 1_700_000_000_000,
+            ctimeMs: 1_700_000_000_500,
+            candidateCount,
+            selected: true,
+            validationCode: 'empty_spine',
+          },
+        }));
+
+        await reconciler.selectCompanionEbook(bookId, 0);
+
+        expect(selectionInfoRecords()[0]).toEqual({
+          bookId,
+          filename: 'a.epub',
+          status: 'invalid',   // the persisted verdict, not the stored `ambiguous`
+          candidateCount: 2,   // the LIVE count, not the stored 7
+        });
+      });
+
+      it('never leaks the resolved path or the library root', async () => {
+        const { bookId, bookPath } = await seedCandidates(['a.epub']);
+        stubRevalidation();
+
+        await reconciler.selectCompanionEbook(bookId, 0);
+
+        const leaves = JSON.stringify(selectionInfoRecords());
+        expect(leaves).not.toContain(bookPath);
+        expect(leaves).not.toContain(libraryRoot);
+      });
+
+      // A mutation record is only meaningful if it is absent when nothing was written.
+      it.each<[string, () => Promise<number>]>([
+        ['out_of_range', async () => (await seedCandidates(['a.epub'])).bookId],
+        ['gone', async () => {
+          const { bookId } = await seedCandidates(['a.epub']);
+          findCompanionEbookCandidatesMock.mockResolvedValueOnce({ outcome: 'gone' });
+          return bookId;
+        }],
+        ['retained', async () => {
+          const { bookId } = await seedCandidates(['a.epub']);
+          revalidateCompanionFileMock.mockResolvedValueOnce({ outcome: 'retain' });
+          return bookId;
+        }],
+      ])('emits no info record when the outcome is %s', async (_label, arrange) => {
+        const bookId = await arrange();
+        spies.info.mockClear();
+
+        await reconciler.selectCompanionEbook(bookId, _label === 'out_of_range' ? 5 : 0);
+
+        expect(selectionInfoRecords()).toEqual([]);
+      });
+
+      it('emits no info record when the guarded commit conflicts', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        revalidateCompanionFileMock.mockImplementationOnce(async ({ filename, candidateCount }) => {
+          await db.update(books).set({ path: join(libraryRoot, 'moved-elsewhere') }).where(eq(books.id, bookId));
+          return selectedObservation(filename, candidateCount);
+        });
+        spies.info.mockClear();
+
+        await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'conflicted' });
+
+        expect(selectionInfoRecords()).toEqual([]);
+      });
+    });
+
+    // -----------------------------------------------------------------------
     // Settings setup, above the lock (AC24 steps -2/-1)
     // -----------------------------------------------------------------------
 
