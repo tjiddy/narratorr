@@ -113,6 +113,7 @@ async function buildApp(urlBase = ''): Promise<FastifyInstance> {
     await v1CompanionEbookRoutes(scoped, {
       bookService: bookService as never,
       settingsService: settingsService as never,
+      reconciler: { reconcileBook: vi.fn(), reconcileAll: vi.fn() },
     }, db);
     // Non-v1 decoys (must be ABSENT from the public spec).
     scoped.get('/api/books', async () => ({ ok: true }));

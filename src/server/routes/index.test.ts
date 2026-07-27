@@ -168,7 +168,7 @@ describe('routeRegistry', () => {
   // test-only seam, and leaking it into the composition root would silently move the
   // concurrency bound off `MAX_CONCURRENT_COMPANION_STREAMS`. The `db` third argument is
   // pinned exactly — the observation read depends on it.
-  it('composes v1CompanionEbookRoutes exactly once, with { bookService, settingsService } and the db', async () => {
+  it('composes v1CompanionEbookRoutes exactly once, with { bookService, settingsService, reconciler } and the db', async () => {
     const { v1CompanionEbookRoutes } = await import('./v1/companion-ebook.js');
     (v1CompanionEbookRoutes as unknown as Mock).mockClear();
 
@@ -178,6 +178,8 @@ describe('routeRegistry', () => {
     expect(v1CompanionEbookRoutes as unknown as Mock).toHaveBeenCalledWith(app, {
       bookService: svc(services, 'book'),
       settingsService: svc(services, 'settings'),
+      // #1960 AC30 — required, unlike the still-absent `maxConcurrentStreams` seam.
+      reconciler: svc(services, 'companionEbook'),
     }, db);
   });
 

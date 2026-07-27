@@ -10,6 +10,7 @@ import { openCompanionEbook } from '../../services/companion-ebook-open.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
 import { Semaphore } from '../../utils/semaphore.js';
 import { streamCompanionEbook } from '../../utils/companion-ebook-stream.js';
+import { triggerCompanionReconcile, type CompanionReconcileTrigger } from '../../services/companion-ebook-trigger.js';
 import { v1ErrorHandler } from './_helpers.js';
 
 // ============================================================================
@@ -24,6 +25,13 @@ import { v1ErrorHandler } from './_helpers.js';
 export interface V1CompanionEbookRouteDeps {
   bookService: BookService;
   settingsService: SettingsService;
+  /**
+   * #1960 AC26/AC30 — REQUIRED, unlike `maxConcurrentStreams` below. A mismatch here is the
+   * only signal a watcherless design gets that the stored observation went stale, so a
+   * deployment that forgot to wire it would silently lose the self-healing half of the
+   * design. The route never awaits it (AC28).
+   */
+  reconciler: CompanionReconcileTrigger;
   /**
    * TEST SEAM ONLY (#1975 AC18). Production wiring in `routes/index.ts` omits it, so the
    * effective bound is `MAX_CONCURRENT_COMPANION_STREAMS`. It exists so a test can drive
@@ -226,6 +234,12 @@ export async function v1CompanionEbookRoutes(
           );
           if (opened.outcome !== 'ok') {
             releaseSlot();
+            // #1960 AC26 — the stored row said the file was there and the live filesystem
+            // disagreed. Fire-and-forget, never awaited: the `unavailable(reply)` below is
+            // byte-identical to what it was before the hook (AC28). Sited HERE and not inside
+            // `openCompanionEbook`, which the reconciler itself calls under its own
+            // non-reentrant book lock (AC29).
+            triggerCompanionReconcile(deps.reconciler, bookId, request.log, 'Companion ebook reconcile failed after a read-path mismatch');
             // `{ bookId, outcome }` and nothing else — no path, no filename, no library root.
             // `bookId` is the numeric rowid, matching the owner route's boundary shape. These
             // records survive at default level and get pasted into bug reports, and unlike the

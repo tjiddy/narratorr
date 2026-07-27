@@ -323,10 +323,13 @@ const routeRegistry: RouteFactory[] = [
   // The public companion-ebook stream (#1975). `db` carries the observation read — the route
   // calls `findCompanionEbook(db, bookId)` directly, so no new `Services` member is needed.
   // `maxConcurrentStreams` is deliberately ABSENT: it is a test-only seam, and production
-  // takes `MAX_CONCURRENT_COMPANION_STREAMS`.
+  // takes `MAX_CONCURRENT_COMPANION_STREAMS`. `reconciler` is #1960's read-path mismatch
+  // hook — required, not optional, so a wiring omission is a compile error rather than a
+  // silently missing self-heal.
   (app, s, db) => v1CompanionEbookRoutes(app, {
     bookService: s.book,
     settingsService: s.settings,
+    reconciler: s.companionEbook,
   }, db),
 ];
 

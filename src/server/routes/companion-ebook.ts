@@ -17,6 +17,7 @@ import type {
   CompanionSelectionResult,
 } from '../services/companion-ebook-reconciler.js';
 import type { CompanionEbookRow } from '../services/types.js';
+import { triggerCompanionReconcile } from '../services/companion-ebook-trigger.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { streamCompanionEbook } from '../utils/companion-ebook-stream.js';
 
@@ -71,6 +72,33 @@ function featureDisabled(reply: FastifyReply): FastifyReply {
  */
 function logOutcome(request: FastifyRequest, bookId: number, outcome: string, message: string): void {
   request.log.warn({ bookId, outcome }, message);
+}
+
+/**
+ * Self-healing on a read-path mismatch (#1960 AC26–AC29). The stored row said the file was
+ * there and the live filesystem disagreed — in a watcherless design this request IS the only
+ * signal that the observation went stale, so it enqueues a reconcile for that book before
+ * returning its error.
+ *
+ * **Sited at the CALLERS, never inside `resolveCompanionEbookPath` / `openCompanionEbook`
+ * (AC29).** `CompanionEbookReconciler` calls the resolver itself from inside
+ * `withBookAdmissionLock`, which is non-reentrant — a hook in the shared helper would re-enter
+ * the reconciler from within its own lock.
+ *
+ * Fire-and-forget and never awaited, so HTTP behaviour is byte-identical: same status, same
+ * body, same latency, and a rejecting reconciler cannot turn a 404 into a 500 (AC28).
+ *
+ * **Accepted characteristic (AC31):** every mismatched request enqueues its OWN book run —
+ * `reconcileBook` registers a fresh run per call and `withBookAdmissionLock` only SERIALIZES
+ * those runs; nothing merges them. Only `reconcileAll()` coalesces and it is not on this path.
+ * Cases that write a non-`available` status self-limit (the exposure gate closes before the
+ * next request reaches the opener); the ones that skip-or-retain without a write re-enqueue on
+ * every request, bounded by one eligibility probe each — zero filesystem calls when
+ * containment rejects lexically, one `stat` when the directory probe rejects, and a bounded
+ * `readdir` only for books that are actually eligible.
+ */
+function enqueueMismatchReconcile(deps: CompanionEbookRouteDeps, bookId: number, request: FastifyRequest): void {
+  triggerCompanionReconcile(deps.reconciler, bookId, request.log, 'Companion ebook reconcile failed after a read-path mismatch');
 }
 
 /** Project a stored row (or the absence of one) as the display-only payload — no `readdir`. */
@@ -229,6 +257,7 @@ async function loadCompanionInspection(
   );
   if (resolved.outcome !== 'ok') {
     logOutcome(request, id, resolved.outcome, 'Companion ebook read unavailable');
+    enqueueMismatchReconcile(deps, id, request);
     return { reply: notFound(reply) };
   }
 
@@ -244,6 +273,7 @@ async function loadCompanionInspection(
     // containment, so anything arriving here is transient, and §4's accepted answer for the
     // stale window is a clean 404.
     logOutcome(request, id, 'inspect_failed', 'Companion ebook inspection failed');
+    enqueueMismatchReconcile(deps, id, request);
     // Logged ONCE at debug, in the established helper shape, so the failure stays diagnosable
     // under `LOG_LEVEL=debug` while the default-level boundary record stays path-free.
     // `serializeError` is mandatory — `narratorr/no-raw-error-logging` traces catch bindings.
@@ -258,6 +288,7 @@ async function loadCompanionInspection(
     // The stored row said `available` and the live file disagrees — the §4 stale-window
     // outcome, not an error class of its own.
     logOutcome(request, id, inspection.status, 'Companion ebook inspection did not agree with the stored row');
+    enqueueMismatchReconcile(deps, id, request);
     return { reply: notFound(reply) };
   }
 
@@ -460,6 +491,7 @@ export async function companionEbookRoutes(
       );
       if (opened.outcome !== 'ok') {
         logOutcome(request, id, opened.outcome, 'Companion ebook download unavailable');
+        enqueueMismatchReconcile(deps, id, request);
         return notFound(reply);
       }
 
