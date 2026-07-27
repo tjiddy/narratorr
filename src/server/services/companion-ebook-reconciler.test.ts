@@ -130,6 +130,27 @@ async function flush(rounds = 12): Promise<void> {
   for (let i = 0; i < rounds; i++) await new Promise((resolve) => setTimeout(resolve, 1));
 }
 
+/**
+ * Poll until the system has reached a named state.
+ *
+ * Every "arrange" step in this suite drives real async work — libSQL round-trips and real
+ * `setTimeout` ticks — so a fixed number of `flush()` rounds is a bet on machine speed that
+ * loses under a loaded full-suite run. `waitUntil` is used to REACH a state; `flush()` is kept
+ * only for the quiet period that follows, where the assertion is that nothing further happened.
+ */
+async function waitUntil(predicate: () => boolean, label: string): Promise<void> {
+  for (let i = 0; i < 3_000; i++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
+/** How many per-book passes have entered `observeCompanionEbook` so far. */
+function observedCount(): number {
+  return hoisted.events.filter((event) => event.startsWith('observe:')).length;
+}
+
 function createMockLogger() {
   const log = {
     info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(),
@@ -413,9 +434,9 @@ describe('CompanionEbookReconciler (#1959)', () => {
       });
 
       const a = reconciler.reconcileBook(bookId);
-      await flush(3);
+      await waitUntil(() => observedCount() === 1, 'A to park inside its observe pass');
       const b = reconciler.reconcileBook(bookId);
-      await flush(3);
+      await waitUntil(() => hoisted.events.includes(`lock.acquire:${bookId}`) && priors.length === 1, 'B to queue on the lock');
 
       gate.resolve();
       await Promise.all([a, b]);
@@ -439,7 +460,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       const target = await insertBook();
 
       const sweep = reconciler.reconcileAll();
-      await flush();
+      await waitUntil(() => observedCount() === RECONCILE_CONCURRENCY, 'the sweep to saturate its slots');
       // The AC21 prefilter has already returned this id; the authoritative row moves afterwards.
       await db.update(books).set({ status: 'wanted' }).where(eq(books.id, target));
       gate.resolve();
@@ -608,6 +629,8 @@ describe('CompanionEbookReconciler (#1959)', () => {
       }
 
       const sweep = reconciler.reconcileAll();
+      await waitUntil(() => inFlight === RECONCILE_CONCURRENCY, 'the sweep to saturate its slots');
+      // Then a quiet period: a fifth pass would push `peak` past the bound.
       await flush();
       expect(peak).toBe(RECONCILE_CONCURRENCY);
 
@@ -636,7 +659,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       }
 
       const sweep = reconciler.reconcileAll();
-      await flush();
+      await waitUntil(() => observedCount() === RECONCILE_CONCURRENCY, 'the sweep to saturate its slots');
       expect(hoisted.events.filter((e) => e === 'semaphore.acquired')).toHaveLength(RECONCILE_CONCURRENCY);
 
       // Inserted AFTER the prefilter returned, so this book belongs to no sweep and the slot
@@ -644,7 +667,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       const direct = await insertBook();
       // Every slot is held by a parked sweep book; the direct call must not queue behind them.
       const directRun = reconciler.reconcileBook(direct);
-      await flush();
+      await waitUntil(() => hoisted.events.includes(`lock.held:${direct}`), 'the direct call to reach its lock');
       expect(hoisted.events).toContain(`lock.held:${direct}`);
       expect(hoisted.events.filter((e) => e === 'semaphore.wait')).toHaveLength(RECONCILE_CONCURRENCY);
 
@@ -680,7 +703,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       observeMock.mockImplementation(async () => { await gate.promise; return OBSERVED; });
 
       const a = reconciler.reconcileAll();
-      await flush(3);
+      await waitUntil(() => observeMock.mock.calls.length >= 1, 'the first run to reach its sweep phase');
       const b = reconciler.reconcileAll();
       gate.resolve();
       await Promise.all([a, b]);
@@ -694,7 +717,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       observeMock.mockImplementation(async () => { await gate.promise; return OBSERVED; });
 
       const first = reconciler.reconcileAll();
-      await flush(3);
+      await waitUntil(() => observeMock.mock.calls.length >= 1, 'the first run to reach its sweep phase');
       const joined = [1, 2, 3, 4, 5].map(() => reconciler.reconcileAll());
       gate.resolve();
       await Promise.all([first, ...joined]);
@@ -714,11 +737,12 @@ describe('CompanionEbookReconciler (#1959)', () => {
       });
 
       const first = reconciler.reconcileAll();
-      await flush(3);
+      await waitUntil(() => observeMock.mock.calls.length >= 1, 'the first run to reach its sweep phase');
       const joined = reconciler.reconcileAll();
       const joinedState = track(joined);
 
       firstGate.resolve();
+      await waitUntil(() => summaries(spies).length === 1, "the first sweep's summary");
       await flush();
       // The first sweep has finished and emitted its summary; the joined caller must still be
       // waiting on the follow-up it queued — counting sweeps alone would not catch this.
@@ -737,7 +761,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       observeMock.mockImplementation(async () => { await gate.promise; return OBSERVED; });
 
       const first = reconciler.reconcileAll();
-      await flush(3);
+      await waitUntil(() => observeMock.mock.calls.length >= 1, 'the first run to reach its sweep phase');
       const joined = reconciler.reconcileAll();
       gate.resolve();
       await Promise.all([first, joined]);
@@ -776,7 +800,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       }) as never);
 
       const first = reconciler.reconcileAll();
-      await flush(3);
+      await waitUntil(() => selectSpy.mock.calls.length >= 1, 'the first run to issue its prefilter');
       const joined = [1, 2, 3].map(() => reconciler.reconcileAll());
       const joinedStates = joined.map(track);
       await flush(3);
@@ -787,6 +811,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(selectSpy).toHaveBeenCalledTimes(1);
 
       prefilterGate.resolve();
+      await waitUntil(() => summaries(spies).length === 1, "the first sweep's summary");
       await flush();
       // The first sweep has finished; the joined callers are still on the ONE follow-up their
       // three calls coalesced into.
@@ -810,7 +835,10 @@ describe('CompanionEbookReconciler (#1959)', () => {
       });
 
       const first = reconciler.reconcileAll();
-      await flush(3);
+      await waitUntil(
+        () => settingsGet.mock.calls.some((call) => call[0] === 'library'),
+        "the first run to park on settings.get('library')",
+      );
       const joined = [1, 2, 3].map(() => reconciler.reconcileAll());
       await flush(3);
 
@@ -967,7 +995,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       const vanishing = await insertBook();
 
       const sweep = reconciler.reconcileAll();
-      await flush();
+      await waitUntil(() => observedCount() === RECONCILE_CONCURRENCY, 'the sweep to saturate its slots');
       await db.delete(books).where(eq(books.id, vanishing));
       gate.resolve();
       await sweep;
@@ -998,7 +1026,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       outcomes.set(first, async () => { await gate.promise; return OBSERVED; });
 
       const sweep = reconciler.reconcileAll();
-      await flush();
+      await waitUntil(() => observedCount() === RECONCILE_CONCURRENCY, 'the sweep to saturate its slots');
       const stopping = reconciler.stop();
       gate.resolve();
       await Promise.all([sweep, stopping]);
@@ -1028,7 +1056,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       }
 
       const sweep = reconciler.reconcileAll();
-      await flush();
+      await waitUntil(() => observedCount() === RECONCILE_CONCURRENCY, 'the sweep to saturate its slots');
       const started = observeMock.mock.calls.length;
       expect(started).toBe(RECONCILE_CONCURRENCY);
 
@@ -1045,7 +1073,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       outcomes.set(bookId, async () => { await gate.promise; return OBSERVED; });
 
       const direct = reconciler.reconcileBook(bookId);
-      await flush(4);
+      await waitUntil(() => observedCount() === 1, 'the direct run to park inside its observe pass');
       const stopping = reconciler.stop();
       const stopState = track(stopping);
       await flush();
@@ -1089,7 +1117,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       const holding = actual.withBookAdmissionLock(late, async () => { await lockGate.promise; });
 
       const direct = reconciler.reconcileBook(late);
-      await flush(3);
+      await waitUntil(() => hoisted.events.includes(`lock.acquire:${late}`), 'the direct run to queue on the held lock');
       void blocker;
 
       const stopping = reconciler.stop();
@@ -1108,7 +1136,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       const selectSpy = vi.spyOn(db, 'select');
 
       const first = reconciler.reconcileAll();
-      await flush(3);
+      await waitUntil(() => observeMock.mock.calls.length >= 1, 'the first run to reach its sweep phase');
       const prefiltersAfterFirst = selectSpy.mock.calls.length;
       const joined = reconciler.reconcileAll();
       const joinedState = track(joined);
@@ -1180,7 +1208,12 @@ describe('CompanionEbookReconciler (#1959)', () => {
       }
 
       const run = reconciler.reconcileAll();
-      await flush(3);
+      await waitUntil(
+        () => (site === 'a settings read'
+          ? settingsGet.mock.calls.some((call) => call[0] === 'library')
+          : (selectSpy?.mock.calls.length ?? 0) >= 1),
+        `the run to park on ${site}`,
+      );
       const stopping = reconciler.stop();
       const stopState = track(stopping);
       await flush();
@@ -1206,7 +1239,10 @@ describe('CompanionEbookReconciler (#1959)', () => {
       });
 
       const a = reconciler.reconcileAll();
-      await flush(3);
+      await waitUntil(
+        () => settingsGet.mock.calls.some((call) => call[0] === 'library'),
+        "the run to park on settings.get('library')",
+      );
       const b = reconciler.reconcileAll();
       const bState = track(b);
       const stopping = reconciler.stop();

@@ -37,6 +37,7 @@ vi.mock('../services', () => ({
   DiscoveryService: vi.fn(),
   SeriesCardService: vi.fn(),
   ReferenceReadService: vi.fn(),
+  CompanionEbookReconciler: vi.fn(),
 }));
 vi.mock('../services/import.service.js', () => ({ ImportService: vi.fn() }));
 vi.mock('../services/merge.service.js', () => ({ MergeService: vi.fn() }));
