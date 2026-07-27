@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import type { DbOrTx } from '../../db/client.js';
+import type { Db, Transaction } from '../../db/client.js';
 import { serializeDbWrite } from './db-write-lane.js';
 
 /**
  * The lane's whole purpose is an ordering guarantee across CALLERS, so every case below drives
- * it the way two different services would: separate `serializeDbWrite` calls that share nothing
- * but the connection object. A test that only queued from one call site would pass on a
+ * it the way two different call paths would: separate `serializeDbWrite` calls that share
+ * nothing but the connection object. A test that only queued from one call site would pass on a
  * service-local tail too, which is exactly the shape #1959 F8 rejected.
+ *
+ * Driver-level transaction exclusion is NOT what this lane provides and is not tested here —
+ * `src/db/serial-transactions.test.ts` owns that, against a real connection.
  */
-function fakeDb(name: string): DbOrTx {
-  return { name } as unknown as DbOrTx;
+function fakeDb(name: string): Db {
+  return { name } as unknown as Db;
 }
 
 interface Deferred {
@@ -36,20 +39,20 @@ async function flush(rounds = 8): Promise<void> {
 }
 
 describe('serializeDbWrite (#1959 F8)', () => {
-  it('never overlaps two operations queued on the same connection by different callers', async () => {
+  it('never overlaps two compound operations queued on the same connection by different callers', async () => {
     const db = fakeDb('shared');
     const gate = deferred();
     const events: string[] = [];
 
-    // Caller A — stands in for ImportStagingService's finalize transaction.
+    // Caller A — stands in for ImportStagingService's finalize sequence.
     const a = serializeDbWrite(db, async () => {
       events.push('a:start');
       await gate.promise;
       events.push('a:end');
     });
 
-    // Caller B — stands in for the reconciler's guarded observation write. It holds no
-    // reference to A; the connection is the only thing they share.
+    // Caller B — stands in for a second compound operation, e.g. its discard path. It holds
+    // no reference to A; the connection is the only thing they share.
     const b = serializeDbWrite(db, async () => {
       events.push('b:start');
       events.push('b:end');
@@ -132,5 +135,23 @@ describe('serializeDbWrite (#1959 F8)', () => {
     await expect(failing).rejects.toThrow('boom');
     await next;
     expect(events).toEqual(['failing:start', 'failing:end', 'next']);
+  });
+
+  /**
+   * The lane key must be the CONNECTION (#1959 F13). A transaction-scoped handle is a different
+   * object, so accepting one would silently open a second tail for the same underlying
+   * connection and let the compound operations this lane exists to order interleave again.
+   *
+   * Pinned at the type level because that is where the constraint lives — there is no runtime
+   * behaviour to assert, and widening the parameter back to `DbOrTx` makes the directive below
+   * unused, which `tsc` reports as an error. A test that passed a handle through a cast would
+   * prove nothing, since the cast is the defect.
+   */
+  it('refuses a transaction handle at the type boundary', () => {
+    const tx = {} as Transaction;
+    // @ts-expect-error — `serializeDbWrite` takes a `Db`; a transaction handle is not one.
+    const rejected = () => serializeDbWrite(tx, async () => undefined);
+
+    expect(typeof rejected).toBe('function');
   });
 });

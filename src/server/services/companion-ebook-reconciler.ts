@@ -3,7 +3,6 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '../../db/client.js';
 import { books } from '../../db/schema.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
-import { serializeDbWrite } from '../utils/db-write-lane.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { withBookAdmissionLock } from './book-admission.js';
@@ -393,12 +392,12 @@ export class CompanionEbookReconciler {
    * admission lock, so the lock alone cannot cover it. Term 2 is defence in depth against a
    * second writer.
    *
-   * The transaction — and ONLY the transaction — runs on the connection's shared serial write
-   * lane. A libSQL connection permits one transaction at a time, and `createServices` hands the
-   * same `Db` to every service, so the lane has to be keyed on the connection rather than owned
-   * privately here: a service-local tail would still let a companion write overlap an
-   * import-staging one and lose to `SQLITE_BUSY`. Discovery, validation, and both pre-scan reads
-   * stay outside it, which is where a sweep actually spends its time.
+   * Nothing here serializes the transaction, deliberately. A libSQL connection permits one
+   * transaction at a time and `createServices` hands the same `Db` to every service, but that
+   * exclusion is enforced by the connection itself (`db/serial-transactions.ts`), not by callers
+   * opting in — so the four concurrent per-book passes queue here automatically, and so does any
+   * other service's transaction. Discovery, validation, and both pre-scan reads stay outside the
+   * transaction, which is where a sweep actually spends its time.
    */
   private async commitObservation(
     bookId: number,
@@ -406,7 +405,7 @@ export class CompanionEbookReconciler {
     prior: CompanionEbookRow | null,
     observation: CompanionEbookObservation,
   ): Promise<BookDisposition> {
-    return serializeDbWrite(this.db, async () => this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const current = await readBookSnapshot(tx, bookId);
       if (current === null || current.path !== snapshot.path || current.status !== snapshot.status) {
         this.log.debug({ bookId, reason: 'book-changed' }, 'Companion ebook observation write aborted');
@@ -421,6 +420,6 @@ export class CompanionEbookReconciler {
 
       await upsertCompanionEbook(tx, bookId, observation);
       return 'observed';
-    }));
+    });
   }
 }

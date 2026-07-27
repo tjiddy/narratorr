@@ -1,49 +1,50 @@
-import type { DbOrTx } from '../../db/client.js';
+import type { Db } from '../../db/client.js';
 
 /**
- * One serialization lane per database connection, shared by every service that opens a
- * transaction on it (#1959 F8; the pattern originates in #1893 F36).
+ * An APPLICATION-level serialization lane, one per database connection (#1893 F36, re-homed by
+ * #1959 F8 and narrowed by #1959 F13).
  *
- * **Why this exists.** A `@libsql/client` connection permits exactly ONE transaction at a
- * time. `createDb` (`src/db/client.ts`) builds one client per process and `createServices`
- * hands that single `Db` to every service, so two overlapping `db.transaction(...)` calls —
- * from the same service or from two different ones — do not queue: the loser rejects with
- * `LibsqlError: SQLITE_BUSY: database is locked`. It is a connection-level constraint, not
- * lock contention, so no busy-timeout or retry setting avoids it.
+ * **This is not the transaction guarantee.** Driver-level exclusion — a libSQL connection
+ * permits one transaction at a time — is enforced by the connection itself in
+ * `src/db/serial-transactions.ts`, where no caller can bypass it. Every `db.transaction(...)`
+ * in the codebase is already ordered without touching this module.
  *
- * **Why a per-`Db` `WeakMap` rather than an injected instance.** The invariant that has to
- * hold is "one lane per connection", and only a lane keyed on the connection itself can
- * guarantee it. A lane passed through DI is a lane a future service can be wired without —
- * silently reintroducing exactly the overlap this module exists to prevent — and the failure
- * would surface as an intermittent `SQLITE_BUSY` inside whichever caller lost the race, which
- * reads as flaky application logic rather than a wiring mistake. Keying on the `Db` makes the
- * correct lane unmissable: any caller holding the same connection gets the same tail by
- * construction, with no wiring to forget. Entries are weakly held, so a per-test database is
- * collected with its lane.
+ * What this lane adds is stronger and different: it orders whole COMPOUND operations, including
+ * the reads and branching that sit outside any transaction. `ImportStagingService` is the
+ * caller that needs it — its PUT, finalize, and discard paths are read-then-decide-then-write
+ * sequences, and one is a bare `DELETE` with no transaction at all. Ordering their transactions
+ * would not be enough: a PUT racing finalize has to observe committed state rather than an
+ * interleaved half-step, which is what makes two concurrent finalizes both resolve to
+ * `processing` instead of one of them observing a torn view.
  *
- * **Serialize the transaction, never the work around it.** Callers should wrap only
- * `db.transaction(...)`. Wrapping the reads, filesystem probes, or validation that surround it
- * would throw away concurrency the driver never restricted — `CompanionEbookReconciler` keeps
- * four per-book passes running while only their guarded writes queue here.
+ * **Reach for this only when a compound sequence must be atomic against another compound
+ * sequence.** A single guarded transaction does not need it — `CompanionEbookReconciler` used
+ * this briefly and no longer does, because its conditional write is one transaction and the
+ * connection already orders those. Wrapping more than necessary throws away concurrency the
+ * driver never restricted.
+ *
+ * **Keyed on the `Db`, and the parameter type says so.** The invariant is one lane per
+ * connection, so the key must be the connection. `DbOrTx` would compile while being wrong: a
+ * transaction-scoped handle is a different object and would silently receive its own tail,
+ * reintroducing the interleaving this exists to prevent. The narrow parameter makes that
+ * unrepresentable rather than merely discouraged, and needs no cast to key the map.
  *
  * This does NOT serialize across processes or across separate connections, and it is not a
- * substitute for a transaction's own guards: it prevents driver-level overlap, not logical
- * write conflicts. Conditional writes still need their own preconditions.
+ * substitute for a transaction's own guards — conditional writes still need their preconditions.
  */
-const lanes = new WeakMap<object, Promise<unknown>>();
+const lanes = new WeakMap<Db, Promise<unknown>>();
 
 /**
- * Run `fn` on `db`'s serial write lane: it starts only after every previously queued operation
- * on the same connection has settled.
+ * Run `fn` on `db`'s application lane: it starts only after every previously queued operation on
+ * the same connection has settled.
  *
  * The chain is advanced with `.then(fn, fn)` and a settle-swallowing tail, so a rejected
  * operation neither wedges the lane nor propagates into the next one — the rejection still
  * reaches this call's own caller.
  */
-export function serializeDbWrite<T>(db: DbOrTx, fn: () => Promise<T>): Promise<T> {
-  const key = db as unknown as object;
-  const previous = lanes.get(key) ?? Promise.resolve();
+export function serializeDbWrite<T>(db: Db, fn: () => Promise<T>): Promise<T> {
+  const previous = lanes.get(db) ?? Promise.resolve();
   const run = previous.then(fn, fn);
-  lanes.set(key, run.then(() => undefined, () => undefined));
+  lanes.set(db, run.then(() => undefined, () => undefined));
   return run;
 }

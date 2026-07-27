@@ -97,12 +97,13 @@ export class ImportStagingService {
    * idempotency (two finalizes both resolve to 'processing') and clean ordering (a PUT
    * racing finalize sees the committed state, not a corrupted tx).
    *
-   * The lane now lives in `utils/db-write-lane.ts` and is keyed on the `Db` rather than
-   * owned privately here. `createServices` hands this same connection to other
-   * transaction-opening services (`CompanionEbookReconciler`), and a service-local tail
-   * only orders that service against itself — an import-staging transaction could still
-   * overlap a companion one and lose. Keying on the connection is what makes the
-   * one-transaction-at-a-time premise actually hold.
+   * The lane lives in `utils/db-write-lane.ts` and is keyed on the `Db` rather than owned
+   * privately here. It is NOT what keeps two transactions off the connection — that is
+   * enforced by the connection itself in `db/serial-transactions.ts`, for every caller,
+   * with nothing to opt into. What this lane adds is the broader guarantee these three
+   * paths actually need: PUT, finalize, and discard are read-then-decide-then-write
+   * sequences (discard is a bare DELETE with no transaction at all), so ordering their
+   * transactions alone would still let one observe another's half-step.
    *
    * This is the single-process supported path; cross-connection contention (the
    * retention-cleanup races) is a separate durable-CAS backstop and intentionally not

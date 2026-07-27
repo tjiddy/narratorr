@@ -8,7 +8,6 @@ import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { books, companionEbooks } from '../../db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
-import { serializeDbWrite } from '../utils/db-write-lane.js';
 import type { SettingsService } from './settings.service.js';
 import { CompanionEbookReconciler, RECONCILE_CONCURRENCY } from './companion-ebook-reconciler.js';
 import { observeCompanionEbook } from './companion-ebook-observe.js';
@@ -640,14 +639,15 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(afterRow).toMatchObject(patch);
     });
 
-    it('runs the guarded write on the CONNECTION-wide lane, not a service-local one (F8)', async () => {
+    it('queues the guarded write behind an unrelated transaction on the same connection (F8/F12)', async () => {
       const bookId = await insertBook();
       const gate = deferred();
       const events: string[] = [];
 
-      // Another service holding the same `Db` — this is ImportStagingService's position, and it
-      // shares nothing with the reconciler except the connection.
-      const otherService = serializeDbWrite(db, async () => {
+      // A plain `db.transaction` — the shape every other service in the codebase uses, and one
+      // that knows nothing about the reconciler or about any serialization helper. That is the
+      // point: the exclusion must hold for callers that never opted in.
+      const otherService = db.transaction(async () => {
         events.push('other:start');
         await gate.promise;
         events.push('other:end');
@@ -660,8 +660,8 @@ describe('CompanionEbookReconciler (#1959)', () => {
 
       const reconcile = reconciler.reconcileBook(bookId);
       await flush();
-      // A private per-service tail would have let the companion transaction open right here,
-      // overlapping the other service's and losing to SQLITE_BUSY.
+      // Without connection-level serialization the companion transaction opens right here,
+      // overlapping the other one, and loses to SQLITE_BUSY.
       expect(events).toEqual(['other:start']);
 
       gate.resolve();
@@ -968,6 +968,47 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(summaries(spies)).toEqual([]);
       expect(observeMock).not.toHaveBeenCalled();
       selectSpy?.mockRestore();
+    });
+
+    /**
+     * `reconcileBook()`'s setup catch is a SEPARATE catch from the sweep's, and the table above
+     * arms both settings sites only for `reconcileAll()` (F11). Deleting the direct catch makes
+     * the fire-and-forget entry point reject during either settings read — an unhandled
+     * rejection behind an already-returned response — while every other case here stays green.
+     *
+     * Both sites are armed here, and the assertions cover the whole AC15 contract for the direct
+     * path: the promise resolves, exactly one `warn` carries `bookId` plus `serializeError`, and
+     * the failure happens early enough that no lock, no DB read, and no filesystem pass occurs.
+     */
+    it.each([
+      { site: "settings.get('companionEpub')", failing: 'companionEpub' },
+      { site: "settings.get('library')", failing: 'library' },
+    ])('resolves and warns once when a direct reconcileBook hits a rejecting $site (F11)', async ({ failing }) => {
+      const bookId = await insertBook();
+      const error = Object.assign(new Error(`${failing} read failed`), { code: 'SQLITE_IOERR' });
+      settingsGet.mockImplementation(async (key: string) => {
+        if (key === failing) throw error;
+        if (key === 'companionEpub') return { enabled: true };
+        return { path: libraryRoot };
+      });
+      const selectSpy = vi.spyOn(db, 'select');
+
+      await expect(reconciler.reconcileBook(bookId)).resolves.toBeUndefined();
+
+      expect(spies.warn).toHaveBeenCalledTimes(1);
+      const record = spies.warn.mock.calls[0]![0] as Record<string, unknown>;
+      expect(record).toMatchObject({ bookId });
+      expectSerializedError(record.error, error, { code: 'SQLITE_IOERR' });
+
+      // Setup precedes every other step, so none of them may have run.
+      expect(withBookAdmissionLockMock).not.toHaveBeenCalled();
+      expect(selectSpy).not.toHaveBeenCalled();
+      expect(findCompanionEbookMock).not.toHaveBeenCalled();
+      expect(observeMock).not.toHaveBeenCalled();
+      expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+      // A direct call is not a sweep and never emits one.
+      expect(summaries(spies)).toEqual([]);
+      selectSpy.mockRestore();
     });
 
     /**
