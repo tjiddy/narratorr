@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -40,7 +40,7 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
    * exists. The worker is constructed WITH this spy so a trigger added to the refusal path is
    * detectable here; without it the whole branch is a blind spot.
    */
-  let reconcileBook: ReturnType<typeof vi.fn>;
+  let reconcileBook: Mock<(bookId: number) => Promise<void>>;
   let worker: ImportQueueWorker;
 
   beforeEach(async () => {
