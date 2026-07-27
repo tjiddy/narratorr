@@ -138,12 +138,64 @@ async function resolveAmbiguousState(
 }
 
 // ---------------------------------------------------------------------------
-// The two owner READS: metadata and cover (#1976 AC4-AC17)
+// The owner-readable gate, and the two owner READS (#1976 AC4-AC17)
 // ---------------------------------------------------------------------------
 
+/** Everything a companion file needs to be opened, once the row is known owner-readable. */
+interface ExposedCompanionContext {
+  bookPath: string;
+  filename: string;
+  libraryRoot: string;
+}
+
 /**
- * The shared prefix both read routes run: the download route's gate ladder term for term, then
- * the §5 resolver, then one `inspectEpub`.
+ * **The** owner-readable decision, at one site (PR #2010 F2).
+ *
+ * `companionEpub.enabled` false → `409` · `bookService.getById` null → `404` ·
+ * `isCompanionEbookExposed` false → `404` · `observation.filename` null → `404` ·
+ * blank `books.path` → `404`. Then the library root, which every opener needs.
+ *
+ * All three companion-file routes run this and only this: download applies
+ * `openCompanionEbook` to the result, metadata and cover apply the resolver plus
+ * `inspectEpub`. AC5's *"mirrors the shipped download route term for term"* is satisfied by
+ * construction here rather than by two copies staying in agreement — the ladder is literally
+ * the same code, so a later change to the exposure terms or the blank-path check cannot make
+ * download and the reads disagree about whether the same row is owner-readable.
+ *
+ * `isCompanionEbookEligible` is deliberately NOT called: its filesystem term is a `stat` of
+ * the book DIRECTORY, and the opener's containment check on the FILE is the authority. That is
+ * a decision, not an oversight. The exposure predicate is likewise never re-spelled inline —
+ * re-deriving `enabled && imported && available` is the exact drift it exists to prevent.
+ */
+async function loadExposedCompanionContext(
+  deps: CompanionEbookRouteDeps,
+  db: Db,
+  reply: FastifyReply,
+  id: number,
+): Promise<{ context: ExposedCompanionContext } | { reply: FastifyReply }> {
+  const { enabled } = await deps.settingsService.get('companionEpub');
+  if (!enabled) return { reply: featureDisabled(reply) };
+
+  const book = await deps.bookService.getById(id);
+  if (!book) return { reply: notFound(reply) };
+
+  const observation = await findCompanionEbook(db, id);
+  if (!isCompanionEbookExposed({ enabled, bookStatus: book.status, observationStatus: observation?.status })) {
+    return { reply: notFound(reply) };
+  }
+  // Both narrow nullable columns that `ck_companion_ebooks_file_present` already makes
+  // non-null for an `available` row — unreachable in practice, expressible in the type.
+  const filename = observation?.filename;
+  if (!filename) return { reply: notFound(reply) };
+  if (!book.path || book.path.trim() === '') return { reply: notFound(reply) };
+
+  const { path: libraryRoot } = await deps.settingsService.get('library');
+  return { context: { bookPath: book.path, filename, libraryRoot } };
+}
+
+/**
+ * The shared prefix both read routes run: the owner-readable gate above, then the §5 resolver,
+ * then one `inspectEpub`.
  *
  * Returns the available inspection, or the `reply` it already sent. Every negative is a `404`
  * except the feature gate's `409`, and every one of them is logged through `logOutcome` — so
@@ -167,24 +219,12 @@ async function loadCompanionInspection(
   reply: FastifyReply,
   id: number,
 ): Promise<{ inspection: EpubInspectionAvailable } | { reply: FastifyReply }> {
-  const { enabled } = await deps.settingsService.get('companionEpub');
-  if (!enabled) return { reply: featureDisabled(reply) };
+  const gated = await loadExposedCompanionContext(deps, db, reply, id);
+  if ('reply' in gated) return gated;
+  const { bookPath, filename, libraryRoot } = gated.context;
 
-  const book = await deps.bookService.getById(id);
-  if (!book) return { reply: notFound(reply) };
-
-  const observation = await findCompanionEbook(db, id);
-  // The SHARED exposure predicate — the three terms are never re-spelled inline.
-  if (!isCompanionEbookExposed({ enabled, bookStatus: book.status, observationStatus: observation?.status })) {
-    return { reply: notFound(reply) };
-  }
-  const filename = observation?.filename;
-  if (!filename) return { reply: notFound(reply) };
-  if (!book.path || book.path.trim() === '') return { reply: notFound(reply) };
-
-  const { path: libraryRoot } = await deps.settingsService.get('library');
   const resolved = await resolveCompanionEbookPath(
-    { bookId: id, bookPath: book.path, filename, libraryRoot },
+    { bookId: id, bookPath, filename, libraryRoot },
     request.log,
   );
   if (resolved.outcome !== 'ok') {
@@ -400,11 +440,9 @@ export async function companionEbookRoutes(
   /**
    * `GET /api/books/:id/companion-epub` — owner download.
    *
-   * The gate is the SHARED `isCompanionEbookExposed` predicate plus a non-blank `books.path`;
-   * re-deriving `enabled && imported && available` inline is the exact drift it exists to
-   * prevent. `isCompanionEbookEligible` is deliberately NOT called: its filesystem term is a
-   * `stat` of the book DIRECTORY, and the helper's containment check on the FILE is the
-   * authority. That is a decision, not an oversight.
+   * The gate is `loadExposedCompanionContext` — the SAME code metadata and cover run, not a
+   * mirror of it (PR #2010 F2). Only the tail differs: this route opens a descriptor and
+   * streams it, where the reads resolve a path and inspect it.
    */
   app.get<{ Params: IdParam }>(
     '/api/books/:id/companion-epub',
@@ -412,25 +450,12 @@ export async function companionEbookRoutes(
     async (request, reply) => {
       const { id } = request.params;
 
-      const { enabled } = await deps.settingsService.get('companionEpub');
-      if (!enabled) return featureDisabled(reply);
+      const gated = await loadExposedCompanionContext(deps, db, reply, id);
+      if ('reply' in gated) return gated.reply;
+      const { bookPath, filename, libraryRoot } = gated.context;
 
-      const book = await deps.bookService.getById(id);
-      if (!book) return notFound(reply);
-
-      const observation = await findCompanionEbook(db, id);
-      if (!isCompanionEbookExposed({ enabled, bookStatus: book.status, observationStatus: observation?.status })) {
-        return notFound(reply);
-      }
-      // Both narrow nullable columns that `ck_companion_ebooks_file_present` already makes
-      // non-null for an `available` row — unreachable in practice, expressible in the type.
-      const filename = observation?.filename;
-      if (!filename) return notFound(reply);
-      if (!book.path || book.path.trim() === '') return notFound(reply);
-
-      const { path: libraryRoot } = await deps.settingsService.get('library');
       const opened = await openCompanionEbook(
-        { bookId: id, bookPath: book.path, filename, libraryRoot },
+        { bookId: id, bookPath, filename, libraryRoot },
         request.log,
       );
       if (opened.outcome !== 'ok') {

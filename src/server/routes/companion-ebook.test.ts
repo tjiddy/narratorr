@@ -636,6 +636,74 @@ describe('companion ebook owner routes', () => {
     ['cover', coverReq],
   ];
 
+  /**
+   * All THREE companion-file routes, for the named owner-readable-gate consistency test
+   * (PR #2010 F2 / DRY-3). Download is in here deliberately: the gate is now `the` decision at
+   * one site rather than two that must stay aligned, and this is the test that fails if a
+   * later change re-forks it. Every case below is a gate NEGATIVE, which is exactly the part
+   * all three share — their success tails (stream / metadata DTO / cover bytes) differ and are
+   * asserted per route elsewhere.
+   */
+  const GATED_ROUTES: Array<[string, () => ReturnType<typeof metadataReq>]> = [
+    ['companion-epub (download)', download],
+    ...READ_ROUTES,
+  ];
+
+  // -------------------------------------------------------------------------
+  // The owner-readable gate — ONE decision, shared by all three routes (F2)
+  // -------------------------------------------------------------------------
+
+  /**
+   * The named consistency test the DRY-3 finding asked for. Each case drives one gate term and
+   * asserts that download, metadata, and cover answer IDENTICALLY — same status, same body.
+   *
+   * Its value is the cross-route equality, not the individual statuses (those are already
+   * covered per route): re-forking `loadExposedCompanionContext` so any one route gains or
+   * loses a term makes the surviving routes disagree here, which is precisely the drift the
+   * extraction removes.
+   */
+  describe('the owner-readable gate is one decision for all three companion-file routes', () => {
+    it.each<[string, () => Promise<void>]>([
+      ['the feature is disabled', async () => { setSettings({ enabled: false }); }],
+      ['the book is unknown', async () => { setBook(null); }],
+      ['books.status is not imported', async () => { setBook({ status: 'missing' }); }],
+      ['the observation row is absent', async () => { setObservation(null); }],
+      ['the observation is not available', async () => { setObservation(row({ status: 'ambiguous' })); }],
+      ['the stored filename is null', async () => { setObservation(row({ filename: null })); }],
+      ['books.path is null', async () => { setBook({ path: null }); }],
+      ['books.path is blank', async () => { setBook({ path: '   ' }); }],
+    ])('all three routes answer identically when %s', async (_label, arrange) => {
+      await placeEpub();
+      await arrange();
+
+      const results = [];
+      for (const [label, request] of GATED_ROUTES) {
+        const res = await request();
+        results.push({ label, statusCode: res.statusCode, body: res.json() });
+      }
+
+      const [first, ...rest] = results;
+      for (const other of rest) {
+        expect({ statusCode: other.statusCode, body: other.body })
+          .toEqual({ statusCode: first!.statusCode, body: first!.body });
+      }
+      // …and the shared answer is genuinely a rejection, so an all-200 regression cannot
+      // satisfy the equality above.
+      expect([409, 404]).toContain(first!.statusCode);
+    });
+
+    it('all three routes reach the file layer only after the gate passes', async () => {
+      await placeEpub();
+      setObservation(row({ status: 'ambiguous' }));
+
+      for (const [, request] of GATED_ROUTES) await request();
+
+      // The gate rejected before any opener or resolver ran, on every route.
+      expect(vi.mocked(openCompanionEbook)).not.toHaveBeenCalled();
+      expect(vi.mocked(resolveCompanionEbookPath)).not.toHaveBeenCalled();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // The shared read ladder (AC5, AC6, AC7, AC8/AC9)
   // -------------------------------------------------------------------------
