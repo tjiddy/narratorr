@@ -66,7 +66,7 @@ describe('v1ErrorHandler', () => {
     // generic-error-only test while attempting an envelope send on those two.
     describe.each(ERROR_CLASSES)('with %s', (_label, makeError) => {
       it('destroys the raw response and sends nothing when raw.headersSent is true', () => {
-        const { request, log } = stubRequest();
+        const { request } = stubRequest();
         const { reply, destroy, send, status } = stubReply({ headersSent: true });
 
         const returned = v1ErrorHandler(makeError(), request, reply);

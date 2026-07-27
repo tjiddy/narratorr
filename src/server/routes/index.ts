@@ -90,6 +90,7 @@ import { v1ActionsRoutes } from './v1/actions.js';
 import { v1MetadataRoutes } from './v1/metadata.js';
 import { v1SystemRoutes } from './v1/system.js';
 import { v1CapabilitiesRoutes } from './v1/capabilities.js';
+import { v1CompanionEbookRoutes } from './v1/companion-ebook.js';
 
 // The `Services` DI container type and `SERVICE_KEYS` list live in services/di.ts
 // (the correct layer — routes depend on services, not the reverse). Imported for
@@ -310,6 +311,14 @@ const routeRegistry: RouteFactory[] = [
   }),
   (app) => v1SystemRoutes(app),
   (app, s) => v1CapabilitiesRoutes(app, { settingsService: s.settings }),
+  // The public companion-ebook stream (#1975). `db` carries the observation read — the route
+  // calls `findCompanionEbook(db, bookId)` directly, so no new `Services` member is needed.
+  // `maxConcurrentStreams` is deliberately ABSENT: it is a test-only seam, and production
+  // takes `MAX_CONCURRENT_COMPANION_STREAMS`.
+  (app, s, db) => v1CompanionEbookRoutes(app, {
+    bookService: s.book,
+    settingsService: s.settings,
+  }, db),
 ];
 
 export { routeRegistry };
