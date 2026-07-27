@@ -60,6 +60,62 @@ describe('EpubValidation — discrimination pin', () => {
     const bogus: EpubValidation = { status: 'ambiguous' };
     expect(bogus.status).toBe('ambiguous');
   });
+
+  it('requires `code` on the invalid arm', () => {
+    // Requiredness, not value: the positive above still compiles if `code`
+    // becomes optional, so the omission is what pins the contract.
+    // @ts-expect-error - an invalid validation must carry its reason code
+    const noCode: EpubValidation = { status: 'invalid' };
+    expect(noCode.status).toBe('invalid');
+  });
+});
+
+describe('EpubInspection — discrimination pin', () => {
+  it('keeps the drm_protected and invalid arms', () => {
+    // Positive assignments: deleting either arm from the union fails the build
+    // right here, which is what the available-only tests below cannot catch.
+    const drm: EpubInspection = { status: 'drm_protected' };
+    const invalid: EpubInspection = { status: 'invalid', code: 'malformed_xml' };
+
+    expect([drm.status, invalid.status]).toEqual(['drm_protected', 'invalid']);
+    expect(invalid.status === 'invalid' && invalid.code).toBe('malformed_xml');
+  });
+
+  it('exposes `code` only on the invalid arm', () => {
+    const drm: EpubInspection = { status: 'drm_protected' };
+    // @ts-expect-error - `code` belongs to the `invalid` arm only
+    const drmCode = drm.code;
+    expect(drmCode).toBeUndefined();
+
+    const available: EpubInspection = {
+      status: 'available',
+      metadata: FULL_METADATA,
+      toc: null,
+      cover: null,
+    };
+    // @ts-expect-error - `code` belongs to the `invalid` arm only
+    const availableCode = available.code;
+    expect(availableCode).toBeUndefined();
+  });
+
+  it('keeps the available payload off the other arms', () => {
+    const invalid: EpubInspection = { status: 'invalid', code: 'truncated' };
+    // @ts-expect-error - `metadata` belongs to the `available` arm only
+    const invalidMetadata = invalid.metadata;
+    expect(invalidMetadata).toBeUndefined();
+  });
+
+  it('rejects a status outside the three arms', () => {
+    // @ts-expect-error - `ambiguous` is a discovery status, never an inspection status
+    const bogus: EpubInspection = { status: 'ambiguous' };
+    expect(bogus.status).toBe('ambiguous');
+  });
+
+  it('requires `code` on the invalid arm', () => {
+    // @ts-expect-error - an invalid inspection must carry its reason code
+    const noCode: EpubInspection = { status: 'invalid' };
+    expect(noCode.status).toBe('invalid');
+  });
 });
 
 describe('EpubInspection — payload pin', () => {
@@ -123,5 +179,17 @@ describe('EpubInspection — payload pin', () => {
     const stringBytes: EpubCover = { mediaType: 'image/png', bytes: 'not-a-buffer' };
 
     expect([svgCover.mediaType, stringBytes.bytes]).toEqual(['image/svg+xml', 'not-a-buffer']);
+  });
+
+  it('requires both EpubCover fields', () => {
+    // The two negatives above supply both properties, so each stays an error on
+    // its wrong *value* even if the property became optional. Omission is the
+    // only assertion that pins requiredness.
+    // @ts-expect-error - `mediaType` is required
+    const noMediaType: EpubCover = { bytes: Buffer.alloc(0) };
+    // @ts-expect-error - `bytes` is required
+    const noBytes: EpubCover = { mediaType: 'image/png' };
+
+    expect([noMediaType.bytes, noBytes.mediaType]).toEqual([Buffer.alloc(0), 'image/png']);
   });
 });
