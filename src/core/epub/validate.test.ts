@@ -1317,26 +1317,12 @@ describe('public surface and guardrails', () => {
     expect(module.inspectEpub.length).toBe(1);
   });
 
-  it('is the only module outside src/core/epub that may not import zip-source', async () => {
-    const { readdir, readFile } = await import('node:fs/promises');
-    const root = path.join(import.meta.dirname, '../..');
-    const files = (await readdir(root, { recursive: true })).filter(
-      (entry) => entry.endsWith('.ts') || entry.endsWith('.tsx'),
-    );
-    const outside = files.filter((file) => !file.startsWith(path.join('core', 'epub')));
-
-    const offenders: string[] = [];
-    for (const file of outside) {
-      const source = await readFile(path.join(root, file), 'utf8');
-      if (/from\s+['"][^'"]*zip-source(?:\.js)?['"]/.test(source)) offenders.push(file);
-    }
-
-    // This is what keeps `zip-source.ts`'s exported `withZipSource(filePath, …)`
-    // folder-internal, and it is the externally-reachable half of Decision 2.
-    // `withZipSource` is deliberately *not* removed, privatized, or wrapped —
-    // `validate.ts` imports it across a module boundary and must.
-    expect(offenders).toEqual([]);
-  });
+  // The "no module outside `src/core/epub/` imports zip-source.ts" guard — the
+  // externally-reachable half of #1990 Decision 2, and what keeps the exported
+  // `withZipSource(filePath, …)` folder-internal — is **not** re-asserted here.
+  // `zip-source.test.ts:1465-1479` already owns it, over the whole of `src/`
+  // outside this folder. A second scan of the same boundary would be a fourth
+  // hand-rolled source scan (#2000) and, being `from`-anchored, a weaker one.
 
   it('exports no type either, so the internal structure cannot escape the open', async () => {
     // Type-only exports are erased at runtime, so the runtime check above cannot
