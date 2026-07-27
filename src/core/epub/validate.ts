@@ -1,8 +1,10 @@
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
+import type { EpubOptionalReader, EpubPackageView } from './extract.js';
+import { extractEpubCover, extractEpubMetadata, extractEpubToc } from './extract.js';
 import { MAX_ARCHIVE_BYTES, MAX_INSPECTION_BYTES, MAX_XML_BYTES } from './limits.js';
 import { resolveHref } from './paths.js';
-import type { EpubValidation, EpubValidationCode } from './result.js';
+import type { EpubInspection, EpubValidation, EpubValidationCode } from './result.js';
 import type { EpubXmlElement, EpubXmlResult } from './xml.js';
 import { attrByExactName, childrenByLocalName, parseEpubXml } from './xml.js';
 import type {
@@ -722,5 +724,86 @@ async function runEpubPipeline<T>(
 export async function validateEpub(filePath: string): Promise<EpubValidation> {
   return runEpubPipeline(filePath, async (outcome) =>
     outcome.kind === 'verdict' ? outcome.validation : classifyEncryption(outcome.structure),
+  );
+}
+
+// --- the optional reads ------------------------------------------------------
+
+/**
+ * The package view `extract.ts` asks for, assembled from the private structure.
+ *
+ * Assembling it here rather than handing `extract.ts` an `EpubStructure` is what
+ * keeps the structure unnamed outside this module: `extract.ts` declares its own
+ * narrow interfaces, this satisfies them at the call site, and no private type
+ * appears in any export (#1990 Decision 2).
+ */
+function packageView(structure: EpubStructure): EpubPackageView {
+  return {
+    document: structure.packageDocument,
+    baseDir: structure.packageBaseDir,
+    items: structure.packageIndex.items,
+    itemsById: structure.packageIndex.itemsById,
+    spine: structure.packageIndex.spine,
+  };
+}
+
+/** The archive capability, bound to this call's one budget in its optional form. */
+function optionalReader(structure: EpubStructure): EpubOptionalReader {
+  return {
+    entry: (name) => structure.entriesByName.get(name),
+    read: (entry, ceiling) => structure.budget.readOptional(entry, ceiling),
+  };
+}
+
+/**
+ * The optional reads, in their frozen order, over the budget the mandatory reads
+ * left behind.
+ *
+ * **TOC first, then the cover** — and the order is a decision, not an accident.
+ * Because the budget is shared, a nav and a cover that are each within their own
+ * caps can jointly exceed what remains, so an unspecified order would make
+ * `{ toc, cover: null }` and `{ toc: null, cover }` equally compliant for the
+ * same file: a non-deterministic public result. The TOC goes first because it is
+ * the smaller read and feeds the plan's named consumer, the chapter count; the
+ * cover is the largest optional read and the most expendable.
+ *
+ * Metadata is not an optional read — it consumes no budget and cannot fail — so
+ * its position here says nothing.
+ */
+async function inspectStructure(structure: EpubStructure): Promise<EpubInspection> {
+  const validation = await classifyEncryption(structure);
+  if (validation.status !== 'available') return validation;
+
+  const view = packageView(structure);
+  const reader = optionalReader(structure);
+  const toc = await extractEpubToc(view, reader);
+  const cover = await extractEpubCover(view, reader);
+  return { status: 'available', metadata: extractEpubMetadata(view), toc, cover };
+}
+
+/**
+ * Structurally validate a companion `.epub` **and** read its metadata, table of
+ * contents, and cover.
+ *
+ * The pipeline is 1.1d's, run whole and re-implemented nowhere: the identical
+ * preflight, the identical structural checks in the identical precedence, and
+ * the identical `encryption.xml` classifier. Every non-`available` outcome is
+ * returned unchanged with no optional read attempted, so this and `validateEpub`
+ * cannot disagree about a book's status.
+ *
+ * **One call is one open is one budget.** The archive is opened once and bounded
+ * by `MAX_ARCHIVE_BYTES` and `MAX_INSPECTION_BYTES` for this call alone; there is
+ * no cross-call budget and no context to carry one. A caller that validates and
+ * then inspects opens twice and is bounded twice.
+ *
+ * **An optional read never changes the status** — see `extract.ts` for the
+ * disposition rule and its reasoning. Filesystem errors remain the exception and
+ * still propagate: a `throw` classification ignores the call site.
+ *
+ * The second and last export in this module (#1989 Decision 1).
+ */
+export async function inspectEpub(filePath: string): Promise<EpubInspection> {
+  return runEpubPipeline(filePath, async (outcome) =>
+    outcome.kind === 'verdict' ? outcome.validation : inspectStructure(outcome.structure),
   );
 }

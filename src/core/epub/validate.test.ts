@@ -1297,15 +1297,45 @@ describe('the inspection budget', () => {
 // ---------------------------------------------------------------------------
 
 describe('public surface and guardrails', () => {
-  it('exports validateEpub and nothing else at runtime', async () => {
+  it('exports validateEpub and inspectEpub and nothing else at runtime', async () => {
     const module = await import('./validate.js');
 
-    // `validateEpub` is the only function this issue adds that accepts a `string`
-    // path — and the only runtime export at all. The shared pipeline, the
-    // structure, its budget, and the encryption classifier are private, so no
-    // caller can name a context, hold one, or close one (Decision 1).
-    expect(Object.keys(module)).toEqual(['validateEpub']);
+    // The two path-taking functions `src/core/epub/` offers outside the folder,
+    // and the only runtime exports at all. The shared pipeline, the structure,
+    // its budget, and the encryption classifier are private, so no caller can
+    // name a context, hold one, or close one (#1989 Decision 1).
+    //
+    // **Sorted, because the key order here is not ours to predict.** A native ES
+    // module namespace is an exotic object that sorts its own keys (ES2026
+    // §10.4.6), but under Vitest this import resolves through Vite's SSR
+    // transform to an ordinary object that preserves *source* order — measured,
+    // not assumed. Neither order is the property under test, so both are removed
+    // from the question. The source scan below is separate and deliberately stays
+    // in file order: it reads the file, not the namespace.
+    expect(Object.keys(module).sort()).toEqual(['inspectEpub', 'validateEpub']);
     expect(module.validateEpub.length).toBe(1);
+    expect(module.inspectEpub.length).toBe(1);
+  });
+
+  it('is the only module outside src/core/epub that may not import zip-source', async () => {
+    const { readdir, readFile } = await import('node:fs/promises');
+    const root = path.join(import.meta.dirname, '../..');
+    const files = (await readdir(root, { recursive: true })).filter(
+      (entry) => entry.endsWith('.ts') || entry.endsWith('.tsx'),
+    );
+    const outside = files.filter((file) => !file.startsWith(path.join('core', 'epub')));
+
+    const offenders: string[] = [];
+    for (const file of outside) {
+      const source = await readFile(path.join(root, file), 'utf8');
+      if (/from\s+['"][^'"]*zip-source(?:\.js)?['"]/.test(source)) offenders.push(file);
+    }
+
+    // This is what keeps `zip-source.ts`'s exported `withZipSource(filePath, …)`
+    // folder-internal, and it is the externally-reachable half of Decision 2.
+    // `withZipSource` is deliberately *not* removed, privatized, or wrapped —
+    // `validate.ts` imports it across a module boundary and must.
+    expect(offenders).toEqual([]);
   });
 
   it('exports no type either, so the internal structure cannot escape the open', async () => {
@@ -1323,7 +1353,12 @@ describe('public surface and guardrails', () => {
       .filter((line) => /^export\b/.test(line))
       .map((line) => line.trim());
 
-    expect(exported).toEqual(['export async function validateEpub(filePath: string): Promise<EpubValidation> {']);
+    // File order, not the namespace's lexicographic order — this reads the
+    // source, not the module.
+    expect(exported).toEqual([
+      'export async function validateEpub(filePath: string): Promise<EpubValidation> {',
+      'export async function inspectEpub(filePath: string): Promise<EpubInspection> {',
+    ]);
   });
 
   it('never reads the cover entry while validating', async () => {
