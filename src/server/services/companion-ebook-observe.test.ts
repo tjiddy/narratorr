@@ -4,7 +4,9 @@ import { readdir, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { validateEpub } from '../../core/epub/validate.js';
-import { observeCompanionEbook } from './companion-ebook-observe.js';
+import * as observeModule from './companion-ebook-observe.js';
+import { observeCompanionEbook, revalidateCompanionFile } from './companion-ebook-observe.js';
+import type { CompanionObserveInput, CompanionRevalidateInput } from './companion-ebook-observe.js';
 import type { CompanionEbookRow } from './types.js';
 
 /**
@@ -495,5 +497,164 @@ describe('observeCompanionEbook (#1959)', () => {
       expect(records[0]).toMatchObject({ bookId: BOOK_ID, path: BOOK_PATH });
       expect(records[0]!.error).toMatchObject({ type: 'TypeError' });
     });
+  });
+});
+
+/**
+ * `revalidateCompanionFile` (#1976 AC22) driven directly — the shared tail the sweep reaches
+ * through `runObserve` and the owner's selection pass reaches on its own.
+ *
+ * Only ONE `lstat` is queued per case here: the pre-validation stat belongs to the CALLER
+ * (AC23), so the sole syscall this function issues is the post-validation re-check. A case
+ * that had to queue two would itself be the regression.
+ */
+describe('revalidateCompanionFile (#1976 AC22)', () => {
+  const PATH = join(BOOK_PATH, 'book.epub');
+  const BEFORE = {
+    sizeBytes: DEFAULT_FINGERPRINT.size,
+    mtimeMs: DEFAULT_FINGERPRINT.mtimeMs,
+    ctimeMs: DEFAULT_FINGERPRINT.ctimeMs,
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    validateEpubMock.mockResolvedValue({ status: 'available' });
+  });
+
+  function revalidate(log: FastifyBaseLogger, overrides: Partial<CompanionRevalidateInput> = {}) {
+    return revalidateCompanionFile(
+      { bookId: BOOK_ID, path: PATH, filename: 'book.epub', selected: false, candidateCount: 1, before: BEFORE, ...overrides },
+      log,
+    );
+  }
+
+  it('observes with the fingerprint that was passed IN, never a freshly taken one', async () => {
+    const { log } = createMockLogger();
+    // The post-validation re-check reports the SAME normalised values, so the two are
+    // indistinguishable by value — the discriminator is the fractional millisecond below.
+    queueLstat(fileStats({ mtimeMs: DEFAULT_FINGERPRINT.mtimeMs + 0.75 }));
+
+    await expect(revalidate(log)).resolves.toEqual({
+      outcome: 'observed',
+      observation: {
+        status: 'available',
+        filename: 'book.epub',
+        sizeBytes: BEFORE.sizeBytes,
+        mtimeMs: BEFORE.mtimeMs,
+        ctimeMs: BEFORE.ctimeMs,
+        candidateCount: 1,
+        selected: false,
+      },
+    });
+    expect(lstatMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries selected and candidateCount through to the observation', async () => {
+    const { log } = createMockLogger();
+    queueLstat(fileStats());
+
+    await expect(revalidate(log, { selected: true, candidateCount: 3, filename: 'chosen.epub' })).resolves.toEqual({
+      outcome: 'observed',
+      observation: expect.objectContaining({ filename: 'chosen.epub', selected: true, candidateCount: 3 }),
+    });
+  });
+
+  it('maps a drm_protected verdict without a validation code', async () => {
+    const { log } = createMockLogger();
+    validateEpubMock.mockResolvedValue({ status: 'drm_protected' });
+    queueLstat(fileStats());
+
+    await expect(revalidate(log)).resolves.toEqual({
+      outcome: 'observed',
+      observation: expect.objectContaining({ status: 'drm_protected' }),
+    });
+  });
+
+  it('carries the real EpubValidationCode onto an invalid observation', async () => {
+    const { log } = createMockLogger();
+    validateEpubMock.mockResolvedValue({ status: 'invalid', code: 'empty_spine' });
+    queueLstat(fileStats());
+
+    await expect(revalidate(log)).resolves.toEqual({
+      outcome: 'observed',
+      observation: expect.objectContaining({ status: 'invalid', validationCode: 'empty_spine' }),
+    });
+  });
+
+  it('retains and logs the canonical record when validateEpub rejects', async () => {
+    const { log, spies } = createMockLogger();
+    const eio = errno('EIO');
+    validateEpubMock.mockRejectedValue(eio);
+
+    await expect(revalidate(log)).resolves.toEqual({ outcome: 'retain' });
+
+    // The re-check never runs: there is no verdict to confirm.
+    expect(lstatMock).not.toHaveBeenCalled();
+    const records = errorDebugRecords(spies);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ bookId: BOOK_ID, path: PATH });
+    expectSerializedError(records[0]!.error, eio, { code: 'EIO' });
+  });
+
+  it('retains and logs the canonical record when the post-validation lstat throws', async () => {
+    const { log, spies } = createMockLogger();
+    const eacces = errno('EACCES');
+    queueLstat(eacces);
+
+    await expect(revalidate(log)).resolves.toEqual({ outcome: 'retain' });
+
+    const records = errorDebugRecords(spies);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ bookId: BOOK_ID, path: PATH });
+    expectSerializedError(records[0]!.error, eacces, { code: 'EACCES' });
+  });
+
+  it('retains when the post-validation entry is no longer a regular file, with no error key', async () => {
+    const { log, spies } = createMockLogger();
+    queueLstat(fileStats({ regular: false }));
+
+    await expect(revalidate(log)).resolves.toEqual({ outcome: 'retain' });
+    // Nothing was caught — this is a disagreement with the caller's stat, not a failure.
+    expect(errorDebugRecords(spies)).toHaveLength(0);
+    expect(spies.debug).toHaveBeenCalledTimes(1);
+  });
+
+  it.each<[string, Partial<typeof DEFAULT_FINGERPRINT>]>([
+    ['size', { size: DEFAULT_FINGERPRINT.size + 1 }],
+    ['mtime', { mtimeMs: DEFAULT_FINGERPRINT.mtimeMs + 1 }],
+    ['ctime', { ctimeMs: DEFAULT_FINGERPRINT.ctimeMs + 1 }],
+  ])('retains when %s moved between the caller stat and the re-check', async (_label, moved) => {
+    const { log } = createMockLogger();
+    queueLstat(fileStats(moved));
+
+    await expect(revalidate(log)).resolves.toEqual({ outcome: 'retain' });
+  });
+
+  it('never logs above debug', async () => {
+    const { log, spies } = createMockLogger();
+    validateEpubMock.mockRejectedValue(errno('EIO'));
+
+    await revalidate(log);
+
+    expect(spies.info).not.toHaveBeenCalled();
+    expect(spies.warn).not.toHaveBeenCalled();
+    expect(spies.error).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The withdrawn design threaded the owner's pick into the SWEEP as a `selection` parameter
+   * and added a fourth precedence rule inside `resolveCandidate`. AC26 withdraws it. These are
+   * compile-level assertions: `CompanionObserveInput`'s key set is exact, so an added
+   * `selection` field fails typecheck here rather than in review.
+   */
+  it('pins CompanionObserveInput to its four fields — no selection field survived (AC26)', () => {
+    type Extra = Exclude<keyof CompanionObserveInput, 'bookId' | 'bookPath' | 'libraryRoot' | 'prior'>;
+    const noExtraKeys: Extra extends never ? true : false = true;
+    expect(noExtraKeys).toBe(true);
+
+    // `resolveCandidate` stays module-private and two-argument: it is exported by nothing, so
+    // the selector structurally cannot reach it and cannot have grown a third parameter for one.
+    const observeExports = Object.keys(observeModule).sort();
+    expect(observeExports).toEqual(['observeCompanionEbook', 'revalidateCompanionFile', 'statRegularFile']);
   });
 });

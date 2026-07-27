@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { mkdir, writeFile, realpath } from 'node:fs/promises';
+import { mkdir, writeFile, realpath, rm, symlink } from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -16,9 +17,13 @@ import { createMockSettings } from '../../shared/schemas/settings/create-mock-se
 import type { Db } from '../../db/index.js';
 import type { Services } from './index.js';
 import type { CompanionEbookRow } from '../services/types.js';
+import { isCompanionEbookExposed } from '../../shared/companion-ebook-exposure.js';
 import { isCompanionEbookEligible } from '../services/companion-ebook-eligibility.js';
 import { findCompanionEbookCandidates } from '../services/companion-ebook-discovery.js';
-import { openCompanionEbook } from '../services/companion-ebook-open.js';
+import { openCompanionEbook, resolveCompanionEbookPath } from '../services/companion-ebook-open.js';
+import * as F from '../../core/__tests__/epub-archive.fixture.js';
+import { MAX_EPUB_COVER_BYTES } from '../../core/epub/limits.js';
+import type { CompanionSelectionResult } from '../services/companion-ebook-reconciler.js';
 
 /**
  * The three collaborators are wrapped in spies that DELEGATE to the real implementations, so
@@ -27,6 +32,12 @@ import { openCompanionEbook } from '../services/companion-ebook-open.js';
  * status" — stay assertable. They live in modules separate from the route, which is what makes
  * `vi.mock` intercept the route's call at all (esm-same-module-vi-mock-bypass).
  */
+vi.mock('../../shared/companion-ebook-exposure.js', async () => {
+  const actual = await vi.importActual<typeof import('../../shared/companion-ebook-exposure.js')>(
+    '../../shared/companion-ebook-exposure.js',
+  );
+  return { ...actual, isCompanionEbookExposed: vi.fn(actual.isCompanionEbookExposed) };
+});
 vi.mock('../services/companion-ebook-eligibility.js', async () => {
   const actual = await vi.importActual<typeof import('../services/companion-ebook-eligibility.js')>(
     '../services/companion-ebook-eligibility.js',
@@ -43,7 +54,41 @@ vi.mock('../services/companion-ebook-open.js', async () => {
   const actual = await vi.importActual<typeof import('../services/companion-ebook-open.js')>(
     '../services/companion-ebook-open.js',
   );
-  return { ...actual, openCompanionEbook: vi.fn(actual.openCompanionEbook) };
+  return {
+    ...actual,
+    openCompanionEbook: vi.fn(actual.openCompanionEbook),
+    // #1976 — the two read routes reach the resolver, not the opener. Spied for the same
+    // reason: the `inspect_failed` case needs the REAL resolver to succeed and the file to
+    // vanish immediately afterwards, which is only expressible from inside a delegating wrapper.
+    resolveCompanionEbookPath: vi.fn(actual.resolveCompanionEbookPath),
+  };
+});
+
+/**
+ * A delegating `unzipper` wrapper, so ONE case can fail a single archive member's inflated
+ * stream (`extract.test.ts`'s `failEntry` technique). `onStream` defaults to `undefined`, so
+ * every other case in this file reads real archives through the real reader.
+ *
+ * `File.stream` is an own property, so it can be wrapped in place on a real reader result.
+ */
+const epubHooks = vi.hoisted(() => ({
+  onStream: undefined as ((name: string) => Readable | undefined) | undefined,
+}));
+
+vi.mock('unzipper', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  const real = (actual.default ?? actual) as typeof import('unzipper');
+  const custom = async (source: unknown, options: unknown) => {
+    const directory = await (real.Open.custom as unknown as
+      (s: unknown, o: unknown) => Promise<{ files: Array<Record<string, unknown>> }>)(source, options);
+    for (const file of directory.files) {
+      const original = (file.stream as (...a: unknown[]) => Readable).bind(file);
+      const name = String(file.path);
+      file.stream = (...args: unknown[]) => epubHooks.onStream?.(name) ?? original(...args);
+    }
+    return directory;
+  };
+  return { ...actual, default: { ...real, Open: { ...real.Open, custom } } };
 });
 
 const BOOK_ID = 11;
@@ -86,6 +131,9 @@ describe('companion ebook owner routes', () => {
     vi.mocked(isCompanionEbookEligible).mockClear();
     vi.mocked(findCompanionEbookCandidates).mockClear();
     vi.mocked(openCompanionEbook).mockClear();
+    vi.mocked(resolveCompanionEbookPath).mockClear();
+    vi.mocked(isCompanionEbookExposed).mockClear();
+    epubHooks.onStream = undefined;
 
     libraryRoot = await realpath(mkdtempSync(join(tmpdir(), 'narratorr-1974-route-')));
     bookPath = join(libraryRoot, 'Author', 'Title');
@@ -129,6 +177,22 @@ describe('companion ebook owner routes', () => {
 
   async function writeEpub(name = EPUB, bytes = EPUB_BYTES) {
     await writeFile(join(bookPath, name), bytes);
+  }
+
+  /**
+   * The AC6 route-boundary rule, in one place: the `warn` record is `{ bookId, outcome }` and
+   * nothing else, and no path, library root, or basename appears anywhere in it. #1976's three
+   * routes reuse this verbatim rather than restating it.
+   *
+   * It is deliberately NOT applied to `debug` records — the resolver's carry the path by
+   * design (AC2/AC6), and asserting otherwise would contradict `companion-ebook-open.test.ts`.
+   */
+  function assertBoundaryRecord(record: unknown, outcome: string) {
+    expect(record).toEqual({ bookId: BOOK_ID, outcome });
+    const leaves = stringLeaves(record).join('\n');
+    for (const secret of [bookPath, libraryRoot, EPUB]) {
+      expect(leaves).not.toContain(secret);
+    }
   }
 
   const download = () => app.inject({ method: 'GET', url: `/api/books/${BOOK_ID}/companion-epub` });
@@ -480,14 +544,6 @@ describe('companion ebook owner routes', () => {
       mockLog.restore();
     });
 
-    function assertBoundaryRecord(record: unknown, outcome: string) {
-      expect(record).toEqual({ bookId: BOOK_ID, outcome });
-      const leaves = stringLeaves(record).join('\n');
-      for (const secret of [bookPath, libraryRoot, EPUB]) {
-        expect(leaves).not.toContain(secret);
-      }
-    }
-
     it('emits { bookId, outcome } and nothing else for a 404 from a non-ok helper outcome', async () => {
       const res = await download(); // the file does not exist → `missing`
 
@@ -507,4 +563,743 @@ describe('companion ebook owner routes', () => {
       assertBoundaryRecord(mockLog.spies.warn.mock.calls[0]![0], 'undetermined');
     });
   });
+
+  // =========================================================================
+  // #1976 — the two owner reads and the selection PUT
+  // =========================================================================
+
+  // --- EPUB fixture shapes, composed from `buildEpub` options -----------------
+  // Composed HERE rather than added to `epub-archive.fixture.ts`, which is at 364 of its 400
+  // `max-lines` cap with this slate still landing (#2003).
+
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]);
+  const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+  const GIF = Buffer.concat([Buffer.from('GIF89a', 'ascii'), Buffer.from([0x01, 0x00])]);
+  const WEBP = Buffer.concat([
+    Buffer.from('RIFF', 'ascii'),
+    Buffer.from([0x10, 0x00, 0x00, 0x00]),
+    Buffer.from('WEBP', 'ascii'),
+  ]);
+  const SVG = Buffer.from('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>', 'utf8');
+
+  const CHAPTER: F.ManifestItem = { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' };
+  const NAV_ITEM: F.ManifestItem = {
+    id: 'nav', href: 'nav.xhtml', mediaType: 'application/xhtml+xml', properties: 'nav',
+  };
+  const NCX_ITEM: F.ManifestItem = { id: 'ncx', href: 'toc.ncx', mediaType: 'application/x-dtbncx+xml' };
+  const NAV_ENTRY = 'OEBPS/nav.xhtml';
+  const NCX_ENTRY = 'OEBPS/toc.ncx';
+  const COVER_ENTRY = 'OEBPS/cover.png';
+
+  function coverItem(mediaType: string): F.ManifestItem {
+    return { id: 'cover', href: 'cover.png', mediaType, properties: 'cover-image' };
+  }
+
+  /** An EPUB 3 book whose nav `<ol>` is built from `nodes`. */
+  function navRowsBook(nodes: readonly F.TocNode[], metadata?: F.MetadataOptions): F.EpubOptions {
+    return {
+      packageOptions: { items: [CHAPTER, NAV_ITEM], ...(metadata && { metadata }) },
+      files: [{ name: NAV_ENTRY, content: F.navDocumentXml(F.navXml(nodes)) }],
+    };
+  }
+
+  /** An EPUB 2 book whose NCX `<navMap>` is built from `nodes`, reached through `spine@toc`. */
+  function ncxRowsBook(nodes: readonly F.TocNode[]): F.EpubOptions {
+    return {
+      packageOptions: {
+        items: [CHAPTER, NCX_ITEM],
+        spine: '<spine toc="ncx"><itemref idref="ch1"/></spine>',
+      },
+      files: [{ name: NCX_ENTRY, content: F.ncxDocumentXml(F.navMapXml(nodes)) }],
+    };
+  }
+
+  /** A book carrying `bytes` as its cover, declared through `properties="cover-image"`. */
+  function coverBook(bytes: Buffer, declaredMediaType = 'image/png'): F.EpubOptions {
+    return {
+      packageOptions: { items: [CHAPTER, coverItem(declaredMediaType)] },
+      files: [{ name: COVER_ENTRY, content: bytes }],
+    };
+  }
+
+  /** Write a built EPUB at the stored basename the `available` row names. */
+  async function placeEpub(options: F.EpubOptions = {}): Promise<void> {
+    await writeFile(join(bookPath, EPUB), await F.buildEpub(options));
+  }
+
+  const metadataReq = () => app.inject({ method: 'GET', url: `/api/books/${BOOK_ID}/companion-epub/metadata` });
+  const coverReq = () => app.inject({ method: 'GET', url: `/api/books/${BOOK_ID}/companion-epub/cover` });
+
+  /** Both read routes share every gate, both resolver mappings, and both inspection negatives. */
+  const READ_ROUTES: Array<[string, () => ReturnType<typeof metadataReq>]> = [
+    ['metadata', metadataReq],
+    ['cover', coverReq],
+  ];
+
+  /**
+   * All THREE companion-file routes, for the named owner-readable-gate consistency test
+   * (PR #2010 F2 / DRY-3). Download is in here deliberately: the gate is now `the` decision at
+   * one site rather than two that must stay aligned, and this is the test that fails if a
+   * later change re-forks it. Every case below is a gate NEGATIVE, which is exactly the part
+   * all three share — their success tails (stream / metadata DTO / cover bytes) differ and are
+   * asserted per route elsewhere.
+   */
+  const GATED_ROUTES: Array<[string, () => ReturnType<typeof metadataReq>]> = [
+    ['companion-epub (download)', download],
+    ...READ_ROUTES,
+  ];
+
+  // -------------------------------------------------------------------------
+  // The owner-readable gate — ONE decision, shared by all three routes (F2)
+  // -------------------------------------------------------------------------
+
+  /**
+   * The named consistency test the DRY-3 finding asked for. Each case drives one gate term and
+   * asserts that download, metadata, and cover answer IDENTICALLY — same status, same body.
+   *
+   * Its value is the cross-route equality, not the individual statuses (those are already
+   * covered per route): re-forking `loadExposedCompanionContext` so any one route gains or
+   * loses a term makes the surviving routes disagree here, which is precisely the drift the
+   * extraction removes.
+   */
+  describe('the owner-readable gate is one decision for all three companion-file routes', () => {
+    it.each<[string, () => Promise<void>]>([
+      ['the feature is disabled', async () => { setSettings({ enabled: false }); }],
+      ['the book is unknown', async () => { setBook(null); }],
+      ['books.status is not imported', async () => { setBook({ status: 'missing' }); }],
+      ['the observation row is absent', async () => { setObservation(null); }],
+      ['the observation is not available', async () => { setObservation(row({ status: 'ambiguous' })); }],
+      ['the stored filename is null', async () => { setObservation(row({ filename: null })); }],
+      ['books.path is null', async () => { setBook({ path: null }); }],
+      ['books.path is blank', async () => { setBook({ path: '   ' }); }],
+    ])('all three routes answer identically when %s', async (_label, arrange) => {
+      await placeEpub();
+      await arrange();
+
+      const results = [];
+      for (const [label, request] of GATED_ROUTES) {
+        const res = await request();
+        results.push({ label, statusCode: res.statusCode, body: res.json() });
+      }
+
+      const [first, ...rest] = results;
+      for (const other of rest) {
+        expect({ statusCode: other.statusCode, body: other.body })
+          .toEqual({ statusCode: first!.statusCode, body: first!.body });
+      }
+      // …and the shared answer is genuinely a rejection, so an all-200 regression cannot
+      // satisfy the equality above.
+      expect([409, 404]).toContain(first!.statusCode);
+    });
+
+    it('all three routes reach the file layer only after the gate passes', async () => {
+      await placeEpub();
+      setObservation(row({ status: 'ambiguous' }));
+
+      for (const [, request] of GATED_ROUTES) await request();
+
+      // The gate rejected before any opener or resolver ran, on every route.
+      expect(vi.mocked(openCompanionEbook)).not.toHaveBeenCalled();
+      expect(vi.mocked(resolveCompanionEbookPath)).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The shared read ladder (AC5, AC6, AC7, AC8/AC9)
+  // -------------------------------------------------------------------------
+  describe.each(READ_ROUTES)('GET /api/books/:id/companion-epub/%s — the shared ladder', (_label, request) => {
+    it('returns 409 when the feature is disabled', async () => {
+      await placeEpub();
+      setSettings({ enabled: false });
+
+      const res = await request();
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({ error: expect.any(String) });
+    });
+
+    it('returns 404 for an unknown book', async () => {
+      setBook(null);
+      expect((await request()).statusCode).toBe(404);
+    });
+
+    it('returns 404 when books.status is missing even though the row says available', async () => {
+      await placeEpub();
+      setBook({ status: 'missing' });
+      expect((await request()).statusCode).toBe(404);
+    });
+
+    it.each(['none', 'ambiguous', 'invalid', 'drm_protected'] as const)(
+      'returns 404 for a %s observation',
+      async (status) => {
+        await placeEpub();
+        setObservation(row({ status }));
+        expect((await request()).statusCode).toBe(404);
+      },
+    );
+
+    it('returns 404 when there is no observation row', async () => {
+      await placeEpub();
+      setObservation(null);
+      expect((await request()).statusCode).toBe(404);
+    });
+
+    it('returns 404 when the stored filename is null', async () => {
+      await placeEpub();
+      setObservation(row({ filename: null }));
+      expect((await request()).statusCode).toBe(404);
+    });
+
+    it.each(['', '   ', null])('returns 404 for a blank books.path (%j)', async (path) => {
+      await placeEpub();
+      setBook({ path });
+      expect((await request()).statusCode).toBe(404);
+    });
+
+    // Resolver negatives, driven for REAL — never "the open throws", and never a dev/ino
+    // comparison (plan §5 declines that binding).
+    it('returns 404 for a symlink at the stored basename, via not_regular_file', async () => {
+      const realTarget = join(bookPath, 'real.epub');
+      await writeFile(realTarget, await F.buildEpub());
+      await symlink(realTarget, join(bookPath, EPUB));
+
+      expect((await request()).statusCode).toBe(404);
+      const [result] = vi.mocked(resolveCompanionEbookPath).mock.results;
+      await expect(result!.value).resolves.toEqual({ outcome: 'not_regular_file' });
+    });
+
+    it('returns 404 for a vanished file, via missing', async () => {
+      expect((await request()).statusCode).toBe(404);
+      const [result] = vi.mocked(resolveCompanionEbookPath).mock.results;
+      await expect(result!.value).resolves.toEqual({ outcome: 'missing' });
+    });
+
+    it('returns 404 when the realpath escapes the library root', async () => {
+      const outside = mkdtempSync(join(tmpdir(), 'narratorr-1976-out-'));
+      try {
+        const externalBook = join(outside, 'Title');
+        await mkdir(externalBook, { recursive: true });
+        await writeFile(join(externalBook, EPUB), await F.buildEpub());
+        await symlink(externalBook, join(libraryRoot, 'escape'));
+        setBook({ path: join(libraryRoot, 'escape') });
+
+        expect((await request()).statusCode).toBe(404);
+        const [result] = vi.mocked(resolveCompanionEbookPath).mock.results;
+        await expect(result!.value).resolves.toEqual({ outcome: 'outside_library' });
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    // AC7 — the stored row said `available` and the live file disagrees. That is the §4
+    // stale-window outcome, not an error class of its own.
+    it('returns 404 when inspectEpub RETURNS a non-available status', async () => {
+      await writeFile(join(bookPath, EPUB), 'this is not a zip archive at all');
+      expect((await request()).statusCode).toBe(404);
+    });
+
+    it('returns 404 and never renders any EPUB HTML in the body', async () => {
+      await placeEpub(navRowsBook([{ label: 'Chapter One' }]));
+      const res = await request();
+      // Whatever the route emitted, it is not markup from inside the archive.
+      expect(res.rawPayload.toString()).not.toContain('<html');
+      expect(res.rawPayload.toString()).not.toContain('<nav');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /api/books/:id/companion-epub/metadata (AC10, AC11)
+  // -------------------------------------------------------------------------
+  describe('GET /api/books/:id/companion-epub/metadata', () => {
+    it('returns the OPF fields and a flattened EPUB 3 nav TOC', async () => {
+      await placeEpub(
+        navRowsBook(
+          [{ label: 'Part One', children: [{ label: 'Chapter One' }] }, { label: 'Part Two' }],
+          { title: 'A Companion', creators: ['Ada Lovelace'], language: 'en-GB' },
+        ),
+      );
+
+      const res = await metadataReq();
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['cache-control']).toBe('private, no-store');
+      expect(res.json()).toEqual({
+        metadata: { title: 'A Companion', author: 'Ada Lovelace', language: 'en-GB' },
+        toc: [
+          { title: 'Part One', depth: 0 },
+          { title: 'Chapter One', depth: 1 },
+          { title: 'Part Two', depth: 0 },
+        ],
+      });
+    });
+
+    it('returns the TOC rows and their depths from an EPUB 2 NCX', async () => {
+      await placeEpub(ncxRowsBook([{ label: 'One', children: [{ label: 'One.a' }] }]));
+
+      const res = await metadataReq();
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().toc).toEqual([
+        { title: 'One', depth: 0 },
+        { title: 'One.a', depth: 1 },
+      ]);
+    });
+
+    // AC11 — `toc: null` is "we could not read one", NOT zero chapters, and there is no
+    // second field beside the array for the panel to disagree with.
+    it('returns toc: null for an unreadable nav document, with NO chapterCount key', async () => {
+      await placeEpub({
+        packageOptions: { items: [CHAPTER, NAV_ITEM] },
+        files: [{ name: NAV_ENTRY, content: '<?xml version="1.0"?><div><p>not a nav document</p></div>' }],
+      });
+
+      const res = await metadataReq();
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body).toEqual({
+        metadata: { title: 'Fixture', author: null, language: null },
+        toc: null,
+      });
+      expect(Object.keys(body).sort()).toEqual(['metadata', 'toc']);
+      expect(body).not.toHaveProperty('chapterCount');
+    });
+
+    it('returns toc: null when the book declares no navigation at all', async () => {
+      await placeEpub();
+      expect((await metadataReq()).json().toc).toBeNull();
+    });
+
+    // AC10 — surfaced exactly as `EpubMetadata` declares them: null, not omitted and not ''.
+    it('returns null creator and language rather than omitting or empty-stringing them', async () => {
+      await placeEpub(navRowsBook([{ label: 'One' }], { title: 'Only A Title' }));
+
+      const body = (await metadataReq()).json();
+
+      expect(body.metadata).toEqual({ title: 'Only A Title', author: null, language: null });
+      expect(Object.keys(body.metadata).sort()).toEqual(['author', 'language', 'title']);
+    });
+
+    it('returns a null title when the OPF omits dc:title', async () => {
+      await placeEpub(navRowsBook([{ label: 'One' }], { title: null }));
+      expect((await metadataReq()).json().metadata.title).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /api/books/:id/companion-epub/cover (AC12-AC17)
+  // -------------------------------------------------------------------------
+  describe('GET /api/books/:id/companion-epub/cover', () => {
+    it.each<[string, Buffer, string]>([
+      ['PNG', PNG, 'image/png'],
+      ['JPEG', JPEG, 'image/jpeg'],
+      ['GIF', GIF, 'image/gif'],
+      ['WebP', WEBP, 'image/webp'],
+    ])('serves a %s cover with the documented headers', async (_label, bytes, mediaType) => {
+      await placeEpub(coverBook(bytes));
+
+      const res = await coverReq();
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toBe(mediaType);
+      expect(res.headers['content-length']).toBe(String(bytes.length));
+      expect(res.headers['content-disposition']).toBe('inline');
+      // NOT `public, max-age=86400` — these bytes are library content behind owner auth and
+      // change whenever the file does. The asymmetry with `/api/books/:id/cover` is deliberate.
+      expect(res.headers['cache-control']).toBe('private, no-store');
+      expect(res.rawPayload.equals(bytes)).toBe(true);
+    });
+
+    // AC15, both directions — the media type the BYTES say, never the one the manifest claims.
+    it('returns 404 for a manifest declaring image/png over SVG bytes', async () => {
+      await placeEpub(coverBook(SVG, 'image/png'));
+
+      const res = await coverReq();
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: expect.any(String) });
+    });
+
+    it('serves image/png for a manifest declaring image/svg+xml over PNG bytes', async () => {
+      await placeEpub(coverBook(PNG, 'image/svg+xml'));
+
+      const res = await coverReq();
+
+      expect(res.statusCode).toBe(200);
+      // `image/svg+xml` is unreachable by construction — the four sniffed literals are the
+      // only values emittable — rather than by a route-level check.
+      expect(res.headers['content-type']).toBe('image/png');
+    });
+
+    it('returns 404 when the book declares no cover', async () => {
+      await placeEpub(navRowsBook([{ label: 'One' }]));
+      expect((await coverReq()).statusCode).toBe(404);
+    });
+
+    it('returns 404 when a <meta name="cover"> names no manifest item', async () => {
+      // A declared-but-broken cover is not a book with a second cover.
+      await placeEpub({
+        packageOptions: { items: [CHAPTER], metadata: { covers: ['no-such-item'] } },
+      });
+      expect((await coverReq()).statusCode).toBe(404);
+    });
+
+    it('serves a cover sitting exactly on MAX_EPUB_COVER_BYTES', async () => {
+      const exact = Buffer.concat([PNG, Buffer.alloc(MAX_EPUB_COVER_BYTES - PNG.length)]);
+      await placeEpub(coverBook(exact));
+
+      const res = await coverReq();
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-length']).toBe(String(MAX_EPUB_COVER_BYTES));
+      expect(res.rawPayload.length).toBe(MAX_EPUB_COVER_BYTES);
+    });
+
+    it('returns 404 one byte over the cap, and sends NO truncated body', async () => {
+      const over = Buffer.concat([PNG, Buffer.alloc(MAX_EPUB_COVER_BYTES - PNG.length + 1)]);
+      await placeEpub(coverBook(over));
+
+      const res = await coverReq();
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: expect.any(String) });
+    });
+
+    // AC17 — `nosniff` is helmet's, globally. The route sets no header of its own.
+    it('sets no X-Content-Type-Options header of its own', async () => {
+      await placeEpub(coverBook(PNG));
+      expect((await coverReq()).headers['x-content-type-options']).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // AC8/AC9 — inspectEpub REJECTING, on both routes
+  // -------------------------------------------------------------------------
+  describe('inspectEpub rejection maps to 404 on both read routes', () => {
+    let mockLog: ReturnType<typeof installMockAppLog>;
+
+    beforeEach(() => {
+      mockLog = installMockAppLog(app);
+    });
+
+    afterEach(() => {
+      mockLog.restore();
+    });
+
+    /** Every `debug` record carrying an `error` key. */
+    function errorDebugRecords(): Array<Record<string, unknown>> {
+      return mockLog.spies.debug.mock.calls
+        .map((call) => call[0] as Record<string, unknown>)
+        .filter((record) => record !== null && typeof record === 'object' && 'error' in record);
+    }
+
+    // Driven by deleting the file AFTER the resolver has verified it, from inside the
+    // delegating wrapper — so the resolver genuinely succeeds and the inspection genuinely
+    // rejects. `preOpenRejection`'s `lstat` has no catch: I/O failure is never a verdict.
+    it.each(READ_ROUTES)('returns 404, never 500, on the %s route', async (_label, request) => {
+      await placeEpub();
+      const actual = await vi.importActual<typeof import('../services/companion-ebook-open.js')>(
+        '../services/companion-ebook-open.js',
+      );
+      vi.mocked(resolveCompanionEbookPath).mockImplementationOnce(async (input, log) => {
+        const resolved = await actual.resolveCompanionEbookPath(input, log);
+        await rm(join(bookPath, EPUB));
+        return resolved;
+      });
+
+      const res = await request();
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: expect.any(String) });
+      // The boundary record is `{ bookId, outcome }` and nothing else — no path, no filename,
+      // no library root — even though the underlying error's message and stack carry all three.
+      expect(mockLog.spies.warn).toHaveBeenCalledTimes(1);
+      assertBoundaryRecord(mockLog.spies.warn.mock.calls[0]![0], 'inspect_failed');
+      // …and the response body leaks none of them either.
+      const bodyLeaves = stringLeaves(res.json()).join('\n');
+      for (const secret of [bookPath, libraryRoot, EPUB]) expect(bodyLeaves).not.toContain(secret);
+      // The global error handler's `request.log.error(error, …)` never ran.
+      expect(mockLog.spies.error).not.toHaveBeenCalled();
+    });
+
+    it('logs the rejection exactly once at debug, with a serializeError-shaped error', async () => {
+      await placeEpub();
+      const actual = await vi.importActual<typeof import('../services/companion-ebook-open.js')>(
+        '../services/companion-ebook-open.js',
+      );
+      vi.mocked(resolveCompanionEbookPath).mockImplementationOnce(async (input, log) => {
+        const resolved = await actual.resolveCompanionEbookPath(input, log);
+        await rm(join(bookPath, EPUB));
+        return resolved;
+      });
+
+      await metadataReq();
+
+      const records = errorDebugRecords();
+      expect(records).toHaveLength(1);
+      expect(Object.keys(records[0]!).sort()).toEqual(['bookId', 'error', 'path']);
+      // Own-ENUMERABLE key set, not `objectContaining({ message })` — a raw `Error` passes
+      // that matcher because `message` and `stack` are non-enumerable on it (#1982).
+      expect(records[0]!.error).not.toBeInstanceOf(Error);
+      expect(Object.keys(records[0]!.error as object).sort()).toEqual(['code', 'message', 'stack', 'type']);
+    });
+
+    // The SAME mapping driven through an OPTIONAL read rather than the pre-open, which proves
+    // both rejection sources share one channel rather than two that happen to agree today.
+    it.each(READ_ROUTES)(
+      'maps a cover-read EIO to the same 404 + inspect_failed on the %s route',
+      async (_label, request) => {
+        await placeEpub(coverBook(PNG));
+        epubHooks.onStream = (name) =>
+          name === COVER_ENTRY
+            ? new Readable({ read() { this.destroy(Object.assign(new Error('simulated EIO'), { code: 'EIO' })); } })
+            : undefined;
+
+        const res = await request();
+
+        expect(res.statusCode).toBe(404);
+        expect(mockLog.spies.warn).toHaveBeenCalledTimes(1);
+        assertBoundaryRecord(mockLog.spies.warn.mock.calls[0]![0], 'inspect_failed');
+        expect(mockLog.spies.error).not.toHaveBeenCalled();
+      },
+    );
+
+    it('emits the boundary record with the inspection STATUS as the outcome for a returned negative', async () => {
+      await writeFile(join(bookPath, EPUB), 'this is not a zip archive at all');
+
+      expect((await metadataReq()).statusCode).toBe(404);
+
+      expect(mockLog.spies.warn).toHaveBeenCalledTimes(1);
+      assertBoundaryRecord(mockLog.spies.warn.mock.calls[0]![0], 'invalid');
+    });
+
+    it('emits the boundary record with the resolver outcome for a resolver negative', async () => {
+      expect((await coverReq()).statusCode).toBe(404);
+
+      expect(mockLog.spies.warn).toHaveBeenCalledTimes(1);
+      assertBoundaryRecord(mockLog.spies.warn.mock.calls[0]![0], 'missing');
+    });
+
+    it('emits no_cover for a book whose cover is unreadable', async () => {
+      await placeEpub(coverBook(SVG, 'image/png'));
+
+      expect((await coverReq()).statusCode).toBe(404);
+
+      expect(mockLog.spies.warn).toHaveBeenCalledTimes(1);
+      assertBoundaryRecord(mockLog.spies.warn.mock.calls[0]![0], 'no_cover');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // PUT /api/books/:id/companion-epub/selection (AC18-AC21, AC31-AC34)
+  // -------------------------------------------------------------------------
+  describe('PUT /api/books/:id/companion-epub/selection', () => {
+    let selectMock: Mock;
+    let mockLog: ReturnType<typeof installMockAppLog>;
+
+    beforeEach(() => {
+      selectMock = services.companionEbook.selectCompanionEbook as unknown as Mock;
+      selectMock.mockReset();
+      mockLog = installMockAppLog(app);
+    });
+
+    afterEach(() => {
+      mockLog.restore();
+    });
+
+    const put = (body: unknown) =>
+      app.inject({ method: 'PUT', url: `/api/books/${BOOK_ID}/companion-epub/selection`, payload: body as never });
+
+    /** The row a `selected` outcome carries, and the DTO the panel must receive for it. */
+    const SELECTED_ROW = row({ status: 'available', filename: 'b.epub', candidateCount: 2, selectedFilename: 'b.epub' });
+
+    // -----------------------------------------------------------------------
+    // Body validation (AC18, AC19) — rejected by the schema, before the handler
+    // -----------------------------------------------------------------------
+    describe('body validation', () => {
+      it.each<[string, unknown]>([
+        ['a missing index', {}],
+        ['a string index', { index: '0' }],
+        ['a negative index', { index: -1 }],
+        ['a fractional index', { index: 1.5 }],
+        ['an extra key', { index: 0, filename: 'x.epub' }],
+        ['a filename instead of an index', { filename: 'x.epub' }],
+        ['a path instead of an index', { path: '/library/x.epub' }],
+        ['a null index', { index: null }],
+      ])('returns 400 for %s, without reaching the reconciler', async (_label, body) => {
+        const res = await put(body);
+
+        expect(res.statusCode).toBe(400);
+        expect(selectMock).not.toHaveBeenCalled();
+      });
+
+      it('accepts index 0 — the list is 0-based, matching what /state issues', async () => {
+        selectMock.mockResolvedValue({ outcome: 'selected', row: SELECTED_ROW });
+
+        expect((await put({ index: 0 })).statusCode).toBe(200);
+        expect(selectMock).toHaveBeenCalledWith(BOOK_ID, 0);
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // The route's own two-term gate (AC20)
+    // -----------------------------------------------------------------------
+    describe('the pre-lock gate', () => {
+      // F10 — the unknown-book gate, which must run BEFORE the mutation.
+      it('returns 404 with the exact notFound body for an unknown book, without mutating', async () => {
+        setBook(null);
+
+        const res = await put({ index: 0 });
+
+        expect(res.statusCode).toBe(404);
+        expect(res.json()).toEqual({ error: 'Companion ebook not found' });
+        expect(selectMock).not.toHaveBeenCalled();
+      });
+
+      it('returns 409 with the featureDisabled body when the feature is off, without mutating', async () => {
+        setSettings({ enabled: false });
+
+        const res = await put({ index: 0 });
+
+        expect(res.statusCode).toBe(409);
+        expect(res.json()).toEqual({ error: 'Companion ebooks are disabled' });
+        expect(selectMock).not.toHaveBeenCalled();
+      });
+
+      /**
+       * F9 / AC20 — the load-bearing distinction. An `ambiguous` row is by definition not
+       * `available`, so `isCompanionEbookExposed` is false for EVERY row this route exists to
+       * act on. A handler copied from the read ladder would make the picker permanently 404.
+       */
+      it('reaches the reconciler for a stored ambiguous row and never consults the exposure predicate', async () => {
+        setObservation(row({
+          status: 'ambiguous', filename: null, sizeBytes: null, mtimeMs: null, ctimeMs: null, candidateCount: 2,
+        }));
+        selectMock.mockResolvedValue({ outcome: 'selected', row: SELECTED_ROW });
+
+        const res = await put({ index: 1 });
+
+        expect(res.statusCode).toBe(200);
+        expect(selectMock).toHaveBeenCalledWith(BOOK_ID, 1);
+        // Neither the shared predicate nor a re-spelled inline copy of it ran: eligibility is
+        // evaluated once, inside the lock, and never at the route.
+        expect(vi.mocked(isCompanionEbookExposed)).not.toHaveBeenCalled();
+        expect(vi.mocked(isCompanionEbookEligible)).not.toHaveBeenCalled();
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // AC31's map — one case per non-2xx outcome, eleven arms
+    // -----------------------------------------------------------------------
+    describe('the outcome map', () => {
+      /** A path-bearing scan: no temp dir, no library root, and no basename in the body. */
+      function expectNoLeak(body: unknown): void {
+        const leaves = stringLeaves(body).join('\n');
+        for (const secret of [bookPath, libraryRoot, EPUB, 'b.epub']) {
+          expect(leaves).not.toContain(secret);
+        }
+      }
+
+      it.each<[CompanionSelectionResult['outcome'], number, string]>([
+        ['out_of_range', 400, 'Candidate index is out of range'],
+        ['book_missing', 404, 'Companion ebook not found'],
+        ['ineligible', 404, 'Companion ebook not found'],
+        ['gone', 404, 'Companion ebook not found'],
+        ['unresolvable', 404, 'Companion ebook not found'],
+        ['disabled', 409, 'Companion ebooks are disabled'],
+        ['conflicted', 409, 'Companion ebook selection conflicted with a concurrent change'],
+        ['undetermined', 503, 'Companion ebook selection could not be completed'],
+        ['retained', 503, 'Companion ebook selection could not be completed'],
+        ['stopped', 503, 'Companion ebook selection could not be completed'],
+        ['failed', 503, 'Companion ebook selection could not be completed'],
+      ])('maps %s to %i with the flat owner error body', async (outcome, status, error) => {
+        selectMock.mockResolvedValue({ outcome });
+
+        const res = await put({ index: 0 });
+
+        expect(res.statusCode).toBe(status);
+        // The WHOLE body, and the flat `{ error: string }` convention — never the v1
+        // `{ error: { code, message } }` envelope.
+        expect(res.json()).toEqual({ error });
+        expectNoLeak(res.json());
+        // Every non-2xx outcome emits the boundary record, and only `{ bookId, outcome }`.
+        expect(mockLog.spies.warn).toHaveBeenCalledTimes(1);
+        assertBoundaryRecord(mockLog.spies.warn.mock.calls[0]![0], outcome);
+      });
+
+      // Same status, deliberately different bodies: `disabled` reuses the route's own disabled
+      // sentence so a feature flip mid-request reads identically to one caught at the gate.
+      it('gives disabled and conflicted distinct bodies under the same 409', async () => {
+        selectMock.mockResolvedValueOnce({ outcome: 'disabled' });
+        const disabled = await put({ index: 0 });
+        selectMock.mockResolvedValueOnce({ outcome: 'conflicted' });
+        const conflicted = await put({ index: 0 });
+
+        expect(disabled.statusCode).toBe(409);
+        expect(conflicted.statusCode).toBe(409);
+        expect(disabled.json()).not.toEqual(conflicted.json());
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // AC32 — the success DTO is not an error envelope
+    // -----------------------------------------------------------------------
+    describe('the selected response', () => {
+      it('returns 200 with the state DTO for the row the commit returned', async () => {
+        selectMock.mockResolvedValue({ outcome: 'selected', row: SELECTED_ROW });
+
+        const res = await put({ index: 1 });
+
+        expect(res.statusCode).toBe(200);
+        // An INDEPENDENTLY written exact DTO literal, not `projectStoredState(row)` (F21):
+        // deriving the expectation through the same projector the route must use would make a
+        // field omission or a rename agree on both sides of the assertion.
+        expect(res.json()).toEqual({
+          status: 'available',
+          filename: 'b.epub',
+          sizeBytes: SELECTED_ROW.sizeBytes,
+          validationCode: null,
+          candidateCount: 2,
+          selectedFilename: 'b.epub',
+          candidates: [],
+        });
+      });
+
+      it('carries filename and selectedFilename, but no full path and no library root', async () => {
+        selectMock.mockResolvedValue({ outcome: 'selected', row: SELECTED_ROW });
+
+        const body = (await put({ index: 1 })).json();
+
+        // The narrower scan: these are stored basenames the owner already sees on `/state`,
+        // so the error bodies' basename-absence rule does not apply here.
+        expect(body.filename).toBe('b.epub');
+        expect(body.selectedFilename).toBe('b.epub');
+        const leaves = stringLeaves(body).join('\n');
+        expect(leaves).not.toContain(bookPath);
+        expect(leaves).not.toContain(libraryRoot);
+      });
+
+      it('emits NO boundary warn record on the success path', async () => {
+        selectMock.mockResolvedValue({ outcome: 'selected', row: SELECTED_ROW });
+
+        expect((await put({ index: 1 })).statusCode).toBe(200);
+        expect(mockLog.spies.warn).not.toHaveBeenCalled();
+      });
+
+      // F23, the HTTP half — AC34's accepted drift, proven at the route boundary. The service
+      // half (the fresh occupant wins) lives in the reconciler integration suite.
+      it('succeeds with no ETag, nonce, or precondition header participating', async () => {
+        selectMock.mockResolvedValue({ outcome: 'selected', row: SELECTED_ROW });
+
+        const res = await put({ index: 1 });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.headers.etag).toBeUndefined();
+        // Nothing was demanded of the request either: the same body succeeded with no
+        // `If-Match`, no `If-Unmodified-Since`, and no nonce field.
+        const staleIndexRetry = await put({ index: 1 });
+        expect(staleIndexRetry.statusCode).toBe(200);
+      });
+    });
+  });
+
 });

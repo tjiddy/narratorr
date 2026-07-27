@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -10,10 +10,16 @@ import { books, companionEbooks } from '../../db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import type { SettingsService } from './settings.service.js';
 import { CompanionEbookReconciler, RECONCILE_CONCURRENCY } from './companion-ebook-reconciler.js';
-import { observeCompanionEbook } from './companion-ebook-observe.js';
+import {
+  observeCompanionEbook,
+  revalidateCompanionFile,
+  statRegularFile,
+} from './companion-ebook-observe.js';
+import { findCompanionEbookCandidates } from './companion-ebook-discovery.js';
+import { resolveCompanionEbookPath } from './companion-ebook-open.js';
 import { findCompanionEbook, upsertCompanionEbook } from './companion-ebook.repository.js';
 import { withBookAdmissionLock } from './book-admission.js';
-import type { CompanionObserveResult } from './companion-ebook-observe.js';
+import type { CompanionObserveResult, CompanionRevalidateResult } from './companion-ebook-observe.js';
 import type { CompanionEbookObservation } from './companion-ebook-observation.js';
 
 /**
@@ -40,7 +46,36 @@ vi.mock('node:fs/promises', async () => {
   return { ...actual, stat: vi.fn(actual.stat) };
 });
 
-vi.mock('./companion-ebook-observe.js', () => ({ observeCompanionEbook: vi.fn() }));
+/**
+ * All THREE runtime exports, not just the one the sweep uses. The factory REPLACES the module
+ * rather than spreading it, so a missing entry fails every case in this file at module load
+ * with *"No export is defined on the mock"* — and #1976's selector imports `statRegularFile`
+ * (step 7) and `revalidateCompanionFile` (step 8) from here. `Fingerprint` and
+ * `CompanionRevalidateInput` are types; `verbatimModuleSyntax` erases them, so they need no
+ * entry (F19).
+ */
+vi.mock('./companion-ebook-observe.js', () => ({
+  observeCompanionEbook: vi.fn(),
+  statRegularFile: vi.fn(),
+  revalidateCompanionFile: vi.fn(),
+}));
+
+/**
+ * Discovery and the path resolver are the selector's other two collaborators. Both are
+ * DELEGATING spies over the real implementations: the selection cases below run against real
+ * temp directories, so `gone`/`undetermined`/`out_of_range` stay drivable by arranging the
+ * filesystem, while the `unresolvable` TOCTOU case can swap a file mid-call and still let the
+ * REAL resolver produce the outcome.
+ */
+vi.mock('./companion-ebook-discovery.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./companion-ebook-discovery.js')>();
+  return { ...actual, findCompanionEbookCandidates: vi.fn(actual.findCompanionEbookCandidates) };
+});
+
+vi.mock('./companion-ebook-open.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./companion-ebook-open.js')>();
+  return { ...actual, resolveCompanionEbookPath: vi.fn(actual.resolveCompanionEbookPath) };
+});
 
 vi.mock('./companion-ebook.repository.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./companion-ebook.repository.js')>();
@@ -86,6 +121,10 @@ vi.mock('../utils/semaphore.js', async (importOriginal) => {
 });
 
 const observeMock = vi.mocked(observeCompanionEbook);
+const statRegularFileMock = vi.mocked(statRegularFile);
+const revalidateCompanionFileMock = vi.mocked(revalidateCompanionFile);
+const findCompanionEbookCandidatesMock = vi.mocked(findCompanionEbookCandidates);
+const resolveCompanionEbookPathMock = vi.mocked(resolveCompanionEbookPath);
 const findCompanionEbookMock = vi.mocked(findCompanionEbook);
 const upsertCompanionEbookMock = vi.mocked(upsertCompanionEbook);
 const withBookAdmissionLockMock = vi.mocked(withBookAdmissionLock);
@@ -283,6 +322,16 @@ describe('CompanionEbookReconciler (#1959)', () => {
       if (typeof configured === 'function') return configured();
       return configured ?? OBSERVED;
     });
+
+    // The two new observe-module exports default to the REAL implementations, so a selection
+    // case that does not care about them runs against the real filesystem and the real
+    // validator. `vi.fn()` in the factory carries no implementation, unlike the delegating
+    // spies elsewhere in this file, so they must be installed here every time.
+    const actualObserve = await vi.importActual<typeof import('./companion-ebook-observe.js')>(
+      './companion-ebook-observe.js',
+    );
+    statRegularFileMock.mockImplementation(actualObserve.statRegularFile);
+    revalidateCompanionFileMock.mockImplementation(actualObserve.revalidateCompanionFile);
 
     reconciler = new CompanionEbookReconciler(db, settings, log);
   });
@@ -1453,4 +1502,634 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(summaries(spies)).toEqual([]);
     });
   });
+
+  // =========================================================================
+  // H. selectCompanionEbook — the owner's `ambiguous` pick (#1976 AC24-AC30)
+  // =========================================================================
+
+  describe('selectCompanionEbook (#1976)', () => {
+    /** A book with a real directory, plus the candidate files it should enumerate. */
+    async function seedCandidates(
+      names: string[],
+      overrides: Parameters<typeof insertBook>[0] = {},
+    ): Promise<{ bookId: number; bookPath: string }> {
+      const bookId = await insertBook(overrides);
+      const rows = await db.select({ path: books.path }).from(books).where(eq(books.id, bookId));
+      const bookPath = rows[0]!.path!;
+      for (const name of names) await writeFile(join(bookPath, name), `PK ${name}`);
+      return { bookId, bookPath };
+    }
+
+    /** The canonical `observed` revalidation for `filename`, as the owner's recorded pick. */
+    function selectedObservation(
+      filename: string,
+      candidateCount: number,
+      selected = true,
+    ): CompanionRevalidateResult {
+      return {
+        outcome: 'observed',
+        observation: {
+          status: 'available',
+          filename,
+          sizeBytes: 4096,
+          mtimeMs: 1_700_000_000_000,
+          ctimeMs: 1_700_000_000_500,
+          candidateCount,
+          selected,
+        },
+      };
+    }
+
+    /**
+     * Make revalidation succeed for whatever file step 8 hands it, so the ladder can be driven
+     * without planting a real EPUB. It echoes back the `filename`, `candidateCount`, and
+     * `selected` it was given — a selector that passed the wrong ones would still "succeed"
+     * here, and the assertions on the persisted row are what catch that.
+     */
+    function stubRevalidation(): void {
+      revalidateCompanionFileMock.mockImplementation(async ({ filename, selected, candidateCount }) =>
+        selectedObservation(filename, candidateCount, selected),
+      );
+    }
+
+    function lockAcquisitions(bookId: number): string[] {
+      return hoisted.events.filter((event) => event === `lock.acquire:${bookId}`);
+    }
+
+    function semaphoreEvents(): string[] {
+      return hoisted.events.filter((event) => event.startsWith('semaphore.'));
+    }
+
+    // -----------------------------------------------------------------------
+    // The happy path and the row-bearing commit (AC29/AC30)
+    // -----------------------------------------------------------------------
+
+    it('persists the chosen candidate as selected and returns the row the commit wrote', async () => {
+      const { bookId } = await seedCandidates(['a.epub', 'b.epub']);
+      await seedRow(bookId, { status: 'ambiguous', filename: null, sizeBytes: null, mtimeMs: null, ctimeMs: null, candidateCount: 2 });
+      stubRevalidation();
+
+      const result = await reconciler.selectCompanionEbook(bookId, 1);
+
+      expect(result.outcome).toBe('selected');
+      if (result.outcome !== 'selected') return;
+      // `upsertCompanionEbook` derives `selected_filename = filename` structurally, so this
+      // is the pair `ck_companion_ebooks_selection` polices (AC30).
+      expect(result.row).toMatchObject({
+        status: 'available',
+        filename: 'b.epub',
+        selectedFilename: 'b.epub',
+        candidateCount: 2,
+      });
+      expect(await readRow(bookId)).toEqual(result.row);
+    });
+
+    it('returns the object upsertCompanionEbook resolved with, and re-reads nothing after the commit (AC29)', async () => {
+      const { bookId } = await seedCandidates(['a.epub']);
+      stubRevalidation();
+
+      const result = await reconciler.selectCompanionEbook(bookId, 0);
+
+      expect(result.outcome).toBe('selected');
+      if (result.outcome !== 'selected') return;
+      // Identity, not equality: a post-commit `findCompanionEbook` would produce an equal-looking
+      // row read OUTSIDE the transaction, which is exactly what AC29 forbids.
+      expect(result.row).toBe(await upsertCompanionEbookMock.mock.results[0]!.value);
+      // Exactly two reads: step 2's prior, and the in-transaction precondition re-read. A third
+      // would be the post-commit re-read.
+      expect(findCompanionEbookMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('revalidates with selected: true, the live candidate count, and the resolved path', async () => {
+      const { bookId, bookPath } = await seedCandidates(['a.epub', 'b.epub', 'c.epub']);
+      stubRevalidation();
+
+      await reconciler.selectCompanionEbook(bookId, 2);
+
+      expect(revalidateCompanionFileMock).toHaveBeenCalledTimes(1);
+      expect(revalidateCompanionFileMock.mock.calls[0]![0]).toMatchObject({
+        bookId,
+        filename: 'c.epub',
+        selected: true,
+        candidateCount: 3,
+        before: expect.objectContaining({ sizeBytes: expect.any(Number) }),
+      });
+      const passedPath = revalidateCompanionFileMock.mock.calls[0]![0].path.split('\\').join('/');
+      expect(passedPath).toBe(join(bookPath, 'c.epub').split('\\').join('/'));
+    });
+
+    // AC26/AC27 — the selector runs its OWN pass. `observeCompanionEbook` is never called, so
+    // its `unchanged` short-circuit is structurally unreachable from here.
+    it('never calls observeCompanionEbook, and re-runs the whole pass on a repeated identical pick', async () => {
+      const { bookId } = await seedCandidates(['a.epub', 'b.epub']);
+      stubRevalidation();
+
+      const first = await reconciler.selectCompanionEbook(bookId, 0);
+      const second = await reconciler.selectCompanionEbook(bookId, 0);
+
+      expect(first.outcome).toBe('selected');
+      expect(second.outcome).toBe('selected');
+      expect(observeMock).not.toHaveBeenCalled();
+      // The work ran twice — the observable invariant, not a moved timestamp (AC27).
+      expect(findCompanionEbookCandidatesMock).toHaveBeenCalledTimes(2);
+      expect(revalidateCompanionFileMock).toHaveBeenCalledTimes(2);
+      expect(upsertCompanionEbookMock).toHaveBeenCalledTimes(2);
+    });
+
+    // -----------------------------------------------------------------------
+    // The info-level mutation audit record (PR #2010 F1)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Every `info` record this selection emitted. The sweep summary is excluded by shape — it
+     * is the only other `info` record this service produces and it carries a `books`
+     * denominator, which a per-selection record never does.
+     */
+    function selectionInfoRecords(): Array<Record<string, unknown>> {
+      return spies.info.mock.calls
+        .map((call) => call[0] as Record<string, unknown>)
+        .filter((record) => record !== null && typeof record === 'object' && !('books' in record));
+    }
+
+    describe('the persisted-selection audit record', () => {
+      // CONTRIBUTING.md: every create/update/delete logs at `info`. A single owner-triggered
+      // selection produces no sweep summary, so without this record the default-level log
+      // cannot establish that the row changed at all.
+      it('emits exactly one info record with the safe fields on a successful persist', async () => {
+        const { bookId } = await seedCandidates(['a.epub', 'b.epub', 'c.epub']);
+        stubRevalidation();
+
+        await expect(reconciler.selectCompanionEbook(bookId, 2)).resolves.toMatchObject({ outcome: 'selected' });
+
+        const records = selectionInfoRecords();
+        expect(records).toHaveLength(1);
+        // The EXACT key set — a widened record that started carrying the resolved path or the
+        // library root fails here rather than in a leak review.
+        expect(Object.keys(records[0]!).sort()).toEqual(['bookId', 'candidateCount', 'filename', 'status']);
+        expect(records[0]).toEqual({
+          bookId,
+          filename: 'c.epub',
+          status: 'available',
+          candidateCount: 3,
+        });
+      });
+
+      it('carries the live candidate count and the persisted status, not the stored ones', async () => {
+        const { bookId } = await seedCandidates(['a.epub', 'b.epub']);
+        await seedRow(bookId, {
+          status: 'ambiguous', filename: null, sizeBytes: null, mtimeMs: null, ctimeMs: null, candidateCount: 7,
+        });
+        revalidateCompanionFileMock.mockImplementation(async ({ filename, candidateCount }) => ({
+          outcome: 'observed',
+          observation: {
+            status: 'invalid',
+            filename,
+            sizeBytes: 4096,
+            mtimeMs: 1_700_000_000_000,
+            ctimeMs: 1_700_000_000_500,
+            candidateCount,
+            selected: true,
+            validationCode: 'empty_spine',
+          },
+        }));
+
+        await reconciler.selectCompanionEbook(bookId, 0);
+
+        expect(selectionInfoRecords()[0]).toEqual({
+          bookId,
+          filename: 'a.epub',
+          status: 'invalid',   // the persisted verdict, not the stored `ambiguous`
+          candidateCount: 2,   // the LIVE count, not the stored 7
+        });
+      });
+
+      it('never leaks the resolved path or the library root', async () => {
+        const { bookId, bookPath } = await seedCandidates(['a.epub']);
+        stubRevalidation();
+
+        await reconciler.selectCompanionEbook(bookId, 0);
+
+        const leaves = JSON.stringify(selectionInfoRecords());
+        expect(leaves).not.toContain(bookPath);
+        expect(leaves).not.toContain(libraryRoot);
+      });
+
+      // A mutation record is only meaningful if it is absent when nothing was written.
+      it.each<[string, () => Promise<number>]>([
+        ['out_of_range', async () => (await seedCandidates(['a.epub'])).bookId],
+        ['gone', async () => {
+          const { bookId } = await seedCandidates(['a.epub']);
+          findCompanionEbookCandidatesMock.mockResolvedValueOnce({ outcome: 'gone' });
+          return bookId;
+        }],
+        ['retained', async () => {
+          const { bookId } = await seedCandidates(['a.epub']);
+          revalidateCompanionFileMock.mockResolvedValueOnce({ outcome: 'retain' });
+          return bookId;
+        }],
+      ])('emits no info record when the outcome is %s', async (_label, arrange) => {
+        const bookId = await arrange();
+        spies.info.mockClear();
+
+        await reconciler.selectCompanionEbook(bookId, _label === 'out_of_range' ? 5 : 0);
+
+        expect(selectionInfoRecords()).toEqual([]);
+      });
+
+      it('emits no info record when the guarded commit conflicts', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        revalidateCompanionFileMock.mockImplementationOnce(async ({ filename, candidateCount }) => {
+          await db.update(books).set({ path: join(libraryRoot, 'moved-elsewhere') }).where(eq(books.id, bookId));
+          return selectedObservation(filename, candidateCount);
+        });
+        spies.info.mockClear();
+
+        await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'conflicted' });
+
+        expect(selectionInfoRecords()).toEqual([]);
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // Settings setup, above the lock (AC24 steps -2/-1)
+    // -----------------------------------------------------------------------
+
+    describe('settings setup', () => {
+      it('returns disabled without acquiring the lock or reading books', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        enabled = false;
+
+        await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'disabled' });
+
+        expect(withBookAdmissionLockMock).not.toHaveBeenCalled();
+        expect(findCompanionEbookMock).not.toHaveBeenCalled();
+        expect(findCompanionEbookCandidatesMock).not.toHaveBeenCalled();
+        expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+      });
+
+      it.each(['companionEpub', 'library'])(
+        'returns failed with one warn record when settings.get(%j) rejects',
+        async (failing) => {
+          const { bookId } = await seedCandidates(['a.epub']);
+          const boom = new Error(`settings ${failing} unavailable`);
+          settingsGet.mockImplementation(async (key: string) => {
+            if (key === failing) throw boom;
+            if (key === 'companionEpub') return { enabled: true };
+            return { path: libraryRoot };
+          });
+
+          await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'failed' });
+
+          expect(withBookAdmissionLockMock).not.toHaveBeenCalled();
+          expect(spies.warn).toHaveBeenCalledTimes(1);
+          const record = spies.warn.mock.calls[0]![0] as Record<string, unknown>;
+          expect(Object.keys(record).sort()).toEqual(['bookId', 'error']);
+          expect(record.bookId).toBe(bookId);
+          expectSerializedError(record.error, boom, {});
+        },
+      );
+    });
+
+    // -----------------------------------------------------------------------
+    // The locked ladder, step by step (AC24)
+    // -----------------------------------------------------------------------
+
+    describe('book_missing (step 1)', () => {
+      it('returns book_missing with no discovery, no resolver, and no write', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        await db.delete(books).where(eq(books.id, bookId));
+
+        await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'book_missing' });
+
+        expect(findCompanionEbookCandidatesMock).not.toHaveBeenCalled();
+        expect(resolveCompanionEbookPathMock).not.toHaveBeenCalled();
+        expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+      });
+
+      // The GENUINE race: deleted between the route's `getById` and the locked snapshot. The
+      // suite already wraps the lock in a delegating spy, so the deletion lands after
+      // acquisition and before the callback — no new seam needed (F6).
+      it('returns book_missing when the row is deleted after lock acquisition, before the callback', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        stubRevalidation();
+        const actual = await vi.importActual<typeof import('./book-admission.js')>('./book-admission.js');
+        withBookAdmissionLockMock.mockImplementationOnce(async (id: number, fn: () => Promise<unknown>) =>
+          actual.withBookAdmissionLock(id, async () => {
+            await db.delete(books).where(eq(books.id, id));
+            return fn();
+          }),
+        );
+
+        await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'book_missing' });
+        expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('ineligible (step 3)', () => {
+      it.each<[string, Parameters<typeof insertBook>[0]]>([
+        ['a non-imported status', { status: 'missing' }],
+        ['a blank path', { path: '   ' }],
+      ])('returns ineligible for %s, with no discovery and no write', async (_label, overrides) => {
+        const { bookId } = await seedCandidates([], overrides);
+
+        await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'ineligible' });
+
+        expect(findCompanionEbookCandidatesMock).not.toHaveBeenCalled();
+        expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('discovery (step 4)', () => {
+      it.each(['gone', 'undetermined'] as const)('maps a %s listing to the same outcome, with no write', async (arm) => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        findCompanionEbookCandidatesMock.mockResolvedValueOnce({ outcome: arm });
+
+        await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: arm });
+
+        expect(resolveCompanionEbookPathMock).not.toHaveBeenCalled();
+        expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+      });
+    });
+
+    /**
+     * AC24 step 5 — the range check is against the LIVE list, never the stored
+     * `candidate_count`. Both directions are pinned: a selector that read the stored column
+     * would accept the first case and reject the second (F8).
+     */
+    describe('out_of_range (step 5)', () => {
+      it('rejects an index the live list cannot address even though the stored count admits it', async () => {
+        const { bookId } = await seedCandidates(['a.epub', 'b.epub']);
+        await seedRow(bookId, {
+          status: 'ambiguous', filename: null, sizeBytes: null, mtimeMs: null, ctimeMs: null, candidateCount: 5,
+        });
+        const before = await readRow(bookId);
+
+        await expect(reconciler.selectCompanionEbook(bookId, 3)).resolves.toEqual({ outcome: 'out_of_range' });
+
+        expect(resolveCompanionEbookPathMock).not.toHaveBeenCalled();
+        expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+        // Byte-for-byte, `updated_at` included.
+        expect(await readRow(bookId)).toEqual(before);
+      });
+
+      it('accepts an index only the live list admits, when the stored count is smaller', async () => {
+        const { bookId } = await seedCandidates(['a.epub', 'b.epub', 'c.epub', 'd.epub']);
+        await seedRow(bookId, {
+          status: 'ambiguous', filename: null, sizeBytes: null, mtimeMs: null, ctimeMs: null, candidateCount: 2,
+        });
+        stubRevalidation();
+
+        const result = await reconciler.selectCompanionEbook(bookId, 3);
+
+        expect(result.outcome).toBe('selected');
+        if (result.outcome !== 'selected') return;
+        expect(result.row).toMatchObject({ filename: 'd.epub', selectedFilename: 'd.epub', candidateCount: 4 });
+      });
+
+      it('rejects an index past the end of the live list', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        await expect(reconciler.selectCompanionEbook(bookId, 1)).resolves.toEqual({ outcome: 'out_of_range' });
+      });
+    });
+
+    describe('unresolvable (steps 6 and 7)', () => {
+      it.each(['invalid_filename', 'not_regular_file', 'outside_library', 'missing', 'unreadable'] as const)(
+        'maps the resolver negative %s to unresolvable, with no validation and no write',
+        async (outcome) => {
+          const { bookId } = await seedCandidates(['a.epub']);
+          resolveCompanionEbookPathMock.mockResolvedValueOnce({ outcome });
+
+          await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'unresolvable' });
+
+          expect(revalidateCompanionFileMock).not.toHaveBeenCalled();
+          expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+        },
+      );
+
+      it('maps a failed step-7 fingerprint stat to unresolvable, not retained', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        statRegularFileMock.mockResolvedValueOnce(null);
+
+        await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'unresolvable' });
+        expect(revalidateCompanionFileMock).not.toHaveBeenCalled();
+      });
+
+      /**
+       * The arm is a genuine TOCTOU window, not dead code. A symlink planted BEFORE the call
+       * is never a candidate — `findCompanionEbookCandidates` already requires `stats.isFile()`
+       * — so the swap has to happen between discovery and the resolver, and the outcome has to
+       * be produced by the REAL resolver rather than by a stub.
+       */
+      it('is reachable: discovery saw a regular file, the real resolver sees a symlink out of the root', async () => {
+        const outside = mkdtempSync(join(tmpdir(), 'companion-select-outside-'));
+        try {
+          await writeFile(join(outside, 'secret.epub'), 'secret');
+          const { bookId, bookPath } = await seedCandidates(['a.epub']);
+          const actualOpen = await vi.importActual<typeof import('./companion-ebook-open.js')>(
+            './companion-ebook-open.js',
+          );
+          resolveCompanionEbookPathMock.mockImplementationOnce(async (input, log) => {
+            await rm(join(bookPath, 'a.epub'));
+            await symlink(join(outside, 'secret.epub'), join(bookPath, 'a.epub'));
+            return actualOpen.resolveCompanionEbookPath(input, log);
+          });
+
+          await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'unresolvable' });
+          expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+        } finally {
+          rmSync(outside, { recursive: true, force: true });
+        }
+      });
+    });
+
+    describe('retained (step 8)', () => {
+      it('writes nothing when revalidation declines to derive a verdict', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        await seedRow(bookId);
+        const before = await readRow(bookId);
+        revalidateCompanionFileMock.mockResolvedValueOnce({ outcome: 'retain' });
+
+        await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'retained' });
+
+        expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+        expect(await readRow(bookId)).toEqual(before);
+      });
+    });
+
+    describe('conflicted (step 9)', () => {
+      it('aborts when a concurrent writer changed the observation row between the pass and the commit', async () => {
+        const { bookId } = await seedCandidates(['a.epub', 'b.epub']);
+        await seedRow(bookId, {
+          status: 'ambiguous', filename: null, sizeBytes: null, mtimeMs: null, ctimeMs: null, candidateCount: 2,
+        });
+        // The mutation lands BETWEEN step 8 and step 9, which is the window the precondition
+        // exists to close.
+        revalidateCompanionFileMock.mockImplementationOnce(async ({ filename, candidateCount }) => {
+          await db.update(companionEbooks)
+            .set({ status: 'invalid', filename: 'winner.epub', sizeBytes: 1, mtimeMs: 1, ctimeMs: 1, validationCode: 'not_a_zip', candidateCount: 1 })
+            .where(eq(companionEbooks.bookId, bookId));
+          return selectedObservation(filename, candidateCount);
+        });
+
+        await expect(reconciler.selectCompanionEbook(bookId, 1)).resolves.toEqual({ outcome: 'conflicted' });
+
+        expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+        expect(abortReasons()).toContain('observation-changed');
+        expect(await readRow(bookId)).toMatchObject({ status: 'invalid', filename: 'winner.epub' });
+      });
+
+      it('aborts when books.path moved between the pass and the commit', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        revalidateCompanionFileMock.mockImplementationOnce(async ({ filename, candidateCount }) => {
+          await db.update(books).set({ path: join(libraryRoot, 'moved-elsewhere') }).where(eq(books.id, bookId));
+          return selectedObservation(filename, candidateCount);
+        });
+
+        await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'conflicted' });
+
+        expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+        expect(abortReasons()).toContain('book-changed');
+      });
+    });
+
+    /**
+     * F7 — the never-rejects contract, proven at the SERVICE level. A route-level stub of the
+     * `failed` arm cannot show that a throw out of the locked callback is absorbed here.
+     */
+    describe('failed (the never-rejects contract)', () => {
+      it('resolves to failed when the commit transaction throws, and logs the serialized record at debug', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        stubRevalidation();
+        const boom = new Error('libSQL write exploded');
+        upsertCompanionEbookMock.mockRejectedValueOnce(boom);
+
+        const promise = reconciler.selectCompanionEbook(bookId, 0);
+        await expect(promise).resolves.toEqual({ outcome: 'failed' });
+
+        const records = debugRecords(spies).filter((record) => 'error' in record);
+        expect(records).toHaveLength(1);
+        expect(Object.keys(records[0]!).sort()).toEqual(['bookId', 'error']);
+        expect(records[0]!.bookId).toBe(bookId);
+        expectSerializedError(records[0]!.error, boom, {});
+        // A setup rejection warns; a locked-callback throw does not (AC25).
+        expect(spies.warn).not.toHaveBeenCalled();
+      });
+
+      it('resolves to failed when a collaborator inside the lock throws', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        findCompanionEbookCandidatesMock.mockRejectedValueOnce(new Error('discovery exploded'));
+
+        await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'failed' });
+        expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // Lifecycle: one lock, no semaphore slot, and drain membership (AC24)
+    // -----------------------------------------------------------------------
+
+    describe('lock and semaphore discipline', () => {
+      it('acquires the admission lock exactly once and takes no sweep semaphore slot', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        stubRevalidation();
+
+        await reconciler.selectCompanionEbook(bookId, 0);
+
+        expect(lockAcquisitions(bookId)).toHaveLength(1);
+        // User-triggered work must not queue behind a background sweep — the same reason
+        // `reconcileBook` takes no slot.
+        expect(semaphoreEvents()).toEqual([]);
+      });
+
+      it('serializes two concurrent selections for the same book through the lock', async () => {
+        const { bookId } = await seedCandidates(['a.epub', 'b.epub']);
+        stubRevalidation();
+
+        const [first, second] = await Promise.all([
+          reconciler.selectCompanionEbook(bookId, 0),
+          reconciler.selectCompanionEbook(bookId, 1),
+        ]);
+
+        // Neither deadlocks, and the second observes the first's row as its prior — so both
+        // reach a terminal outcome rather than one aborting on a stale precondition.
+        expect([first.outcome, second.outcome].sort()).toEqual(['selected', 'selected']);
+        expect(lockAcquisitions(bookId)).toHaveLength(2);
+      });
+    });
+
+    describe('shutdown drain membership', () => {
+      it('returns stopped with zero filesystem and zero DB work when stop() ran first', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        await reconciler.stop();
+        findCompanionEbookCandidatesMock.mockClear();
+        findCompanionEbookMock.mockClear();
+
+        await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toEqual({ outcome: 'stopped' });
+
+        expect(withBookAdmissionLockMock).not.toHaveBeenCalled();
+        expect(findCompanionEbookCandidatesMock).not.toHaveBeenCalled();
+        expect(findCompanionEbookMock).not.toHaveBeenCalled();
+      });
+
+      /**
+       * Same-turn registration. `stop()` is called in the SAME tick, with no `await` between.
+       *
+       * The gate is on the SETTINGS read, not on revalidation, and that is the whole point: a
+       * same-turn `stop()` latches `stopping` before the locked callback runs, so step 0
+       * correctly short-circuits and revalidation is never reached — a gate placed there never
+       * fires, and the case would pass without proving anything.
+       *
+       * Parked on its first `await` inside setup, the selection is observable only through the
+       * `activeBookRuns` registration. A run registered AFTER that first `await` would already
+       * have been missed by the drain's snapshot and `stop()` would resolve immediately, so
+       * this is exactly the discriminator for synchronous registration.
+       */
+      it('keeps stop() pending until a selection accepted in the same turn resolves', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        const gate = deferred<{ enabled: boolean }>();
+        settingsGet.mockImplementation(async (key: string) => {
+          if (key === 'companionEpub') return gate.promise;
+          return { path: libraryRoot };
+        });
+
+        const selection = reconciler.selectCompanionEbook(bookId, 0);
+        const stopping = reconciler.stop();
+        const stopState = track(stopping);
+
+        await flush();
+        expect(stopState.settled).toBe(false);
+
+        gate.resolve({ enabled: true });
+        // `stopped`, from step 0 — the drain latched before this selection began its work.
+        await expect(selection).resolves.toEqual({ outcome: 'stopped' });
+        await stopping;
+        expect(stopState.settled).toBe(true);
+        expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+      });
+
+      it('keeps stop() pending for a selection already parked mid-pass, then completes the write', async () => {
+        const { bookId } = await seedCandidates(['a.epub']);
+        const gate = deferred<CompanionRevalidateResult>();
+        revalidateCompanionFileMock.mockImplementationOnce(() => gate.promise);
+
+        const selection = reconciler.selectCompanionEbook(bookId, 0);
+        await waitUntil(() => revalidateCompanionFileMock.mock.calls.length > 0, 'the selection to reach revalidation');
+
+        const stopping = reconciler.stop();
+        const stopState = track(stopping);
+        await flush();
+        expect(stopState.settled).toBe(false);
+
+        gate.resolve(selectedObservation('a.epub', 1));
+        await expect(selection).resolves.toMatchObject({ outcome: 'selected' });
+        await stopping;
+
+        expect(stopState.settled).toBe(true);
+        // `shutdown.ts` runs `stop()` immediately before `app.close()`, so the write must be
+        // done — not merely started — by the time the drain resolves.
+        expect(await readRow(bookId)).toMatchObject({ filename: 'a.epub', selectedFilename: 'a.epub' });
+      });
+    });
+  });
+
 });

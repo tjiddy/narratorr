@@ -8,6 +8,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { books, companionEbooks } from '../../db/schema.js';
 import { buildEpub } from '../../core/__tests__/epub-archive.fixture.js';
+import { validateEpub } from '../../core/epub/validate.js';
+import { upsertCompanionEbook } from './companion-ebook.repository.js';
 import { generatePublicId } from '../utils/public-id.js';
 import type { SettingsService } from './settings.service.js';
 import { CompanionEbookReconciler } from './companion-ebook-reconciler.js';
@@ -24,17 +26,35 @@ import { CompanionEbookReconciler } from './companion-ebook-reconciler.js';
  * Case 48 is the reason this file exists at all: it is the only test in the slate that can
  * produce a genuine ctime-only change, and without it the feature ships a silent hole.
  *
- * `readdir` is the ONE exception to "unmocked": it is a spy delegating to the real
- * implementation, so every case below still enumerates real directories, and case 52 can force
- * a genuine non-absence errno on demand rather than depending on whether the host honours mode
- * bits (F10). Nothing else in the graph is intercepted.
+ * **Three DELEGATING spies, and nothing else, are intercepted** — every one of them calls the
+ * real implementation, so the real validator, the real repository write, the real transaction,
+ * and the eight CHECK constraints all still run:
+ *
+ * - `readdir`, so case 52 can force a genuine non-absence errno on demand rather than depending
+ *   on whether the host honours mode bits (F10).
+ * - `validateEpub` and `upsertCompanionEbook`, so #1976's repeated-selection case can assert
+ *   the work ran TWICE (F24). Those counts are not observable from the returned rows —
+ *   `updated_at` stores Unix seconds and legitimately stays equal across two calls in the same
+ *   second — so a call count is the only honest evidence that the selector never short-circuits.
  */
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   return { ...actual, readdir: vi.fn(actual.readdir) };
 });
 
+vi.mock('../../core/epub/validate.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/epub/validate.js')>();
+  return { ...actual, validateEpub: vi.fn(actual.validateEpub) };
+});
+
+vi.mock('./companion-ebook.repository.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./companion-ebook.repository.js')>();
+  return { ...actual, upsertCompanionEbook: vi.fn(actual.upsertCompanionEbook) };
+});
+
 const readdirMock = vi.mocked(readdir);
+const validateEpubMock = vi.mocked(validateEpub);
+const upsertCompanionEbookMock = vi.mocked(upsertCompanionEbook);
 
 /** True where mode bits cannot produce EACCES — root defeats them entirely. */
 const IS_ROOT = process.getuid?.() === 0;
@@ -240,4 +260,229 @@ describe('CompanionEbookReconciler end-to-end (#1959)', () => {
 
     expect(await readRow()).toEqual(before);
   });
+
+  // =========================================================================
+  // selectCompanionEbook end to end (#1976) — real CHECK constraints
+  // =========================================================================
+
+  describe('selectCompanionEbook (#1976)', () => {
+    /** An `encryption.xml` naming a content document — the Adobe DRM shape. */
+    const ADOBE_DRM =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" ' +
+      'xmlns:enc="http://www.w3.org/2001/04/xmlenc#">' +
+      '<EncryptedData><EncryptionMethod Algorithm="http://ns.adobe.com/pdf/enc#RC"/>' +
+      '<CipherData><CipherReference URI="OEBPS/ch1.xhtml"/></CipherData></EncryptedData>' +
+      '</encryption>';
+
+    it('writes filename and selected_filename together for the picked candidate (case 53)', async () => {
+      await writeEpub('a.epub');
+      await writeEpub('b.epub');
+      await reconciler.reconcileAll();
+      expect((await readRow())!.status).toBe('ambiguous');
+
+      await expect(reconciler.selectCompanionEbook(bookId, 1)).resolves.toMatchObject({ outcome: 'selected' });
+
+      // The pair `ck_companion_ebooks_selection` and
+      // `ck_companion_ebooks_multi_candidate_selection` jointly police. A raw DB rejection
+      // would surface here as a thrown DrizzleQueryError, not a soft assertion failure — and
+      // the selector never rejects, so it would surface as `failed` instead.
+      expect(await readRow()).toMatchObject({
+        status: 'available',
+        filename: 'b.epub',
+        selectedFilename: 'b.epub',
+        candidateCount: 2,
+        validationCode: null,
+      });
+    });
+
+    it('survives a subsequent full reconcile via the prior-selection rule (case 54)', async () => {
+      await writeEpub('a.epub');
+      await writeEpub('b.epub');
+      await reconciler.reconcileAll();
+      await reconciler.selectCompanionEbook(bookId, 1);
+
+      await reconciler.reconcileAll();
+
+      // `resolveCandidate`'s first rule — a live prior selection wins — so the sweep does not
+      // re-ambiguate the book the owner just resolved.
+      expect(await readRow()).toMatchObject({
+        status: 'available',
+        filename: 'b.epub',
+        selectedFilename: 'b.epub',
+      });
+    });
+
+    it('persists a deliberately picked BROKEN epub as invalid, with the selection kept (case 55)', async () => {
+      await writeEpub('a.epub');
+      await writeEpub('b.epub', { packageOptions: { spine: '<spine></spine>' } });
+      await reconciler.reconcileAll();
+
+      await expect(reconciler.selectCompanionEbook(bookId, 1)).resolves.toMatchObject({ outcome: 'selected' });
+
+      // An owner may deliberately pick the broken file, and the CHECK admits `invalid` in its
+      // status list — the real `EpubValidationCode` round-trips through the real column.
+      expect(await readRow()).toMatchObject({
+        status: 'invalid',
+        validationCode: 'empty_spine',
+        filename: 'b.epub',
+        selectedFilename: 'b.epub',
+        candidateCount: 2,
+      });
+    });
+
+    it("persists a picked DRM'd candidate as drm_protected, with the selection kept (case 56)", async () => {
+      await writeEpub('a.epub');
+      await writeEpub('b.epub', { encryption: ADOBE_DRM });
+      await reconciler.reconcileAll();
+
+      await expect(reconciler.selectCompanionEbook(bookId, 1)).resolves.toMatchObject({ outcome: 'selected' });
+
+      expect(await readRow()).toMatchObject({
+        status: 'drm_protected',
+        filename: 'b.epub',
+        selectedFilename: 'b.epub',
+        validationCode: null,
+      });
+    });
+
+    /**
+     * AC27 — an explicit owner action ALWAYS revalidates; only the background sweep may skip.
+     *
+     * The observable invariant is "the work ran again", not "the timestamp moved":
+     * `companion_ebooks.updated_at` is `mode: 'timestamp'`, i.e. Unix SECONDS, so two
+     * selections completing inside the same second legitimately store an equal `updatedAt`.
+     * An advance assertion would fail on correct code; the call counts are what actually prove
+     * the selector never short-circuits and that `unchanged` is unreachable here.
+     */
+    it('re-runs validation and the write on a repeated identical selection (case 57)', async () => {
+      await writeEpub('a.epub');
+      await writeEpub('b.epub');
+      await reconciler.reconcileAll();
+
+      validateEpubMock.mockClear();
+      upsertCompanionEbookMock.mockClear();
+
+      await expect(reconciler.selectCompanionEbook(bookId, 1)).resolves.toMatchObject({ outcome: 'selected' });
+      const first = await readRow();
+      await expect(reconciler.selectCompanionEbook(bookId, 1)).resolves.toMatchObject({ outcome: 'selected' });
+      const second = await readRow();
+
+      expect(validateEpubMock).toHaveBeenCalledTimes(2);
+      expect(upsertCompanionEbookMock).toHaveBeenCalledTimes(2);
+      // Material columns unchanged. `updatedAt` is deliberately NOT compared in either
+      // direction — equal values within the storage resolution are conformant.
+      expect({ ...second, updatedAt: null }).toEqual({ ...first, updatedAt: null });
+    });
+
+    /**
+     * F12 / F23, the SERVICE half of AC34's accepted index drift. The route half — that a valid
+     * `PUT` succeeds with no ETag, nonce, or precondition header — lives in the route suite,
+     * which is the only layer that mounts Fastify.
+     */
+    it('honours the index against the CURRENT occupant after the list shifted (case 58)', async () => {
+      await writeEpub('b.epub');
+      await writeEpub('c.epub');
+      await reconciler.reconcileAll();
+      // Index 1 was issued against `[b, c]` and meant `c.epub`.
+      expect(await readdir(bookDir)).toEqual(expect.arrayContaining(['b.epub', 'c.epub']));
+
+      // A lexically earlier candidate appears, so the live order becomes `[a, b, c]`.
+      await writeEpub('a.epub');
+
+      await expect(reconciler.selectCompanionEbook(bookId, 1)).resolves.toMatchObject({ outcome: 'selected' });
+
+      // The CURRENT occupant of index 1 wins, and the stale index is not rejected.
+      expect(await readRow()).toMatchObject({
+        filename: 'b.epub',
+        selectedFilename: 'b.epub',
+        candidateCount: 3,
+      });
+    });
+
+    it('honours index 0 after the list shrank to a single candidate (case 59)', async () => {
+      await writeEpub('a.epub');
+      await writeEpub('b.epub');
+      await reconciler.reconcileAll();
+      await rm(join(bookDir, 'b.epub'));
+
+      await expect(reconciler.selectCompanionEbook(bookId, 0)).resolves.toMatchObject({ outcome: 'selected' });
+
+      // Legal under the observation schema, whose `superRefine` only REQUIRES a selection at
+      // `candidateCount >= 2` — it does not forbid one at 1.
+      expect(await readRow()).toMatchObject({
+        status: 'available',
+        filename: 'a.epub',
+        selectedFilename: 'a.epub',
+        candidateCount: 1,
+      });
+    });
+
+    it('clears the selection rather than promoting another candidate when the picked file is deleted (case 60)', async () => {
+      await writeEpub('a.epub');
+      await writeEpub('b.epub');
+      await writeEpub('c.epub');
+      await reconciler.reconcileAll();
+      await reconciler.selectCompanionEbook(bookId, 2); // c.epub
+
+      await rm(join(bookDir, 'c.epub'));
+      await reconciler.reconcileAll();
+
+      // Two others remain, so the row goes back to `ambiguous` — picking "another one" would
+      // silently re-point the owner's choice at a file they never chose.
+      expect(await readRow()).toMatchObject({
+        status: 'ambiguous',
+        candidateCount: 2,
+        filename: null,
+        selectedFilename: null,
+      });
+    });
+
+    it('falls back to an UNSELECTED available row when exactly one candidate remains (case 60b)', async () => {
+      await writeEpub('a.epub');
+      await writeEpub('b.epub');
+      await reconciler.reconcileAll();
+      await reconciler.selectCompanionEbook(bookId, 1); // b.epub
+
+      await rm(join(bookDir, 'b.epub'));
+      await reconciler.reconcileAll();
+
+      expect(await readRow()).toMatchObject({
+        status: 'available',
+        filename: 'a.epub',
+        selectedFilename: null,
+        candidateCount: 1,
+      });
+    });
+
+    it('serializes two concurrent selections for the same book without deadlocking (case 61)', async () => {
+      await writeEpub('a.epub');
+      await writeEpub('b.epub');
+      await reconciler.reconcileAll();
+
+      const [first, second] = await Promise.all([
+        reconciler.selectCompanionEbook(bookId, 0),
+        reconciler.selectCompanionEbook(bookId, 1),
+      ]);
+
+      // The second observes the first's row as its prior, so neither aborts on a stale
+      // precondition and neither self-deadlocks on the non-reentrant admission lock.
+      expect([first.outcome, second.outcome]).toEqual(['selected', 'selected']);
+      const row = await readRow();
+      expect(['a.epub', 'b.epub']).toContain(row!.filename);
+      expect(row!.selectedFilename).toBe(row!.filename);
+    });
+
+    it('rejects an out-of-range index against the live list without writing (case 62)', async () => {
+      await writeEpub('a.epub');
+      await writeEpub('b.epub');
+      await reconciler.reconcileAll();
+      const before = await readRow();
+
+      await expect(reconciler.selectCompanionEbook(bookId, 2)).resolves.toEqual({ outcome: 'out_of_range' });
+
+      expect(await readRow()).toEqual(before);
+    });
+  });
+
 });

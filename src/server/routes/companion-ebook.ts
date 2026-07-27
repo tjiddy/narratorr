@@ -1,15 +1,23 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { Db } from '../../db/index.js';
 import { idParamSchema } from '../../shared/schemas/common.js';
 import { isCompanionEbookExposed } from '../../shared/companion-ebook-exposure.js';
 import type { CompanionEbookStatus } from '../../shared/schemas/companion-ebook.js';
+// Deep path, never a `core/index.js` barrel — the same rule `companion-ebook-observe.ts` follows.
+import { inspectEpub } from '../../core/epub/validate.js';
+import type { EpubInspection } from '../../core/epub/result.js';
 import type { BookService, SettingsService } from '../services/index.js';
 import { findCompanionEbook } from '../services/companion-ebook.repository.js';
 import { isCompanionEbookEligible } from '../services/companion-ebook-eligibility.js';
 import { findCompanionEbookCandidates } from '../services/companion-ebook-discovery.js';
-import { openCompanionEbook } from '../services/companion-ebook-open.js';
+import { openCompanionEbook, resolveCompanionEbookPath } from '../services/companion-ebook-open.js';
+import type {
+  CompanionEbookReconciler,
+  CompanionSelectionResult,
+} from '../services/companion-ebook-reconciler.js';
 import type { CompanionEbookRow } from '../services/types.js';
+import { serializeError } from '../utils/serialize-error.js';
 import { streamCompanionEbook } from '../utils/companion-ebook-stream.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
@@ -17,7 +25,21 @@ type IdParam = z.infer<typeof idParamSchema>;
 export interface CompanionEbookRouteDeps {
   bookService: BookService;
   settingsService: SettingsService;
+  /** #1976 — the selection `PUT` delegates the whole mutation to the reconciler. */
+  reconciler: CompanionEbookReconciler;
 }
+
+/**
+ * The selection `PUT` body (#1976 AC18). `.strict()` so an extra key is a `400` from the
+ * schema, before the handler runs — and the route accepts NO filename and NO path on any
+ * field. The index is 0-based, matching what `/state` issues.
+ */
+const selectionBodySchema = z.object({ index: z.number().int().min(0) }).strict();
+
+type SelectionBody = z.infer<typeof selectionBodySchema>;
+
+/** The one inspection arm that carries a payload; the other two are pure verdicts. */
+type EpubInspectionAvailable = Extract<EpubInspection, { status: 'available' }>;
 
 /** The `/state` payload (#1974 AC24). The route encodes NO rendering policy — §7 decides
  *  which fields each state displays, and duplicating that judgement here is how the two drift. */
@@ -115,6 +137,289 @@ async function resolveAmbiguousState(
   } satisfies CompanionEbookStateResponse);
 }
 
+// ---------------------------------------------------------------------------
+// The owner-readable gate, and the two owner READS (#1976 AC4-AC17)
+// ---------------------------------------------------------------------------
+
+/** Everything a companion file needs to be opened, once the row is known owner-readable. */
+interface ExposedCompanionContext {
+  bookPath: string;
+  filename: string;
+  libraryRoot: string;
+}
+
+/**
+ * **The** owner-readable decision, at one site (PR #2010 F2).
+ *
+ * `companionEpub.enabled` false → `409` · `bookService.getById` null → `404` ·
+ * `isCompanionEbookExposed` false → `404` · `observation.filename` null → `404` ·
+ * blank `books.path` → `404`. Then the library root, which every opener needs.
+ *
+ * All three companion-file routes run this and only this: download applies
+ * `openCompanionEbook` to the result, metadata and cover apply the resolver plus
+ * `inspectEpub`. AC5's *"mirrors the shipped download route term for term"* is satisfied by
+ * construction here rather than by two copies staying in agreement — the ladder is literally
+ * the same code, so a later change to the exposure terms or the blank-path check cannot make
+ * download and the reads disagree about whether the same row is owner-readable.
+ *
+ * `isCompanionEbookEligible` is deliberately NOT called: its filesystem term is a `stat` of
+ * the book DIRECTORY, and the opener's containment check on the FILE is the authority. That is
+ * a decision, not an oversight. The exposure predicate is likewise never re-spelled inline —
+ * re-deriving `enabled && imported && available` is the exact drift it exists to prevent.
+ */
+async function loadExposedCompanionContext(
+  deps: CompanionEbookRouteDeps,
+  db: Db,
+  reply: FastifyReply,
+  id: number,
+): Promise<{ context: ExposedCompanionContext } | { reply: FastifyReply }> {
+  const { enabled } = await deps.settingsService.get('companionEpub');
+  if (!enabled) return { reply: featureDisabled(reply) };
+
+  const book = await deps.bookService.getById(id);
+  if (!book) return { reply: notFound(reply) };
+
+  const observation = await findCompanionEbook(db, id);
+  if (!isCompanionEbookExposed({ enabled, bookStatus: book.status, observationStatus: observation?.status })) {
+    return { reply: notFound(reply) };
+  }
+  // Both narrow nullable columns that `ck_companion_ebooks_file_present` already makes
+  // non-null for an `available` row — unreachable in practice, expressible in the type.
+  const filename = observation?.filename;
+  if (!filename) return { reply: notFound(reply) };
+  if (!book.path || book.path.trim() === '') return { reply: notFound(reply) };
+
+  const { path: libraryRoot } = await deps.settingsService.get('library');
+  return { context: { bookPath: book.path, filename, libraryRoot } };
+}
+
+/**
+ * The shared prefix both read routes run: the owner-readable gate above, then the §5 resolver,
+ * then one `inspectEpub`.
+ *
+ * Returns the available inspection, or the `reply` it already sent. Every negative is a `404`
+ * except the feature gate's `409`, and every one of them is logged through `logOutcome` — so
+ * the boundary record stays `{ bookId, outcome }` and nothing else, whatever the cause.
+ *
+ * **`resolveCompanionEbookPath`, not `openCompanionEbook`**: `inspectEpub` opens the archive by
+ * pathname itself, so taking a descriptor solely to close it before that re-open buys nothing
+ * (AC3). The route never builds `join(bookPath, filename)` — a second path-construction site
+ * is exactly what can drift from the verified one.
+ *
+ * **Two full inspections per panel load is accepted.** `inspectEpub` is documented as *"one
+ * call is one open is one budget"*, so a book page that fetches metadata and cover separately
+ * opens the archive twice. That is the design's stated cost model, bounded by
+ * `MAX_ARCHIVE_BYTES` and `MAX_INSPECTION_BYTES`; there is no response cache and no combined
+ * route in this issue.
+ */
+async function loadCompanionInspection(
+  deps: CompanionEbookRouteDeps,
+  db: Db,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  id: number,
+): Promise<{ inspection: EpubInspectionAvailable } | { reply: FastifyReply }> {
+  const gated = await loadExposedCompanionContext(deps, db, reply, id);
+  if ('reply' in gated) return gated;
+  const { bookPath, filename, libraryRoot } = gated.context;
+
+  const resolved = await resolveCompanionEbookPath(
+    { bookId: id, bookPath, filename, libraryRoot },
+    request.log,
+  );
+  if (resolved.outcome !== 'ok') {
+    logOutcome(request, id, resolved.outcome, 'Companion ebook read unavailable');
+    return { reply: notFound(reply) };
+  }
+
+  let inspection: EpubInspection;
+  try {
+    inspection = await inspectEpub(resolved.path);
+  } catch (error: unknown) {
+    // NOT a 500. `inspectEpub` propagates filesystem failures by design — `preOpenRejection`'s
+    // `lstat` has no catch and optional TOC/cover read errors propagate — so a file that
+    // vanishes or faults between the resolver and the inspection arrives here. Without this
+    // catch it would reach the global handler's `request.log.error(error, …)`, whose raw error
+    // message and stack embed the library path. The resolver already proved regular-file and
+    // containment, so anything arriving here is transient, and §4's accepted answer for the
+    // stale window is a clean 404.
+    logOutcome(request, id, 'inspect_failed', 'Companion ebook inspection failed');
+    // Logged ONCE at debug, in the established helper shape, so the failure stays diagnosable
+    // under `LOG_LEVEL=debug` while the default-level boundary record stays path-free.
+    // `serializeError` is mandatory — `narratorr/no-raw-error-logging` traces catch bindings.
+    request.log.debug(
+      { bookId: id, path: resolved.path, error: serializeError(error) },
+      'Companion ebook inspection threw',
+    );
+    return { reply: notFound(reply) };
+  }
+
+  if (inspection.status !== 'available') {
+    // The stored row said `available` and the live file disagrees — the §4 stale-window
+    // outcome, not an error class of its own.
+    logOutcome(request, id, inspection.status, 'Companion ebook inspection did not agree with the stored row');
+    return { reply: notFound(reply) };
+  }
+
+  return { inspection };
+}
+
+/**
+ * `GET /api/books/:id/companion-epub/metadata` — OPF title/author/language plus a plain-text
+ * table of contents. Feeds the `available` panel's chapter count.
+ *
+ * The three metadata fields and the two TOC fields are surfaced exactly as `EpubMetadata` and
+ * `EpubTocEntry` declare them — nothing renamed, defaulted, or coalesced.
+ *
+ * **No `chapterCount` field**, deliberately: the panel derives the count from `toc.length`. A
+ * second field computed from the array beside it in the same payload is a drift seam for no
+ * gain, and `toc: null` — an unreadable NCX/nav, or one that lost the shared inspection budget
+ * to nothing left — is not `0` chapters and must not be reported as one.
+ *
+ * No EPUB HTML is rendered here, so there is no sanitiser, no iframe, and no CSP question.
+ */
+async function handleCompanionEpubMetadata(
+  deps: CompanionEbookRouteDeps,
+  db: Db,
+  request: FastifyRequest<{ Params: IdParam }>,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const { id } = request.params;
+  const loaded = await loadCompanionInspection(deps, db, request, reply, id);
+  if ('reply' in loaded) return loaded.reply;
+
+  const { metadata, toc } = loaded.inspection;
+  return reply.status(200).header('Cache-Control', 'private, no-store').send({ metadata, toc });
+}
+
+/**
+ * `GET /api/books/:id/companion-epub/cover` — the validated embedded cover.
+ *
+ * `Content-Type` is `EpubCover.mediaType`, the BYTE-SNIFFED value; the manifest's declared
+ * `media-type` is never read here. The four literals `result.ts` names are the only values
+ * emittable, so `image/svg+xml` is unreachable by construction rather than by a route check.
+ *
+ * `Cache-Control` is `private, no-store` — deliberately NOT the `public, max-age=86400` that
+ * `routes/book-files.ts` uses for `/api/books/:id/cover`. These bytes are library content
+ * behind owner auth and change whenever the file does. The asymmetry is intentional; do not
+ * "fix" it later.
+ *
+ * `Content-Disposition` is `inline`: it renders in an `<img>`, and `attachment` is the download
+ * route's disposition. No `X-Content-Type-Options` is set here — `@fastify/helmet` applies
+ * `nosniff` globally.
+ */
+async function handleCompanionEpubCover(
+  deps: CompanionEbookRouteDeps,
+  db: Db,
+  request: FastifyRequest<{ Params: IdParam }>,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const { id } = request.params;
+  const loaded = await loadCompanionInspection(deps, db, request, reply, id);
+  if ('reply' in loaded) return loaded.reply;
+
+  const { cover } = loaded.inspection;
+  // `null` covers every discovery and read failure `extract.ts` documents: no declared cover, a
+  // `content` naming no manifest item, a read over `MAX_EPUB_COVER_BYTES`, a budget-exhausted
+  // skip, and bytes whose signature matched none of the four accepted formats.
+  if (cover === null) {
+    logOutcome(request, id, 'no_cover', 'Companion ebook has no readable embedded cover');
+    return notFound(reply);
+  }
+
+  return reply
+    .status(200)
+    .header('Content-Type', cover.mediaType)
+    .header('Content-Length', cover.bytes.length)
+    .header('Content-Disposition', 'inline')
+    .header('Cache-Control', 'private, no-store')
+    .send(cover.bytes);
+}
+
+// ---------------------------------------------------------------------------
+// The selection PUT (#1976 AC18-AC21, AC31-AC34)
+// ---------------------------------------------------------------------------
+
+function selectionUnavailable(reply: FastifyReply): FastifyReply {
+  return reply.status(503).send({ error: 'Companion ebook selection could not be completed' });
+}
+
+type SelectionFailure = Exclude<CompanionSelectionResult, { outcome: 'selected' }>['outcome'];
+
+/**
+ * AC31's map, total over the eleven non-2xx outcomes — `Record<SelectionFailure, …>` means a
+ * new outcome that is not mapped fails typecheck rather than falling through to a default.
+ *
+ * `disabled` and `conflicted` share a status but not a body: the first reuses the route's own
+ * disabled sentence, so a feature flip mid-request reads identically to one caught a moment
+ * earlier at the gate. Every body is the owner-route flat `{ error: '<sentence>' }` convention
+ * — NOT the v1 `{ error: { code, message } }` envelope — and none carries a path, a filename,
+ * or the library root.
+ */
+const SELECTION_FAILURE_RESPONSES: Record<SelectionFailure, (reply: FastifyReply) => FastifyReply> = {
+  out_of_range: (reply) => reply.status(400).send({ error: 'Candidate index is out of range' }),
+  book_missing: notFound,
+  ineligible: notFound,
+  gone: notFound,
+  unresolvable: notFound,
+  disabled: featureDisabled,
+  conflicted: (reply) =>
+    reply.status(409).send({ error: 'Companion ebook selection conflicted with a concurrent change' }),
+  undetermined: selectionUnavailable,
+  retained: selectionUnavailable,
+  stopped: selectionUnavailable,
+  failed: selectionUnavailable,
+};
+
+/**
+ * `PUT /api/books/:id/companion-epub/selection` — the `ambiguous` picker.
+ *
+ * The route's own gate is exactly TWO terms: feature disabled → `409`, unknown book → `404`.
+ * It then delegates to `selectCompanionEbook`, which re-reads both settings itself because it
+ * — not the route — owns the inputs `isCompanionEbookEligible` and the resolver require. The
+ * route gate is a cheap early-out, not the authority.
+ *
+ * **`isCompanionEbookExposed` is deliberately NOT consulted.** An `ambiguous` row is by
+ * definition not `available`, so the exposure predicate is false for every row this route
+ * exists to act on; a handler copied from the read ladder would make the picker permanently
+ * 404. Eligibility is evaluated once, inside the lock, never here.
+ *
+ * CSRF is ambient: `enforceCsrf` requires `X-Requested-With: XMLHttpRequest` on every non-safe
+ * method and `fetchApi` already sends it, so there is no per-route CSRF wiring.
+ *
+ * Index drift between the `GET /state` that issued the index and this `PUT` is ACCEPTED — no
+ * precondition token, no ETag, no nonce. The owner may pick the wrong candidate once and
+ * re-pick.
+ */
+async function handleCompanionEpubSelection(
+  deps: CompanionEbookRouteDeps,
+  request: FastifyRequest<{ Params: IdParam; Body: SelectionBody }>,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const { id } = request.params;
+
+  const { enabled } = await deps.settingsService.get('companionEpub');
+  if (!enabled) return featureDisabled(reply);
+
+  const book = await deps.bookService.getById(id);
+  if (!book) return notFound(reply);
+
+  const result = await deps.reconciler.selectCompanionEbook(id, request.body.index);
+
+  if (result.outcome !== 'selected') {
+    logOutcome(request, id, result.outcome, 'Companion ebook selection unavailable');
+    return SELECTION_FAILURE_RESPONSES[result.outcome](reply);
+  }
+
+  // The row the commit transaction returned, rendered by the SAME projector `GET /state` uses,
+  // so the two cannot render differently for the same row and the panel needs no follow-up
+  // fetch. This payload carries `filename` and `selectedFilename` deliberately — they are
+  // stored basenames the owner already sees on `/state`, and the leak rule that governs the
+  // error bodies does not apply to it. A success emits no boundary record, matching the
+  // shipped routes, which log only on negatives.
+  return reply.status(200).send(projectStoredState(result.row));
+}
+
 /**
  * Owner-facing companion-ebook routes (#1974, plan §5 and §7) — the download and the one
  * owner observation read.
@@ -135,11 +440,9 @@ export async function companionEbookRoutes(
   /**
    * `GET /api/books/:id/companion-epub` — owner download.
    *
-   * The gate is the SHARED `isCompanionEbookExposed` predicate plus a non-blank `books.path`;
-   * re-deriving `enabled && imported && available` inline is the exact drift it exists to
-   * prevent. `isCompanionEbookEligible` is deliberately NOT called: its filesystem term is a
-   * `stat` of the book DIRECTORY, and the helper's containment check on the FILE is the
-   * authority. That is a decision, not an oversight.
+   * The gate is `loadExposedCompanionContext` — the SAME code metadata and cover run, not a
+   * mirror of it (PR #2010 F2). Only the tail differs: this route opens a descriptor and
+   * streams it, where the reads resolve a path and inspect it.
    */
   app.get<{ Params: IdParam }>(
     '/api/books/:id/companion-epub',
@@ -147,25 +450,12 @@ export async function companionEbookRoutes(
     async (request, reply) => {
       const { id } = request.params;
 
-      const { enabled } = await deps.settingsService.get('companionEpub');
-      if (!enabled) return featureDisabled(reply);
+      const gated = await loadExposedCompanionContext(deps, db, reply, id);
+      if ('reply' in gated) return gated.reply;
+      const { bookPath, filename, libraryRoot } = gated.context;
 
-      const book = await deps.bookService.getById(id);
-      if (!book) return notFound(reply);
-
-      const observation = await findCompanionEbook(db, id);
-      if (!isCompanionEbookExposed({ enabled, bookStatus: book.status, observationStatus: observation?.status })) {
-        return notFound(reply);
-      }
-      // Both narrow nullable columns that `ck_companion_ebooks_file_present` already makes
-      // non-null for an `available` row — unreachable in practice, expressible in the type.
-      const filename = observation?.filename;
-      if (!filename) return notFound(reply);
-      if (!book.path || book.path.trim() === '') return notFound(reply);
-
-      const { path: libraryRoot } = await deps.settingsService.get('library');
       const opened = await openCompanionEbook(
-        { bookId: id, bookPath: book.path, filename, libraryRoot },
+        { bookId: id, bookPath, filename, libraryRoot },
         request.log,
       );
       if (opened.outcome !== 'ok') {
@@ -214,5 +504,36 @@ export async function companionEbookRoutes(
 
       return reply.status(200).send(projectStoredState(row));
     },
+  );
+
+  /**
+   * The three #1976 routes. Each handler is a MODULE-LEVEL named function, deliberately:
+   * written inline they would push this factory near or past its 150-line cap, which is the
+   * binding limit here rather than the file's 400.
+   *
+   * All three declare `params` only and NO `response` map — these handlers `reply.status(…)
+   * .send(…)` inline for four different statuses, and declaring a success schema would make
+   * every one of those fail typecheck under the zod type provider
+   * (zod-type-provider-send-union-narrowing).
+   *
+   * Auth is ambient via the `/api/*` `onRequest` hook; none of the three is added to
+   * `BASE_PUBLIC_ROUTES`.
+   */
+  app.get<{ Params: IdParam }>(
+    '/api/books/:id/companion-epub/metadata',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => handleCompanionEpubMetadata(deps, db, request, reply),
+  );
+
+  app.get<{ Params: IdParam }>(
+    '/api/books/:id/companion-epub/cover',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => handleCompanionEpubCover(deps, db, request, reply),
+  );
+
+  app.put<{ Params: IdParam; Body: SelectionBody }>(
+    '/api/books/:id/companion-epub/selection',
+    { schema: { params: idParamSchema, body: selectionBodySchema } },
+    async (request, reply) => handleCompanionEpubSelection(deps, request, reply),
   );
 }

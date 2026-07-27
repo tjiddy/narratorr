@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { FastifyBaseLogger } from 'fastify';
-import { openCompanionEbook } from './companion-ebook-open.js';
+import { openCompanionEbook, resolveCompanionEbookPath } from './companion-ebook-open.js';
 
 /**
  * Driven against a REAL temp directory, never an `fs` mock: the symlink / regular-file /
@@ -303,6 +303,233 @@ describe('openCompanionEbook', () => {
     it('never logs above debug', async () => {
       await call('book.epub'); // missing
       await call('a/b.epub');  // invalid_filename
+      expect(logger.spies.info).not.toHaveBeenCalled();
+      expect(logger.spies.warn).not.toHaveBeenCalled();
+      expect(logger.spies.error).not.toHaveBeenCalled();
+    });
+  });
+});
+
+/**
+ * `resolveCompanionEbookPath` (#1976 AC1) — the verification prefix `openCompanionEbook` now
+ * composes, and the sole path-construction site the two read routes and the selection
+ * mutation all reach.
+ *
+ * Driven against the same real temp directories for the same reason: the symlink /
+ * regular-file / parent-escape distinctions are the ones a mock erases. Every case asserts
+ * `open` was never called — the resolver's whole point is that it verifies WITHOUT taking a
+ * descriptor, so `inspectEpub` can open the archive by pathname itself (AC3).
+ */
+describe('resolveCompanionEbookPath', () => {
+  let root: string;
+  let bookPath: string;
+  let outside: string;
+  let logger: ReturnType<typeof createMockLogger>;
+
+  beforeEach(async () => {
+    vi.mocked(lstat).mockClear();
+    vi.mocked(open).mockClear();
+    root = await realpath(mkdtempSync(join(tmpdir(), 'narratorr-1976-lib-')));
+    outside = await realpath(mkdtempSync(join(tmpdir(), 'narratorr-1976-out-')));
+    bookPath = join(root, 'Author', 'Title');
+    await mkdir(bookPath, { recursive: true });
+    logger = createMockLogger();
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  function resolve(filename: string, overrides?: { bookPath?: string }) {
+    return resolveCompanionEbookPath(
+      { bookId: 42, bookPath: overrides?.bookPath ?? bookPath, filename, libraryRoot: root },
+      logger.log,
+    );
+  }
+
+  /**
+   * The AC1 "no descriptor" invariant. The resolver issues `lstat` and `realpath` only, so a
+   * regression that opened a handle to probe the file — and leaked it — shows up here as a
+   * call to the spied `open`, which is the only observable a leaked descriptor has.
+   */
+  function expectNoDescriptorOpened(): void {
+    expect(vi.mocked(open)).not.toHaveBeenCalled();
+  }
+
+  describe('ok', () => {
+    it('returns the joined path for a regular .epub inside the root', async () => {
+      await writeFile(join(bookPath, 'book.epub'), 'PK companion bytes');
+
+      await expect(resolve('book.epub')).resolves.toEqual({
+        outcome: 'ok',
+        path: join(bookPath, 'book.epub'),
+      });
+      expectNoDescriptorOpened();
+    });
+
+    it('returns the path VERBATIM, not the canonicalised realpath', async () => {
+      // Containment canonicalises to decide, but the returned path is the one the caller
+      // built from `books.path` — so `inspectEpub` opens the same name the row names.
+      await writeFile(join(bookPath, 'book.epub'), 'bytes');
+      const result = await resolve('book.epub');
+
+      expect(result.outcome).toBe('ok');
+      if (result.outcome !== 'ok') return;
+      expect(result.path.split('\\').join('/')).toContain('Author/Title/book.epub');
+    });
+  });
+
+  describe('invalid_filename', () => {
+    const rejected = ['', 'a/b.epub', 'a\\b.epub', ' book.epub', 'book.epub ', '.', '..'];
+
+    it.each(rejected)('rejects %j before any syscall', async (filename) => {
+      await expect(resolve(filename)).resolves.toEqual({ outcome: 'invalid_filename' });
+      expect(vi.mocked(lstat)).not.toHaveBeenCalled();
+      expectNoDescriptorOpened();
+    });
+  });
+
+  describe('not_regular_file', () => {
+    it('rejects a symlink whose target is outside the root', async () => {
+      await writeFile(join(outside, 'secret.epub'), 'secret');
+      await symlink(join(outside, 'secret.epub'), join(bookPath, 'book.epub'));
+
+      await expect(resolve('book.epub')).resolves.toEqual({ outcome: 'not_regular_file' });
+      expectNoDescriptorOpened();
+    });
+
+    it('rejects a symlink whose target is inside the root', async () => {
+      await writeFile(join(bookPath, 'real.epub'), 'real');
+      await symlink(join(bookPath, 'real.epub'), join(bookPath, 'book.epub'));
+
+      await expect(resolve('book.epub')).resolves.toEqual({ outcome: 'not_regular_file' });
+      expectNoDescriptorOpened();
+    });
+
+    it('rejects a directory', async () => {
+      await mkdir(join(bookPath, 'book.epub'));
+      await expect(resolve('book.epub')).resolves.toEqual({ outcome: 'not_regular_file' });
+      expectNoDescriptorOpened();
+    });
+
+    it.runIf(isLinux)('rejects a FIFO', async () => {
+      execFileSync('mkfifo', [join(bookPath, 'book.epub')]);
+      await expect(resolve('book.epub')).resolves.toEqual({ outcome: 'not_regular_file' });
+      expectNoDescriptorOpened();
+    });
+  });
+
+  describe('outside_library', () => {
+    // The PARENT-component escape, not merely a final-component one: this is the case
+    // `isCompanionEbookEligible`'s directory-level guard cannot cover once a component is
+    // swapped after it ran, and the only reason step 6 of the selection pass exists (AC28).
+    it('rejects a parent-directory symlink escape whose final component is a real file', async () => {
+      const externalBook = join(outside, 'Title');
+      await mkdir(externalBook, { recursive: true });
+      await writeFile(join(externalBook, 'book.epub'), 'outside bytes');
+      await symlink(externalBook, join(root, 'escape'));
+
+      const result = await resolve('book.epub', { bookPath: join(root, 'escape') });
+      expect(result).toEqual({ outcome: 'outside_library' });
+      expectNoDescriptorOpened();
+    });
+
+    it('rejects a book path lexically outside the root', async () => {
+      await writeFile(join(outside, 'book.epub'), 'outside bytes');
+      await expect(resolve('book.epub', { bookPath: outside })).resolves.toEqual({
+        outcome: 'outside_library',
+      });
+      expectNoDescriptorOpened();
+    });
+  });
+
+  describe('missing', () => {
+    it('classifies an already-vanished file as missing at the lstat step (ENOENT)', async () => {
+      await expect(resolve('book.epub')).resolves.toEqual({ outcome: 'missing' });
+      expectNoDescriptorOpened();
+    });
+
+    it('classifies a book path that is not a directory as missing (ENOTDIR)', async () => {
+      const filePath = join(bookPath, 'notadir');
+      await writeFile(filePath, 'x');
+      await expect(resolve('book.epub', { bookPath: filePath })).resolves.toEqual({
+        outcome: 'missing',
+      });
+      expectNoDescriptorOpened();
+    });
+
+    it('classifies a file that vanishes between lstat and containment as missing', async () => {
+      const filePath = join(bookPath, 'book.epub');
+      await writeFile(filePath, 'bytes');
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      vi.mocked(lstat).mockImplementationOnce((async (target: string) => {
+        const stats = await actual.lstat(target);
+        await actual.rm(target);
+        return stats;
+      }) as unknown as typeof lstat);
+
+      await expect(resolve('book.epub')).resolves.toEqual({ outcome: 'missing' });
+      expectNoDescriptorOpened();
+    });
+  });
+
+  describe('unreadable', () => {
+    it('classifies EACCES from lstat as unreadable', async () => {
+      const filePath = join(bookPath, 'book.epub');
+      await writeFile(filePath, 'bytes');
+      vi.mocked(lstat).mockRejectedValueOnce(
+        Object.assign(new Error(`EACCES: permission denied, lstat '${filePath}'`), { code: 'EACCES' }),
+      );
+
+      await expect(resolve('book.epub')).resolves.toEqual({ outcome: 'unreadable' });
+      expectNoDescriptorOpened();
+    });
+
+    it('classifies a code-less throw as unreadable, never missing', async () => {
+      await writeFile(join(bookPath, 'book.epub'), 'bytes');
+      // The message SAYS ENOENT and there is no `code`: only the shared #1955 discriminator
+      // gets this right, a hand-rolled message match does not.
+      vi.mocked(lstat).mockRejectedValueOnce(new Error('ENOENT'));
+
+      await expect(resolve('book.epub')).resolves.toEqual({ outcome: 'unreadable' });
+      expectNoDescriptorOpened();
+    });
+  });
+
+  // AC2/AC6 boundary: the resolver's `debug` records carry the path DELIBERATELY. The
+  // path-free rule is the route boundary's, and #1974 settled that a path-free
+  // `serializeError` is not expressible.
+  describe('logging', () => {
+    it('logs a caught lstat error at debug with the path preserved in the serialized error', async () => {
+      const filePath = join(bookPath, 'book.epub');
+      await writeFile(filePath, 'bytes');
+      const eacces = Object.assign(new Error(`EACCES: permission denied, lstat '${filePath}'`), {
+        code: 'EACCES',
+      });
+      vi.mocked(lstat).mockRejectedValueOnce(eacces);
+
+      await resolve('book.epub');
+
+      expect(logger.spies.debug).toHaveBeenCalledTimes(1);
+      const [record] = logger.spies.debug.mock.calls[0] as [Record<string, unknown>, string];
+      expect(record).toMatchObject({ bookId: 42, path: filePath });
+      expectSerializedError(record.error, eacces, { code: 'EACCES' });
+      expect(stringLeaves(record.error).join('\n')).toContain(filePath);
+    });
+
+    it('logs the containment rejection WITHOUT an error key — it is control flow, not a failure', async () => {
+      await writeFile(join(outside, 'book.epub'), 'outside bytes');
+
+      await resolve('book.epub', { bookPath: outside });
+
+      const [record] = logger.spies.debug.mock.calls[0] as [Record<string, unknown>, string];
+      expect(Object.keys(record).sort()).toEqual(['bookId', 'path']);
+    });
+
+    it('never logs above debug', async () => {
+      await resolve('book.epub'); // missing
+      await resolve('a/b.epub');  // invalid_filename
       expect(logger.spies.info).not.toHaveBeenCalled();
       expect(logger.spies.warn).not.toHaveBeenCalled();
       expect(logger.spies.error).not.toHaveBeenCalled();
