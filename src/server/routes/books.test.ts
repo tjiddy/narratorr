@@ -1143,6 +1143,91 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(500);
     });
+
+    // =======================================================================
+    // #1960 AC19/AC22 — rename caller 1: no-op / changed / thrown
+    // =======================================================================
+
+    describe('#1960 companion-ebook reconcile', () => {
+      beforeEach(() => {
+        (services.companionEbook.reconcileBook as Mock).mockResolvedValue(undefined);
+      });
+
+      it('AC19: a rename that MOVED the folder fires exactly one reconcileBook', async () => {
+        (services.rename.renameBook as Mock).mockResolvedValue({
+          oldPath: '/library/old', newPath: '/library/new',
+          message: 'Moved from /library/old to /library/new', filesRenamed: 0,
+        });
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+        expect(services.companionEbook.reconcileBook).toHaveBeenCalledWith(1);
+      });
+
+      it('AC19: a rename that only RENAMED FILES fires exactly one reconcileBook', async () => {
+        (services.rename.renameBook as Mock).mockResolvedValue({
+          oldPath: '/library/same', newPath: '/library/same',
+          message: 'Renamed 2 file(s)', filesRenamed: 2,
+        });
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+      });
+
+      it('AC22: the "Already organized" no-op shape fires ZERO reconciles', async () => {
+        // Discriminated STRUCTURALLY (`newPath === oldPath && filesRenamed === 0`), never on
+        // the message string. Nothing moved, so there is nothing to re-observe.
+        (services.rename.renameBook as Mock).mockResolvedValue({
+          oldPath: '/library/same', newPath: '/library/same',
+          message: 'Already organized', filesRenamed: 0,
+        });
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.companionEbook.reconcileBook).not.toHaveBeenCalled();
+      });
+
+      it('AC22: a THROW after the path write fires one reconcileBook and still propagates', async () => {
+        // `rename.service.ts` persists the new `books.path` BEFORE `renameFilesWithTemplate`
+        // can fail, so the EPUB may already have travelled — a throw always reconciles.
+        (services.rename.renameBook as Mock).mockRejectedValue(new Error('Unexpected'));
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+        expect(res.statusCode).toBe(500);
+        expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+        expect(services.companionEbook.reconcileBook).toHaveBeenCalledWith(1);
+      });
+
+      it('AC22: a coded RenameError also reconciles, with its mapping unchanged', async () => {
+        (services.rename.renameBook as Mock).mockRejectedValue(
+          new RenameError('Book has no path', 'NO_PATH'),
+        );
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+        expect(res.statusCode).toBe(400);
+        expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+      });
+
+      it('a rejecting reconciler changes neither the status code nor the body', async () => {
+        (services.companionEbook.reconcileBook as Mock).mockRejectedValue(new Error('reconcile rejected'));
+        (services.rename.renameBook as Mock).mockResolvedValue({
+          oldPath: '/library/old', newPath: '/library/new',
+          message: 'Moved from /library/old to /library/new', filesRenamed: 1,
+        });
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload).newPath).toBe('/library/new');
+      });
+    });
   });
 
   describe('GET /api/books/:id/retag/preview', () => {
@@ -3880,6 +3965,73 @@ describe('#1071 series routes', () => {
         expect(res.statusCode).toBe(200);
         expect(services.rename.renameBook).not.toHaveBeenCalled();
         expect(services.tagging.retagBook).not.toHaveBeenCalled();
+      });
+
+      // =====================================================================
+      // #1960 AC20/AC22 — rename caller 2: the same no-op / changed / thrown
+      // shapes as the standalone route, gated on `renameFiles`.
+      // =====================================================================
+
+      describe('#1960 companion-ebook reconcile', () => {
+        beforeEach(() => {
+          (services.companionEbook.reconcileBook as Mock).mockResolvedValue(undefined);
+        });
+
+        it('AC20: renameFiles=true with a MATERIAL rename fires exactly one reconcileBook', async () => {
+          primeSuccessfulFixMatch();
+          (services.rename.renameBook as Mock).mockResolvedValueOnce({ oldPath: '/a', newPath: '/b', message: 'ok', filesRenamed: 1 });
+
+          const res = await app.inject({
+            method: 'POST', url: '/api/books/7/fix-match',
+            payload: { asin: 'B_NEW', renameFiles: true },
+          });
+
+          expect(res.statusCode).toBe(200);
+          expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+          expect(services.companionEbook.reconcileBook).toHaveBeenCalledWith(7);
+        });
+
+        it('AC20: renameFiles=true whose rename REJECTS still fires one reconcileBook, and the swallow is unchanged', async () => {
+          primeSuccessfulFixMatch();
+          (services.rename.renameBook as Mock).mockRejectedValueOnce(new Error('rename blew up'));
+
+          const res = await app.inject({
+            method: 'POST', url: '/api/books/7/fix-match',
+            payload: { asin: 'B_NEW', renameFiles: true },
+          });
+
+          // The existing `catch` still absorbs the failure — Fix Match itself succeeds.
+          expect(res.statusCode).toBe(200);
+          expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+        });
+
+        it('AC22: renameFiles=true with the "Already organized" no-op shape fires ZERO reconciles', async () => {
+          primeSuccessfulFixMatch();
+          (services.rename.renameBook as Mock).mockResolvedValueOnce({
+            oldPath: '/library/book-7', newPath: '/library/book-7',
+            message: 'Already organized', filesRenamed: 0,
+          });
+
+          const res = await app.inject({
+            method: 'POST', url: '/api/books/7/fix-match',
+            payload: { asin: 'B_NEW', renameFiles: true },
+          });
+
+          expect(res.statusCode).toBe(200);
+          expect(services.companionEbook.reconcileBook).not.toHaveBeenCalled();
+        });
+
+        it('AC20: renameFiles=false fires ZERO reconciles from this seam', async () => {
+          primeSuccessfulFixMatch();
+
+          const res = await app.inject({
+            method: 'POST', url: '/api/books/7/fix-match',
+            payload: { asin: 'B_NEW', renameFiles: false },
+          });
+
+          expect(res.statusCode).toBe(200);
+          expect(services.companionEbook.reconcileBook).not.toHaveBeenCalled();
+        });
       });
 
       // #1670 — Fix Match refreshes the OPF on BOTH the retag and non-retag paths, gated on

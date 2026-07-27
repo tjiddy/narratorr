@@ -13,6 +13,8 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { RetrySearchDeps } from './retry-search.js';
+import type { CompanionReconcileTrigger } from './companion-ebook-trigger.js';
+import { CompanionEbookReconciler } from './companion-ebook-reconciler.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 
@@ -42,6 +44,7 @@ function createService(opts?: {
   settingsService?: Partial<SettingsService>;
   eventHistory?: Partial<EventHistoryService>;
   retrySearchDeps?: RetrySearchDeps;
+  companionEbook?: CompanionReconcileTrigger;
 }) {
   const db = createMockDb();
   const log = createMockLogger();
@@ -70,6 +73,7 @@ function createService(opts?: {
     settingsService,
     eventHistory,
     retrySearchDeps,
+    opts?.companionEbook,
   );
 
   return { service, db, log, bookService, blacklistService, settingsService, eventHistory };
@@ -444,6 +448,87 @@ describe('BookRejectionService', () => {
       // Actually per spec, blacklist creation failure is inside the shared helper which catches it
       // The mock throws from the top-level call — let's verify behavior
       await expect(service.rejectAsWrongRelease(42)).rejects.toThrow('blacklist error');
+    });
+  });
+
+  // ==========================================================================
+  // #1960 AC23/AC24 — the companion seam is hygiene, and provably writes nothing
+  // ==========================================================================
+
+  describe('#1960 companion-ebook reconcile', () => {
+    it('AC23: rejectAsWrongRelease triggers reconcileBook for that book', async () => {
+      const companionEbook = {
+        reconcileBook: vi.fn().mockResolvedValue(undefined),
+        reconcileAll: vi.fn().mockResolvedValue(undefined),
+      };
+      const { service, bookService } = createService({ companionEbook });
+      (bookService.getById as Mock).mockResolvedValue(importedBook);
+
+      await service.rejectAsWrongRelease(42);
+
+      expect(companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+      expect(companionEbook.reconcileBook).toHaveBeenCalledWith(42);
+      expect(companionEbook.reconcileAll).not.toHaveBeenCalled();
+    });
+
+    it('AC23: a rejecting reconciler does not fail the rejection', async () => {
+      const companionEbook = {
+        reconcileBook: vi.fn().mockRejectedValue(new Error('reconcile rejected')),
+        reconcileAll: vi.fn(),
+      };
+      const { service, bookService } = createService({ companionEbook });
+      (bookService.getById as Mock).mockResolvedValue(importedBook);
+
+      await expect(service.rejectAsWrongRelease(42)).resolves.toBeUndefined();
+    });
+
+    it('AC24: a REAL reconciler over the post-reset book writes NO companion_ebooks row', async () => {
+      // The reset above set `status: 'wanted'` / `path: null`, so `isCompanionEbookEligible`
+      // fails on the status term and `reconcileLocked` returns `skipped` BEFORE any write —
+      // never a zeroing one. Exposure was already closed by the predicate's `imported` term;
+      // this AC pins that the seam stays a pure no-op rather than becoming a write.
+      const companionDb = createMockDb();
+      // Read 1 = the post-reset `books` snapshot; read 2 = the prior observation (absent).
+      let selectCall = 0;
+      companionDb.select.mockImplementation(() => ({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockImplementation(() => {
+          selectCall++;
+          return Promise.resolve(selectCall === 1 ? [{ id: 42, status: 'wanted', path: null }] : []);
+        }),
+      }));
+      const companionLog = createMockLogger();
+      const reconciler = new CompanionEbookReconciler(
+        inject<Db>(companionDb),
+        inject<SettingsService>({
+          get: vi.fn().mockImplementation((cat: string) =>
+            Promise.resolve(cat === 'companionEpub' ? { enabled: true } : { path: '/audiobooks' })),
+        }),
+        inject<FastifyBaseLogger>(companionLog),
+      );
+
+      // The seam is fire-and-forget, so capture the real run's promise to drain it
+      // deterministically — no timers, and the reconciler underneath is the real one.
+      const runs: Promise<void>[] = [];
+      const { service, bookService } = createService({
+        companionEbook: {
+          reconcileBook: (id: number) => { const p = reconciler.reconcileBook(id); runs.push(p); return p; },
+          reconcileAll: () => reconciler.reconcileAll(),
+        },
+      });
+      (bookService.getById as Mock).mockResolvedValue(importedBook);
+
+      await service.rejectAsWrongRelease(42);
+      expect(runs).toHaveLength(1);
+      await Promise.all(runs);
+
+      // Non-vacuity: the run really did reach `reconcileLocked` (snapshot + prior-observation
+      // reads both issued) and only THEN skipped — it did not bail out during setup.
+      expect(selectCall).toBe(2);
+      expect(companionDb.update).not.toHaveBeenCalled();
+      expect(companionDb.insert).not.toHaveBeenCalled();
+      expect(companionDb.transaction).not.toHaveBeenCalled();
     });
   });
 });

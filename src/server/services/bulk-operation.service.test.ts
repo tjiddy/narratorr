@@ -101,6 +101,7 @@ function createService(opts?: {
   taggingService?: TaggingService;
   bookService?: BookService;
   connectorService?: { notifyRefresh: ReturnType<typeof vi.fn> };
+  companionEbook?: { reconcileBook: ReturnType<typeof vi.fn>; reconcileAll: ReturnType<typeof vi.fn> };
 }) {
   const db = createMockDb();
   const log = createMockLogger();
@@ -121,6 +122,7 @@ function createService(opts?: {
     bookService,
     inject<FastifyBaseLogger>(log),
     connectorService ? inject<ConnectorService>(connectorService) : undefined,
+    opts?.companionEbook,
   );
   return { service, db, log, renameService, taggingService, bookService, settingsService, connectorService };
 }
@@ -479,6 +481,108 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
     // Lockstep invariant: preview denominator === job setTotal === actual renameBook calls.
     expect(service.getJob(id)?.total).toBe(preview.jobTotal);
     expect((renameService.renameBook as Mock).mock.calls).toHaveLength(preview.jobTotal);
+  });
+});
+
+// ===== #1960 AC21 — rename caller 3: ONE post-loop sweep, never a per-book fan-out =====
+
+describe('BulkOperationService — companion-ebook sweep after bulk rename (#1960 AC21)', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  const FILE_FORMAT_SETTINGS = {
+    settingsOverrides: {
+      library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+    },
+  };
+
+  function makeCompanionStub() {
+    return {
+      reconcileBook: vi.fn().mockResolvedValue(undefined),
+      reconcileAll: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  function bookRow(overrides: Record<string, unknown>) {
+    return {
+      id: 1, path: '/library/Author Name/Book1', title: 'Book1',
+      seriesName: null, seriesPosition: null, publishedDate: null,
+      editionLabel: null, authorName: 'Author Name',
+      ...overrides,
+    };
+  }
+
+  it('a rename over N books produces ONE reconcileAll and ZERO reconcileBook calls', async () => {
+    const companionEbook = makeCompanionStub();
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+        bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+        bookRow({ id: 3, path: '/library/Author Name/Book3', title: 'Book3' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(renameService.renameBook).toHaveBeenCalledTimes(3);
+    // N-wide direct fan-out is exactly what this AC prevents: direct runs do not coalesce.
+    expect(companionEbook.reconcileBook).not.toHaveBeenCalled();
+    expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires once even when some books failed mid-loop', async () => {
+    const companionEbook = makeCompanionStub();
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+        bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock)
+      .mockRejectedValueOnce(new RenameError('conflict', 'CONFLICT'))
+      .mockResolvedValueOnce({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(service.getJob(id)?.failures).toBe(1);
+    expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('is NOT fired when the target set is empty', async () => {
+    const companionEbook = makeCompanionStub();
+    const { service, db } = createService({ companionEbook });
+    db.select.mockReturnValue(mockDbChain([])); // no eligible rows at all
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(service.getJob(id)?.total).toBe(0);
+    expect(companionEbook.reconcileAll).not.toHaveBeenCalled();
+  });
+
+  it('a rejecting sweep does not fail the job', async () => {
+    const companionEbook = {
+      reconcileBook: vi.fn(),
+      reconcileAll: vi.fn().mockRejectedValue(new Error('sweep rejected')),
+    };
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
+    db.select
+      .mockReturnValueOnce(mockDbChain([bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' })]))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(service.getJob(id)?.failures).toBe(0);
+    expect(service.getJob(id)?.status).toBe('completed');
   });
 });
 
