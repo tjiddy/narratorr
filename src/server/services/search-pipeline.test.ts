@@ -536,6 +536,17 @@ describe('filterAndRankResults — ebook format filtering', () => {
     expect(results).toHaveLength(1);
   });
 
+  // Companion-ebook slate guardrail (#1986). Narratorr *observes* an ebook the
+  // owner placed beside an audiobook; it never *acquires* one. Adding companion
+  // EPUB support must not relax EBOOK_FORMAT_RE — this is the single most
+  // likely accidental breach in that slate.
+  it('still rejects an ebook-only release while companion EPUB support lands (#1986)', () => {
+    const ebookOnly = filterAndRankResults([makeResult({ title: 'Dune EPUB' })], base.bookDuration, { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference });
+    const withAudio = filterAndRankResults([makeResult({ title: 'Dune EPUB M4B' })], base.bookDuration, { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference });
+    expect(ebookOnly.results).toHaveLength(0);
+    expect(withAudio.results).toHaveLength(1);
+  });
+
   describe('debug-level drop logging (AC6)', () => {
     it('emits per-drop debug log for ebook-only filter when logger is provided', () => {
       const log = createMockLogger();
