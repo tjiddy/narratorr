@@ -2872,8 +2872,10 @@ describe('ImportQueueWorker', () => {
           jobWrites.push(payload);
           return {
             where: vi.fn().mockImplementation(() => {
-              // The terminus is what AC4's ordering is measured against: the trace entry
-              // lands when the completion UPDATE RESOLVES, not when it is issued.
+              // Issuance order only — this trace cannot distinguish "issued" from "persisted",
+              // which is exactly why the AC4 ordering contract has its own gated test below
+              // (`does not start until the completion UPDATE has RESOLVED`) rather than being
+              // asserted from here.
               if (payload.status === 'completed') trace.push('completion-update');
               if (payload.status === 'failed') trace.push('failure-update');
               return updateWhereTerminus();
@@ -2911,7 +2913,7 @@ describe('ImportQueueWorker', () => {
       expect(reconcileBook).toHaveBeenCalledWith(42);
     });
 
-    it('AC4: the importJobs completion UPDATE resolves BEFORE the trigger is invoked', async () => {
+    it('AC4: the importJobs completion UPDATE is ISSUED before the trigger (weak ordering — see the gated test for persistence)', async () => {
       const { trace, jobWrites } = await runOneJob({
         jobRow: completedJob(),
         reconcileBook: () => Promise.resolve(),
@@ -2919,6 +2921,83 @@ describe('ImportQueueWorker', () => {
 
       expect(trace).toEqual(['completion-update', 'reconcile']);
       expect(jobWrites.some(w => w.status === 'completed' && w.phase === 'done')).toBe(true);
+    });
+
+    /**
+     * AC4's REAL ordering contract: "after the completion UPDATE has **persisted** (not before
+     * it, not inside the same statement)".
+     *
+     * The issuance trace above cannot prove this. `where()` runs synchronously when the
+     * statement is built, so if production dropped the `await` on `finalizeCompletedImport(…)`
+     * the helper would still reach `where()`, push its trace entry, and let the worker fire the
+     * trigger while the database promise was still pending — and the weak assertion would stay
+     * green. This test gates the completion terminus instead: the write cannot settle until the
+     * test releases it, so "no reconcile yet" is a real observation rather than a side effect of
+     * synchronous mock bookkeeping.
+     */
+    it('AC4: reconciliation does not start until the completion UPDATE has RESOLVED, not merely been issued', async () => {
+      const events: string[] = [];
+      let releasePersistence!: () => void;
+      const persisted = new Promise<void>((r) => { releasePersistence = r; });
+      let markIssued!: () => void;
+      const issued = new Promise<void>((r) => { markIssued = r; });
+
+      const reconcileBook = vi.fn().mockImplementation(() => {
+        events.push('reconcile');
+        return Promise.resolve();
+      });
+      const w = new ImportQueueWorker(
+        inject<Db>(mockDb.db), log, { emit: vi.fn() } as never,
+        undefined, undefined,
+        { reconcileBook },
+      );
+
+      registerImportAdapter({ type: 'manual', process: () => Promise.resolve() } as ImportAdapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 900 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([completedJob()]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => ({
+          where: vi.fn().mockImplementation(() => {
+            if (payload.status !== 'completed') return updateWhereTerminus();
+            events.push('completion-issued');
+            markIssued();
+            // Awaitable AND `.returning()`-capable, but neither settles until the test
+            // releases it (`guarded-transition-needs-returning-in-tx-mocks`).
+            const settle = () => persisted.then(() => { events.push('completion-persisted'); });
+            return {
+              then: (resolve: (v: { rowsAffected: number }) => void, reject: (e: unknown) => void) =>
+                settle().then(() => ({ rowsAffected: 1 })).then(resolve, reject),
+              returning: vi.fn().mockImplementation(() => settle().then(() => [{ id: 1 }])),
+            };
+          }),
+        })),
+      }));
+
+      await w.start();
+      await issued;
+      // Ample room for every pending microtask AND a macrotask turn: if production dropped the
+      // `await`, the trigger would already have fired by now.
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(events).toEqual(['completion-issued']);
+      expect(reconcileBook).not.toHaveBeenCalled();
+
+      releasePersistence();
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(reconcileBook).toHaveBeenCalledTimes(1);
+      expect(reconcileBook).toHaveBeenCalledWith(42);
+      expect(events).toEqual(['completion-issued', 'completion-persisted', 'reconcile']);
+
+      await w.stop();
     });
 
     it('AC6: no trigger when the job carries a null bookId', async () => {

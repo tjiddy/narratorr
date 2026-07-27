@@ -34,6 +34,13 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
   let emitSpy: ReturnType<typeof vi.fn>;
   let eventCreate: ReturnType<typeof vi.fn>;
   let eventHistory: EventHistoryService;
+  /**
+   * #1960 AC5 — the companion trigger must NOT fire on the forced-refusal branch: that branch
+   * DELETES the placeholder book, so a reconcile would enqueue work for a row that no longer
+   * exists. The worker is constructed WITH this spy so a trigger added to the refusal path is
+   * detectable here; without it the whole branch is a blind spot.
+   */
+  let reconcileBook: ReturnType<typeof vi.fn>;
   let worker: ImportQueueWorker;
 
   beforeEach(async () => {
@@ -46,7 +53,8 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     emitSpy = vi.fn();
     eventCreate = vi.fn().mockResolvedValue({});
     eventHistory = { create: eventCreate } as unknown as EventHistoryService;
-    worker = new ImportQueueWorker(db, noopLog, { emit: emitSpy } as never, undefined, eventHistory);
+    reconcileBook = vi.fn().mockResolvedValue(undefined);
+    worker = new ImportQueueWorker(db, noopLog, { emit: emitSpy } as never, undefined, eventHistory, { reconcileBook });
   });
 
   afterEach(async () => {
@@ -149,6 +157,10 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     expect(payload.error_message).toContain('#99');
     // NOT the generic import_complete success path.
     expect(emitSpy.mock.calls.some(c => c[0] === 'import_complete')).toBe(false);
+
+    // #1960 AC5 — and NO companion reconcile: the placeholder was just deleted, so enqueueing a
+    // book run here would schedule work against a row that no longer exists.
+    expect(reconcileBook).not.toHaveBeenCalled();
   });
 
   it('2+-owner data anomaly stays fail-closed under force: refused disposition, no swap/overwrite', async () => {
@@ -163,6 +175,7 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     expect(remaining).toHaveLength(0);
     const payload = emitSpy.mock.calls.find(c => c[0] === 'import_failed')![1];
     expect(payload.refusal_reason).toMatchObject({ kind: 'forced-import-refused', recordingReason: 'recording-review-ambiguous-owner', existingBookId: 5 });
+    expect(reconcileBook).not.toHaveBeenCalled(); // #1960 AC5
   });
 
   it('ownerless refusal (-1 sentinel) reports existingBookId null, never "book #-1"', async () => {
@@ -175,6 +188,7 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     expect(payload.refusal_reason).toMatchObject({ kind: 'forced-import-refused', recordingReason: 'recording-review-no-disambiguator', existingBookId: null });
     expect(payload.error_message).not.toContain('#-1');
     expect(payload.error_message).toContain('no identifiable owner');
+    expect(reconcileBook).not.toHaveBeenCalled(); // #1960 AC5
     void jobId;
   });
 
@@ -202,6 +216,8 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     const payload = emitSpy.mock.calls.find(c => c[0] === 'import_failed')![1];
     expect(payload.refusal_reason).toBeUndefined();
     expect(eventCreate).not.toHaveBeenCalled();
+    // #1960 AC5 — the generic failure path does not reconcile either.
+    expect(reconcileBook).not.toHaveBeenCalled();
   });
 
   it('non-Owned failure is unchanged: generic markJobFailed path, book reverts to failed (not deleted)', async () => {
@@ -228,5 +244,25 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     // Sanity: no bookEvents written by the worker on the generic path.
     const events = await db.select().from(bookEvents);
     expect(events).toHaveLength(0);
+    // #1960 AC5 — no companion reconcile on a generic failure.
+    expect(reconcileBook).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #1960 AC5, the positive control for this suite: the SAME worker instance — the one carrying
+   * the reconciler spy — DOES fire exactly once when the adapter succeeds. Without this, every
+   * `not.toHaveBeenCalled()` above would also pass against a worker whose trigger was wired to a
+   * dead reference, and the whole refusal-branch guard would be vacuous.
+   */
+  it('positive control: a SUCCEEDING import on this same worker fires exactly one reconcile', async () => {
+    const { bookId, jobId } = await seedForcedJob();
+    registerImportAdapter({ type: 'manual', async process() { /* succeeds */ } } as ImportAdapter);
+
+    await runWorker();
+
+    const [jobRow] = await db.select().from(importJobs).where(eq(importJobs.id, jobId)).limit(1);
+    expect(jobRow!.status).toBe('completed');
+    expect(reconcileBook).toHaveBeenCalledTimes(1);
+    expect(reconcileBook).toHaveBeenCalledWith(bookId);
   });
 });
