@@ -63,7 +63,7 @@ const mockBook = {
 };
 
 /**
- * Build a complete `BookRouteDeps` with all 17 services mocked. Each call
+ * Build a complete `BookRouteDeps` with all 18 services mocked. Each call
  * derives fresh `vi.fn()`-backed mocks from `createMockServices()`, so a test
  * mutating the returned deps can't leak into a later call. Pass `overrides` to
  * replace any field; omitted fields keep their default mock.
@@ -93,6 +93,7 @@ function makeBookRouteDeps(overrides: Partial<BookRouteDeps> = {}): BookRouteDep
     eventBroadcaster: s.eventBroadcaster,
     seriesCardService: s.seriesCard,
     metadataService: s.metadata,
+    companionEbook: s.companionEbook,
     connectorService: makeMockConnector(),
     ...overrides,
   };
@@ -3364,7 +3365,8 @@ describe('POST /api/books/:id/cover', () => {
   });
 });
 
-// #1558 — `BookRouteDeps` now marks all 17 services required, so the old
+// #1558 — `BookRouteDeps` now marks all 18 services required (17 + #1960's
+// `companionEbook`), so the old
 // `#514` "absent blacklistService" test (which forced `services.blacklist =
 // undefined` and asserted search is NOT triggered) is no longer representable.
 // The positive required-deps path — search IS triggered for a `searchImmediately`
@@ -3376,12 +3378,12 @@ describe('#1558 makeBookRouteDeps factory', () => {
     'settingsService', 'renameService', 'mergeService', 'taggingService',
     'eventHistory', 'bookDeletionService', 'indexerSearchService', 'indexerService',
     'bookRejectionService', 'blacklistService', 'eventBroadcaster', 'seriesCardService',
-    'metadataService',
+    'metadataService', 'companionEbook',
   ];
 
-  it('returns a complete BookRouteDeps with all 17 fields defined', () => {
+  it('returns a complete BookRouteDeps with all 18 fields defined', () => {
     const deps = makeBookRouteDeps();
-    expect(ALL_FIELDS).toHaveLength(17);
+    expect(ALL_FIELDS).toHaveLength(18);
     for (const field of ALL_FIELDS) {
       expect(deps[field], `expected ${field} to be defined`).toBeDefined();
     }

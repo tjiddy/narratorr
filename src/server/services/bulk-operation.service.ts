@@ -14,6 +14,7 @@ import { enqueueRetagRefresh } from '../utils/enqueue-book-refresh.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { BulkJob } from './bulk-job.js';
 import { runSidecarReconcile } from './bulk-sidecar-reconcile.js';
+import { triggerCompanionSweep, type CompanionReconcileTrigger } from './companion-ebook-trigger.js';
 import { convertBook, type ConvertProcessingSettings } from './bulk-convert.js';
 import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
@@ -104,6 +105,8 @@ export class BulkOperationService {
     private bookService: BookService,
     private log: FastifyBaseLogger,
     private connectorService?: ConnectorService,
+    /** #1960 AC21 — optional so unit suites that do not exercise the sweep can omit it. */
+    private companionEbook?: CompanionReconcileTrigger,
   ) {}
 
   /**
@@ -291,6 +294,15 @@ export class BulkOperationService {
           continue;
         }
         tick(false); // success
+      }
+
+      // #1960 AC21 — caller 3 of three: ONE coalesced sweep after the whole loop, never a
+      // per-book `reconcileBook` inside it. A whole-library rename would otherwise fan out N
+      // direct runs, and direct runs do not coalesce — only `reconcileAll()` does. Fires even
+      // when some books failed (their folders may still have moved) and is skipped entirely
+      // for an empty target set.
+      if (targetIds.length > 0) {
+        triggerCompanionSweep(this.companionEbook, this.log, 'Companion ebook sweep failed after bulk rename');
       }
     }, () => this.onJobComplete(id));
 

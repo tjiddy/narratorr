@@ -9,6 +9,7 @@ import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { RetrySearchDeps } from './retry-search.js';
 import { blacklistAndRetrySearch } from './rejection-helpers.js';
+import { triggerCompanionReconcile, type CompanionReconcileTrigger } from './companion-ebook-trigger.js';
 import { preserveBookCover } from '../utils/cover-cache.js';
 import { config } from '../config.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -23,6 +24,8 @@ export class BookRejectionService {
     private settingsService: SettingsService,
     private eventHistory?: EventHistoryService,
     private retrySearchDeps?: RetrySearchDeps,
+    /** #1960 AC23 — optional so unit suites that do not exercise the seam can omit it. */
+    private companionEbook?: CompanionReconcileTrigger,
   ) {}
 
   /**
@@ -75,6 +78,13 @@ export class BookRejectionService {
       lastGrabInfoHash: null,
       updatedAt: new Date(),
     }).where(eq(books.id, bookId));
+
+    // 2b. Companion-ebook hygiene (#1960 AC23/AC24). Provably a NO-OP WRITE: the reset above
+    // set `status: 'wanted'` and `path: null`, so `isCompanionEbookEligible` fails and
+    // `reconcileLocked` returns `skipped` before it touches `companion_ebooks` — never a
+    // zeroing write. Exposure was already closed by the predicate's `status === 'imported'`
+    // term. The AC exists to pin that this stays a no-op.
+    triggerCompanionReconcile(this.companionEbook, bookId, this.log, 'Companion ebook reconcile failed after wrong-release reset');
 
     // 3. Preserve cover + delete book files (best-effort — after DB reset so crash won't leave stale state)
     if (book.path) {

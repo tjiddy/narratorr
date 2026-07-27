@@ -24,6 +24,20 @@ export interface RenameResult {
   filesRenamed: number;
 }
 
+/**
+ * Did this rename actually move the folder or rewrite a filename? The ONE home for that
+ * question (#1960 AC22) — both rename callers that care import it rather than re-spelling the
+ * comparison, so a future change to `RenameResult` has a single site to follow.
+ *
+ * `renameBook` returns `newPath === oldPath && filesRenamed === 0` UNIQUELY for the
+ * "Already organized" early return; every other success path either moved the folder or
+ * renamed at least one file. The decision is structural on purpose — never on the `message`
+ * string, which is display text and free to change.
+ */
+export function didRenameChangeAnything(result: RenameResult): boolean {
+  return result.newPath !== result.oldPath || result.filesRenamed > 0;
+}
+
 export interface RenamePlan {
   libraryRoot: string;
   folderFormat: string;

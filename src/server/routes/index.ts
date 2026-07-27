@@ -157,7 +157,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   });
   const taskRegistry = new TaskRegistry();
   const discovery = new DiscoveryService(db, log, metadata, settings);
-  const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log, connector);
+  const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log, connector, companionEbook);
 
   // Migrate quality.preferredLanguage → metadata.languages (one-time, idempotent)
   await settings.migrateLanguageSettings();
@@ -204,7 +204,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     retrySearchDeps,
     settingsService: settings,
   });
-  const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps);
+  const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps, companionEbook);
   const bookDeletion = new BookDeletionService(book, download, downloadOrchestrator, settings, log, eventHistory);
 
   // Phase 2: wire required cyclic deps now that every instance exists.
@@ -244,6 +244,7 @@ const routeRegistry: RouteFactory[] = [
     eventBroadcaster: s.eventBroadcaster,
     seriesCardService: s.seriesCard,
     metadataService: s.metadata,
+    companionEbook: s.companionEbook,
     connectorService: s.connector,
   }),
   (app, s) => bookFilesRoute(app, s.book, s.settings, s.connector),
