@@ -11,7 +11,7 @@ import { serializeError } from '../utils/serialize-error.js';
 import { HardcoverClient } from '../../core/metadata/hardcover.js';
 import { mapHardcoverError } from '../utils/hardcover-error.js';
 import { resolveFfmpegPath, probeFfmpeg } from '../../core/utils/audio-processor.js';
-import { triggerCompanionSweep, type CompanionReconcileTrigger } from '../services/companion-ebook-trigger.js';
+import { triggerCompanionSweep, type CompanionSweepTrigger } from '../services/companion-ebook-trigger.js';
 import {
   snapshotCompanionSettings,
   companionSettingsChangeFired,
@@ -64,7 +64,7 @@ export async function settingsRoutes(
   settingsService: SettingsService,
   indexerService?: IndexerService,
   healthCheckService?: HealthCheckService,
-  companionEbook?: CompanionReconcileTrigger,
+  companionEbook?: CompanionSweepTrigger,
 ) {
   // GET /api/settings
   app.get('/api/settings', async () => {

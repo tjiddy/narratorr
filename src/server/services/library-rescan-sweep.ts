@@ -1,11 +1,11 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { ScanInProgressError, type LibraryScanService, type RescanResult } from './library-scan.service.js';
-import { triggerCompanionSweep, type CompanionReconcileTrigger } from './companion-ebook-trigger.js';
+import { triggerCompanionSweep, type CompanionSweepTrigger } from './companion-ebook-trigger.js';
 
 export interface RescanWithCompanionSweepDeps {
   libraryScan: Pick<LibraryScanService, 'rescanLibrary'>;
   /** Optional so a suite that does not exercise the sweep can omit it entirely. */
-  companionEbook?: CompanionReconcileTrigger | null | undefined;
+  companionEbook?: CompanionSweepTrigger | null | undefined;
   log: FastifyBaseLogger;
 }
 

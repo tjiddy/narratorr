@@ -13,7 +13,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { RetrySearchDeps } from './retry-search.js';
-import type { CompanionReconcileTrigger } from './companion-ebook-trigger.js';
+import type { CompanionBookReconcileTrigger } from './companion-ebook-trigger.js';
 import { CompanionEbookReconciler } from './companion-ebook-reconciler.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
@@ -44,7 +44,7 @@ function createService(opts?: {
   settingsService?: Partial<SettingsService>;
   eventHistory?: Partial<EventHistoryService>;
   retrySearchDeps?: RetrySearchDeps;
-  companionEbook?: CompanionReconcileTrigger;
+  companionEbook?: CompanionBookReconcileTrigger;
 }) {
   const db = createMockDb();
   const log = createMockLogger();
@@ -514,7 +514,6 @@ describe('BookRejectionService', () => {
       const { service, bookService } = createService({
         companionEbook: {
           reconcileBook: (id: number) => { const p = reconciler.reconcileBook(id); runs.push(p); return p; },
-          reconcileAll: () => reconciler.reconcileAll(),
         },
       });
       (bookService.getById as Mock).mockResolvedValue(importedBook);

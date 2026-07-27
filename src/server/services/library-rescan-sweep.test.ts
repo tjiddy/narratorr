@@ -31,10 +31,22 @@ function createEmptyDb(): Db {
   });
 }
 
+/** The wrapper is a SWEEP-only seam, so its stub carries `reconcileAll` and nothing else. */
 function createCompanionStub() {
+  return { reconcileAll: vi.fn().mockResolvedValue(undefined) };
+}
+
+/**
+ * The same stub plus a `reconcileBook` PROBE — an extra property the wrapper's
+ * `CompanionSweepTrigger` parameter does not declare, so it can only be reached by code that
+ * went looking for it. Used by the one test that asserts the wrapper never fans out per-book;
+ * everywhere else it would be exactly the irrelevant fixture member the narrow interface exists
+ * to eliminate.
+ */
+function createProbedCompanionStub() {
   return {
-    reconcileBook: vi.fn().mockResolvedValue(undefined),
     reconcileAll: vi.fn().mockResolvedValue(undefined),
+    reconcileBook: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -53,8 +65,8 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
   // ==========================================================================
 
   describe('AC12 outcome matrix', () => {
-    it('a successful rescan sweeps once and returns the summary unchanged', async () => {
-      const companionEbook = createCompanionStub();
+    it('a successful rescan sweeps once, never per-book, and returns the summary unchanged', async () => {
+      const companionEbook = createProbedCompanionStub();
       const libraryScan = { rescanLibrary: vi.fn().mockResolvedValue(SUMMARY) };
 
       await expect(rescanLibraryWithCompanionSweep({ libraryScan, companionEbook, log }))
@@ -142,7 +154,6 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
       const sweepStarted = new Promise<void>((r) => { resolveSweep = r; });
 
       const companionEbook = {
-        reconcileBook: vi.fn().mockResolvedValue(undefined),
         reconcileAll: vi.fn().mockImplementation(async () => {
           try {
             await libraryScan.rescanLibrary();
@@ -165,10 +176,7 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
       // Sweep A never settles, so it is provably still in flight for the whole test.
       let releaseSweepA!: () => void;
       const sweepA = new Promise<void>((r) => { releaseSweepA = r; });
-      const companionEbook = {
-        reconcileBook: vi.fn().mockResolvedValue(undefined),
-        reconcileAll: vi.fn().mockReturnValue(sweepA),
-      };
+      const companionEbook = { reconcileAll: vi.fn().mockReturnValue(sweepA) };
 
       await rescanLibraryWithCompanionSweep({ libraryScan, companionEbook, log });
       expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
@@ -193,7 +201,6 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
         return { scanned: 0, missing: 0, restored: 0 };
       });
       const companionEbook = {
-        reconcileBook: vi.fn().mockResolvedValue(undefined),
         reconcileAll: vi.fn().mockImplementation(() => { order.push('sweep'); return Promise.resolve(); }),
       };
 
@@ -210,10 +217,7 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
 
   describe('sweep isolation', () => {
     it('a REJECTING reconcileAll does not fail the rescan', async () => {
-      const companionEbook = {
-        reconcileBook: vi.fn(),
-        reconcileAll: vi.fn().mockRejectedValue(new Error('sweep rejected')),
-      };
+      const companionEbook = { reconcileAll: vi.fn().mockRejectedValue(new Error('sweep rejected')) };
       const libraryScan = { rescanLibrary: vi.fn().mockResolvedValue(SUMMARY) };
 
       await expect(rescanLibraryWithCompanionSweep({ libraryScan, companionEbook, log }))
@@ -222,7 +226,6 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
 
     it('a SYNCHRONOUSLY THROWING reconcileAll does not fail the rescan', async () => {
       const companionEbook = {
-        reconcileBook: vi.fn(),
         reconcileAll: vi.fn().mockImplementation(() => { throw new Error('sweep threw synchronously'); }),
       };
       const libraryScan = { rescanLibrary: vi.fn().mockResolvedValue(SUMMARY) };
@@ -233,7 +236,6 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
 
     it('a synchronously throwing reconcileAll on the ERROR path still rethrows the original scan error', async () => {
       const companionEbook = {
-        reconcileBook: vi.fn(),
         reconcileAll: vi.fn().mockImplementation(() => { throw new Error('sweep threw synchronously'); }),
       };
       const error = new LibraryPathError('Library path is not configured');

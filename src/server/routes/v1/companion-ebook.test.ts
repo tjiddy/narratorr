@@ -77,7 +77,12 @@ describe('v1 companion ebook stream', () => {
   let apps: FastifyInstance[];
   let bookService: { getById: Mock };
   let settingsService: { get: Mock };
-  /** #1960 AC26/AC30 — the required read-path-mismatch hook, spied per test. */
+  /**
+   * #1960 AC26/AC30 — the required read-path-mismatch hook, spied per test. `reconcileBook` is
+   * the only method `CompanionBookReconcileTrigger` declares; `reconcileAll` is an extra PROBE
+   * that the route's type cannot reach, kept so "the public opener never sweeps" stays
+   * assertable at runtime on top of the type-level guarantee.
+   */
   let companionReconciler: { reconcileBook: Mock; reconcileAll: Mock };
   let db: ReturnType<typeof createMockDb>;
   let libraryRoot: string;

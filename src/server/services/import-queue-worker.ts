@@ -19,7 +19,7 @@ import { OwnedRecordingError } from './book.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { finalizeForcedImportRefusal } from './import-refused.js';
 import { finalizeCompletedImport, resolveBookTitle } from './import-completed.js';
-import { triggerCompanionReconcile, type CompanionReconcileTrigger } from './companion-ebook-trigger.js';
+import { triggerCompanionReconcile, type CompanionBookReconcileTrigger } from './companion-ebook-trigger.js';
 
 
 const SAFETY_POLL_INTERVAL_MS = 30_000;
@@ -31,7 +31,7 @@ export class ImportQueueWorker {
   private readonly broadcaster: EventBroadcasterService | null;
   private readonly getLibraryRoot: (() => Promise<string | null | undefined>) | null;
   private readonly eventHistory: EventHistoryService | null;
-  private readonly companionEbook: CompanionReconcileTrigger | null;
+  private readonly companionEbook: CompanionBookReconcileTrigger | null;
   private readonly emitter = new EventEmitter();
   private running = false;
   private stopping = false;
@@ -63,7 +63,7 @@ export class ImportQueueWorker {
     broadcaster?: EventBroadcasterService,
     getLibraryRoot?: () => Promise<string | null | undefined>,
     eventHistory?: EventHistoryService,
-    companionEbook?: CompanionReconcileTrigger,
+    companionEbook?: CompanionBookReconcileTrigger,
   ) {
     this.db = db;
     this.log = log.child({ component: 'ImportQueueWorker' });

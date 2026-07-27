@@ -3,11 +3,21 @@ import { fireAndForget } from '../utils/fire-and-forget.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 /**
- * The trigger seam's view of the reconciler (#1960). Structural, not the concrete class, so a
- * seam declares only the method it fires and a test stub needs nothing else.
+ * The trigger seams' view of the reconciler (#1960). Structural, not the concrete class, and
+ * SPLIT BY METHOD so a seam declares only the one it fires and a test stub needs nothing else —
+ * the same narrow-dependency shape this slate already uses for
+ * `Pick<LibraryScanService, 'rescanLibrary'>` and `Pick<SettingsService, 'get'>`.
+ *
+ * No seam uses both: import completion, Refresh & Scan, the two per-book rename callers,
+ * wrong-release, and the three opener mismatch arms fire {@link CompanionBookReconcileTrigger};
+ * the rescan wrapper, bulk rename, and `PUT /api/settings` fire {@link CompanionSweepTrigger}.
+ * `CompanionEbookReconciler` satisfies both, so production wiring is unchanged.
  */
-export interface CompanionReconcileTrigger {
+export interface CompanionBookReconcileTrigger {
   reconcileBook(bookId: number): Promise<void>;
+}
+
+export interface CompanionSweepTrigger {
   reconcileAll(): Promise<void>;
 }
 
@@ -33,7 +43,7 @@ function fire(run: () => Promise<void>, log: FastifyBaseLogger, context: string)
 
 /** Refresh the companion observation for ONE book. No-op when no reconciler is wired. */
 export function triggerCompanionReconcile(
-  reconciler: CompanionReconcileTrigger | null | undefined,
+  reconciler: CompanionBookReconcileTrigger | null | undefined,
   bookId: number,
   log: FastifyBaseLogger,
   context: string,
@@ -48,7 +58,7 @@ export function triggerCompanionReconcile(
  * at most one extra run.
  */
 export function triggerCompanionSweep(
-  reconciler: CompanionReconcileTrigger | null | undefined,
+  reconciler: CompanionSweepTrigger | null | undefined,
   log: FastifyBaseLogger,
   context: string,
 ): void {

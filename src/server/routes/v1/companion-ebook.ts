@@ -10,7 +10,7 @@ import { openCompanionEbook } from '../../services/companion-ebook-open.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
 import { Semaphore } from '../../utils/semaphore.js';
 import { streamCompanionEbook } from '../../utils/companion-ebook-stream.js';
-import { triggerCompanionReconcile, type CompanionReconcileTrigger } from '../../services/companion-ebook-trigger.js';
+import { triggerCompanionReconcile, type CompanionBookReconcileTrigger } from '../../services/companion-ebook-trigger.js';
 import { v1ErrorHandler } from './_helpers.js';
 
 // ============================================================================
@@ -31,7 +31,7 @@ export interface V1CompanionEbookRouteDeps {
    * deployment that forgot to wire it would silently lose the self-healing half of the
    * design. The route never awaits it (AC28).
    */
-  reconciler: CompanionReconcileTrigger;
+  reconciler: CompanionBookReconcileTrigger;
   /**
    * TEST SEAM ONLY (#1975 AC18). Production wiring in `routes/index.ts` omits it, so the
    * effective bound is `MAX_CONCURRENT_COMPANION_STREAMS`. It exists so a test can drive

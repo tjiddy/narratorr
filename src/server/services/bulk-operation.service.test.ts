@@ -23,7 +23,7 @@ import type { RenameService } from './rename.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { BookService } from './book.service.js';
 import type { ConnectorService } from './connector.service.js';
-import type { CompanionReconcileTrigger } from './companion-ebook-trigger.js';
+import type { CompanionSweepTrigger } from './companion-ebook-trigger.js';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 
 /** Serialize a Drizzle SQL expression into a raw SQL+params pair for predicate assertions. */
@@ -102,7 +102,7 @@ function createService(opts?: {
   taggingService?: TaggingService;
   bookService?: BookService;
   connectorService?: { notifyRefresh: ReturnType<typeof vi.fn> };
-  companionEbook?: CompanionReconcileTrigger;
+  companionEbook?: CompanionSweepTrigger;
 }) {
   const db = createMockDb();
   const log = createMockLogger();
@@ -496,10 +496,16 @@ describe('BulkOperationService — companion-ebook sweep after bulk rename (#196
     },
   };
 
+  /**
+   * Bulk rename is a SWEEP-only seam, so the stub carries `reconcileAll` — plus a
+   * `reconcileBook` PROBE that `CompanionSweepTrigger` does not declare. AC21's whole point is
+   * that a whole-library rename must NOT fan out N direct runs, and the probe is what makes
+   * that assertable at runtime on top of the type-level guarantee.
+   */
   function makeCompanionStub() {
     return {
-      reconcileBook: vi.fn().mockResolvedValue(undefined),
       reconcileAll: vi.fn().mockResolvedValue(undefined),
+      reconcileBook: vi.fn().mockResolvedValue(undefined),
     };
   }
 
@@ -568,10 +574,7 @@ describe('BulkOperationService — companion-ebook sweep after bulk rename (#196
   });
 
   it('a rejecting sweep does not fail the job', async () => {
-    const companionEbook = {
-      reconcileBook: vi.fn(),
-      reconcileAll: vi.fn().mockRejectedValue(new Error('sweep rejected')),
-    };
+    const companionEbook = { reconcileAll: vi.fn().mockRejectedValue(new Error('sweep rejected')) };
     const renameService = makeRenameService();
     const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
     db.select

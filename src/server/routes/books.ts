@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService, IndexerService, ConnectorService } from '../services/index.js';
 import { RenameError, didRenameChangeAnything, type RenameResult } from '../services/rename.service.js';
-import { triggerCompanionReconcile, type CompanionReconcileTrigger } from '../services/companion-ebook-trigger.js';
+import { triggerCompanionReconcile, type CompanionBookReconcileTrigger } from '../services/companion-ebook-trigger.js';
 import { OwnedRecordingError } from '../services/book.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
@@ -30,7 +30,7 @@ export interface BookRouteDeps {
   seriesCardService: SeriesCardService;
   metadataService: MetadataService;
   /** #1960 — the rename, Refresh & Scan, and wrong-release seams all fire through this. */
-  companionEbook: CompanionReconcileTrigger;
+  companionEbook: CompanionBookReconcileTrigger;
   connectorService?: ConnectorService;
 }
 import { searchAndGrabForBook, buildNarratorPriority, buildSearchFilterOptions } from '../services/search-pipeline.js';

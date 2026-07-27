@@ -9,7 +9,7 @@ import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { RetrySearchDeps } from './retry-search.js';
 import { blacklistAndRetrySearch } from './rejection-helpers.js';
-import { triggerCompanionReconcile, type CompanionReconcileTrigger } from './companion-ebook-trigger.js';
+import { triggerCompanionReconcile, type CompanionBookReconcileTrigger } from './companion-ebook-trigger.js';
 import { preserveBookCover } from '../utils/cover-cache.js';
 import { config } from '../config.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -25,7 +25,7 @@ export class BookRejectionService {
     private eventHistory?: EventHistoryService,
     private retrySearchDeps?: RetrySearchDeps,
     /** #1960 AC23 — optional so unit suites that do not exercise the seam can omit it. */
-    private companionEbook?: CompanionReconcileTrigger,
+    private companionEbook?: CompanionBookReconcileTrigger,
   ) {}
 
   /**

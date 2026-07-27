@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import type { LibraryScanService } from '../services/library-scan.service.js';
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
 import { rescanLibraryWithCompanionSweep } from '../services/library-rescan-sweep.js';
-import type { CompanionReconcileTrigger } from '../services/companion-ebook-trigger.js';
+import type { CompanionSweepTrigger } from '../services/companion-ebook-trigger.js';
 import type { MatchJobService } from '../services/match-job.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { MetadataService } from '../services/metadata.service.js';
@@ -58,7 +58,7 @@ export async function libraryScanRoutes(
   matchJobService: MatchJobService,
   bookService: BookService,
   metadataService: MetadataService,
-  companionEbook?: CompanionReconcileTrigger,
+  companionEbook?: CompanionSweepTrigger,
 ): Promise<void> {
   // Rescan library — verify book paths exist on disk
   app.post('/api/library/rescan', async (request, reply) => {

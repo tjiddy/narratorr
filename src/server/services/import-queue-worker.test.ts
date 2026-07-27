@@ -2844,10 +2844,12 @@ describe('ImportQueueWorker', () => {
         trace.push('reconcile');
         return opts.reconcileBook(bookId);
       });
+      // No cast: `{ reconcileBook }` IS a `CompanionBookReconcileTrigger` now that the trigger
+      // interface is split per method (#1960 PR review F5).
       const w = new ImportQueueWorker(
         inject<Db>(mockDb.db), log, { emit: emitSpy } as never,
         undefined, undefined,
-        inject<ConstructorParameters<typeof ImportQueueWorker>[5]>({ reconcileBook }),
+        { reconcileBook },
       );
 
       registerImportAdapter({

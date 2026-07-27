@@ -14,7 +14,7 @@ import { enqueueRetagRefresh } from '../utils/enqueue-book-refresh.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { BulkJob } from './bulk-job.js';
 import { runSidecarReconcile } from './bulk-sidecar-reconcile.js';
-import { triggerCompanionSweep, type CompanionReconcileTrigger } from './companion-ebook-trigger.js';
+import { triggerCompanionSweep, type CompanionSweepTrigger } from './companion-ebook-trigger.js';
 import { convertBook, type ConvertProcessingSettings } from './bulk-convert.js';
 import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
@@ -106,7 +106,7 @@ export class BulkOperationService {
     private log: FastifyBaseLogger,
     private connectorService?: ConnectorService,
     /** #1960 AC21 — optional so unit suites that do not exercise the sweep can omit it. */
-    private companionEbook?: CompanionReconcileTrigger,
+    private companionEbook?: CompanionSweepTrigger,
   ) {}
 
   /**
