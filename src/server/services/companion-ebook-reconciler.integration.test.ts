@@ -13,6 +13,7 @@ import { upsertCompanionEbook } from './companion-ebook.repository.js';
 import { generatePublicId } from '../utils/public-id.js';
 import type { SettingsService } from './settings.service.js';
 import { CompanionEbookReconciler } from './companion-ebook-reconciler.js';
+import { isCompanionEbookExposed } from '../../shared/companion-ebook-exposure.js';
 
 /**
  * The whole stack, unmocked: a real migrated libSQL database, real temp directories, real
@@ -482,6 +483,69 @@ describe('CompanionEbookReconciler end-to-end (#1959)', () => {
       await expect(reconciler.selectCompanionEbook(bookId, 2)).resolves.toEqual({ outcome: 'out_of_range' });
 
       expect(await readRow()).toEqual(before);
+    });
+  });
+
+  // ==========================================================================
+  // #1960 AC25 — what a library-root change does, and what it deliberately does NOT
+  // ==========================================================================
+
+  describe('library-root change (#1960 AC25)', () => {
+    /**
+     * **This test pins an ACCEPTED LIMITATION, not an invalidation.** After the root moves, a
+     * book whose absolute path now falls OUTSIDE it keeps its `available` row and keeps being
+     * advertised: `isCompanionEbookEligible` fails on containment so `reconcileLocked` returns
+     * `skipped` WITHOUT a write, and `isCompanionEbookExposed` takes no path or root input at
+     * all (`shared/companion-ebook-exposure.ts:25-31`). The library rescan skips those rows
+     * too, so nothing in #1960 clears them.
+     *
+     * The owner-visible failure is a clean `404 companion_epub_unavailable` at click time.
+     * Closing it needs the deferred `exposure_generation` column — explicitly out of scope for
+     * both #1959 and #1960. Do not "fix" this test into an invalidation assertion.
+     */
+    it('does NOT invalidate an observation for a book that falls outside the new root', async () => {
+      await writeEpub('book.epub');
+      await reconciler.reconcileAll();
+      const before = await readRow();
+      expect(before).toMatchObject({ status: 'available', filename: 'book.epub' });
+
+      // Save a new root that does not contain `bookDir`.
+      const newRoot = join(dir, 'relocated');
+      await mkdir(newRoot, { recursive: true });
+      libraryRoot = newRoot;
+
+      await reconciler.reconcileAll();
+
+      // No write — not even a zeroing one, and not even an `updated_at` touch.
+      expect(await readRow()).toEqual(before);
+      // And the row is STILL exposed, because the predicate never sees a path or a root.
+      expect(isCompanionEbookExposed({
+        enabled: true, bookStatus: 'imported', observationStatus: before!.status,
+      })).toBe(true);
+    });
+
+    it('DOES observe a book that becomes newly eligible under the new root', async () => {
+      // A second book that starts OUTSIDE the current root, so the first sweep ignores it.
+      const newRoot = join(dir, 'relocated');
+      const newBookDir = join(newRoot, 'Author', 'Another Book');
+      await mkdir(newBookDir, { recursive: true });
+      await writeFile(join(newBookDir, 'other.epub'), await buildEpub());
+      const [inserted] = await db
+        .insert(books)
+        .values({ publicId: generatePublicId('bk'), title: 'Another Book', status: 'imported', path: newBookDir })
+        .returning({ id: books.id });
+      const newBookId = inserted!.id;
+
+      await reconciler.reconcileAll();
+      const untouched = await db.select().from(companionEbooks).where(eq(companionEbooks.bookId, newBookId));
+      expect(untouched).toHaveLength(0);
+
+      // Widen/relocate the root so the previously out-of-root book comes into scope.
+      libraryRoot = newRoot;
+      await reconciler.reconcileAll();
+
+      const rows = await db.select().from(companionEbooks).where(eq(companionEbooks.bookId, newBookId));
+      expect(rows[0]).toMatchObject({ status: 'available', filename: 'other.epub' });
     });
   });
 
