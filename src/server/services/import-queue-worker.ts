@@ -19,8 +19,7 @@ import { OwnedRecordingError } from './book.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { finalizeForcedImportRefusal } from './import-refused.js';
 import { finalizeCompletedImport, resolveBookTitle } from './import-completed.js';
-import type { CompanionEbookReconciler } from './companion-ebook-reconciler.js';
-import { fireAndForget } from '../utils/fire-and-forget.js';
+import { triggerCompanionReconcile, type CompanionReconcileTrigger } from './companion-ebook-trigger.js';
 
 
 const SAFETY_POLL_INTERVAL_MS = 30_000;
@@ -32,7 +31,7 @@ export class ImportQueueWorker {
   private readonly broadcaster: EventBroadcasterService | null;
   private readonly getLibraryRoot: (() => Promise<string | null | undefined>) | null;
   private readonly eventHistory: EventHistoryService | null;
-  private readonly companionEbook: CompanionEbookReconciler | null;
+  private readonly companionEbook: CompanionReconcileTrigger | null;
   private readonly emitter = new EventEmitter();
   private running = false;
   private stopping = false;
@@ -64,7 +63,7 @@ export class ImportQueueWorker {
     broadcaster?: EventBroadcasterService,
     getLibraryRoot?: () => Promise<string | null | undefined>,
     eventHistory?: EventHistoryService,
-    companionEbook?: CompanionEbookReconciler,
+    companionEbook?: CompanionReconcileTrigger,
   ) {
     this.db = db;
     this.log = log.child({ component: 'ImportQueueWorker' });
@@ -487,23 +486,13 @@ export class ImportQueueWorker {
   }
 
   /**
-   * The companion-ebook seam for a completed import (#1960 AC4–AC7). Never throws and never
-   * returns a promise: `fireAndForget` evaluates its argument EAGERLY, so a reconciler that
-   * throws synchronously would escape it (`fire-and-forget-preflight`) and reach `processJob`'s
-   * `catch`, converting a successfully imported audiobook into a failed job. The `try` here is
-   * what makes that impossible. No trigger when the job carries no book (AC6).
+   * The companion-ebook seam for a completed import (#1960 AC4–AC7). No trigger when the job
+   * carries no book (AC6). The shared helper is what makes a SYNCHRONOUS reconciler throw
+   * unable to reach `processJob`'s `catch` and convert a completed import into a failed job.
    */
   private triggerCompanionReconcile(bookId: number | null): void {
-    if (bookId === null || this.companionEbook === null) return;
-    try {
-      fireAndForget(
-        this.companionEbook.reconcileBook(bookId),
-        this.log,
-        'Companion ebook reconcile failed after import',
-      );
-    } catch (error: unknown) {
-      this.log.warn({ error: serializeError(error), bookId }, 'Companion ebook reconcile failed after import');
-    }
+    if (bookId === null) return;
+    triggerCompanionReconcile(this.companionEbook, bookId, this.log, 'Companion ebook reconcile failed after import');
   }
 
   /**

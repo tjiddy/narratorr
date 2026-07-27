@@ -486,6 +486,93 @@ describe('library-scan routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.error).toBe('unknown');
     });
+
+    // =======================================================================
+    // #1960 AC9/AC12/AC14 — the route goes through the companion sweep wrapper
+    // =======================================================================
+
+    it('AC9/AC12: a successful rescan triggers exactly one companion sweep', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ scanned: 10, missing: 2, restored: 1 });
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(undefined);
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+      expect(services.companionEbook.reconcileBook).not.toHaveBeenCalled();
+    });
+
+    it('AC12: a 409 (ScanInProgressError) triggers ZERO companion sweeps', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new ScanInProgressError());
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(undefined);
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+
+      expect(res.statusCode).toBe(409);
+      expect(services.companionEbook.reconcileAll).not.toHaveBeenCalled();
+    });
+
+    it('AC12: a 400 (LibraryPathError) still sweeps, and the mapping is unchanged', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new LibraryPathError('Library path is not configured'));
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(undefined);
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Library path is not configured');
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('AC12: a 500 (unexpected throw) still sweeps, and the mapping is unchanged', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new Error('Unexpected DB failure'));
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(undefined);
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Unexpected DB failure');
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('AC14: a rescan issued while a companion sweep is still in flight returns 200, not 409', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ scanned: 1, missing: 0, restored: 0 });
+      // Sweep A never settles — it is provably still pending when the second POST lands.
+      let releaseSweep!: () => void;
+      const pendingSweep = new Promise<void>((r) => { releaseSweep = r; });
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
+        .mockReturnValue(pendingSweep);
+
+      const first = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+      expect(first.statusCode).toBe(200);
+
+      const second = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+      expect(second.statusCode).toBe(200);
+      expect(JSON.parse(second.payload)).toEqual({ scanned: 1, missing: 0, restored: 0 });
+
+      releaseSweep();
+      await pendingSweep;
+    });
+
+    it('AC12: a rejecting sweep does not change the 200 the route already returned', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ scanned: 4, missing: 0, restored: 0 });
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new Error('sweep rejected'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ scanned: 4, missing: 0, restored: 0 });
+    });
   });
 
   // ===========================================================================
