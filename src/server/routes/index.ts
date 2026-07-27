@@ -123,7 +123,9 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const bookImport = new BookImportService(db, log);
   const bookList = new BookListService(db);
   const referenceRead = new ReferenceReadService(db);
-  // No trigger call sites yet — #1960 owns every seam that invokes this.
+  // Triggered from every seam that creates, moves, rescans, or reads a book (#1960): the
+  // import worker, the rescan wrapper (route + 6h cron), Refresh & Scan, the three rename
+  // callers, wrong-release, `PUT /api/settings`, and each companion opener's mismatch arm.
   const companionEbook = new CompanionEbookReconciler(db, settings, log);
   const eventHistory = new EventHistoryService(db, log, blacklistService, book);
 
@@ -186,7 +188,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   );
 
   // Construct remaining cyclic-dep services (worker created before QGO/wire phase)
-  const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster, async () => (await settings.get('library')).path, eventHistory);
+  const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster, async () => (await settings.get('library')).path, eventHistory, companionEbook);
   const nudgeImportWorker = (): void => importQueueWorker.nudge();
   // Staged import submission (#1893): server-owned processing runner + the inert
   // upload/finalize/query state-machine service that nudges it on the winning CAS.
