@@ -11,6 +11,12 @@ import { serializeError } from '../utils/serialize-error.js';
 import { HardcoverClient } from '../../core/metadata/hardcover.js';
 import { mapHardcoverError } from '../utils/hardcover-error.js';
 import { resolveFfmpegPath, probeFfmpeg } from '../../core/utils/audio-processor.js';
+import { triggerCompanionSweep, type CompanionReconcileTrigger } from '../services/companion-ebook-trigger.js';
+import {
+  snapshotCompanionSettings,
+  companionSettingsChangeFired,
+  recoverCompanionSettingsChange,
+} from '../services/companion-ebook-settings-trigger.js';
 
 
 function redactProxyUrl(proxyUrl: string): string {
@@ -58,6 +64,7 @@ export async function settingsRoutes(
   settingsService: SettingsService,
   indexerService?: IndexerService,
   healthCheckService?: HealthCheckService,
+  companionEbook?: CompanionReconcileTrigger,
 ) {
   // GET /api/settings
   app.get('/api/settings', async () => {
@@ -81,7 +88,25 @@ export async function settingsRoutes(
         ? await settingsService.get('network')
         : undefined;
 
-      const result = await settingsService.update(data);
+      // #1960 AC25–AC25d — the same snapshot-and-compare shape, for the companion sweep.
+      // `finally`-shaped because `SettingsService.update` writes categories one at a time
+      // with no transaction: a request can durably persist `library.path` or
+      // `companionEpub.enabled` and then reject on a later category.
+      const companionBefore = await snapshotCompanionSettings(settingsService, data);
+      const sweep = (): void => triggerCompanionSweep(
+        companionEbook, request.log, 'Companion ebook sweep failed after settings update',
+      );
+
+      let result: AppSettings;
+      try {
+        result = await settingsService.update(data);
+      } catch (error: unknown) {
+        // The recovery read is itself guarded per-arm; whatever it decides, the ORIGINAL
+        // settings error is what propagates — same status, same body.
+        if (await recoverCompanionSettingsChange(settingsService, companionBefore, request.log)) sweep();
+        throw error;
+      }
+      if (companionSettingsChangeFired(companionBefore, result)) sweep();
 
       // Apply log level change at runtime
       if (data.general?.logLevel) {

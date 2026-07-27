@@ -23,6 +23,7 @@ import type { RenameService } from './rename.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { BookService } from './book.service.js';
 import type { ConnectorService } from './connector.service.js';
+import type { CompanionReconcileTrigger } from './companion-ebook-trigger.js';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 
 /** Serialize a Drizzle SQL expression into a raw SQL+params pair for predicate assertions. */
@@ -101,7 +102,7 @@ function createService(opts?: {
   taggingService?: TaggingService;
   bookService?: BookService;
   connectorService?: { notifyRefresh: ReturnType<typeof vi.fn> };
-  companionEbook?: { reconcileBook: ReturnType<typeof vi.fn>; reconcileAll: ReturnType<typeof vi.fn> };
+  companionEbook?: CompanionReconcileTrigger;
 }) {
   const db = createMockDb();
   const log = createMockLogger();
