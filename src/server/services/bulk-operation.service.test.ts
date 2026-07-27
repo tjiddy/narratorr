@@ -540,6 +540,62 @@ describe('BulkOperationService — companion-ebook sweep after bulk rename (#196
     expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * AC21's ORDERING half. The call-count test above cannot see it: moving the sweep above the
+   * `for (const bookId of targetIds)` loop preserves "3 renames, 1 sweep" exactly, and every
+   * status assertion with it — while the sweep would then observe the OLD paths and miss every
+   * folder the rename just moved.
+   *
+   * The final rename is held pending, so "no sweep yet" is observed while the loop is provably
+   * still mid-flight, and the ordered trace pins the sweep strictly after the last rename
+   * returns.
+   */
+  it('AC21: the sweep runs strictly AFTER the loop — held on the final rename, no sweep until it settles', async () => {
+    const order: string[] = [];
+    const companionEbook = {
+      reconcileAll: vi.fn().mockImplementation(() => { order.push('sweep'); return Promise.resolve(); }),
+      reconcileBook: vi.fn().mockResolvedValue(undefined),
+    };
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+        bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+        bookRow({ id: 3, path: '/library/Author Name/Book3', title: 'Book3' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+
+    let releaseFinalRename!: () => void;
+    const finalRenameHeld = new Promise<void>((r) => { releaseFinalRename = r; });
+    let markFinalRenameStarted!: () => void;
+    const finalRenameStarted = new Promise<void>((r) => { markFinalRenameStarted = r; });
+
+    (renameService.renameBook as Mock).mockImplementation(async (bookId: number) => {
+      order.push(`rename:${bookId}`);
+      if (bookId === 3) {
+        markFinalRenameStarted();
+        await finalRenameHeld;
+      }
+      return { oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 };
+    });
+
+    const id = await service.startRenameJob();
+    await finalRenameStarted;
+    // Room for any pending microtask AND a macrotask turn — a sweep hoisted above the loop
+    // would already have run by this point.
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(order).toEqual(['rename:1', 'rename:2', 'rename:3']);
+    expect(companionEbook.reconcileAll).not.toHaveBeenCalled();
+
+    releaseFinalRename();
+    await waitForJob(service, id);
+
+    expect(order).toEqual(['rename:1', 'rename:2', 'rename:3', 'sweep']);
+    expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+  });
+
   it('fires once even when some books failed mid-loop', async () => {
     const companionEbook = makeCompanionStub();
     const renameService = makeRenameService();
