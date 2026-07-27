@@ -8,6 +8,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { books, companionEbooks } from '../../db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
+import { serializeDbWrite } from '../utils/db-write-lane.js';
 import type { SettingsService } from './settings.service.js';
 import { CompanionEbookReconciler, RECONCILE_CONCURRENCY } from './companion-ebook-reconciler.js';
 import { observeCompanionEbook } from './companion-ebook-observe.js';
@@ -171,6 +172,27 @@ function debugRecords(spies: { debug: ReturnType<typeof vi.fn> }): Array<Record<
   return spies.debug.mock.calls
     .map((call) => call[0] as Record<string, unknown>)
     .filter((record): record is Record<string, unknown> => record !== null && typeof record === 'object');
+}
+
+/**
+ * Assert a logged `error` value is the output of `serializeError`, not the caught `Error`.
+ *
+ * The own-ENUMERABLE key set is what makes this discriminating: on a real `Error`, `message`
+ * and `stack` are non-enumerable, so a `toMatchObject`/`objectContaining({ message })` matcher
+ * reads through to them and passes on a raw `Error` too. Mirrors `companion-ebook-open.test.ts`.
+ */
+function expectSerializedError(logged: unknown, original: Error, expected: { code?: string }): void {
+  expect(logged).not.toBe(original);
+  expect(logged).not.toBeInstanceOf(Error);
+  expect(Object.keys(logged as object).sort()).toEqual(
+    expected.code === undefined ? ['message', 'stack', 'type'] : ['code', 'message', 'stack', 'type'],
+  );
+  expect(logged).toEqual({
+    message: original.message,
+    stack: expect.stringContaining(original.message),
+    type: 'Error',
+    ...(expected.code !== undefined && { code: expected.code }),
+  });
 }
 
 const OBSERVATION: CompanionEbookObservation = {
@@ -549,13 +571,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
 
     it.each([
       {
-        name: 'the fingerprint no longer matches the pre-scan prior (case 27)',
-        seed: true,
-        mutate: async (db_: Db, bookId: number) => {
-          await db_.update(companionEbooks).set({ mtimeMs: 999 }).where(eq(companionEbooks.bookId, bookId));
-        },
-      },
-      {
         name: 'the prior was null but a row exists at write time (case 28)',
         seed: false,
         mutate: async (db_: Db, bookId: number) => {
@@ -569,20 +584,9 @@ describe('CompanionEbookReconciler (#1959)', () => {
           await db_.delete(companionEbooks).where(eq(companionEbooks.bookId, bookId));
         },
       },
-      {
-        name: 'ONLY validation_code differs — the eighth column (case 31)',
-        seed: true,
-        seedValues: { status: 'invalid' as const, validationCode: 'empty_spine' },
-        mutate: async (db_: Db, bookId: number) => {
-          await db_
-            .update(companionEbooks)
-            .set({ validationCode: 'truncated' })
-            .where(eq(companionEbooks.bookId, bookId));
-        },
-      },
-    ])('aborts the write when $name', async ({ seed, seedValues, mutate }) => {
+    ])('aborts the write when $name', async ({ seed, mutate }) => {
       const bookId = await insertBook();
-      if (seed) await seedRow(bookId, seedValues ?? {});
+      if (seed) await seedRow(bookId);
       const beforeRow = await readRow(bookId);
       outcomes.set(bookId, async () => { await mutate(db, bookId); return OBSERVED; });
 
@@ -591,6 +595,79 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
       expect(abortReasons()).toEqual(['observation-changed']);
       expect(await readRow(bookId)).not.toEqual(beforeRow);
+    });
+
+    /**
+     * One row per material column of the AC19 observation guard, so deleting ANY single
+     * comparison in `sameObservationRow` fails a named case (cases 27/31, F7). Every patch is a
+     * legal single-column move under the eight CHECK constraints: `candidateCount` is bumped
+     * from an already-selected multi-candidate seed (`ck_companion_ebooks_multi_candidate_selection`),
+     * and `validationCode` moves within an `invalid` seed (`ck_companion_ebooks_validation_code`).
+     */
+    it.each([
+      { column: 'status', seedValues: {}, patch: { status: 'drm_protected' as const } },
+      { column: 'filename', seedValues: {}, patch: { filename: 'a-different.epub' } },
+      { column: 'sizeBytes', seedValues: {}, patch: { sizeBytes: 8_192 } },
+      { column: 'mtimeMs', seedValues: {}, patch: { mtimeMs: 999 } },
+      { column: 'ctimeMs', seedValues: {}, patch: { ctimeMs: 999 } },
+      {
+        column: 'validationCode',
+        seedValues: { status: 'invalid' as const, validationCode: 'empty_spine' },
+        patch: { validationCode: 'truncated' },
+      },
+      {
+        column: 'candidateCount',
+        seedValues: { candidateCount: 2, selectedFilename: 'book.epub' },
+        patch: { candidateCount: 3 },
+      },
+      { column: 'selectedFilename', seedValues: {}, patch: { selectedFilename: 'book.epub' } },
+    ])('aborts the write when a concurrent writer moved only $column (case 27/31, F7)', async ({ seedValues, patch }) => {
+      const bookId = await insertBook();
+      await seedRow(bookId, seedValues);
+      const beforeRow = await readRow(bookId);
+      outcomes.set(bookId, async () => {
+        await db.update(companionEbooks).set(patch).where(eq(companionEbooks.bookId, bookId));
+        return OBSERVED;
+      });
+
+      await reconciler.reconcileBook(bookId);
+
+      expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+      expect(abortReasons()).toEqual(['observation-changed']);
+      // The concurrent writer's value survived intact — the pass wrote nothing over it.
+      const afterRow = await readRow(bookId);
+      expect(afterRow).not.toEqual(beforeRow);
+      expect(afterRow).toMatchObject(patch);
+    });
+
+    it('runs the guarded write on the CONNECTION-wide lane, not a service-local one (F8)', async () => {
+      const bookId = await insertBook();
+      const gate = deferred();
+      const events: string[] = [];
+
+      // Another service holding the same `Db` — this is ImportStagingService's position, and it
+      // shares nothing with the reconciler except the connection.
+      const otherService = serializeDbWrite(db, async () => {
+        events.push('other:start');
+        await gate.promise;
+        events.push('other:end');
+      });
+      upsertCompanionEbookMock.mockImplementation(async (x, id, observation) => {
+        events.push('companion:write');
+        const actual = await vi.importActual<typeof import('./companion-ebook.repository.js')>('./companion-ebook.repository.js');
+        return actual.upsertCompanionEbook(x, id, observation);
+      });
+
+      const reconcile = reconciler.reconcileBook(bookId);
+      await flush();
+      // A private per-service tail would have let the companion transaction open right here,
+      // overlapping the other service's and losing to SQLITE_BUSY.
+      expect(events).toEqual(['other:start']);
+
+      gate.resolve();
+      await Promise.all([otherService, reconcile]);
+      expect(events).toEqual(['other:start', 'other:end', 'companion:write']);
+      expect(await readRow(bookId)).toMatchObject({ status: 'available' });
     });
   });
 
@@ -893,6 +970,55 @@ describe('CompanionEbookReconciler (#1959)', () => {
       selectSpy?.mockRestore();
     });
 
+    /**
+     * The three per-book rejection sites, each asserted on the RECORD the failure leaves behind
+     * and not merely on the promise resolving (F1). The `debug` level, the `bookId`, the
+     * exactly-once count, and the `serializeError` shape are the whole diagnostic contract for a
+     * per-book failure — it is the only trace of it besides the summary's `failed` counter, so
+     * losing, duplicating, or raw-logging it has to fail here.
+     */
+    it.each([
+      {
+        site: 'the pre-scan prior read',
+        arm: (error: Error) => { findCompanionEbookMock.mockRejectedValueOnce(error); },
+      },
+      {
+        site: 'the observe pass',
+        arm: (error: Error) => { observeMock.mockRejectedValueOnce(error); },
+      },
+      {
+        site: 'the guarded upsert inside the transaction',
+        arm: (error: Error) => { upsertCompanionEbookMock.mockRejectedValueOnce(error); },
+      },
+    ])('resolves and logs exactly one canonical debug record when $site rejects (F1)', async ({ site, arm }) => {
+      const bookId = await insertBook();
+      const error = Object.assign(new Error(`${site} failed`), { code: 'EIO' });
+      arm(error);
+
+      await expect(reconciler.reconcileBook(bookId)).resolves.toBeUndefined();
+
+      const failureRecords = debugRecords(spies).filter((record) => 'error' in record);
+      expect(failureRecords).toHaveLength(1);
+      expect(failureRecords[0]).toMatchObject({ bookId });
+      expectSerializedError(failureRecords[0]!.error, error, { code: 'EIO' });
+      // `debug`, never `warn`: a per-book failure is already info-visible through the summary.
+      expect(spies.warn).not.toHaveBeenCalled();
+    });
+
+    it('counts a per-book failure once in the sweep summary while still resolving (F1)', async () => {
+      const bookId = await insertBook();
+      const error = new Error('observe failed');
+      outcomes.set(bookId, async () => { throw error; });
+
+      await expect(reconciler.reconcileAll()).resolves.toBeUndefined();
+
+      const failureRecords = debugRecords(spies).filter((record) => 'error' in record);
+      expect(failureRecords).toHaveLength(1);
+      expect(failureRecords[0]).toMatchObject({ bookId });
+      expectSerializedError(failureRecords[0]!.error, error, {});
+      expect(summaries(spies)[0]).toMatchObject({ books: 1, failed: 1 });
+    });
+
     it('never rejects from either public method, whatever fails (F7)', async () => {
       const bookId = await insertBook();
 
@@ -937,6 +1063,38 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(Object.keys(records[0]!).sort()).toEqual([...FIELDS].sort());
       expect(records[0]).toMatchObject({ books: 0, observed: 0, unchanged: 0, retained: 0, conflicted: 0, skipped: 0, failed: 0, stopped: 0 });
       expect(typeof records[0]!.durationMs).toBe('number');
+    });
+
+    /**
+     * `durationMs` must be the SWEEP PHASE's elapsed wall time, and a `typeof === 'number'`
+     * assertion proves none of that (F2). The clock below is driven by hand and advanced by two
+     * different amounts on the two sides of the sweep-start instant, so exactly one value is
+     * correct and each way of getting it wrong produces a different, named wrong answer:
+     *
+     * - hard-coded `0`  → 0, not 7_000
+     * - setup included  → 100_000 + 7_000
+     * - reversed delta  → -7_000
+     * - measured across the whole run rather than the sweep → 107_000
+     */
+    it('reports the sweep-phase elapsed time, excluding setup (case 41/F2)', async () => {
+      const SETUP_MS = 100_000;
+      const SWEEP_MS = 7_000;
+      let now = 1_600_000_000_000;
+      const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+
+      const bookId = await insertBook();
+      // Setup burns wall-clock time BEFORE the sweep-start instant.
+      settingsGet.mockImplementation(async (key: string) => {
+        if (key === 'companionEpub') return { enabled: true };
+        now += SETUP_MS;
+        return { path: libraryRoot };
+      });
+      outcomes.set(bookId, async () => { now += SWEEP_MS; return OBSERVED; });
+
+      await reconciler.reconcileAll();
+
+      expect(summaries(spies)[0]).toMatchObject({ books: 1, observed: 1, durationMs: SWEEP_MS });
+      nowSpy.mockRestore();
     });
 
     it.each([

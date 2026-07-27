@@ -226,6 +226,42 @@ describe('observeCompanionEbook (#1959)', () => {
       });
     });
 
+    /**
+     * One row per term of AC9's conjunction that the surrounding cases do not already move, so
+     * deleting ANY single comparison in `isUnchanged` fails a named case. `filename`, `size`,
+     * and `mtime` were the three that had no mismatch case at all: a short-circuit that ignored
+     * them would let genuinely different bytes inherit the stored verdict.
+     */
+    it.each([
+      {
+        term: 'filename',
+        prior: { filename: 'a-different.epub' } as const,
+        // A prior recorded against another basename cannot vouch for this one's bytes.
+      },
+      { term: 'sizeBytes', prior: { sizeBytes: DEFAULT_FINGERPRINT.size - 1 } as const },
+      { term: 'mtimeMs', prior: { mtimeMs: DEFAULT_FINGERPRINT.mtimeMs - 1 } as const },
+    ])('misses when only $term differs, forcing revalidation (F5)', async ({ prior }) => {
+      const { log } = createMockLogger();
+      readdirMock.mockResolvedValue(['book.epub'] as never);
+      queueLstat(fileStats(), fileStats(), fileStats());
+
+      const result = await observe(priorRow(prior), log);
+
+      expect(validateEpubMock).toHaveBeenCalledExactlyOnceWith(join(BOOK_PATH, 'book.epub'));
+      expect(result).toEqual({
+        outcome: 'observed',
+        observation: {
+          status: 'available',
+          filename: 'book.epub',
+          sizeBytes: DEFAULT_FINGERPRINT.size,
+          mtimeMs: DEFAULT_FINGERPRINT.mtimeMs,
+          ctimeMs: DEFAULT_FINGERPRINT.ctimeMs,
+          candidateCount: 1,
+          selected: false,
+        },
+      });
+    });
+
     it('misses when the candidate count moved 1 → 2 (case 9)', async () => {
       const { log } = createMockLogger();
       readdirMock.mockResolvedValue(['book.epub', 'extra.epub'] as never);
@@ -378,10 +414,20 @@ describe('observeCompanionEbook (#1959)', () => {
       await expect(observe(null, log)).resolves.toEqual({ outcome: 'retain' });
     });
 
-    it('retains when the post-validation lstat reports a changed mtime (case 17)', async () => {
+    /**
+     * One row per component of the post-validation fingerprint re-check, so deleting ANY of the
+     * three comparisons in `sameFingerprint` fails a named case. The file is replaced WHILE
+     * `validateEpub` is reading it: persisting the verdict against the new bytes is exactly the
+     * state AC12 exists to prevent, and `size` and `ctime` had no case before (F6).
+     */
+    it.each([
+      { component: 'mtimeMs', after: { mtimeMs: DEFAULT_FINGERPRINT.mtimeMs + 1 } },
+      { component: 'sizeBytes', after: { size: DEFAULT_FINGERPRINT.size + 1 } },
+      { component: 'ctimeMs', after: { ctimeMs: DEFAULT_FINGERPRINT.ctimeMs + 1 } },
+    ])('retains when only $component moved during validation (case 17/F6)', async ({ after }) => {
       const { log } = createMockLogger();
       readdirMock.mockResolvedValue(['book.epub'] as never);
-      queueLstat(fileStats(), fileStats(), fileStats({ mtimeMs: DEFAULT_FINGERPRINT.mtimeMs + 1 }));
+      queueLstat(fileStats(), fileStats(), fileStats(after));
 
       await expect(observe(null, log)).resolves.toEqual({ outcome: 'retain' });
       expect(validateEpubMock).toHaveBeenCalledTimes(1);

@@ -2,6 +2,8 @@ import { and, eq, isNotNull, sql } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '../../db/client.js';
 import { books } from '../../db/schema.js';
+import type { BookStatus } from '../../shared/schemas/book.js';
+import { serializeDbWrite } from '../utils/db-write-lane.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { withBookAdmissionLock } from './book-admission.js';
@@ -48,10 +50,16 @@ const sweepSemaphore = new Semaphore(RECONCILE_CONCURRENCY);
 /** The seven terminal dispositions of a book run. Every book in a sweep gets exactly one. */
 type BookDisposition = 'observed' | 'unchanged' | 'retained' | 'conflicted' | 'skipped' | 'failed' | 'stopped';
 
-/** The `books` columns the AC19 precondition compares — read inside the lock, re-read in the tx. */
+/**
+ * The `books` columns the AC19 precondition compares — read inside the lock, re-read in the tx.
+ *
+ * `status` carries the canonical `BookStatus`, not a widened `string`: it is handed straight to
+ * `isCompanionEbookEligible`, whose input names the same type, so a drift between the column's
+ * enum and the shared union has to fail at compile time here rather than be cast away.
+ */
 interface BookSnapshot {
   id: number;
-  status: string;
+  status: BookStatus;
   path: string | null;
 }
 
@@ -84,9 +92,18 @@ function bookSnapshotProjection() {
   return { id: books.id, status: books.status, path: books.path };
 }
 
+/**
+ * No cast on the way out: the projection's inferred row type has to be assignable to
+ * `BookSnapshot`, so a `books.status` enum change that no longer matches `BookStatus` fails
+ * here at compile time instead of being laundered through the call site.
+ */
 async function readBookSnapshot(x: DbOrTx, bookId: number): Promise<BookSnapshot | null> {
-  const rows = await x.select(bookSnapshotProjection()).from(books).where(eq(books.id, bookId)).limit(1);
-  return (rows[0] as BookSnapshot | undefined) ?? null;
+  const rows: BookSnapshot[] = await x
+    .select(bookSnapshotProjection())
+    .from(books)
+    .where(eq(books.id, bookId))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 export class CompanionEbookReconciler {
@@ -99,19 +116,6 @@ export class CompanionEbookReconciler {
   private chain: Promise<void> | null = null;
   private followUpQueued = false;
   private readonly activeBookRuns = new Set<Promise<unknown>>();
-
-  /**
-   * In-process serialization lane for the AC19 transaction, adopting
-   * `ImportStagingService`'s `writeChain` (#1893 F36) rather than reinventing it.
-   *
-   * A libSQL connection permits only ONE transaction at a time, so the four concurrent
-   * per-book passes the sweep runs would otherwise collide on the shared connection and all
-   * but one would fail with `SQLITE_BUSY`. Chaining means each guarded write runs to commit
-   * before the next begins. Only the transaction is serialized — discovery, validation, and
-   * both pre-scan reads stay concurrent, and those are where a sweep actually spends its time.
-   * The chain survives rejections, so one failing write never wedges the lane.
-   */
-  private writeChain: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly db: Db,
@@ -361,7 +365,7 @@ export class CompanionEbookReconciler {
     const prior = await findCompanionEbook(this.db, bookId);
 
     const eligible = await isCompanionEbookEligible(
-      { enabled, book: { id: bookId, status: snapshot.status as never, path: snapshot.path }, libraryRoot },
+      { enabled, book: { id: bookId, status: snapshot.status, path: snapshot.path }, libraryRoot },
       this.log,
     );
     // No write at all — never a zeroing one. The exposure predicate's
@@ -388,6 +392,13 @@ export class CompanionEbookReconciler {
    * rename, import, and rejection all write `books.path`/`books.status` WITHOUT holding the
    * admission lock, so the lock alone cannot cover it. Term 2 is defence in depth against a
    * second writer.
+   *
+   * The transaction — and ONLY the transaction — runs on the connection's shared serial write
+   * lane. A libSQL connection permits one transaction at a time, and `createServices` hands the
+   * same `Db` to every service, so the lane has to be keyed on the connection rather than owned
+   * privately here: a service-local tail would still let a companion write overlap an
+   * import-staging one and lose to `SQLITE_BUSY`. Discovery, validation, and both pre-scan reads
+   * stay outside it, which is where a sweep actually spends its time.
    */
   private async commitObservation(
     bookId: number,
@@ -395,7 +406,7 @@ export class CompanionEbookReconciler {
     prior: CompanionEbookRow | null,
     observation: CompanionEbookObservation,
   ): Promise<BookDisposition> {
-    return this.serializeWrite(async () => this.db.transaction(async (tx) => {
+    return serializeDbWrite(this.db, async () => this.db.transaction(async (tx) => {
       const current = await readBookSnapshot(tx, bookId);
       if (current === null || current.path !== snapshot.path || current.status !== snapshot.status) {
         this.log.debug({ bookId, reason: 'book-changed' }, 'Companion ebook observation write aborted');
@@ -411,12 +422,5 @@ export class CompanionEbookReconciler {
       await upsertCompanionEbook(tx, bookId, observation);
       return 'observed';
     }));
-  }
-
-  /** Run a mutating transaction on the serialized write lane (see `writeChain`). */
-  private serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.writeChain.then(fn, fn);
-    this.writeChain = run.then(() => undefined, () => undefined);
-    return run;
   }
 }

@@ -4,6 +4,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { importSubmissions, importSubmissionItems } from '../../db/schema.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
+import { serializeDbWrite } from '../utils/db-write-lane.js';
 import { isUniqueViolation } from '../../shared/error-message.js';
 import { buildHeaderFields, drizzleHeaderInput, reportRowToDto, completeProgress, liveProgress } from './import-submission-dto.js';
 import {
@@ -81,32 +82,34 @@ function stagedItemBytes(item: StagedImportItem): number {
  * ONLY on the winning finalize CAS.
  */
 export class ImportStagingService {
-  /**
-   * In-process serialization lane for MUTATING transactions (F36). A libSQL
-   * connection permits only one transaction at a time, so two overlapping
-   * `db.transaction` calls on the shared connection corrupt with SQLITE_BUSY /
-   * "SQL statements in progress". Routing PUT and finalize through one chain means no
-   * two of them ever overlap on the connection: each runs to commit before the next
-   * begins, giving deterministic idempotency (two finalizes both resolve to
-   * 'processing') and clean ordering (a PUT racing finalize sees the committed state,
-   * not a corrupted tx). The chain survives rejections so one failure never wedges the
-   * lane. This is the single-process supported path; cross-connection contention (the
-   * retention-cleanup races) is a separate durable-CAS backstop and intentionally not
-   * serialized here.
-   */
-  private writeChain: Promise<unknown> = Promise.resolve();
-
   constructor(
     private readonly db: Db,
     private readonly log: FastifyBaseLogger,
     private readonly nudgeRunner: () => void,
   ) {}
 
-  /** Run a mutating operation on the serialized write lane (see `writeChain`). */
+  /**
+   * Run a mutating transaction on the CONNECTION's serialization lane (F36, re-homed by
+   * #1959 F8). A libSQL connection permits only one transaction at a time, so two
+   * overlapping `db.transaction` calls corrupt with SQLITE_BUSY / "SQL statements in
+   * progress". Routing PUT and finalize through the lane means no two of them ever
+   * overlap: each runs to commit before the next begins, giving deterministic
+   * idempotency (two finalizes both resolve to 'processing') and clean ordering (a PUT
+   * racing finalize sees the committed state, not a corrupted tx).
+   *
+   * The lane now lives in `utils/db-write-lane.ts` and is keyed on the `Db` rather than
+   * owned privately here. `createServices` hands this same connection to other
+   * transaction-opening services (`CompanionEbookReconciler`), and a service-local tail
+   * only orders that service against itself — an import-staging transaction could still
+   * overlap a companion one and lose. Keying on the connection is what makes the
+   * one-transaction-at-a-time premise actually hold.
+   *
+   * This is the single-process supported path; cross-connection contention (the
+   * retention-cleanup races) is a separate durable-CAS backstop and intentionally not
+   * serialized here.
+   */
   private serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.writeChain.then(fn, fn);
-    this.writeChain = run.then(() => undefined, () => undefined);
-    return run;
+    return serializeDbWrite(this.db, fn);
   }
 
   /**
