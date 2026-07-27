@@ -37,6 +37,7 @@ vi.mock('../services', () => ({
   DiscoveryService: vi.fn(),
   SeriesCardService: vi.fn(),
   ReferenceReadService: vi.fn(),
+  CompanionEbookReconciler: vi.fn(),
 }));
 vi.mock('../services/import.service.js', () => ({ ImportService: vi.fn() }));
 vi.mock('../services/merge.service.js', () => ({ MergeService: vi.fn() }));
@@ -651,5 +652,46 @@ describe('createServices', () => {
     // staging's nudgeRunner → the composed runner instance; runner's nudge → the composed worker.
     expect(runnerNudge).toHaveBeenCalledTimes(1);
     expect(workerNudge).toHaveBeenCalledTimes(1);
+  });
+
+  // #1959 (F4) — CompanionEbookReconciler is constructed once with the SAME db, the SAME
+  // composed SettingsService, and the SAME logger createServices was handed, and the instance
+  // it returns as `services.companionEbook` is that construction. Every one of those terms is
+  // load-bearing at runtime and invisible to the service-level suite, which injects its own
+  // doubles: a wrong `db` writes observations to another connection (and escapes the shared
+  // write lane keyed on it), a wrong settings instance reads a different feature flag and
+  // library root, and a wrong returned instance means `shutdown.ts` drains a reconciler that
+  // owns none of the in-flight work.
+  it('constructs CompanionEbookReconciler once with the composed db/settings/log and returns that instance', async () => {
+    const { SettingsService, CompanionEbookReconciler } = await import('../services/index.js');
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us', path: '/library/root' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    const services = await createServices(db, log);
+
+    // ctor signature: (db, settings, log)
+    const reconcilerCalls = vi.mocked(CompanionEbookReconciler).mock.calls;
+    expect(reconcilerCalls).toHaveLength(1);
+    const settingsInstances = vi.mocked(SettingsService).mock.instances;
+    expect(settingsInstances).toHaveLength(1);
+    expect(reconcilerCalls[0]).toEqual([db, settingsInstances[0], log]);
+
+    // …and the container hands out that exact construction, not a second one.
+    const reconcilerInstances = vi.mocked(CompanionEbookReconciler).mock.instances;
+    expect(reconcilerInstances).toHaveLength(1);
+    expect(services.companionEbook).toBe(reconcilerInstances[0]);
   });
 });
