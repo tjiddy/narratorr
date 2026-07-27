@@ -1401,22 +1401,33 @@ describe('the inspection budget', () => {
 // ---------------------------------------------------------------------------
 
 describe('public surface and guardrails', () => {
-  it('adds exactly one caller-facing entry point, and no path-taking context handle', async () => {
+  it('exports validateEpub and nothing else at runtime', async () => {
     const module = await import('./validate.js');
-    const functions = Object.entries(module)
-      .filter(([, value]) => typeof value === 'function')
-      .map(([name]) => name)
-      .sort();
 
-    // `validateEpub` is the only export that takes a path and returns a verdict.
-    // `withEpubStructure` also takes a path, but *requires* a continuation, so no
-    // structure can outlive the call — that is the property Decision 1 protects.
-    // `classifyEpubEncryption` takes a structure, never a path. There is no
-    // `openEpub`, no context type, and nothing for a caller to close.
-    expect(functions).toEqual(['classifyEpubEncryption', 'validateEpub', 'withEpubStructure']);
+    // `validateEpub` is the only function this issue adds that accepts a `string`
+    // path — and the only runtime export at all. The shared pipeline, the
+    // structure, its budget, and the encryption classifier are private, so no
+    // caller can name a context, hold one, or close one (Decision 1).
+    expect(Object.keys(module)).toEqual(['validateEpub']);
     expect(module.validateEpub.length).toBe(1);
-    expect(module.withEpubStructure.length).toBe(2);
-    expect(functions.some((name) => /^open/.test(name))).toBe(false);
+  });
+
+  it('exports no type either, so the internal structure cannot escape the open', async () => {
+    // Type-only exports are erased at runtime, so the runtime check above cannot
+    // see them — this is the assertion that catches a re-added
+    // `export type EpubStructure` or a re-exported continuation seam. The
+    // structure is only valid inside `runEpubPipeline`'s callback; an exported
+    // continuation with an unconstrained return type would let a caller write
+    // `pipeline(path, async (outcome) => outcome)` and receive the structure
+    // *after* `withZipSource` ran its closing `finally`.
+    const { readFile } = await import('node:fs/promises');
+    const source = await readFile(path.join(import.meta.dirname, 'validate.ts'), 'utf8');
+    const exported = source
+      .split('\n')
+      .filter((line) => /^export\b/.test(line))
+      .map((line) => line.trim());
+
+    expect(exported).toEqual(['export async function validateEpub(filePath: string): Promise<EpubValidation> {']);
   });
 
   it('never reads the cover entry while validating', async () => {

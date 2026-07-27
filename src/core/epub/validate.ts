@@ -26,11 +26,16 @@ import { withZipSource } from './zip-source.js';
  * module calls them in order and maps their outcomes onto the frozen
  * vocabulary. Any re-spelling of that logic here is a DRY defect.
  *
- * **No context handle.** `validateEpub(filePath)` performs the entire preflight
- * itself: one call is one open is one budget. There is no `EpubContext` to pass,
- * own, close, or reuse — {@link withEpubStructure} hands the shared structure to
- * a continuation and it is dead the moment that continuation returns, because
- * 1.1c closes the handle in its own `finally`.
+ * **No context handle, and one export.** `validateEpub(filePath)` performs the
+ * entire preflight itself: one call is one open is one budget. There is no
+ * `EpubContext` to pass, own, close, or reuse. The shared pipeline, the
+ * structure it produces, its budget, and the encryption classifier are all
+ * module-private; {@link runEpubPipeline} hands the structure to a continuation
+ * and it is dead the moment that continuation returns, because 1.1c closes the
+ * handle in its own `finally`. 1.1e's `inspectEpub` lands **here**, beside
+ * `validateEpub`, over the same private pipeline — `extract.ts` owns only the
+ * optional-read helpers. That is what keeps "reuse the pipeline whole" and "the
+ * internal shape appears in no export" true at the same time (#1989 Decision 1).
  *
  * **I/O failure is never a verdict.** 1.1c already classifies around
  * `Open.custom()` and around every entry stream, rethrowing on `throw` and
@@ -114,7 +119,7 @@ function fromReadFailure(label: ZipReadFailure): EpubValidation {
  * There is **no cross-call budget** and no context to carry one: a caller that
  * validates and then inspects opens twice and is bounded twice.
  */
-export interface EpubInspectionBudget {
+interface EpubInspectionBudget {
   /** Inflated bytes charged so far. */
   readonly consumed: number;
   /**
@@ -171,14 +176,21 @@ interface EpubPackageIndex {
  * What the structural pipeline produces once a book has passed every check up to
  * and including the linear spine.
  *
- * **Internal to `src/core/epub/`, and never a handle.** It appears in no public
- * signature: `validateEpub` returns an `EpubValidation` and 1.1e's `inspectEpub`
- * will return an `EpubInspection`. It is valid only inside
- * {@link withEpubStructure}'s continuation, is never owned by a caller, and is
- * never closed by one — 1.1c's `finally` owns the handle. This is deliberately
- * *not* the rejected `EpubContext` shape (#1989 Decision 1).
+ * **Module-private, and never a handle.** It appears in no export at all — not
+ * as a value, not as a type — so no caller can name it, hold it, or receive one:
+ * `validateEpub` returns an `EpubValidation` and 1.1e's `inspectEpub` will
+ * return an `EpubInspection`. It is valid only inside {@link runEpubPipeline}'s
+ * continuation, is never owned by a caller, and is never closed by one — 1.1c's
+ * `finally` owns the handle. This is deliberately *not* the rejected
+ * `EpubContext` shape (#1989 Decision 1).
+ *
+ * Privacy is what makes that airtight rather than advisory. An exported
+ * continuation with an unconstrained return type would let
+ * `pipeline(path, async (outcome) => outcome)` hand the structure back *after*
+ * the closing `finally` ran, leaving a caller holding a source whose handle is
+ * gone. Nothing outside this module can express that call.
  */
-export interface EpubStructure {
+interface EpubStructure {
   /** The open positional source, for reads a later stage still wants to perform. */
   readonly source: ZipPositionalSource;
   /** Every normalised archive member, as 1.1c reported them. */
@@ -193,7 +205,7 @@ export interface EpubStructure {
 }
 
 /** The pipeline either produced a structure or already decided the verdict. */
-export type EpubPipelineOutcome =
+type EpubPipelineOutcome =
   | { kind: 'structure'; structure: EpubStructure }
   | { kind: 'verdict'; validation: EpubValidation };
 
@@ -572,7 +584,7 @@ function collectEncryptionFindings(
  * means the companion artefact cannot be fully read, and the owner-facing
  * outcome for that is the DRM sentence.
  */
-export async function classifyEpubEncryption(structure: EpubStructure): Promise<EpubValidation> {
+async function classifyEncryption(structure: EpubStructure): Promise<EpubValidation> {
   const entry = structure.entriesByName.get(ENCRYPTION_ENTRY);
   if (!entry) return AVAILABLE;
 
@@ -588,23 +600,31 @@ export async function classifyEpubEncryption(structure: EpubStructure): Promise<
   return AVAILABLE;
 }
 
-// --- the public entry point -------------------------------------------------
+// --- the one public entry point ---------------------------------------------
 
 /**
  * Run the pre-open checks and the structural pipeline over `filePath`, then hand
  * the outcome to `onOutcome`.
  *
- * **Internal to `src/core/epub/`** — the seam 1.1e's `inspectEpub` reuses so the
- * pipeline has exactly one implementation. It takes a continuation rather than
- * returning the structure precisely so no structure can outlive the open: 1.1c
- * owns the handle inside `withZipSource`'s callback and closes it in a `finally`
- * on every exit, including a thrown error.
+ * **Module-private**, and deliberately so. This is the seam 1.1e's `inspectEpub`
+ * reuses — it lands in *this* module, beside `validateEpub`, and calls this
+ * function; `extract.ts` then owns only the optional-read helpers that take what
+ * they need. That keeps the pipeline at exactly one implementation without any
+ * of it becoming reachable from outside.
+ *
+ * It takes a continuation rather than returning the structure so that no
+ * structure can outlive the open: 1.1c owns the handle inside `withZipSource`'s
+ * callback and closes it in a `finally` on every exit, including a thrown error.
+ * The continuation shape alone is not a *guarantee* — the return type is
+ * unconstrained, so `pipeline(path, async (outcome) => outcome)` would smuggle
+ * the structure past the close. Privacy is what closes that: the only two call
+ * sites are in this file, and neither returns the outcome.
  *
  * Every byte read after the open comes from that one handle, via
  * `session.source` or `entry.read(cap)`. No code path here re-opens the archive
  * by pathname, and this module calls `node:fs/promises`' `open` nowhere.
  */
-export async function withEpubStructure<T>(
+async function runEpubPipeline<T>(
   filePath: string,
   onOutcome: (outcome: EpubPipelineOutcome) => Promise<T>,
 ): Promise<T> {
@@ -631,9 +651,13 @@ export async function withEpubStructure<T>(
  * reconciler's six-hourly sweep needs only the status and must not hold up to
  * 8 MiB of cover bytes per book, while the owner panel wants everything in one
  * pass.
+ *
+ * **The only export in this module** — `inspectEpub` will be the second and
+ * last. Everything else here is private: there is no context type to name, no
+ * handle to own, and nothing for a caller to close (#1989 Decision 1).
  */
 export async function validateEpub(filePath: string): Promise<EpubValidation> {
-  return withEpubStructure(filePath, async (outcome) =>
-    outcome.kind === 'verdict' ? outcome.validation : classifyEpubEncryption(outcome.structure),
+  return runEpubPipeline(filePath, async (outcome) =>
+    outcome.kind === 'verdict' ? outcome.validation : classifyEncryption(outcome.structure),
   );
 }
