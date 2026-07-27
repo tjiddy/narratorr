@@ -23,11 +23,17 @@ import type { JobScheduler } from './jobs/index.js';
  *     reply that would re-block app.close() (#1813).
  *  3. Stop the import queue worker — it finishes any in-flight import, which may
  *     enqueue connector refreshes on the way out.
- *  4. Drain the best-effort connector refresh queue — clears pending debounce/
+ *  4. Drain the companion-ebook reconciler — refuses new runs, then awaits the
+ *     in-flight sweep (or direct per-book reconcile) so `app.close()` cannot run
+ *     while a guarded observation write is outstanding. It sits AFTER the import
+ *     queue worker because that worker is its future producer (#1960's import
+ *     seam), and before the connector drain so the ordering reads
+ *     producer → consumer throughout (#1959).
+ *  5. Drain the best-effort connector refresh queue — clears pending debounce/
  *     deadline timers (warn-logging dropped batches) and awaits any in-flight
  *     flush. This MUST run before `app.close()` so a refresh that is mid-request
  *     or mid-retry isn't silently lost when the process tears down.
- *  5. Close the Fastify app LAST to release the port.
+ *  6. Close the Fastify app LAST to release the port.
  *
  * Extracted from the `index.ts` signal handler so the ordering contract (AC2 of
  * #1498, scheduler-first of #1515) is unit-testable without booting the server.
@@ -45,6 +51,7 @@ export async function gracefulShutdown(
   // release). Order: scheduler → broadcaster → submissionRunner → importQueueWorker.
   await services.importSubmissionRunner.stop();
   await services.importQueueWorker.stop();
+  await services.companionEbook.stop();
   await services.connector.stop();
   await app.close();
 }
