@@ -35,6 +35,20 @@ export type CompanionOpenResult =
   | { outcome: 'unreadable' };
 
 /**
+ * The five negatives, named once. `resolveCompanionEbookPath` returns *the same five* as a
+ * matter of type identity rather than of two lists agreeing by inspection (#1976 AC1) — adding
+ * a sixth outcome to `CompanionOpenResult` widens both, which is the point.
+ */
+type CompanionVerifyFailure = Exclude<CompanionOpenResult, { outcome: 'ok' }>;
+
+/**
+ * The resolver's outcome union: the verified path, or the same five negatives. No handle —
+ * `inspectEpub` opens the archive by pathname itself, and taking a descriptor solely to close
+ * it before that re-open buys nothing (#1976 AC3).
+ */
+export type CompanionResolveResult = { outcome: 'ok'; path: string } | CompanionVerifyFailure;
+
+/**
  * Absence vs. undetermined, through the shared #1955 discriminator — never a hand-rolled
  * errno set. A code-less throw is `unreadable`, never `missing`.
  */
@@ -65,7 +79,7 @@ async function verifyPath(
   path: string,
   libraryRoot: string,
   log: FastifyBaseLogger,
-): Promise<CompanionOpenResult | null> {
+): Promise<CompanionVerifyFailure | null> {
   try {
     // `lstat`, never `stat`: a symlink must be REJECTED, not followed. The final component is
     // therefore proven non-symlink, which is what makes canonicalising the full path below
@@ -93,11 +107,47 @@ async function verifyPath(
 }
 
 /**
- * Open one companion ebook for serving, verifying it first (#1974 AC1-AC7, plan §5).
+ * Verify a stored companion basename and return the path it resolves to (#1976 AC1, plan §5).
  *
  * In order: reject a non-persistable basename **before any `join` and before any syscall** ·
- * `lstat` · regular-file check · realpath containment inside the library root · `open` ·
- * `fstat` for the authoritative size.
+ * `join` · `lstat` · regular-file check · realpath containment inside the library root.
+ *
+ * **It never throws**, and it never opens a descriptor — on every outcome, including `ok`,
+ * nothing is left for the caller to close. That is what lets the two read routes hand the
+ * returned `path` straight to `inspectEpub`, which opens the archive by pathname itself.
+ *
+ * This is the ONE path-construction site (#1976 AC3). `openCompanionEbook` composes it, both
+ * read routes call it, and the selection mutation reaches it from inside its admission lock.
+ * A route that built `join(bookPath, filename)` itself would be a second site, free to drift
+ * from the verified one — which is exactly the drift the containment check exists to catch.
+ *
+ * Logging is `debug`-only and carries the `path` deliberately; see `openCompanionEbook`.
+ */
+export async function resolveCompanionEbookPath(
+  input: CompanionOpenInput,
+  log: FastifyBaseLogger,
+): Promise<CompanionResolveResult> {
+  const { bookId, bookPath, filename, libraryRoot } = input;
+
+  // Before any `join`, before any syscall: a `..`, a separator, or a padded name never
+  // becomes a path here.
+  if (!isPersistableCompanionBasename(filename)) return { outcome: 'invalid_filename' };
+
+  const path = join(bookPath, filename);
+
+  const rejection = await verifyPath(bookId, path, libraryRoot, log);
+  if (rejection) return rejection;
+
+  // The path as BUILT, not the canonicalised form containment compared: the caller opens the
+  // name the row names, and canonicalisation is a decision procedure, not a rewrite.
+  return { outcome: 'ok', path };
+}
+
+/**
+ * Open one companion ebook for serving, verifying it first (#1974 AC1-AC7, plan §5).
+ *
+ * Composed as `resolveCompanionEbookPath` → `open` → `fstat` (#1976 AC2), so the basename
+ * re-validation, the `join`, and the two verification syscalls exist at exactly one site.
  *
  * **It never throws.** Like `isCompanionEbookEligible`, every negative and every errno is
  * absorbed and returned as a discriminated outcome, so a route maps outcomes to statuses and
@@ -123,16 +173,11 @@ export async function openCompanionEbook(
   input: CompanionOpenInput,
   log: FastifyBaseLogger,
 ): Promise<CompanionOpenResult> {
-  const { bookId, bookPath, filename, libraryRoot } = input;
+  const { bookId } = input;
 
-  // Before any `join`, before any syscall: a `..`, a separator, or a padded name never
-  // becomes a path here.
-  if (!isPersistableCompanionBasename(filename)) return { outcome: 'invalid_filename' };
-
-  const path = join(bookPath, filename);
-
-  const rejection = await verifyPath(bookId, path, libraryRoot, log);
-  if (rejection) return rejection;
+  const resolved = await resolveCompanionEbookPath(input, log);
+  if (resolved.outcome !== 'ok') return resolved;
+  const { path } = resolved;
 
   let handle: FileHandle;
   try {

@@ -249,9 +249,12 @@ const routeRegistry: RouteFactory[] = [
   // Companion ebooks (#1974) — its own module, not `books.ts` (360/400 lines). `db` carries
   // the observation read: the routes call `findCompanionEbook(db, bookId)` directly, a free
   // function over `DbOrTx`, so no `BookService` join and no new `Services` member is needed.
+  // `reconciler` is #1976's: the selection PUT delegates the whole mutation to the instance
+  // already constructed above and already on the `Services` object — no new registry entry.
   (app, s, db) => companionEbookRoutes(app, {
     bookService: s.book,
     settingsService: s.settings,
+    reconciler: s.companionEbook,
   }, db),
   (app, s) => searchRoutes(app, s.downloadOrchestrator),
   (app, s) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, s.bookImport, () => s.importQueueWorker.nudge()),

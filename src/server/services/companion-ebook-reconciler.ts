@@ -6,9 +6,15 @@ import type { BookStatus } from '../../shared/schemas/book.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { withBookAdmissionLock } from './book-admission.js';
+import { findCompanionEbookCandidates } from './companion-ebook-discovery.js';
 import { isCompanionEbookEligible } from './companion-ebook-eligibility.js';
 import type { CompanionEbookObservation } from './companion-ebook-observation.js';
-import { observeCompanionEbook } from './companion-ebook-observe.js';
+import {
+  observeCompanionEbook,
+  revalidateCompanionFile,
+  statRegularFile,
+} from './companion-ebook-observe.js';
+import { resolveCompanionEbookPath } from './companion-ebook-open.js';
 import { findCompanionEbook, upsertCompanionEbook } from './companion-ebook.repository.js';
 import type { SettingsService } from './settings.service.js';
 import type { CompanionEbookRow } from './types.js';
@@ -48,6 +54,49 @@ const sweepSemaphore = new Semaphore(RECONCILE_CONCURRENCY);
 
 /** The seven terminal dispositions of a book run. Every book in a sweep gets exactly one. */
 type BookDisposition = 'observed' | 'unchanged' | 'retained' | 'conflicted' | 'skipped' | 'failed' | 'stopped';
+
+/**
+ * The conditional write's result (#1976 AC29). Row-bearing rather than a bare disposition,
+ * because the selection `PUT` renders the row this commit wrote and the only alternative — a
+ * post-commit re-read — can observe a *different* concurrent value.
+ *
+ * The sweep is unaffected: `reconcileLocked` maps this back to `BookDisposition` in one line,
+ * so `runSweep`'s counters and the seven-disposition vocabulary are unchanged.
+ */
+type CommitResult = { outcome: 'observed'; row: CompanionEbookRow } | { outcome: 'conflicted' };
+
+/**
+ * The twelve terminal outcomes of one selection (#1976 AC25) — total and exact, one per row of
+ * AC31's response map. `selected` carries the written row so the route needs no follow-up read.
+ *
+ * `unchanged` is deliberately absent: the sweep's short-circuit lives in `runObserve` and the
+ * selector never enters it. An explicit owner action always revalidates (AC27).
+ */
+export type CompanionSelectionResult =
+  /** Persisted. The row is the one the commit transaction returned. */
+  | { outcome: 'selected'; row: CompanionEbookRow }
+  /** `companionEpub.enabled` flipped false between the route's gate and the service's read. */
+  | { outcome: 'disabled' }
+  /** The `books` row vanished between the route lookup and the locked snapshot. */
+  | { outcome: 'book_missing' }
+  /** `isCompanionEbookEligible` said no — a non-imported status, a blank or escaped path. */
+  | { outcome: 'ineligible' }
+  /** The candidate directory is definitively gone. */
+  | { outcome: 'gone' }
+  /** The listing failed with a non-absence errno; the candidate set is unknown. */
+  | { outcome: 'undetermined' }
+  /** The index does not address the LIVE candidate list. */
+  | { outcome: 'out_of_range' }
+  /** The chosen basename stopped being a readable, contained regular file under us. */
+  | { outcome: 'unresolvable' }
+  /** Revalidation declined to derive a verdict; the last observation stands. */
+  | { outcome: 'retained' }
+  /** The conditional write's precondition no longer matched. */
+  | { outcome: 'conflicted' }
+  /** The drain latched before this selection began its work. */
+  | { outcome: 'stopped' }
+  /** Anything threw. The method never rejects. */
+  | { outcome: 'failed' };
 
 /**
  * The `books` columns the AC19 precondition compares — read inside the lock, re-read in the tx.
@@ -155,6 +204,31 @@ export class CompanionEbookReconciler {
     });
     this.chain = chain;
     return chain;
+  }
+
+  /**
+   * Persist the owner's pick from an `ambiguous` candidate list (#1976 AC24). Never rejects.
+   *
+   * `index` addresses the LIVE list this pass enumerates, not the stored `candidate_count` and
+   * not the list the `GET /state` that issued it saw. Drift between the two is accepted (AC34):
+   * there is no precondition token, no ETag, and no nonce — the owner may pick the wrong
+   * candidate once and re-pick.
+   *
+   * Registered in `activeBookRuns` SYNCHRONOUSLY, before the first `await`, for the same
+   * reason `reconcileBook` is: `stop()` awaits that set and `shutdown.ts` runs it immediately
+   * before `app.close()`, so an unregistered selection could still be committing while the app
+   * tears down. The `stopping` re-check inside the lock is the other half — the registration
+   * makes an accepted selection drainable, the re-check stops one that has not begun its work.
+   *
+   * **No `sweepSemaphore` slot**, for the same reason `reconcileBook` takes none: this is
+   * user-triggered and must not queue behind a background sweep.
+   */
+  selectCompanionEbook(bookId: number, index: number): Promise<CompanionSelectionResult> {
+    if (this.stopping) return Promise.resolve({ outcome: 'stopped' });
+    const run: Promise<CompanionSelectionResult> = this.runSelection(bookId, index)
+      .finally(() => { this.activeBookRuns.delete(run); });
+    this.activeBookRuns.add(run);
+    return run;
   }
 
   /**
@@ -380,7 +454,117 @@ export class CompanionEbookReconciler {
     if (result.outcome === 'unchanged') return 'unchanged';
     if (result.outcome === 'retain') return 'retained';
 
-    return this.commitObservation(bookId, snapshot, prior, result.observation);
+    // The sweep discards the written row and keeps its seven-arm vocabulary (#1976 AC29).
+    const committed = await this.commitObservation(bookId, snapshot, prior, result.observation);
+    return committed.outcome === 'conflicted' ? 'conflicted' : 'observed';
+  }
+
+  // -------------------------------------------------------------------------
+  // The selection pass (#1976)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Setup, then the locked pass. Between them, the whole body is covered by a `try`.
+   *
+   * The two settings reads are hoisted ABOVE the lock, exactly as `runDirectBook` does: they
+   * are process-wide configuration, not per-book state, so they take no part in the conditional
+   * write's precondition and holding the lock across them would only lengthen it. The reads
+   * that DO participate — snapshot, prior, eligibility, discovery, resolver, revalidation — are
+   * all inside, and none of them may be hoisted.
+   *
+   * A feature flip between the route's own `enabled` gate and this read maps to `disabled`,
+   * which is the same `409` the route would have given a moment earlier, rather than being
+   * laundered into a 404.
+   *
+   * The two catches differ only in level: a setup rejection is a real fault an operator should
+   * see (`warn`, matching `runDirectBook`), while a throw out of the locked callback mirrors
+   * `runBook`'s `debug`. Both absorb to `failed` — the method never rejects.
+   */
+  private async runSelection(bookId: number, index: number): Promise<CompanionSelectionResult> {
+    let libraryRoot: string;
+    try {
+      const { enabled } = await this.settings.get('companionEpub');
+      if (!enabled) return { outcome: 'disabled' };
+      libraryRoot = (await this.settings.get('library')).path;
+    } catch (error: unknown) {
+      this.log.warn({ bookId, error: serializeError(error) }, 'Companion ebook selection setup failed');
+      return { outcome: 'failed' };
+    }
+
+    try {
+      return await withBookAdmissionLock(bookId, () => this.selectLocked(bookId, index, libraryRoot));
+    } catch (error: unknown) {
+      this.log.debug({ bookId, error: serializeError(error) }, 'Companion ebook selection failed for book');
+      return { outcome: 'failed' };
+    }
+  }
+
+  /**
+   * The nine locked steps, in order, with no read hoisted out (#1976 AC24).
+   *
+   * This is ONE discovery, and the basename resolved at step 6 is the one revalidated at step
+   * 8 — so the chosen file cannot be swapped for a different one between enumeration and write,
+   * and writing a file the owner did not pick is not expressible. `observeCompanionEbook` is
+   * deliberately not called: re-running discovery inside the observer, after this pass had
+   * already enumerated and range-checked, is exactly the window that made the withdrawn design
+   * able to silently re-point the owner's choice (AC26).
+   *
+   * Steps 6 and 7 each `lstat` the same path, deliberately. Step 6 owns the SECURITY decision —
+   * it is the only place the full resolved path is canonicalised against the library root,
+   * which is what catches an escape through a parent component that discovery's per-entry
+   * `isFile()` check does not look at — and step 7 owns the fingerprint. They share one failure
+   * arm because both mean the same thing: the file stopped being a readable regular file under
+   * us. Collapsing them by widening the resolver's return shape would change a contract #1974
+   * and #1975 already ship against.
+   */
+  private async selectLocked(
+    bookId: number,
+    index: number,
+    libraryRoot: string,
+  ): Promise<CompanionSelectionResult> {
+    // Step 0 — the drain re-check. Zero filesystem and zero DB work happens after this point.
+    if (this.stopping) return { outcome: 'stopped' };
+
+    const snapshot = await readBookSnapshot(this.db, bookId);
+    if (snapshot === null) return { outcome: 'book_missing' };
+
+    const prior = await findCompanionEbook(this.db, bookId);
+
+    const eligible = await isCompanionEbookEligible(
+      { enabled: true, book: { id: bookId, status: snapshot.status, path: snapshot.path }, libraryRoot },
+      this.log,
+    );
+    if (!eligible) return { outcome: 'ineligible' };
+
+    const bookPath = snapshot.path!;
+    const discovery = await findCompanionEbookCandidates({ bookId, bookPath }, this.log);
+    if (discovery.outcome !== 'ok') return { outcome: discovery.outcome };
+
+    // The range check is against the LIVE list. Reading the stored `candidate_count` here would
+    // accept an index the directory can no longer address, and reject one it can.
+    const { candidates } = discovery;
+    if (index < 0 || index >= candidates.length) return { outcome: 'out_of_range' };
+    const filename = candidates[index]!;
+
+    const resolved = await resolveCompanionEbookPath({ bookId, bookPath, filename, libraryRoot }, this.log);
+    if (resolved.outcome !== 'ok') return { outcome: 'unresolvable' };
+
+    const before = await statRegularFile(bookId, resolved.path, this.log);
+    if (before === null) return { outcome: 'unresolvable' };
+
+    const revalidated = await revalidateCompanionFile(
+      { bookId, path: resolved.path, filename, selected: true, candidateCount: candidates.length, before },
+      this.log,
+    );
+    if (revalidated.outcome === 'retain') return { outcome: 'retained' };
+
+    // The REAL prior from step 2, never a synthesised one: both preconditions still apply, and
+    // a mismatch writes nothing. `selected: true` reaches the row through the observation write
+    // boundary, which is what makes `ck_companion_ebooks_selection` unviolatable rather than
+    // merely untriggered — no `UPDATE companion_ebooks SET selected_filename` exists anywhere.
+    const committed = await this.commitObservation(bookId, snapshot, prior, revalidated.observation);
+    if (committed.outcome === 'conflicted') return { outcome: 'conflicted' };
+    return { outcome: 'selected', row: committed.row };
   }
 
   /**
@@ -404,22 +588,25 @@ export class CompanionEbookReconciler {
     snapshot: BookSnapshot,
     prior: CompanionEbookRow | null,
     observation: CompanionEbookObservation,
-  ): Promise<BookDisposition> {
+  ): Promise<CommitResult> {
     return this.db.transaction(async (tx) => {
       const current = await readBookSnapshot(tx, bookId);
       if (current === null || current.path !== snapshot.path || current.status !== snapshot.status) {
         this.log.debug({ bookId, reason: 'book-changed' }, 'Companion ebook observation write aborted');
-        return 'conflicted';
+        return { outcome: 'conflicted' };
       }
 
       const currentRow = await findCompanionEbook(tx, bookId);
       if (!sameObservationRow(prior, currentRow)) {
         this.log.debug({ bookId, reason: 'observation-changed' }, 'Companion ebook observation write aborted');
-        return 'conflicted';
+        return { outcome: 'conflicted' };
       }
 
-      await upsertCompanionEbook(tx, bookId, observation);
-      return 'observed';
+      // The row the TRANSACTION wrote, from the upsert's own `.returning()` — not a
+      // post-commit `findCompanionEbook`, which reads outside the transaction and can observe
+      // a different concurrent value (#1976 AC29).
+      const row = await upsertCompanionEbook(tx, bookId, observation);
+      return { outcome: 'observed', row };
     });
   }
 }

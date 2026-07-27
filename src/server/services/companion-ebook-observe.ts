@@ -54,11 +54,38 @@ export type CompanionObserveResult =
   /** Write NOTHING — the last successful observation is better than anything we could derive. */
   | { outcome: 'retain' };
 
+/**
+ * The revalidation tail, taken alone (#1976 AC22): validate, re-stat, compare, build. Exported
+ * so the sweep and the owner's `ambiguous` selection share ONE implementation of "decide a
+ * verdict about this specific file" instead of two that can drift.
+ */
+export type CompanionRevalidateResult = Exclude<CompanionObserveResult, { outcome: 'unchanged' }>;
+
 /** The three `size`/`mtime`/`ctime` columns, already normalised for storage and comparison. */
-interface Fingerprint {
+export interface Fingerprint {
   sizeBytes: number;
   mtimeMs: number;
   ctimeMs: number;
+}
+
+/**
+ * `revalidateCompanionFile`'s inputs. `before` is the fingerprint the CALLER already took —
+ * never re-taken here (AC23). The sweep's pre-validation `lstat` doubles as its short-circuit
+ * input, and the selector's step 7 takes its own; re-statting inside would add a third syscall
+ * to a sequence `companion-ebook-observe.test.ts`'s `queueLstat` helper pins in exact order.
+ */
+export interface CompanionRevalidateInput {
+  bookId: number;
+  /** The already-resolved path to the file — built by the caller, never re-joined here. */
+  path: string;
+  /** The candidate's basename, as it will be persisted. */
+  filename: string;
+  /** Whether this file is the owner's recorded pick. */
+  selected: boolean;
+  /** The live candidate count this observation was made against. */
+  candidateCount: number;
+  /** The pre-validation fingerprint, taken by the caller. */
+  before: Fingerprint;
 }
 
 /** Which candidate this pass is about, and whether it is the owner's recorded pick. */
@@ -115,7 +142,7 @@ function resolveCandidate(candidates: string[], prior: CompanionEbookRow | null)
  * as readily, so a same-fingerprint replacement by a non-regular entry would otherwise pass.
  * `companion-ebook-open.ts` draws the same two checks apart for the same reason.
  */
-async function statRegularFile(
+export async function statRegularFile(
   bookId: number,
   path: string,
   log: FastifyBaseLogger,
@@ -177,8 +204,54 @@ function toObservation(
 }
 
 /**
+ * Validate one already-resolved companion file and turn the verdict into an observation
+ * (#1976 AC22) — the tail of a sweep pass, and the whole of a selection pass.
+ *
+ * Exactly three steps, in this order: `validateEpub` and its catch · the post-validation
+ * `statRegularFile` re-check · the fingerprint comparison against the caller's `before`. Any
+ * of them failing is `retain`, which means *write nothing* — the last successful observation
+ * is better than anything we could derive from a file that moved under us.
+ *
+ * **It never throws**, on the same terms as the module: every errno and every rejection out of
+ * `validateEpub` is absorbed and logged once at `debug` in the canonical
+ * `{ bookId, path, error: serializeError(error) }` shape.
+ *
+ * **`runObserve` calls this through the module-local binding**, so a `vi.mock` factory
+ * overriding this export intercepts the reconciler's selection call and NOT the observer's
+ * internal one (esm-same-module-vi-mock-bypass). That asymmetry is load-bearing for the
+ * reconciler suite: it can dictate the selector's revalidation without also rewriting what a
+ * sweep observes.
+ */
+export async function revalidateCompanionFile(
+  input: CompanionRevalidateInput,
+  log: FastifyBaseLogger,
+): Promise<CompanionRevalidateResult> {
+  const { bookId, path, filename, selected, candidateCount, before } = input;
+
+  let validation: EpubValidation;
+  try {
+    validation = await validateEpub(path);
+  } catch (error: unknown) {
+    // Includes `ENOENT` — the candidate vanished between `readdir` and the open. The next pass
+    // re-enumerates and writes `none` from a complete view, so one stale pass is the correct
+    // cost of never clobbering on a partial one.
+    log.debug({ bookId, path, error: serializeError(error) }, 'Companion ebook validation failed — retaining the last observation');
+    return { outcome: 'retain' };
+  }
+
+  const after = await statRegularFile(bookId, path, log);
+  if (after === null || !sameFingerprint(after, before)) return { outcome: 'retain' };
+
+  return { outcome: 'observed', observation: toObservation(validation, { filename, selected }, before, candidateCount) };
+}
+
+/**
  * The fixed AC3 step order: discovery → resolve → `lstat` → short-circuit → `validateEpub` →
  * post-validation `lstat` re-check.
+ *
+ * The last two steps moved WHOLE into `revalidateCompanionFile` (#1976 AC23) and the
+ * pre-taken `before` is passed down rather than re-derived. No syscall was added and none
+ * reordered, which is the extraction's whole correctness claim.
  */
 async function runObserve(input: CompanionObserveInput, log: FastifyBaseLogger): Promise<CompanionObserveResult> {
   const { bookId, bookPath, prior } = input;
@@ -203,21 +276,17 @@ async function runObserve(input: CompanionObserveInput, log: FastifyBaseLogger):
 
   if (isUnchanged(prior, resolution, before, candidates.length)) return { outcome: 'unchanged' };
 
-  let validation: EpubValidation;
-  try {
-    validation = await validateEpub(path);
-  } catch (error: unknown) {
-    // Includes `ENOENT` — the candidate vanished between `readdir` and the open. The next pass
-    // re-enumerates and writes `none` from a complete view, so one stale pass is the correct
-    // cost of never clobbering on a partial one.
-    log.debug({ bookId, path, error: serializeError(error) }, 'Companion ebook validation failed — retaining the last observation');
-    return { outcome: 'retain' };
-  }
-
-  const after = await statRegularFile(bookId, path, log);
-  if (after === null || !sameFingerprint(after, before)) return { outcome: 'retain' };
-
-  return { outcome: 'observed', observation: toObservation(validation, resolution, before, candidates.length) };
+  return revalidateCompanionFile(
+    {
+      bookId,
+      path,
+      filename: resolution.filename,
+      selected: resolution.selected,
+      candidateCount: candidates.length,
+      before,
+    },
+    log,
+  );
 }
 
 /**

@@ -141,7 +141,7 @@ describe('routeRegistry', () => {
   // equality, on purpose: #1976 adds its own service dependency to this same closure when it
   // lands the selection PUT, and that must extend this assertion rather than fail it. The
   // `db` third argument IS pinned exactly — the observation read depends on it.
-  it('composes companionEbookRoutes exactly once, with { bookService, settingsService } and the db', async () => {
+  it('composes companionEbookRoutes exactly once, with { bookService, settingsService, reconciler } and the db', async () => {
     const { companionEbookRoutes } = await import('./companion-ebook.js');
     (companionEbookRoutes as unknown as Mock).mockClear();
 
@@ -153,6 +153,11 @@ describe('routeRegistry', () => {
       expect.objectContaining({
         bookService: svc(services, 'book'),
         settingsService: svc(services, 'settings'),
+        // #1976 AC35 / F20 — `objectContaining` PASSES on an omitted key, so without this
+        // line production could stop passing the reconciler and every suite would stay green.
+        // The route-module suite supplies its own fake, so it proves handler behaviour and
+        // structurally cannot prove that production wires the real instance.
+        reconciler: svc(services, 'companionEbook'),
       }),
       db,
     );
