@@ -20,6 +20,7 @@ import { v1ActionsRoutes } from './actions.js';
 import { v1MetadataRoutes } from './metadata.js';
 import { v1SystemRoutes } from './system.js';
 import { v1CapabilitiesRoutes } from './capabilities.js';
+import { v1CompanionEbookRoutes } from './companion-ebook.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors books.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
@@ -106,6 +107,13 @@ async function buildApp(urlBase = ''): Promise<FastifyInstance> {
     });
     await v1SystemRoutes(scoped);
     await v1CapabilitiesRoutes(scoped, { settingsService: capabilitiesSettingsService as never });
+    // #1975 AC27 — `buildApp()` composes the v1 surface by hand and is NOT coupled to
+    // `routeRegistry` (open debt #1979), so a new v1 route is silently absent from the
+    // asserted spec unless it is registered here too.
+    await v1CompanionEbookRoutes(scoped, {
+      bookService: bookService as never,
+      settingsService: settingsService as never,
+    }, db);
     // Non-v1 decoys (must be ABSENT from the public spec).
     scoped.get('/api/books', async () => ({ ok: true }));
     scoped.get('/api/v1/system/status', async () => ({ ok: true })); // Prowlarr-compat shim
@@ -277,6 +285,21 @@ describe('v1 OpenAPI spec generation', () => {
       // The public docs surface is unauthenticated; it must describe the shape
       // without consulting the owner's configuration.
       expect(capabilitiesSettingsService.get).not.toHaveBeenCalled();
+    });
+  });
+
+  // #1975 AC27/AC28 — the public companion-ebook stream.
+  describe('GET /api/v1/books/{publicId}/companion-epub (#1975)', () => {
+    it('documents the endpoint at the RELATIVE path key with a get operation', () => {
+      // Relative path key (NOT URL_BASE-prefixed) — the base lives in servers[].url
+      // (learning fastify-swagger-servers-strips-path-prefix).
+      expect(spec.paths).toHaveProperty(['/api/v1/books/{publicId}/companion-epub']);
+      expect(spec.paths['/api/v1/books/{publicId}/companion-epub'].get).toBeTruthy();
+    });
+
+    it('documents the publicId path parameter', () => {
+      const params = spec.paths['/api/v1/books/{publicId}/companion-epub'].get.parameters ?? [];
+      expect(params.map((p: { name: string }) => p.name)).toContain('publicId');
     });
   });
 

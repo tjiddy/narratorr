@@ -8,9 +8,9 @@ import type { BookService, SettingsService } from '../services/index.js';
 import { findCompanionEbook } from '../services/companion-ebook.repository.js';
 import { isCompanionEbookEligible } from '../services/companion-ebook-eligibility.js';
 import { findCompanionEbookCandidates } from '../services/companion-ebook-discovery.js';
-import { openCompanionEbook, type CompanionOpenResult } from '../services/companion-ebook-open.js';
+import { openCompanionEbook } from '../services/companion-ebook-open.js';
 import type { CompanionEbookRow } from '../services/types.js';
-import { serializeError } from '../utils/serialize-error.js';
+import { streamCompanionEbook } from '../utils/companion-ebook-stream.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -49,69 +49,6 @@ function featureDisabled(reply: FastifyReply): FastifyReply {
  */
 function logOutcome(request: FastifyRequest, bookId: number, outcome: string, message: string): void {
   request.log.warn({ bookId, outcome }, message);
-}
-
-/**
- * Stream an open companion handle with exactly-once cleanup (#1974 AC18-AC22).
- *
- * The stream is created with **`autoClose: false`** and ONE idempotent application-owned
- * closer is wired to stream `end`, stream `error`, and response `close` (which covers a client
- * abort). Node 24 documents `autoClose: true` as the default for
- * `filehandle.createReadStream()`, so layering close handling on top of the default is exactly
- * how a double close appears; with it off, nothing tears the stream down implicitly and
- * teardown happens if and only if `release` runs.
- *
- * **`release` destroys the stream rather than calling `handle.close()`, and that is
- * load-bearing.** Measured on Node 24.18: a FileHandle-backed `ReadStream` registers itself on
- * the handle's `close` event, so an application `handle.close()` destroys the stream, whose
- * `_destroy` then closes the handle a SECOND time — two `close()` calls on both the `end` and
- * the abort path. Destroying the stream closes the underlying handle exactly once on every
- * path. (`autoClose` only governs whether the stream self-destroys at `end`; an explicit
- * `destroy()` closes the fd either way.)
- */
-function streamCompanionEbook(
-  bookId: number,
-  filename: string,
-  opened: Extract<CompanionOpenResult, { outcome: 'ok' }>,
-  request: FastifyRequest,
-  reply: FastifyReply,
-): FastifyReply {
-  const stream = opened.handle.createReadStream({ autoClose: false });
-
-  let released = false;
-  const release = (): void => {
-    if (released) return;
-    released = true;
-    if (!stream.destroyed) stream.destroy();
-  };
-
-  stream.once('end', release);
-  stream.once('error', (error: unknown) => {
-    request.log.debug({ bookId, error: serializeError(error) }, 'Companion ebook stream error');
-    logOutcome(request, bookId, 'stream_error', 'Companion ebook stream failed');
-    release();
-    // `error-handler.ts` ends in an unconditional `reply.status(500).send(...)` with no
-    // `headersSent` check, so letting it run here would append a JSON body to a response that
-    // already committed to `200` + `Content-Length` — a truncated body under a success status.
-    // Contained locally: destroying the socket is the only honest signal left. Editing the
-    // shared handler is out of scope (every route in the app is downstream of it).
-    if (reply.raw.headersSent && !reply.raw.writableEnded) reply.raw.socket?.destroy();
-  });
-  reply.raw.once('close', release);
-
-  // The existing sanitize idiom (`routes/system.ts`), so a comma, a space, or a non-ASCII
-  // character in the stored basename cannot break out of the quoted header value.
-  const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '-');
-
-  return reply
-    .status(200)
-    .header('Content-Type', 'application/epub+zip')
-    // `fstat.size` from the OPEN handle, never `companion_ebooks.size_bytes` — the stored
-    // value is a stale observation and a divergence would truncate or hang the response.
-    .header('Content-Length', opened.sizeBytes)
-    .header('Cache-Control', 'private, no-store')
-    .header('Content-Disposition', `attachment; filename="${safeFilename}"`)
-    .send(stream);
 }
 
 /** Project a stored row (or the absence of one) as the display-only payload — no `readdir`. */

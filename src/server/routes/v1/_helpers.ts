@@ -2,6 +2,7 @@ import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
 import type { DbOrTx } from '../../../db/index.js';
 import type { authors, books, downloads, narrators, series } from '../../../db/schema.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
+import { serializeError } from '../../utils/serialize-error.js';
 
 // ============================================================================
 // Public API v1 — shared route helpers (S3 — #1449)
@@ -54,6 +55,7 @@ export async function fetchByPublicId<TRow, TDto>(
 /**
  * v1-scoped error handler. Maps the failures the v1 routes themselves raise to
  * the canonical `v1ErrorEnvelopeSchema` shape (`{ error: { code, message } }`):
+ *   - an ALREADY-COMMITTED reply   → no send at all; destroy the connection
  *   - `V1NotFoundError`            → 404 `NOT_FOUND`
  *   - Fastify validation errors    → 400 `BAD_REQUEST` (unknown param, bounds)
  *   - anything else                → 500 `INTERNAL_ERROR` (no internal leak)
@@ -72,6 +74,27 @@ export function v1ErrorHandler(
   request: FastifyRequest,
   reply: FastifyReply,
 ): FastifyReply {
+  // The committed-response guard (#1975 AC23-AC24), FIRST — before the not-found and
+  // validation branches, so no envelope send is attempted on a committed response
+  // regardless of error class. Sending here would append `{"error":...}` JSON to a body
+  // that already promised a status and a `Content-Length`, which a client reads as a
+  // corrupt payload under a success status rather than as an error.
+  //
+  // DEFENSE IN DEPTH, not a fix for a live defect. No v1 path reaches this handler with
+  // headers already sent today: Fastify 5.8.5's `sendStream` destroys the response
+  // without invoking `onErrorHook` (`lib/reply.js:768-789`), and both the `onSend` and
+  // serializer failure paths run the error hook BEFORE `safeWriteHead`. It costs three
+  // lines and closes the branch on a handler shared by nine v1 route modules, ahead of
+  // the first v1 route that streams (#1975) or hand-writes a raw response.
+  if (reply.sent || reply.raw.headersSent) {
+    request.log.error(
+      { error: serializeError(error) },
+      'v1 error after the response was committed — destroying the connection',
+    );
+    reply.raw.destroy();
+    return reply;
+  }
+
   if (error instanceof V1NotFoundError) {
     request.log.warn({ code: 'NOT_FOUND' }, error.message);
     return reply.status(404).send({ error: { code: 'NOT_FOUND', message: error.message } });

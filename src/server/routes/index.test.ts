@@ -80,20 +80,23 @@ vi.mock('./v1/capabilities.js', () => ({ v1CapabilitiesRoutes: vi.fn() }));
 // exists, not what its closure hands the factory (including the `db` third argument, which
 // carries the observation read).
 vi.mock('./companion-ebook.js', () => ({ companionEbookRoutes: vi.fn() }));
+// #1975 F7 — the public v1 stream. Same reason: the length bump cannot see that production
+// wiring passes the right two services, the right `db`, and NO `maxConcurrentStreams`.
+vi.mock('./v1/companion-ebook.js', () => ({ v1CompanionEbookRoutes: vi.fn() }));
 vi.mock('./v1/metadata.js', () => ({ v1MetadataRoutes: vi.fn() }));
 vi.mock('../config.js', () => ({ config: { configPath: '/tmp/config', dbPath: '/tmp/db.sqlite' } }));
 vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(), probeFfmpeg: vi.fn() }));
 vi.mock('../../core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
 
 describe('routeRegistry', () => {
-  it('contains all 38 route factories', () => {
+  it('contains all 39 route factories', () => {
     // books, bookFiles, bookPreview, companionEbook, search, activity, importJobs, indexers, downloadClients,
     // settings, metadata, libraryScan, importSubmissions, system, notifiers, connectors, blacklist,
     // auth, remotePathMapping, filesystem, eventHistory, events, searchStream,
     // prowlarrCompat, importLists, discover, bulkOperations, retryImport, importPreview,
     // v1Books, v1Authors, v1Narrators, v1Series, v1Downloads, v1Actions, v1Metadata, v1System,
-    // v1Capabilities
-    expect(routeRegistry).toHaveLength(38);
+    // v1Capabilities, v1CompanionEbook
+    expect(routeRegistry).toHaveLength(39);
   });
 
   it('every entry is a function', () => {
@@ -152,6 +155,24 @@ describe('routeRegistry', () => {
       }),
       db,
     );
+  });
+
+  // #1975 AC3 / F7 — EXACT deps object, not `objectContaining`. A misrouted service fails
+  // here, and so does a stray `maxConcurrentStreams` in production wiring: that property is a
+  // test-only seam, and leaking it into the composition root would silently move the
+  // concurrency bound off `MAX_CONCURRENT_COMPANION_STREAMS`. The `db` third argument is
+  // pinned exactly — the observation read depends on it.
+  it('composes v1CompanionEbookRoutes exactly once, with { bookService, settingsService } and the db', async () => {
+    const { v1CompanionEbookRoutes } = await import('./v1/companion-ebook.js');
+    (v1CompanionEbookRoutes as unknown as Mock).mockClear();
+
+    const { app, services, db } = await driveCompositionRoot();
+
+    expect(v1CompanionEbookRoutes as unknown as Mock).toHaveBeenCalledTimes(1);
+    expect(v1CompanionEbookRoutes as unknown as Mock).toHaveBeenCalledWith(app, {
+      bookService: svc(services, 'book'),
+      settingsService: svc(services, 'settings'),
+    }, db);
   });
 
   it('composes v1CapabilitiesRoutes exactly once, with { settingsService: services.settings }', async () => {
