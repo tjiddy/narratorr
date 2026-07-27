@@ -14,9 +14,17 @@
 export const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024;
 
 /**
- * Maximum number of archive members, applied twice by 1.1c — once against the
- * EOCD/ZIP64 *declared* record count before opening, and once against the
- * *actual* central-directory length after. Both map to `limit_exceeded`.
+ * Maximum number of archive members, applied **once** by 1.1c — pre-open,
+ * against the validated EOCD/ZIP64 *declared* record count, mapping to
+ * `limit_exceeded`. That is the check that bounds the reader's allocation, and
+ * via `zip-source.ts`'s validated replay the count it validated is the count the
+ * reader consumes.
+ *
+ * `CentralDirectory.files.length` is **not** a second, independent measurement
+ * against this limit — it is a defensive equality assertion only. The reader
+ * builds `vars.files` from `Bluebird.mapSeries(Array(vars.numberOfRecords), …)`
+ * (`unzipper@0.12.3/lib/Open/directory.js:185-239`), so `files.length` *is* the
+ * declared count by construction and a post-open ceiling branch is unreachable.
  *
  * Source: **#1988 Decision 1**, which overrides §4's prose (`docs/plans/
  * companion-ebook-support.md:293-313`) and its frozen-limits paragraph
