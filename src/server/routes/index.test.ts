@@ -91,6 +91,15 @@ vi.mock('./companion-ebook.js', () => ({ companionEbookRoutes: vi.fn() }));
 // wiring passes the right two services, the right `db`, and NO `maxConcurrentStreams`.
 vi.mock('./v1/companion-ebook.js', () => ({ v1CompanionEbookRoutes: vi.fn() }));
 vi.mock('./v1/metadata.js', () => ({ v1MetadataRoutes: vi.fn() }));
+// #1960 (sibling sweep for F6–F8) — these three closures also hand the reconciler to a route
+// factory. `settingsRoutes` and `libraryScanRoutes` take it as a TRAILING OPTIONAL POSITIONAL
+// argument, so dropping it compiles and silently kills the settings and rescan sweeps in
+// production; `booksRoutes` takes it as a required deps field, where the residual risk is a
+// WRONG instance rather than a missing one. All three are invisible to their own route suites,
+// which build deps by hand.
+vi.mock('./settings.js', () => ({ settingsRoutes: vi.fn() }));
+vi.mock('./library-scan.js', () => ({ libraryScanRoutes: vi.fn() }));
+vi.mock('./books.js', () => ({ booksRoutes: vi.fn() }));
 vi.mock('../config.js', () => ({ config: { configPath: '/tmp/config', dbPath: '/tmp/db.sqlite' } }));
 vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(), probeFfmpeg: vi.fn() }));
 vi.mock('../../core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
@@ -187,6 +196,53 @@ describe('routeRegistry', () => {
       // #1960 AC30 — required, unlike the still-absent `maxConcurrentStreams` seam.
       reconciler: svc(services, 'companionEbook'),
     }, db);
+  });
+
+  // #1960 (sibling sweep for F6–F8) — the three remaining production sites that hand the
+  // reconciler to a ROUTE factory. `companionEbookRoutes` and `v1CompanionEbookRoutes` are
+  // already pinned above; these three complete the set, so every one of the eight injection
+  // sites this issue adds is now guarded at the composition root.
+
+  it('composes settingsRoutes with the live reconciler as its 5th argument', async () => {
+    const { settingsRoutes } = await import('./settings.js');
+    (settingsRoutes as unknown as Mock).mockClear();
+
+    const { app, services } = await driveCompositionRoot();
+
+    expect(settingsRoutes as unknown as Mock).toHaveBeenCalledTimes(1);
+    // The whole positional tail is pinned: a reordered or dropped argument is what silently
+    // turns the enable/root-change sweep into a no-op.
+    expect(settingsRoutes as unknown as Mock).toHaveBeenCalledWith(
+      app, svc(services, 'settings'), svc(services, 'indexer'), svc(services, 'healthCheck'), svc(services, 'companionEbook'),
+    );
+  });
+
+  it('composes libraryScanRoutes with the live reconciler as its 6th argument', async () => {
+    const { libraryScanRoutes } = await import('./library-scan.js');
+    (libraryScanRoutes as unknown as Mock).mockClear();
+
+    const { app, services } = await driveCompositionRoot();
+
+    expect(libraryScanRoutes as unknown as Mock).toHaveBeenCalledTimes(1);
+    expect(libraryScanRoutes as unknown as Mock).toHaveBeenCalledWith(
+      app, svc(services, 'libraryScan'), svc(services, 'matchJob'), svc(services, 'book'),
+      svc(services, 'metadata'), svc(services, 'companionEbook'),
+    );
+  });
+
+  it('composes booksRoutes with the live reconciler on its deps object', async () => {
+    const { booksRoutes } = await import('./books.js');
+    (booksRoutes as unknown as Mock).mockClear();
+
+    const { app, services } = await driveCompositionRoot();
+
+    expect(booksRoutes as unknown as Mock).toHaveBeenCalledTimes(1);
+    // `companionEbook` is a REQUIRED field here, so omission is a compile error — what this
+    // pins is the identity: the rename / Refresh & Scan seams must fire the reconciler the
+    // container owns and `shutdown.ts` drains, not some other instance.
+    expect(booksRoutes as unknown as Mock).toHaveBeenCalledWith(
+      app, expect.objectContaining({ companionEbook: svc(services, 'companionEbook') }),
+    );
   });
 
   it('composes v1CapabilitiesRoutes exactly once, with { settingsService: services.settings }', async () => {
