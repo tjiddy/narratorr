@@ -1,8 +1,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { z } from 'zod';
 import type { Db } from '../../../db/index.js';
 import { books } from '../../../db/schema.js';
 import { isCompanionEbookExposed } from '../../../shared/companion-ebook-exposure.js';
+import { v1PublicIdParamSchema, type V1PublicIdParam } from '../../../shared/schemas/v1/common.js';
 import type { BookService } from '../../services/book.service.js';
 import type { SettingsService } from '../../services/settings.service.js';
 import { findCompanionEbook } from '../../services/companion-ebook.repository.js';
@@ -20,10 +20,6 @@ import { v1ErrorHandler } from './_helpers.js';
 // Kindle". It never accepts or returns a filesystem path, and it resolves the
 // file through the shared `openCompanionEbook` helper rather than opening
 // anything itself.
-
-/** `:publicId` path param. `.strict()` per the v1 owned-schema convention. */
-const publicIdParamSchema = z.object({ publicId: z.string().min(1) }).strict();
-type PublicIdParam = z.infer<typeof publicIdParamSchema>;
 
 export interface V1CompanionEbookRouteDeps {
   bookService: BookService;
@@ -113,6 +109,10 @@ function resolveStreamLimit(supplied: number | undefined): number {
  * push the stream through the Zod serializer (`zod-type-provider-send-union-narrowing`). The
  * app-level `validatorCompiler` still validates the Zod `params` either way — the shipped
  * owner route solves it identically.
+ *
+ * The params validator is the SHARED `v1PublicIdParamSchema`, not a private copy (#1983 F2):
+ * a malformed public id must fail identically on every v1 detail route, and a whitespace-only
+ * id is a `400 BAD_REQUEST` from the validator rather than a `404` from the resolver.
  */
 export async function v1CompanionEbookRoutes(
   app: FastifyInstance,
@@ -137,9 +137,9 @@ export async function v1CompanionEbookRoutes(
     async (v1) => {
       v1.setErrorHandler(v1ErrorHandler);
 
-      v1.get<{ Params: PublicIdParam }>(
+      v1.get<{ Params: V1PublicIdParam }>(
         '/books/:publicId/companion-epub',
-        { schema: { params: publicIdParamSchema } },
+        { schema: { params: v1PublicIdParamSchema } },
         async (request, reply) => {
           const { publicId } = request.params;
 

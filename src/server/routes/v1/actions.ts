@@ -1,7 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { eq } from 'drizzle-orm';
-import { z } from 'zod';
 import type { Db } from '../../../db/index.js';
 import { books, downloads } from '../../../db/schema.js';
 import type { BookService } from '../../services/book.service.js';
@@ -17,7 +16,7 @@ import { resolveBookQualityInputs } from '../../../core/utils/index.js';
 import { buildSearchQuery, postProcessSearchResults } from '../../services/search-pipeline.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
 import { downloadV1Schema, toDownloadV1 } from '../../../shared/schemas/v1/downloads.js';
-import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
 import {
   releaseV1Schema,
   grabV1RequestSchema,
@@ -53,9 +52,6 @@ export interface V1ActionsRouteDeps {
   settingsService: SettingsService;
   indexerService: IndexerService;
 }
-
-/** `:publicId` path param. `.strict()` per the v1 owned-schema convention. */
-const publicIdParamSchema = z.object({ publicId: z.string().min(1) }).strict();
 
 /** Build a v1 error envelope body (`{ error: { code, message } }`). */
 function envelope(code: string, message: string): { error: { code: string; message: string } } {
@@ -219,7 +215,7 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
         '/books/:publicId/search',
         {
           schema: {
-            params: publicIdParamSchema,
+            params: v1PublicIdParamSchema,
             response: { 200: v1ListResponseSchema(releaseV1Schema), 400: v1ErrorEnvelopeSchema, 404: v1ErrorEnvelopeSchema },
           },
         },
@@ -281,7 +277,7 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
         '/books/:publicId/grab',
         {
           schema: {
-            params: publicIdParamSchema,
+            params: v1PublicIdParamSchema,
             body: grabV1RequestSchema,
             response: {
               200: downloadV1Schema,

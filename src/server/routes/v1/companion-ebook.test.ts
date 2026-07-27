@@ -225,6 +225,26 @@ describe('v1 companion ebook stream', () => {
       expect(bookService.getById).not.toHaveBeenCalled();
     });
 
+    // #1983 F1 — a whitespace-only id is MALFORMED INPUT, not a miss. It must fail in the
+    // validator with the v1 `400 BAD_REQUEST` envelope, never reach `resolveByPublicId`, and
+    // never be answered with the companion 404 (which would make a malformed request
+    // indistinguishable from a well-formed one for a nonexistent book).
+    it.each(['%20', '%20%20', '%09', '%20%09%0A'])(
+      'returns the v1 400 BAD_REQUEST envelope for the whitespace-only publicId %s',
+      async (encoded) => {
+        const app = await makeApp();
+
+        const res = await download(app, encoded);
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: { code: 'BAD_REQUEST', message: expect.any(String) } });
+        // Validation runs before the handler, so no lookup of any kind was performed.
+        expect(db.select).not.toHaveBeenCalled();
+        expect(bookService.getById).not.toHaveBeenCalled();
+        expect(vi.mocked(openCompanionEbook)).not.toHaveBeenCalled();
+      },
+    );
+
     it('returns the companion 404 — never { code: NOT_FOUND } — for an unresolvable publicId', async () => {
       setDb({ rowid: null, observation: null });
       const app = await makeApp();

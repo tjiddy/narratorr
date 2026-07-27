@@ -1,6 +1,5 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { z } from 'zod';
 import type { Db } from '../../../db/index.js';
 import { books } from '../../../db/schema.js';
 import { OwnedRecordingError, type BookService, type BookWithAuthor } from '../../services/book.service.js';
@@ -32,7 +31,7 @@ import {
 import { toCompanionEbookV1 } from '../../../shared/schemas/v1/companion-ebook.js';
 import { findCompanionEbooksByBookIds } from '../../services/companion-ebook.repository.js';
 import type { CompanionEbookRow } from '../../services/types.js';
-import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
 import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 
@@ -197,9 +196,6 @@ function recordCreateAndMaybeSearch(
   }
 }
 
-/** `:publicId` path param. `.strict()` per the v1 owned-schema convention. */
-const publicIdParamSchema = z.object({ publicId: z.string().min(1) }).strict();
-
 /** What `loadCompanionContext` resolves for a page (or a single row): the feature
  *  flag plus the batch-loaded observations keyed by numeric `books.id`. */
 interface CompanionContext {
@@ -317,7 +313,7 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
         '/books/:publicId',
         {
           schema: {
-            params: publicIdParamSchema,
+            params: v1PublicIdParamSchema,
             response: { 200: bookV1Schema, 400: v1ErrorEnvelopeSchema, 404: v1ErrorEnvelopeSchema },
           },
         },
