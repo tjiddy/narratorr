@@ -13,6 +13,9 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { RetrySearchDeps } from './retry-search.js';
+import type { CompanionBookReconcileTrigger } from './companion-ebook-trigger.js';
+import { CompanionEbookReconciler } from './companion-ebook-reconciler.js';
+import { buildEpub } from '../../core/__tests__/epub-archive.fixture.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 
@@ -42,6 +45,7 @@ function createService(opts?: {
   settingsService?: Partial<SettingsService>;
   eventHistory?: Partial<EventHistoryService>;
   retrySearchDeps?: RetrySearchDeps;
+  companionEbook?: CompanionBookReconcileTrigger;
 }) {
   const db = createMockDb();
   const log = createMockLogger();
@@ -70,6 +74,7 @@ function createService(opts?: {
     settingsService,
     eventHistory,
     retrySearchDeps,
+    opts?.companionEbook,
   );
 
   return { service, db, log, bookService, blacklistService, settingsService, eventHistory };
@@ -444,6 +449,136 @@ describe('BookRejectionService', () => {
       // Actually per spec, blacklist creation failure is inside the shared helper which catches it
       // The mock throws from the top-level call — let's verify behavior
       await expect(service.rejectAsWrongRelease(42)).rejects.toThrow('blacklist error');
+    });
+  });
+
+  // ==========================================================================
+  // #1960 AC23/AC24 — the companion seam is hygiene, and provably writes nothing
+  // ==========================================================================
+
+  describe('#1960 companion-ebook reconcile', () => {
+    it('AC23: rejectAsWrongRelease triggers reconcileBook for that book', async () => {
+      const companionEbook = {
+        reconcileBook: vi.fn().mockResolvedValue(undefined),
+        reconcileAll: vi.fn().mockResolvedValue(undefined),
+      };
+      const { service, bookService } = createService({ companionEbook });
+      (bookService.getById as Mock).mockResolvedValue(importedBook);
+
+      await service.rejectAsWrongRelease(42);
+
+      expect(companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+      expect(companionEbook.reconcileBook).toHaveBeenCalledWith(42);
+      expect(companionEbook.reconcileAll).not.toHaveBeenCalled();
+    });
+
+    it('AC23: a rejecting reconciler does not fail the rejection', async () => {
+      const companionEbook = {
+        reconcileBook: vi.fn().mockRejectedValue(new Error('reconcile rejected')),
+        reconcileAll: vi.fn(),
+      };
+      const { service, bookService } = createService({ companionEbook });
+      (bookService.getById as Mock).mockResolvedValue(importedBook);
+
+      await expect(service.rejectAsWrongRelease(42)).resolves.toBeUndefined();
+    });
+
+    /**
+     * AC23 + AC24 together, and they are ONE test on purpose: the no-write outcome is a
+     * CONSEQUENCE of the ordering, not an independent fact.
+     *
+     * The book row the reconciler reads is SHARED, ordered state — it starts `imported` at a real
+     * on-disk directory holding a real EPUB, and only flips to `wanted`/`path: null` when the
+     * service's own reset UPDATE resolves. That is what makes the ordering falsifiable: run the
+     * trigger before the reset and the reconciler finds an ELIGIBLE book (imported, inside the
+     * root, a real directory with a real candidate) and commits an observation row. Run it after,
+     * and eligibility fails on the status term so `reconcileLocked` returns `skipped` before any
+     * write — never a zeroing one.
+     *
+     * The reset UPDATE is also gated, so "no reconcile while the write is still pending" is a
+     * direct observation rather than an inference.
+     */
+    it('AC23/AC24: the reconcile runs only after the reset PERSISTS, and therefore writes no companion_ebooks row', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'narratorr-1960-wrongrelease-'));
+      try {
+        const bookDir = join(root, 'Author', 'Book');
+        await mkdir(bookDir, { recursive: true });
+        // A real, valid EPUB: pre-reset this book is eligible AND has a candidate, so a trigger
+        // that ran too early would commit an `available` row rather than skipping.
+        await writeFile(join(bookDir, 'companion.epub'), await buildEpub());
+
+        // The ONE shared view of the book row. `createMockDb`'s update terminus below is what
+        // advances it, so the reconciler observes exactly what the service has persisted so far.
+        let bookState: { id: number; status: string; path: string | null } =
+          { id: 42, status: 'imported', path: bookDir };
+
+        let releaseReset!: () => void;
+        const resetPersisted = new Promise<void>((r) => { releaseReset = r; });
+        let markResetIssued!: () => void;
+        const resetIssued = new Promise<void>((r) => { markResetIssued = r; });
+
+        const companionDb = createMockDb();
+        let selectCall = 0;
+        companionDb.select.mockImplementation(() => ({
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockImplementation(() => {
+            selectCall++;
+            // Odd read = the `books` snapshot (live shared state); even = the prior observation.
+            return Promise.resolve(selectCall % 2 === 1 ? [{ ...bookState }] : []);
+          }),
+        }));
+        const reconciler = new CompanionEbookReconciler(
+          inject<Db>(companionDb),
+          inject<SettingsService>({
+            get: vi.fn().mockImplementation((cat: string) =>
+              Promise.resolve(cat === 'companionEpub' ? { enabled: true } : { path: root })),
+          }),
+          inject<FastifyBaseLogger>(createMockLogger()),
+        );
+
+        // The seam is fire-and-forget, so capture the real run's promise to drain it
+        // deterministically — no timers, and the reconciler underneath is the real one.
+        const runs: Promise<void>[] = [];
+        const { service, bookService, db } = createService({
+          companionEbook: {
+            reconcileBook: (id: number) => { const p = reconciler.reconcileBook(id); runs.push(p); return p; },
+          },
+        });
+        (bookService.getById as Mock).mockResolvedValue({ ...importedBook, path: bookDir });
+
+        // Gate the service's reset UPDATE and advance the shared state only when it settles.
+        db.update.mockReturnValue(inject<ReturnType<typeof mockDbChain>>({
+          set: vi.fn().mockReturnValue({
+            where: vi.fn().mockImplementation(() => {
+              markResetIssued();
+              return resetPersisted.then(() => { bookState = { id: 42, status: 'wanted', path: null }; });
+            }),
+          }),
+        }));
+
+        const rejection = service.rejectAsWrongRelease(42);
+        await resetIssued;
+        // Room for every pending microtask and a macrotask turn: a trigger sited above the reset
+        // would already have started by now.
+        await new Promise(r => setTimeout(r, 20));
+        expect(runs).toHaveLength(0);
+
+        releaseReset();
+        await rejection;
+
+        expect(runs).toHaveLength(1);
+        await Promise.all(runs);
+
+        // Non-vacuity: the run really did reach `reconcileLocked` (snapshot + prior-observation
+        // reads both issued) and only THEN skipped — it did not bail out during setup.
+        expect(selectCall).toBe(2);
+        expect(companionDb.update).not.toHaveBeenCalled();
+        expect(companionDb.insert).not.toHaveBeenCalled();
+        expect(companionDb.transaction).not.toHaveBeenCalled();
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
     });
   });
 });

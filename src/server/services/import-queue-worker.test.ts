@@ -2821,4 +2821,257 @@ describe('ImportQueueWorker', () => {
       await w.stop();
     });
   });
+
+  // ===========================================================================
+  // #1960 — the companion-ebook trigger on import completion (AC4–AC8)
+  // ===========================================================================
+
+  describe('#1960 companion-ebook reconcile on import completion', () => {
+    /**
+     * Drive exactly one job of the given shape to its terminal disposition and hand back
+     * everything the ACs assert on: the ordered trace, the `import_jobs` payloads, and the
+     * SSE emits. `adapterProcess` decides success vs failure; `reconcileBook` is the stub
+     * under test.
+     */
+    async function runOneJob(opts: {
+      jobRow: Record<string, unknown>;
+      reconcileBook: (bookId: number) => Promise<void>;
+      adapterProcess?: () => Promise<void>;
+    }) {
+      const trace: string[] = [];
+      const emitSpy = vi.fn();
+      const reconcileBook = vi.fn().mockImplementation((bookId: number) => {
+        trace.push('reconcile');
+        return opts.reconcileBook(bookId);
+      });
+      // No cast: `{ reconcileBook }` IS a `CompanionBookReconcileTrigger` now that the trigger
+      // interface is split per method (#1960 PR review F5).
+      const w = new ImportQueueWorker(
+        inject<Db>(mockDb.db), log, { emit: emitSpy } as never,
+        undefined, undefined,
+        { reconcileBook },
+      );
+
+      registerImportAdapter({
+        type: opts.jobRow.type as 'auto' | 'manual',
+        process: opts.adapterProcess ?? (() => Promise.resolve()),
+      } as ImportAdapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: opts.jobRow.id }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([opts.jobRow]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      const jobWrites: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          jobWrites.push(payload);
+          return {
+            where: vi.fn().mockImplementation(() => {
+              // Issuance order only — this trace cannot distinguish "issued" from "persisted",
+              // which is exactly why the AC4 ordering contract has its own gated test below
+              // (`does not start until the completion UPDATE has RESOLVED`) rather than being
+              // asserted from here.
+              if (payload.status === 'completed') trace.push('completion-update');
+              if (payload.status === 'failed') trace.push('failure-update');
+              return updateWhereTerminus();
+            }),
+          };
+        }),
+      }));
+
+      await w.start();
+      await new Promise(r => setTimeout(r, 100));
+      await w.stop();
+
+      return { reconcileBook, trace, jobWrites, emitSpy };
+    }
+
+    const completedJob = (overrides: Record<string, unknown> = {}) => ({
+      id: 900, bookId: 42, type: 'manual', status: 'processing',
+      metadata: '{"title":"Test"}', phaseHistory: null, ...overrides,
+    });
+
+    // AC5 — every adapter form reaches the same success tail, so each fires exactly once.
+    // Adopt is the manual adapter with `mode === undefined`; there is no separate seam.
+    it.each([
+      ['auto', { type: 'auto', metadata: '{"downloadId":7}' }],
+      ['manual copy', { type: 'manual', metadata: '{"title":"Test","mode":"copy"}' }],
+      ['manual move', { type: 'manual', metadata: '{"title":"Test","mode":"move"}' }],
+      ['pointer/adopt (mode undefined)', { type: 'manual', metadata: '{"title":"Test"}' }],
+    ])('fires exactly one reconcileBook for the %s adapter', async (_label, overrides) => {
+      const { reconcileBook } = await runOneJob({
+        jobRow: completedJob(overrides),
+        reconcileBook: () => Promise.resolve(),
+      });
+
+      expect(reconcileBook).toHaveBeenCalledTimes(1);
+      expect(reconcileBook).toHaveBeenCalledWith(42);
+    });
+
+    it('AC4: the importJobs completion UPDATE is ISSUED before the trigger (weak ordering — see the gated test for persistence)', async () => {
+      const { trace, jobWrites } = await runOneJob({
+        jobRow: completedJob(),
+        reconcileBook: () => Promise.resolve(),
+      });
+
+      expect(trace).toEqual(['completion-update', 'reconcile']);
+      expect(jobWrites.some(w => w.status === 'completed' && w.phase === 'done')).toBe(true);
+    });
+
+    /**
+     * AC4's REAL ordering contract: "after the completion UPDATE has **persisted** (not before
+     * it, not inside the same statement)".
+     *
+     * The issuance trace above cannot prove this. `where()` runs synchronously when the
+     * statement is built, so if production dropped the `await` on `finalizeCompletedImport(…)`
+     * the helper would still reach `where()`, push its trace entry, and let the worker fire the
+     * trigger while the database promise was still pending — and the weak assertion would stay
+     * green. This test gates the completion terminus instead: the write cannot settle until the
+     * test releases it, so "no reconcile yet" is a real observation rather than a side effect of
+     * synchronous mock bookkeeping.
+     */
+    it('AC4: reconciliation does not start until the completion UPDATE has RESOLVED, not merely been issued', async () => {
+      const events: string[] = [];
+      let releasePersistence!: () => void;
+      const persisted = new Promise<void>((r) => { releasePersistence = r; });
+      let markIssued!: () => void;
+      const issued = new Promise<void>((r) => { markIssued = r; });
+
+      const reconcileBook = vi.fn().mockImplementation(() => {
+        events.push('reconcile');
+        return Promise.resolve();
+      });
+      const w = new ImportQueueWorker(
+        inject<Db>(mockDb.db), log, { emit: vi.fn() } as never,
+        undefined, undefined,
+        { reconcileBook },
+      );
+
+      registerImportAdapter({ type: 'manual', process: () => Promise.resolve() } as ImportAdapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 900 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([completedJob()]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => ({
+          where: vi.fn().mockImplementation(() => {
+            if (payload.status !== 'completed') return updateWhereTerminus();
+            events.push('completion-issued');
+            markIssued();
+            // Awaitable AND `.returning()`-capable, but neither settles until the test
+            // releases it (`guarded-transition-needs-returning-in-tx-mocks`).
+            const settle = () => persisted.then(() => { events.push('completion-persisted'); });
+            return {
+              then: (resolve: (v: { rowsAffected: number }) => void, reject: (e: unknown) => void) =>
+                settle().then(() => ({ rowsAffected: 1 })).then(resolve, reject),
+              returning: vi.fn().mockImplementation(() => settle().then(() => [{ id: 1 }])),
+            };
+          }),
+        })),
+      }));
+
+      await w.start();
+      await issued;
+      // Ample room for every pending microtask AND a macrotask turn: if production dropped the
+      // `await`, the trigger would already have fired by now.
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(events).toEqual(['completion-issued']);
+      expect(reconcileBook).not.toHaveBeenCalled();
+
+      releasePersistence();
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(reconcileBook).toHaveBeenCalledTimes(1);
+      expect(reconcileBook).toHaveBeenCalledWith(42);
+      expect(events).toEqual(['completion-issued', 'completion-persisted', 'reconcile']);
+
+      await w.stop();
+    });
+
+    it('AC6: no trigger when the job carries a null bookId', async () => {
+      const { reconcileBook, jobWrites } = await runOneJob({
+        jobRow: completedJob({ bookId: null }),
+        reconcileBook: () => Promise.resolve(),
+      });
+
+      expect(reconcileBook).not.toHaveBeenCalled();
+      // The job still completes — the null-bookId guard skips the trigger, not the tail.
+      expect(jobWrites.some(w => w.status === 'completed')).toBe(true);
+    });
+
+    it('AC5: no trigger on the failure path — the job goes to markJobFailed instead', async () => {
+      const { reconcileBook, jobWrites } = await runOneJob({
+        jobRow: completedJob(),
+        reconcileBook: () => Promise.resolve(),
+        adapterProcess: () => Promise.reject(new Error('adapter blew up')),
+      });
+
+      expect(reconcileBook).not.toHaveBeenCalled();
+      expect(jobWrites.some(w => w.status === 'failed')).toBe(true);
+      expect(jobWrites.some(w => w.status === 'completed')).toBe(false);
+    });
+
+    it('AC7: a REJECTING reconcileBook leaves the job completed, still emits import_complete, and never reaches markJobFailed', async () => {
+      const { reconcileBook, trace, jobWrites, emitSpy } = await runOneJob({
+        jobRow: completedJob(),
+        reconcileBook: () => Promise.reject(new Error('reconcile rejected')),
+      });
+
+      expect(reconcileBook).toHaveBeenCalledTimes(1);
+      expect(jobWrites.some(w => w.status === 'completed' && w.phase === 'done')).toBe(true);
+      expect(jobWrites.some(w => w.status === 'failed')).toBe(false);
+      expect(trace).not.toContain('failure-update');
+      expect(emitSpy.mock.calls.filter(c => c[0] === 'import_complete')).toHaveLength(1);
+      expect(emitSpy.mock.calls.filter(c => c[0] === 'import_failed')).toHaveLength(0);
+    });
+
+    it('AC7: a SYNCHRONOUSLY THROWING reconcileBook is equally isolated — the case fireAndForget alone does not cover', async () => {
+      const { reconcileBook, trace, jobWrites, emitSpy } = await runOneJob({
+        jobRow: completedJob(),
+        // `fireAndForget(promise, …)` evaluates its argument eagerly, so this throw escapes
+        // it entirely (`fire-and-forget-preflight`). Only the seam's own `try` catches it.
+        reconcileBook: () => { throw new Error('reconcile threw synchronously'); },
+      });
+
+      expect(reconcileBook).toHaveBeenCalledTimes(1);
+      expect(jobWrites.some(w => w.status === 'completed' && w.phase === 'done')).toBe(true);
+      expect(jobWrites.some(w => w.status === 'failed')).toBe(false);
+      expect(trace).not.toContain('failure-update');
+      expect(emitSpy.mock.calls.filter(c => c[0] === 'import_complete')).toHaveLength(1);
+      expect(emitSpy.mock.calls.filter(c => c[0] === 'import_failed')).toHaveLength(0);
+    });
+
+    it('AC8: a worker constructed without a reconciler still completes jobs', async () => {
+      const emitSpy = vi.fn();
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
+      registerImportAdapter({ type: 'manual', process: () => Promise.resolve() } as ImportAdapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 901 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([completedJob({ id: 901 })]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      await w.start();
+      await new Promise(r => setTimeout(r, 100));
+      await w.stop();
+
+      expect(emitSpy.mock.calls.filter(c => c[0] === 'import_complete')).toHaveLength(1);
+    });
+  });
 });

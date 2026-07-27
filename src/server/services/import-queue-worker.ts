@@ -18,6 +18,8 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { OwnedRecordingError } from './book.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { finalizeForcedImportRefusal } from './import-refused.js';
+import { finalizeCompletedImport, resolveBookTitle } from './import-completed.js';
+import { triggerCompanionReconcile, type CompanionBookReconcileTrigger } from './companion-ebook-trigger.js';
 
 
 const SAFETY_POLL_INTERVAL_MS = 30_000;
@@ -29,6 +31,7 @@ export class ImportQueueWorker {
   private readonly broadcaster: EventBroadcasterService | null;
   private readonly getLibraryRoot: (() => Promise<string | null | undefined>) | null;
   private readonly eventHistory: EventHistoryService | null;
+  private readonly companionEbook: CompanionBookReconcileTrigger | null;
   private readonly emitter = new EventEmitter();
   private running = false;
   private stopping = false;
@@ -49,6 +52,10 @@ export class ImportQueueWorker {
    * Optional (omitted in unit tests that don't exercise that branch); when absent the refusal
    * still finalizes the job, deletes the placeholder, and emits the enriched SSE — only the
    * durable event row is skipped (best-effort, matching the broadcaster contract).
+   *
+   * `companionEbook` refreshes the companion-ebook observation for a book an import just
+   * finished (#1960 AC4). OPTIONAL (AC8) so the many `new ImportQueueWorker(db, log)` unit
+   * constructions keep compiling; when absent the seam is simply a no-op.
    */
   constructor(
     db: Db,
@@ -56,12 +63,14 @@ export class ImportQueueWorker {
     broadcaster?: EventBroadcasterService,
     getLibraryRoot?: () => Promise<string | null | undefined>,
     eventHistory?: EventHistoryService,
+    companionEbook?: CompanionBookReconcileTrigger,
   ) {
     this.db = db;
     this.log = log.child({ component: 'ImportQueueWorker' });
     this.broadcaster = broadcaster ?? null;
     this.getLibraryRoot = getLibraryRoot ?? null;
     this.eventHistory = eventHistory ?? null;
+    this.companionEbook = companionEbook ?? null;
   }
 
   /** Nudge the worker to check for new pending jobs. */
@@ -389,34 +398,16 @@ export class ImportQueueWorker {
     try {
       await adapter.process(job, ctx);
 
-      // Close current phase entry
-      if (phaseHistory.length > 0) {
-        const last = phaseHistory[phaseHistory.length - 1]!;
-        if (last.completedAt === undefined) {
-          last.completedAt = Date.now();
-        }
-      }
+      await finalizeCompletedImport(
+        { db: this.db, broadcaster: this.broadcaster, log: this.log },
+        { jobId, bookId, bookTitle, phaseHistory, startTime },
+      );
 
-      const now = new Date();
-      await this.db.update(importJobs).set({
-        status: 'completed',
-        phase: 'done',
-        phaseHistory: JSON.stringify(phaseHistory),
-        completedAt: now,
-        updatedAt: now,
-      }).where(eq(importJobs.id, jobId));
-
-      const elapsedMs = Date.now() - startTime;
-      const resolvedTitle = await this.resolveBookTitle(bookId, bookTitle);
-      safeEmit(this.broadcaster, 'import_complete', {
-        download_id: null,
-        book_id: bookId,
-        book_title: resolvedTitle,
-        job_id: jobId,
-        elapsed_ms: elapsedMs,
-      }, this.log);
-
-      this.log.info({ jobId, elapsedMs }, 'Import job completed successfully');
+      // #1960 AC4 — the companion sweep for this book, AFTER the completion UPDATE has
+      // persisted and never before it. `triggerCompanionReconcile` absorbs both a rejection
+      // and a SYNCHRONOUS throw, so this seam cannot convert a completed import into a
+      // failed job even though it sits inside the `try` (AC7).
+      this.triggerCompanionReconcile(bookId);
     } catch (error: unknown) {
       this.log.error({ error: serializeError(error), jobId }, 'Import job failed');
       // Close the active phase entry before persisting
@@ -484,7 +475,7 @@ export class ImportQueueWorker {
       errorMessage = lastError;
     }
 
-    const resolvedTitle = await this.resolveBookTitle(bookId, bookTitle);
+    const resolvedTitle = await resolveBookTitle(this.db, bookId, bookTitle);
     safeEmit(this.broadcaster, 'import_failed', {
       job_id: jobId,
       book_id: bookId,
@@ -495,23 +486,13 @@ export class ImportQueueWorker {
   }
 
   /**
-   * Resolve the canonical book title from the `books` row for SSE emit.
-   * Falls back to `fallback` when bookId is null, the row is missing, or the
-   * lookup throws — preserves the quiet-path semantics for this high-volume
-   * code (no error logs on failure).
+   * The companion-ebook seam for a completed import (#1960 AC4–AC7). No trigger when the job
+   * carries no book (AC6). The shared helper is what makes a SYNCHRONOUS reconciler throw
+   * unable to reach `processJob`'s `catch` and convert a completed import into a failed job.
    */
-  private async resolveBookTitle(bookId: number | null, fallback: string): Promise<string> {
-    if (bookId === null) return fallback;
-    try {
-      const rows = await this.db
-        .select({ title: books.title })
-        .from(books)
-        .where(eq(books.id, bookId))
-        .limit(1);
-      return rows[0]?.title ?? fallback;
-    } catch {
-      return fallback;
-    }
+  private triggerCompanionReconcile(bookId: number | null): void {
+    if (bookId === null) return;
+    triggerCompanionReconcile(this.companionEbook, bookId, this.log, 'Companion ebook reconcile failed after import');
   }
 
   /**

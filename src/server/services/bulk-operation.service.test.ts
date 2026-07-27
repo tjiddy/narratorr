@@ -23,6 +23,7 @@ import type { RenameService } from './rename.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { BookService } from './book.service.js';
 import type { ConnectorService } from './connector.service.js';
+import type { CompanionSweepTrigger } from './companion-ebook-trigger.js';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 
 /** Serialize a Drizzle SQL expression into a raw SQL+params pair for predicate assertions. */
@@ -101,6 +102,7 @@ function createService(opts?: {
   taggingService?: TaggingService;
   bookService?: BookService;
   connectorService?: { notifyRefresh: ReturnType<typeof vi.fn> };
+  companionEbook?: CompanionSweepTrigger;
 }) {
   const db = createMockDb();
   const log = createMockLogger();
@@ -121,6 +123,7 @@ function createService(opts?: {
     bookService,
     inject<FastifyBaseLogger>(log),
     connectorService ? inject<ConnectorService>(connectorService) : undefined,
+    opts?.companionEbook,
   );
   return { service, db, log, renameService, taggingService, bookService, settingsService, connectorService };
 }
@@ -479,6 +482,167 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
     // Lockstep invariant: preview denominator === job setTotal === actual renameBook calls.
     expect(service.getJob(id)?.total).toBe(preview.jobTotal);
     expect((renameService.renameBook as Mock).mock.calls).toHaveLength(preview.jobTotal);
+  });
+});
+
+// ===== #1960 AC21 — rename caller 3: ONE post-loop sweep, never a per-book fan-out =====
+
+describe('BulkOperationService — companion-ebook sweep after bulk rename (#1960 AC21)', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  const FILE_FORMAT_SETTINGS = {
+    settingsOverrides: {
+      library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+    },
+  };
+
+  /**
+   * Bulk rename is a SWEEP-only seam, so the stub carries `reconcileAll` — plus a
+   * `reconcileBook` PROBE that `CompanionSweepTrigger` does not declare. AC21's whole point is
+   * that a whole-library rename must NOT fan out N direct runs, and the probe is what makes
+   * that assertable at runtime on top of the type-level guarantee.
+   */
+  function makeCompanionStub() {
+    return {
+      reconcileAll: vi.fn().mockResolvedValue(undefined),
+      reconcileBook: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  function bookRow(overrides: Record<string, unknown>) {
+    return {
+      id: 1, path: '/library/Author Name/Book1', title: 'Book1',
+      seriesName: null, seriesPosition: null, publishedDate: null,
+      editionLabel: null, authorName: 'Author Name',
+      ...overrides,
+    };
+  }
+
+  it('a rename over N books produces ONE reconcileAll and ZERO reconcileBook calls', async () => {
+    const companionEbook = makeCompanionStub();
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+        bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+        bookRow({ id: 3, path: '/library/Author Name/Book3', title: 'Book3' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(renameService.renameBook).toHaveBeenCalledTimes(3);
+    // N-wide direct fan-out is exactly what this AC prevents: direct runs do not coalesce.
+    expect(companionEbook.reconcileBook).not.toHaveBeenCalled();
+    expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * AC21's ORDERING half. The call-count test above cannot see it: moving the sweep above the
+   * `for (const bookId of targetIds)` loop preserves "3 renames, 1 sweep" exactly, and every
+   * status assertion with it — while the sweep would then observe the OLD paths and miss every
+   * folder the rename just moved.
+   *
+   * The final rename is held pending, so "no sweep yet" is observed while the loop is provably
+   * still mid-flight, and the ordered trace pins the sweep strictly after the last rename
+   * returns.
+   */
+  it('AC21: the sweep runs strictly AFTER the loop — held on the final rename, no sweep until it settles', async () => {
+    const order: string[] = [];
+    const companionEbook = {
+      reconcileAll: vi.fn().mockImplementation(() => { order.push('sweep'); return Promise.resolve(); }),
+      reconcileBook: vi.fn().mockResolvedValue(undefined),
+    };
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+        bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+        bookRow({ id: 3, path: '/library/Author Name/Book3', title: 'Book3' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+
+    let releaseFinalRename!: () => void;
+    const finalRenameHeld = new Promise<void>((r) => { releaseFinalRename = r; });
+    let markFinalRenameStarted!: () => void;
+    const finalRenameStarted = new Promise<void>((r) => { markFinalRenameStarted = r; });
+
+    (renameService.renameBook as Mock).mockImplementation(async (bookId: number) => {
+      order.push(`rename:${bookId}`);
+      if (bookId === 3) {
+        markFinalRenameStarted();
+        await finalRenameHeld;
+      }
+      return { oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 };
+    });
+
+    const id = await service.startRenameJob();
+    await finalRenameStarted;
+    // Room for any pending microtask AND a macrotask turn — a sweep hoisted above the loop
+    // would already have run by this point.
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(order).toEqual(['rename:1', 'rename:2', 'rename:3']);
+    expect(companionEbook.reconcileAll).not.toHaveBeenCalled();
+
+    releaseFinalRename();
+    await waitForJob(service, id);
+
+    expect(order).toEqual(['rename:1', 'rename:2', 'rename:3', 'sweep']);
+    expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires once even when some books failed mid-loop', async () => {
+    const companionEbook = makeCompanionStub();
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+        bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock)
+      .mockRejectedValueOnce(new RenameError('conflict', 'CONFLICT'))
+      .mockResolvedValueOnce({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(service.getJob(id)?.failures).toBe(1);
+    expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('is NOT fired when the target set is empty', async () => {
+    const companionEbook = makeCompanionStub();
+    const { service, db } = createService({ companionEbook });
+    db.select.mockReturnValue(mockDbChain([])); // no eligible rows at all
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(service.getJob(id)?.total).toBe(0);
+    expect(companionEbook.reconcileAll).not.toHaveBeenCalled();
+  });
+
+  it('a rejecting sweep does not fail the job', async () => {
+    const companionEbook = { reconcileAll: vi.fn().mockRejectedValue(new Error('sweep rejected')) };
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
+    db.select
+      .mockReturnValueOnce(mockDbChain([bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' })]))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(service.getJob(id)?.failures).toBe(0);
+    expect(service.getJob(id)?.status).toBe('completed');
   });
 });
 

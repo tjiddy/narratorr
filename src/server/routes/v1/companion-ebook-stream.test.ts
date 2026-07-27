@@ -152,6 +152,8 @@ describe('v1 companion ebook stream — real socket', () => {
       getById: vi.fn().mockResolvedValue({ id: BOOK_ID, status: 'imported', path: bookPath, title: 'Title' }),
     };
 
+    const companionReconciler = { reconcileBook: vi.fn().mockResolvedValue(undefined) };
+
     db = createMockDb();
     const row = {
       bookId: BOOK_ID, status: 'available', filename: EPUB, sizeBytes: PAYLOAD.length,
@@ -173,6 +175,7 @@ describe('v1 companion ebook stream — real socket', () => {
     await v1CompanionEbookRoutes(app, {
       bookService: bookService as never,
       settingsService: settingsService as never,
+      reconciler: companionReconciler,
       maxConcurrentStreams: 1,
     }, inject<Db>(db));
     await app.ready();

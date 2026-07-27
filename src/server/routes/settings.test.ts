@@ -6,7 +6,7 @@ import { RateLimitError, TransientError, MetadataError } from '../../core/metada
 import type * as HardcoverModule from '../../core/metadata/hardcover.js';
 import type { Services } from './index.js';
 import { SECRET_CATEGORIES } from '../utils/secret-category-map.js';
-import { getSecretFieldNames } from '../utils/secret-codec.js';
+import { getSecretFieldNames, SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
 
 const { mockHardcoverSearchSeries, mockHardcoverClientCtor, mockFetchWithTimeout } = vi.hoisted(() => {
   const searchSeriesFn = vi.fn();
@@ -76,6 +76,11 @@ describe('settings routes', () => {
 
   beforeEach(() => {
     resetMockServices(services);
+    // `PUT /api/settings` snapshots the persisted `library` / `companionEpub` values before it
+    // writes (#1960 AC25), and that read is deliberately unguarded — an unconfigured rejecting
+    // stub would 500 every PUT in this suite. Default to the fixture; tests that care override.
+    (services.settings.get as Mock).mockImplementation((cat: string) =>
+      Promise.resolve(mockSettings[cat as keyof typeof mockSettings]));
     for (const s of Object.values(logSpies)) s.mockClear();
     mockHardcoverSearchSeries.mockReset();
     mockHardcoverClientCtor.mockReset();
@@ -173,6 +178,299 @@ describe('settings routes', () => {
         method: 'PUT',
         url: '/api/settings',
         payload: { search: { enabled: false } },
+      });
+
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
+  // ==========================================================================
+  // #1960 AC25–AC25d — the companion sweep on enable and on a library-root change
+  // ==========================================================================
+
+  describe('PUT /api/settings — companion-ebook sweep (#1960 AC25–AC25d)', () => {
+    const ROOT_BEFORE = '/audiobooks';
+    const ROOT_AFTER = '/media/audiobooks';
+
+    /** Persisted-BEFORE state the pre-update snapshot reads. */
+    function primePersisted(opts: { root?: string; enabled?: boolean } = {}) {
+      const before = {
+        ...mockSettings,
+        library: { ...mockSettings.library, path: opts.root ?? ROOT_BEFORE },
+        companionEpub: { enabled: opts.enabled ?? false },
+      };
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(before[cat as keyof typeof before]));
+      return before;
+    }
+
+    /** Persisted-AFTER state `SettingsService.update` returns (it returns `getAll()`). */
+    function primeUpdated(opts: { root?: string; enabled?: boolean } = {}) {
+      (services.settings.update as Mock).mockResolvedValue({
+        ...mockSettings,
+        library: { ...mockSettings.library, path: opts.root ?? ROOT_BEFORE },
+        companionEpub: { enabled: opts.enabled ?? false },
+      });
+    }
+
+    beforeEach(() => {
+      (services.companionEbook.reconcileAll as Mock).mockResolvedValue(undefined);
+    });
+
+    // --- AC25c, the exhaustive matrix -------------------------------------
+
+    it('enable arm alone (false → true) fires exactly one sweep', async () => {
+      primePersisted({ enabled: false });
+      primeUpdated({ enabled: true });
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings', payload: { companionEpub: { enabled: true } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+      expect(services.companionEbook.reconcileBook).not.toHaveBeenCalled();
+    });
+
+    it('root arm alone (changed library.path) fires exactly one sweep', async () => {
+      primePersisted({ root: ROOT_BEFORE });
+      primeUpdated({ root: ROOT_AFTER });
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings', payload: { library: { path: ROOT_AFTER } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('BOTH arms in one request fire exactly ONE sweep, not two', async () => {
+      primePersisted({ root: ROOT_BEFORE, enabled: false });
+      primeUpdated({ root: ROOT_AFTER, enabled: true });
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings',
+        payload: { library: { path: ROOT_AFTER }, companionEpub: { enabled: true } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+    });
+
+    // The row that proves the arms are INDEPENDENT: the enable arm does not fire on
+    // `true → false`, but the root arm still does. (Carried obligation F10.)
+    it('DISABLE plus a changed root still fires exactly one sweep', async () => {
+      primePersisted({ root: ROOT_BEFORE, enabled: true });
+      primeUpdated({ root: ROOT_AFTER, enabled: false });
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings',
+        payload: { library: { path: ROOT_AFTER }, companionEpub: { enabled: false } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['true → true', true, true],
+      ['true → false', true, false],
+      ['false → false', false, false],
+    ] as const)('the enable arm does NOT fire on %s with an unchanged root', async (_label, before, after) => {
+      primePersisted({ enabled: before });
+      primeUpdated({ enabled: after });
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings', payload: { companionEpub: { enabled: after } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.companionEbook.reconcileAll).not.toHaveBeenCalled();
+    });
+
+    it('a root resubmitted UNCHANGED fires no sweep', async () => {
+      primePersisted({ root: ROOT_BEFORE });
+      primeUpdated({ root: ROOT_BEFORE });
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings', payload: { library: { path: ROOT_BEFORE } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.companionEbook.reconcileAll).not.toHaveBeenCalled();
+    });
+
+    it('neither category in the payload fires no sweep — and reads neither back', async () => {
+      primePersisted();
+      primeUpdated();
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings', payload: { search: { enabled: false } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.companionEbook.reconcileAll).not.toHaveBeenCalled();
+      expect(services.settings.get).not.toHaveBeenCalledWith('library');
+      expect(services.settings.get).not.toHaveBeenCalledWith('companionEpub');
+    });
+
+    // AC25b — `patch` MERGES a partial category, so a `companionEpub` object with no
+    // `enabled` key leaves the persisted value alone and must not fire.
+    it('a companionEpub payload with no `enabled` key does not fire', async () => {
+      primePersisted({ enabled: false });
+      primeUpdated({ enabled: false });
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings', payload: { companionEpub: {} },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.companionEbook.reconcileAll).not.toHaveBeenCalled();
+    });
+
+    // --- AC25d, partial persistence --------------------------------------
+
+    it('a persisted root change followed by a LATER category failure still sweeps, and the original error propagates', async () => {
+      // A REAL `SettingsService.update` failure with a DISTINCT status + body (400, its own
+      // message). That is what makes "the original error propagates" falsifiable here: a
+      // leaked recovery-read error would surface as a generic 500 / 'Internal server error'.
+      const failure = new SentinelOnNonSecretFieldError('processing.bitrate');
+      // The `library` write LANDS, then a later category blows up — so the pre-update read
+      // sees the old root and the post-failure re-read sees the new one.
+      let phase: 'before' | 'after' = 'before';
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(cat === 'library'
+          ? { ...mockSettings.library, path: phase === 'after' ? ROOT_AFTER : ROOT_BEFORE }
+          : mockSettings[cat as keyof typeof mockSettings]));
+      (services.settings.update as Mock).mockImplementation(() => { phase = 'after'; return Promise.reject(failure); });
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings',
+        payload: { library: { path: ROOT_AFTER }, processing: { bitrate: 64 } },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe(failure.message);
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('a persisted companionEpub enable followed by a LATER category failure still sweeps, and the original error propagates', async () => {
+      // A REAL `SettingsService.update` failure with a DISTINCT status + body (400, its own
+      // message). That is what makes "the original error propagates" falsifiable here: a
+      // leaked recovery-read error would surface as a generic 500 / 'Internal server error'.
+      const failure = new SentinelOnNonSecretFieldError('processing.bitrate');
+      let updateCalled = false;
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'companionEpub') return Promise.resolve({ enabled: updateCalled });
+        return Promise.resolve(mockSettings[cat as keyof typeof mockSettings]);
+      });
+      (services.settings.update as Mock).mockImplementation(() => {
+        updateCalled = true;
+        return Promise.reject(failure);
+      });
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings',
+        payload: { companionEpub: { enabled: true }, processing: { bitrate: 64 } },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe(failure.message);
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+    });
+
+    // --- AC25d, per-arm read independence ---------------------------------
+
+    it('library re-read SUCCEEDS (changed) while companionEpub re-read THROWS → exactly one call, original error propagates', async () => {
+      primePersisted({ root: ROOT_BEFORE, enabled: false });
+      const failure = new SentinelOnNonSecretFieldError('processing.bitrate');
+      let phase: 'before' | 'after' = 'before';
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (phase === 'after' && cat === 'companionEpub') return Promise.reject(new Error('companionEpub re-read failed'));
+        if (phase === 'after' && cat === 'library') return Promise.resolve({ ...mockSettings.library, path: ROOT_AFTER });
+        if (cat === 'companionEpub') return Promise.resolve({ enabled: false });
+        return Promise.resolve({ ...mockSettings.library, path: ROOT_BEFORE });
+      });
+      (services.settings.update as Mock).mockImplementation(() => { phase = 'after'; return Promise.reject(failure); });
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings',
+        payload: { library: { path: ROOT_AFTER }, companionEpub: { enabled: true } },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe(failure.message);
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('the mirror — companionEpub re-read SUCCEEDS (false→true) while library re-read THROWS → exactly one call, original error propagates', async () => {
+      const failure = new SentinelOnNonSecretFieldError('processing.bitrate');
+      let phase: 'before' | 'after' = 'before';
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (phase === 'after' && cat === 'library') return Promise.reject(new Error('library re-read failed'));
+        if (phase === 'after' && cat === 'companionEpub') return Promise.resolve({ enabled: true });
+        if (cat === 'companionEpub') return Promise.resolve({ enabled: false });
+        return Promise.resolve({ ...mockSettings.library, path: ROOT_BEFORE });
+      });
+      (services.settings.update as Mock).mockImplementation(() => { phase = 'after'; return Promise.reject(failure); });
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings',
+        payload: { library: { path: ROOT_AFTER }, companionEpub: { enabled: true } },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe(failure.message);
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('masking guard: BOTH re-reads throw → the ORIGINAL settings error still propagates, both are warned, and exactly one sweep fires', async () => {
+      const failure = new SentinelOnNonSecretFieldError('processing.bitrate');
+      let phase: 'before' | 'after' = 'before';
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (phase === 'after') return Promise.reject(new Error(`${cat} re-read failed`));
+        if (cat === 'companionEpub') return Promise.resolve({ enabled: false });
+        return Promise.resolve({ ...mockSettings.library, path: ROOT_BEFORE });
+      });
+      (services.settings.update as Mock).mockImplementation(() => { phase = 'after'; return Promise.reject(failure); });
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings',
+        payload: { library: { path: ROOT_AFTER }, companionEpub: { enabled: true } },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe(failure.message);
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+      expect(logSpies.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.anything() }),
+        expect.stringContaining('Could not re-read library settings'),
+      );
+      expect(logSpies.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.anything() }),
+        expect.stringContaining('Could not re-read companion-ebook settings'),
+      );
+    });
+
+    it('a PRE-update snapshot read failure fails the request before anything is persisted', async () => {
+      (services.settings.get as Mock).mockRejectedValue(new Error('snapshot read failed'));
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings', payload: { library: { path: ROOT_AFTER } },
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(services.settings.update).not.toHaveBeenCalled();
+      expect(services.companionEbook.reconcileAll).not.toHaveBeenCalled();
+    });
+
+    it('a rejecting sweep does not change the 200 the route already returned', async () => {
+      primePersisted({ root: ROOT_BEFORE });
+      primeUpdated({ root: ROOT_AFTER });
+      (services.companionEbook.reconcileAll as Mock).mockRejectedValue(new Error('sweep rejected'));
+
+      const res = await app.inject({
+        method: 'PUT', url: '/api/settings', payload: { library: { path: ROOT_AFTER } },
       });
 
       expect(res.statusCode).toBe(200);

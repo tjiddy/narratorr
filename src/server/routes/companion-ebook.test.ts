@@ -11,6 +11,7 @@ import {
   createMockDb,
   mockDbChain,
   installMockAppLog,
+  createMockLogger,
   inject,
 } from '../__tests__/helpers.js';
 import { createMockSettings } from '../../shared/schemas/settings/create-mock-settings.fixtures.js';
@@ -23,7 +24,7 @@ import { findCompanionEbookCandidates } from '../services/companion-ebook-discov
 import { openCompanionEbook, resolveCompanionEbookPath } from '../services/companion-ebook-open.js';
 import * as F from '../../core/__tests__/epub-archive.fixture.js';
 import { MAX_EPUB_COVER_BYTES } from '../../core/epub/limits.js';
-import type { CompanionSelectionResult } from '../services/companion-ebook-reconciler.js';
+import { CompanionEbookReconciler, type CompanionSelectionResult } from '../services/companion-ebook-reconciler.js';
 
 /**
  * The three collaborators are wrapped in spies that DELEGATE to the real implementations, so
@@ -141,6 +142,11 @@ describe('companion ebook owner routes', () => {
 
     services = createMockServices();
     db = createMockDb();
+    // #1960 AC26 — every mismatch arm now enqueues a reconcile. The unconfigured Proxy stub
+    // REJECTS, and `fireAndForget` logs that at warn, which would add a second warn to every
+    // boundary-record assertion in this suite. Resolve it by default; the mismatch tests below
+    // assert the call count, and the isolation test opts back into the rejection explicitly.
+    (services.companionEbook.reconcileBook as unknown as Mock).mockResolvedValue(undefined);
     app = await createTestApp(services, inject<Db>(db));
 
     setSettings({ enabled: true });
@@ -1299,6 +1305,195 @@ describe('companion ebook owner routes', () => {
         const staleIndexRetry = await put({ index: 1 });
         expect(staleIndexRetry.statusCode).toBe(200);
       });
+    });
+  });
+
+  // ==========================================================================
+  // #1960 AC26–AC31 — read-path mismatch enqueues a reconcile, self-healing
+  // ==========================================================================
+
+  describe('#1960 read-path mismatch enqueues a reconcile', () => {
+    const NEGATIVE_OUTCOMES = ['invalid_filename', 'not_regular_file', 'outside_library', 'missing', 'unreadable'] as const;
+
+    const reconcileMock = () => services.companionEbook.reconcileBook as unknown as Mock;
+
+    // --- Owner download (site 2): every `openCompanionEbook` negative -------
+
+    it.each(NEGATIVE_OUTCOMES)('owner download: %s enqueues exactly one reconcile, with the 404 unchanged', async (outcome) => {
+      vi.mocked(openCompanionEbook).mockResolvedValueOnce({ outcome });
+
+      const res = await download();
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Companion ebook not found' });
+      expect(reconcileMock()).toHaveBeenCalledTimes(1);
+      expect(reconcileMock()).toHaveBeenCalledWith(BOOK_ID);
+    });
+
+    // --- Owner metadata + cover (site 1): every resolver negative -----------
+
+    it.each(NEGATIVE_OUTCOMES)('owner metadata: %s enqueues exactly one reconcile, with the 404 unchanged', async (outcome) => {
+      vi.mocked(resolveCompanionEbookPath).mockResolvedValueOnce({ outcome });
+
+      const res = await metadataReq();
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Companion ebook not found' });
+      expect(reconcileMock()).toHaveBeenCalledTimes(1);
+      expect(reconcileMock()).toHaveBeenCalledWith(BOOK_ID);
+    });
+
+    it.each(NEGATIVE_OUTCOMES)('owner cover: %s enqueues exactly one reconcile, with the 404 unchanged', async (outcome) => {
+      vi.mocked(resolveCompanionEbookPath).mockResolvedValueOnce({ outcome });
+
+      const res = await coverReq();
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Companion ebook not found' });
+      expect(reconcileMock()).toHaveBeenCalledTimes(1);
+    });
+
+    // --- AC27: the two post-resolve disagreement arms -----------------------
+
+    it('AC27: an inspectEpub THROW enqueues exactly one reconcile', async () => {
+      // The resolver says `ok` and the file vanishes immediately afterwards — a mismatch by
+      // the same definition, even though the resolver succeeded.
+      await writeEpub();
+      vi.mocked(resolveCompanionEbookPath).mockImplementationOnce(async (input, log) => {
+        const real = await vi.importActual<typeof import('../services/companion-ebook-open.js')>(
+          '../services/companion-ebook-open.js',
+        );
+        const resolved = await real.resolveCompanionEbookPath(input, log);
+        await rm(join(bookPath, EPUB), { force: true });
+        return resolved;
+      });
+
+      const res = await metadataReq();
+
+      expect(res.statusCode).toBe(404);
+      expect(reconcileMock()).toHaveBeenCalledTimes(1);
+    });
+
+    it('AC27: an inspection that does not agree with the stored row enqueues exactly one reconcile', async () => {
+      // A real, readable file that is NOT a valid EPUB — `inspectEpub` returns a non-`available`
+      // verdict rather than throwing.
+      await writeEpub(EPUB, 'not a zip at all');
+
+      const res = await metadataReq();
+
+      expect(res.statusCode).toBe(404);
+      expect(reconcileMock()).toHaveBeenCalledTimes(1);
+    });
+
+    // --- The happy paths enqueue nothing ------------------------------------
+
+    it('a successful download enqueues ZERO reconciles', async () => {
+      await writeEpub();
+
+      expect((await download()).statusCode).toBe(200);
+      expect(reconcileMock()).not.toHaveBeenCalled();
+    });
+
+    it('a successful metadata read enqueues ZERO reconciles', async () => {
+      await placeEpub();
+
+      expect((await metadataReq()).statusCode).toBe(200);
+      expect(reconcileMock()).not.toHaveBeenCalled();
+    });
+
+    // --- AC28: isolation ----------------------------------------------------
+
+    it('AC28: a REJECTING reconciler changes neither the status code nor the body', async () => {
+      reconcileMock().mockRejectedValue(new Error('reconcile rejected'));
+      vi.mocked(openCompanionEbook).mockResolvedValueOnce({ outcome: 'missing' });
+
+      const res = await download();
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Companion ebook not found' });
+    });
+
+    it('AC28: a SYNCHRONOUSLY THROWING reconciler changes neither the status code nor the body', async () => {
+      reconcileMock().mockImplementation(() => { throw new Error('reconcile threw synchronously'); });
+      vi.mocked(openCompanionEbook).mockResolvedValueOnce({ outcome: 'missing' });
+
+      const res = await download();
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Companion ebook not found' });
+    });
+
+    // --- AC31: the accepted persistent re-enqueue, and its cost bound --------
+
+    it('AC31 (accepted characteristic): two consecutive outside-root requests enqueue TWICE, the row is unchanged, exposure stays true, and NO readdir happens', async () => {
+      // This is the documented, bilaterally-agreed stale window after a library-root change —
+      // NOT a bug. `reconcileBook` registers a fresh run per call and `withBookAdmissionLock`
+      // only serializes them; nothing coalesces on this path. The run stops at the LEXICAL
+      // containment check, which performs zero filesystem calls, so the cost per request is
+      // one eligibility probe and the exposure gate never closes.
+      const reconcilerDb = createMockDb();
+      let snapshotReads = 0;
+      reconcilerDb.select.mockImplementation(() => ({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockImplementation(() => {
+          snapshotReads++;
+          // Odd read = the `books` snapshot (imported, path OUTSIDE the root); even = observation.
+          return Promise.resolve(snapshotReads % 2 === 1 ? [{ id: BOOK_ID, status: 'imported', path: bookPath }] : []);
+        }),
+      }));
+      // A root that does NOT contain `bookPath` — the post-root-change stale window.
+      const newRoot = await realpath(mkdtempSync(join(tmpdir(), 'narratorr-1960-newroot-')));
+      const reconciler = new CompanionEbookReconciler(
+        inject<Db>(reconcilerDb),
+        inject<ConstructorParameters<typeof CompanionEbookReconciler>[1]>({
+          get: vi.fn().mockImplementation((cat: string) =>
+            Promise.resolve(cat === 'companionEpub' ? { enabled: true } : { path: newRoot })),
+        }),
+        inject<ConstructorParameters<typeof CompanionEbookReconciler>[2]>(createMockLogger()),
+      );
+
+      const runs: Promise<void>[] = [];
+      const localServices = createMockServices();
+      localServices.companionEbook = inject<Services['companionEbook']>({
+        reconcileBook: (id: number) => { const p = reconciler.reconcileBook(id); runs.push(p); return p; },
+        reconcileAll: () => reconciler.reconcileAll(),
+      });
+      const localDb = createMockDb();
+      localDb.select.mockReturnValue(mockDbChain([row()]));
+      const localSettings = createMockSettings({ companionEpub: { enabled: true }, library: { path: libraryRoot } });
+      (localServices.settings.get as Mock).mockImplementation((c: keyof typeof localSettings) => Promise.resolve(localSettings[c]));
+      (localServices.book.getById as Mock).mockResolvedValue({ id: BOOK_ID, status: 'imported', path: bookPath, title: 'Title' });
+      const localApp = await createTestApp(localServices, inject<Db>(localDb));
+
+      try {
+        // The stored row still says `available`, so exposure lets both requests through to the
+        // opener, which then fails containment against the NEW root.
+        vi.mocked(openCompanionEbook)
+          .mockResolvedValueOnce({ outcome: 'outside_library' })
+          .mockResolvedValueOnce({ outcome: 'outside_library' });
+        vi.mocked(findCompanionEbookCandidates).mockClear();
+
+        const first = await localApp.inject({ method: 'GET', url: `/api/books/${BOOK_ID}/companion-epub` });
+        const second = await localApp.inject({ method: 'GET', url: `/api/books/${BOOK_ID}/companion-epub` });
+        await Promise.all(runs);
+
+        expect(first.statusCode).toBe(404);
+        expect(second.statusCode).toBe(404);
+        // Two enqueues, not one: serialization is not coalescing.
+        expect(runs).toHaveLength(2);
+        // No write at all, so the exposure gate never closes and the next request repeats this.
+        expect(reconcilerDb.update).not.toHaveBeenCalled();
+        expect(reconcilerDb.insert).not.toHaveBeenCalled();
+        expect(reconcilerDb.transaction).not.toHaveBeenCalled();
+        // Cost bound: containment rejects LEXICALLY, so discovery is never reached.
+        expect(findCompanionEbookCandidates).not.toHaveBeenCalled();
+        // Exposure is unchanged — the predicate takes no path or root input.
+        expect(isCompanionEbookExposed({ enabled: true, bookStatus: 'imported', observationStatus: 'available' })).toBe(true);
+      } finally {
+        await localApp.close();
+        rmSync(newRoot, { recursive: true, force: true });
+      }
     });
   });
 

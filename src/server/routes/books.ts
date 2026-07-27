@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService, IndexerService, ConnectorService } from '../services/index.js';
-import { RenameError } from '../services/rename.service.js';
+import { RenameError, didRenameChangeAnything, type RenameResult } from '../services/rename.service.js';
+import { triggerCompanionReconcile, type CompanionBookReconcileTrigger } from '../services/companion-ebook-trigger.js';
 import { OwnedRecordingError } from '../services/book.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
@@ -28,6 +29,8 @@ export interface BookRouteDeps {
   eventBroadcaster: EventBroadcasterService;
   seriesCardService: SeriesCardService;
   metadataService: MetadataService;
+  /** #1960 — the rename, Refresh & Scan, and wrong-release seams all fire through this. */
+  companionEbook: CompanionBookReconcileTrigger;
   connectorService?: ConnectorService;
 }
 import { searchAndGrabForBook, buildNarratorPriority, buildSearchFilterOptions } from '../services/search-pipeline.js';
@@ -377,7 +380,20 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     { schema: { params: idParamSchema } },
     async (request) => {
       const { id } = request.params;
-      const result = await renameService.renameBook(id);
+      // #1960 AC19/AC22 — caller 1 of three. A THROW always reconciles: `renameBook` persists
+      // the new `books.path` before `renameFilesWithTemplate` can fail, so the EPUB may already
+      // have travelled. On the success path only a MATERIAL rename does — the "Already
+      // organized" early return moved nothing, so there is nothing to re-observe.
+      let result: RenameResult;
+      try {
+        result = await renameService.renameBook(id);
+      } catch (error: unknown) {
+        triggerCompanionReconcile(deps.companionEbook, id, request.log, 'Companion ebook reconcile failed after rename');
+        throw error;
+      }
+      if (didRenameChangeAnything(result)) {
+        triggerCompanionReconcile(deps.companionEbook, id, request.log, 'Companion ebook reconcile failed after rename');
+      }
       request.log.info({ id, oldPath: result.oldPath, newPath: result.newPath }, 'Book renamed');
       return result;
     },
@@ -425,8 +441,16 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     { schema: { params: idParamSchema } },
     async (request) => {
       const { id } = request.params;
-      const result = await refreshScanBook(id, deps.bookService, deps.settingsService, request.log);
-      return result;
+      // #1960 AC15–AC17 — sited HERE, not inside `refreshScanBook` (which gains no companion
+      // code). `finally`-shaped so every `RefreshScanError` code — `NOT_FOUND`, `NO_PATH`,
+      // `PATH_MISSING`, `NO_AUDIO_FILES`, all thrown BEFORE the audio probe — still refreshes
+      // the companion observation. The thrown error propagates to the existing handler
+      // untouched; the trigger never awaits and never throws.
+      try {
+        return await refreshScanBook(id, deps.bookService, deps.settingsService, request.log);
+      } finally {
+        triggerCompanionReconcile(deps.companionEbook, id, request.log, 'Companion ebook reconcile failed after refresh scan');
+      }
     },
   );
 

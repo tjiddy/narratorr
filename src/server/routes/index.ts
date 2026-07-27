@@ -123,7 +123,9 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const bookImport = new BookImportService(db, log);
   const bookList = new BookListService(db);
   const referenceRead = new ReferenceReadService(db);
-  // No trigger call sites yet — #1960 owns every seam that invokes this.
+  // Triggered from every seam that creates, moves, rescans, or reads a book (#1960): the
+  // import worker, the rescan wrapper (route + 6h cron), Refresh & Scan, the three rename
+  // callers, wrong-release, `PUT /api/settings`, and each companion opener's mismatch arm.
   const companionEbook = new CompanionEbookReconciler(db, settings, log);
   const eventHistory = new EventHistoryService(db, log, blacklistService, book);
 
@@ -155,7 +157,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   });
   const taskRegistry = new TaskRegistry();
   const discovery = new DiscoveryService(db, log, metadata, settings);
-  const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log, connector);
+  const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log, connector, companionEbook);
 
   // Migrate quality.preferredLanguage → metadata.languages (one-time, idempotent)
   await settings.migrateLanguageSettings();
@@ -186,7 +188,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   );
 
   // Construct remaining cyclic-dep services (worker created before QGO/wire phase)
-  const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster, async () => (await settings.get('library')).path, eventHistory);
+  const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster, async () => (await settings.get('library')).path, eventHistory, companionEbook);
   const nudgeImportWorker = (): void => importQueueWorker.nudge();
   // Staged import submission (#1893): server-owned processing runner + the inert
   // upload/finalize/query state-machine service that nudges it on the winning CAS.
@@ -202,7 +204,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     retrySearchDeps,
     settingsService: settings,
   });
-  const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps);
+  const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps, companionEbook);
   const bookDeletion = new BookDeletionService(book, download, downloadOrchestrator, settings, log, eventHistory);
 
   // Phase 2: wire required cyclic deps now that every instance exists.
@@ -242,6 +244,7 @@ const routeRegistry: RouteFactory[] = [
     eventBroadcaster: s.eventBroadcaster,
     seriesCardService: s.seriesCard,
     metadataService: s.metadata,
+    companionEbook: s.companionEbook,
     connectorService: s.connector,
   }),
   (app, s) => bookFilesRoute(app, s.book, s.settings, s.connector),
@@ -261,9 +264,9 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => importJobsRoutes(app, s.bookImport),
   (app, s) => indexersRoutes(app, s.indexer),
   (app, s) => downloadClientsRoutes(app, s.downloadClient),
-  (app, s) => settingsRoutes(app, s.settings, s.indexer, s.healthCheck),
+  (app, s) => settingsRoutes(app, s.settings, s.indexer, s.healthCheck, s.companionEbook),
   (app, s) => metadataRoutes(app, s.metadata),
-  (app, s) => libraryScanRoutes(app, s.libraryScan, s.matchJob, s.book, s.metadata),
+  (app, s) => libraryScanRoutes(app, s.libraryScan, s.matchJob, s.book, s.metadata, s.companionEbook),
   (app, s) => importSubmissionsRoutes(app, s.importStaging, s.importSubmissionReport),
   (app, s, db) => systemRoutes(app, s, db),
   (app, s) => notifiersRoutes(app, s.notifier),
@@ -320,10 +323,13 @@ const routeRegistry: RouteFactory[] = [
   // The public companion-ebook stream (#1975). `db` carries the observation read — the route
   // calls `findCompanionEbook(db, bookId)` directly, so no new `Services` member is needed.
   // `maxConcurrentStreams` is deliberately ABSENT: it is a test-only seam, and production
-  // takes `MAX_CONCURRENT_COMPANION_STREAMS`.
+  // takes `MAX_CONCURRENT_COMPANION_STREAMS`. `reconciler` is #1960's read-path mismatch
+  // hook — required, not optional, so a wiring omission is a compile error rather than a
+  // silently missing self-heal.
   (app, s, db) => v1CompanionEbookRoutes(app, {
     bookService: s.book,
     settingsService: s.settings,
+    reconciler: s.companionEbook,
   }, db),
 ];
 

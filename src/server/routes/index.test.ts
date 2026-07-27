@@ -62,6 +62,12 @@ vi.mock('../services/task-registry.js', () => ({ TaskRegistry: vi.fn() }));
 vi.mock('../services/event-broadcaster.service.js', () => ({ EventBroadcasterService: vi.fn() }));
 vi.mock('../services/retry-search.js', () => ({ createRetrySearchDeps: vi.fn().mockReturnValue({}) }));
 vi.mock('../services/import-queue-worker.js', () => ({ ImportQueueWorker: vi.fn() }));
+// #1960 (F7/F8) — constructor-mocked so the composition root can assert that each service
+// actually receives the live `CompanionEbookReconciler`. Both dependencies are OPTIONAL by
+// design (AC8's shape), so dropping the argument compiles and leaves every service-level suite
+// green while production silently stops reconciling; only a composition assertion catches that.
+vi.mock('../services/bulk-operation.service.js', () => ({ BulkOperationService: vi.fn() }));
+vi.mock('../services/book-rejection.service.js', () => ({ BookRejectionService: vi.fn() }));
 vi.mock('../services/import-adapters/registry.js', () => ({
   registerImportAdapter: vi.fn(),
   getImportAdapter: vi.fn(),
@@ -85,6 +91,15 @@ vi.mock('./companion-ebook.js', () => ({ companionEbookRoutes: vi.fn() }));
 // wiring passes the right two services, the right `db`, and NO `maxConcurrentStreams`.
 vi.mock('./v1/companion-ebook.js', () => ({ v1CompanionEbookRoutes: vi.fn() }));
 vi.mock('./v1/metadata.js', () => ({ v1MetadataRoutes: vi.fn() }));
+// #1960 (sibling sweep for F6–F8) — these three closures also hand the reconciler to a route
+// factory. `settingsRoutes` and `libraryScanRoutes` take it as a TRAILING OPTIONAL POSITIONAL
+// argument, so dropping it compiles and silently kills the settings and rescan sweeps in
+// production; `booksRoutes` takes it as a required deps field, where the residual risk is a
+// WRONG instance rather than a missing one. All three are invisible to their own route suites,
+// which build deps by hand.
+vi.mock('./settings.js', () => ({ settingsRoutes: vi.fn() }));
+vi.mock('./library-scan.js', () => ({ libraryScanRoutes: vi.fn() }));
+vi.mock('./books.js', () => ({ booksRoutes: vi.fn() }));
 vi.mock('../config.js', () => ({ config: { configPath: '/tmp/config', dbPath: '/tmp/db.sqlite' } }));
 vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(), probeFfmpeg: vi.fn() }));
 vi.mock('../../core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
@@ -168,7 +183,7 @@ describe('routeRegistry', () => {
   // test-only seam, and leaking it into the composition root would silently move the
   // concurrency bound off `MAX_CONCURRENT_COMPANION_STREAMS`. The `db` third argument is
   // pinned exactly — the observation read depends on it.
-  it('composes v1CompanionEbookRoutes exactly once, with { bookService, settingsService } and the db', async () => {
+  it('composes v1CompanionEbookRoutes exactly once, with { bookService, settingsService, reconciler } and the db', async () => {
     const { v1CompanionEbookRoutes } = await import('./v1/companion-ebook.js');
     (v1CompanionEbookRoutes as unknown as Mock).mockClear();
 
@@ -178,7 +193,56 @@ describe('routeRegistry', () => {
     expect(v1CompanionEbookRoutes as unknown as Mock).toHaveBeenCalledWith(app, {
       bookService: svc(services, 'book'),
       settingsService: svc(services, 'settings'),
+      // #1960 AC30 — required, unlike the still-absent `maxConcurrentStreams` seam.
+      reconciler: svc(services, 'companionEbook'),
     }, db);
+  });
+
+  // #1960 (sibling sweep for F6–F8) — the three remaining production sites that hand the
+  // reconciler to a ROUTE factory. `companionEbookRoutes` and `v1CompanionEbookRoutes` are
+  // already pinned above; these three complete the set, so every one of the eight injection
+  // sites this issue adds is now guarded at the composition root.
+
+  it('composes settingsRoutes with the live reconciler as its 5th argument', async () => {
+    const { settingsRoutes } = await import('./settings.js');
+    (settingsRoutes as unknown as Mock).mockClear();
+
+    const { app, services } = await driveCompositionRoot();
+
+    expect(settingsRoutes as unknown as Mock).toHaveBeenCalledTimes(1);
+    // The whole positional tail is pinned: a reordered or dropped argument is what silently
+    // turns the enable/root-change sweep into a no-op.
+    expect(settingsRoutes as unknown as Mock).toHaveBeenCalledWith(
+      app, svc(services, 'settings'), svc(services, 'indexer'), svc(services, 'healthCheck'), svc(services, 'companionEbook'),
+    );
+  });
+
+  it('composes libraryScanRoutes with the live reconciler as its 6th argument', async () => {
+    const { libraryScanRoutes } = await import('./library-scan.js');
+    (libraryScanRoutes as unknown as Mock).mockClear();
+
+    const { app, services } = await driveCompositionRoot();
+
+    expect(libraryScanRoutes as unknown as Mock).toHaveBeenCalledTimes(1);
+    expect(libraryScanRoutes as unknown as Mock).toHaveBeenCalledWith(
+      app, svc(services, 'libraryScan'), svc(services, 'matchJob'), svc(services, 'book'),
+      svc(services, 'metadata'), svc(services, 'companionEbook'),
+    );
+  });
+
+  it('composes booksRoutes with the live reconciler on its deps object', async () => {
+    const { booksRoutes } = await import('./books.js');
+    (booksRoutes as unknown as Mock).mockClear();
+
+    const { app, services } = await driveCompositionRoot();
+
+    expect(booksRoutes as unknown as Mock).toHaveBeenCalledTimes(1);
+    // `companionEbook` is a REQUIRED field here, so omission is a compile error — what this
+    // pins is the identity: the rename / Refresh & Scan seams must fire the reconciler the
+    // container owns and `shutdown.ts` drains, not some other instance.
+    expect(booksRoutes as unknown as Mock).toHaveBeenCalledWith(
+      app, expect.objectContaining({ companionEbook: svc(services, 'companionEbook') }),
+    );
   });
 
   it('composes v1CapabilitiesRoutes exactly once, with { settingsService: services.settings }', async () => {
@@ -698,5 +762,71 @@ describe('createServices', () => {
     const reconcilerInstances = vi.mocked(CompanionEbookReconciler).mock.instances;
     expect(reconcilerInstances).toHaveLength(1);
     expect(services.companionEbook).toBe(reconcilerInstances[0]);
+  });
+
+  // ==========================================================================
+  // #1960 F6/F7/F8 — the three OPTIONAL reconciler injections
+  // ==========================================================================
+  //
+  // Each of these three services takes the reconciler as a trailing OPTIONAL constructor
+  // argument (AC8's shape, so existing unit constructions keep compiling). That optionality is
+  // exactly what makes the wiring fragile: delete the argument at the composition root and the
+  // code still typechecks, every service-level suite still passes — they inject their own spies
+  // — and production silently stops reconciling. The composition root is the only place that
+  // can see it, so each seam gets a same-instance assertion here.
+  describe('#1960 — the live reconciler reaches every optional-dependency seam', () => {
+    /** Drive `createServices` with the standard SettingsService double this file uses. */
+    async function composeServices() {
+      const { SettingsService } = await import('../services/index.js');
+      vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+        this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us', path: '/library/root' });
+        this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+        this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+        this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
+        this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+        this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      } as never);
+
+      const { createServices } = await import('./index.js');
+      const db = {} as unknown as Db;
+      const log = {
+        info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+        child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+      } as unknown as FastifyBaseLogger;
+      const services = await createServices(db, log);
+      return { services };
+    }
+
+    it('F6: ImportQueueWorker receives the composed reconciler as its 6th constructor arg', async () => {
+      const { ImportQueueWorker } = await import('../services/import-queue-worker.js');
+
+      const { services } = await composeServices();
+
+      const calls = vi.mocked(ImportQueueWorker).mock.calls;
+      expect(calls).toHaveLength(1);
+      // Same INSTANCE, not merely defined: a wrong reconciler reconciles nothing this process
+      // owns, and `shutdown.ts` would drain a different one.
+      expect(calls[0]![5]).toBe(services.companionEbook);
+    });
+
+    it('F7: BulkOperationService receives the composed reconciler as its 8th constructor arg', async () => {
+      const { BulkOperationService } = await import('../services/bulk-operation.service.js');
+
+      const { services } = await composeServices();
+
+      const calls = vi.mocked(BulkOperationService).mock.calls;
+      expect(calls).toHaveLength(1);
+      expect(calls[0]![7]).toBe(services.companionEbook);
+    });
+
+    it('F8: BookRejectionService receives the composed reconciler as its 8th constructor arg', async () => {
+      const { BookRejectionService } = await import('../services/book-rejection.service.js');
+
+      const { services } = await composeServices();
+
+      const calls = vi.mocked(BookRejectionService).mock.calls;
+      expect(calls).toHaveLength(1);
+      expect(calls[0]![7]).toBe(services.companionEbook);
+    });
   });
 });

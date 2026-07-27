@@ -151,4 +151,70 @@ describe('POST /api/books/:id/refresh-scan', () => {
       expect.anything(), // request.log
     );
   });
+
+  // ==========================================================================
+  // #1960 AC15–AC17 — the companion reconcile is `finally`-shaped at THIS route
+  // ==========================================================================
+
+  describe('#1960 companion-ebook reconcile', () => {
+    const reconcileMock = () => services.companionEbook.reconcileBook as ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      reconcileMock().mockResolvedValue(undefined);
+    });
+
+    it('AC17: a successful scan fires exactly one reconcileBook for that book', async () => {
+      vi.mocked(refreshScanBook).mockResolvedValue({
+        bookId: 7, codec: 'mp3', bitrate: 128000, fileCount: 1, durationMinutes: 60, narratorsUpdated: false,
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/7/refresh-scan' });
+
+      expect(res.statusCode).toBe(200);
+      expect(reconcileMock()).toHaveBeenCalledTimes(1);
+      expect(reconcileMock()).toHaveBeenCalledWith(7);
+      expect(services.companionEbook.reconcileAll).not.toHaveBeenCalled();
+    });
+
+    // AC16 — every coded error is thrown BEFORE the audio probe, so a failing probe (or a
+    // missing directory) must still refresh the companion observation. The HTTP mapping for
+    // each code is asserted unchanged alongside the trigger.
+    it.each([
+      ['NOT_FOUND', 'Book 5 not found', 404],
+      ['NO_PATH', 'Book 5 has no library path — import it first', 400],
+      ['PATH_MISSING', 'Book path does not exist on disk: /lib/book', 400],
+      ['NO_AUDIO_FILES', 'No audio files found in book directory', 400],
+    ] as const)('AC16: %s still fires one reconcileBook and keeps its %i mapping', async (code, message, status) => {
+      vi.mocked(refreshScanBook).mockRejectedValue(new RefreshScanError(code, message));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/5/refresh-scan' });
+
+      expect(res.statusCode).toBe(status);
+      expect(JSON.parse(res.payload)).toEqual({ error: message });
+      expect(reconcileMock()).toHaveBeenCalledTimes(1);
+      expect(reconcileMock()).toHaveBeenCalledWith(5);
+    });
+
+    it('AC16: an unexpected throw still fires one reconcileBook and keeps its 500', async () => {
+      vi.mocked(refreshScanBook).mockRejectedValue(new Error('Unexpected'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/5/refresh-scan' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
+      expect(reconcileMock()).toHaveBeenCalledTimes(1);
+    });
+
+    it('AC15: a rejecting reconciler changes neither the status code nor the body', async () => {
+      reconcileMock().mockRejectedValue(new Error('reconcile rejected'));
+      vi.mocked(refreshScanBook).mockResolvedValue({
+        bookId: 3, codec: 'mp3', bitrate: 128000, fileCount: 2, durationMinutes: 30, narratorsUpdated: true,
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/3/refresh-scan' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).bookId).toBe(3);
+    });
+  });
 });

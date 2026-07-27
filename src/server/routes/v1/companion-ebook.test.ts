@@ -77,6 +77,13 @@ describe('v1 companion ebook stream', () => {
   let apps: FastifyInstance[];
   let bookService: { getById: Mock };
   let settingsService: { get: Mock };
+  /**
+   * #1960 AC26/AC30 — the required read-path-mismatch hook, spied per test. `reconcileBook` is
+   * the only method `CompanionBookReconcileTrigger` declares; `reconcileAll` is an extra PROBE
+   * that the route's type cannot reach, kept so "the public opener never sweeps" stays
+   * assertable at runtime on top of the type-level guarantee.
+   */
+  let companionReconciler: { reconcileBook: Mock; reconcileAll: Mock };
   let db: ReturnType<typeof createMockDb>;
   let libraryRoot: string;
   let bookPath: string;
@@ -104,6 +111,10 @@ describe('v1 companion ebook stream', () => {
 
     bookService = { getById: vi.fn() };
     settingsService = { get: vi.fn() };
+    companionReconciler = {
+      reconcileBook: vi.fn().mockResolvedValue(undefined),
+      reconcileAll: vi.fn().mockResolvedValue(undefined),
+    };
     db = createMockDb();
 
     setSettings({ enabled: true });
@@ -182,6 +193,7 @@ describe('v1 companion ebook stream', () => {
     await v1CompanionEbookRoutes(app, {
       bookService: bookService as never,
       settingsService: settingsService as never,
+      reconciler: companionReconciler,
       ...(maxConcurrentStreams !== undefined && { maxConcurrentStreams }),
     }, inject<Db>(db));
     await app.ready();
@@ -349,6 +361,76 @@ describe('v1 companion ebook stream', () => {
         mockLog.restore();
       },
     );
+
+    // =======================================================================
+    // #1960 AC26–AC31 — the public stream is opener site 3
+    // =======================================================================
+
+    it.each(['invalid_filename', 'not_regular_file', 'outside_library', 'missing', 'unreadable'] as const)(
+      'AC26: the %s outcome enqueues exactly one reconcileBook, with the 404 body unchanged',
+      async (outcome) => {
+        vi.mocked(openCompanionEbook).mockResolvedValue({ outcome });
+        const app = await makeApp();
+
+        const res = await download(app);
+
+        expect(res.statusCode).toBe(404);
+        expect(res.json()).toEqual(UNAVAILABLE);
+        expect(companionReconciler.reconcileBook).toHaveBeenCalledTimes(1);
+        expect(companionReconciler.reconcileBook).toHaveBeenCalledWith(BOOK_ID);
+        expect(companionReconciler.reconcileAll).not.toHaveBeenCalled();
+      },
+    );
+
+    it('AC26: a successful stream enqueues ZERO reconciles', async () => {
+      await writeEpub();
+      const app = await makeApp();
+
+      const res = await download(app);
+
+      expect(res.statusCode).toBe(200);
+      expect(companionReconciler.reconcileBook).not.toHaveBeenCalled();
+    });
+
+    it('AC26: the pre-opener negatives (disabled, unknown book, not exposed) enqueue ZERO reconciles', async () => {
+      setSettings({ enabled: false });
+      const app = await makeApp();
+
+      expect((await download(app)).statusCode).toBe(409);
+      expect(companionReconciler.reconcileBook).not.toHaveBeenCalled();
+    });
+
+    it('AC28: a REJECTING reconciler changes neither the status code nor the body', async () => {
+      companionReconciler.reconcileBook.mockRejectedValue(new Error('reconcile rejected'));
+      vi.mocked(openCompanionEbook).mockResolvedValue({ outcome: 'missing' });
+      const app = await makeApp();
+
+      const res = await download(app);
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual(UNAVAILABLE);
+    });
+
+    it('AC28: a SYNCHRONOUSLY THROWING reconciler changes neither the status code nor the body', async () => {
+      companionReconciler.reconcileBook.mockImplementation(() => { throw new Error('reconcile threw synchronously'); });
+      vi.mocked(openCompanionEbook).mockResolvedValue({ outcome: 'missing' });
+      const app = await makeApp();
+
+      const res = await download(app);
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual(UNAVAILABLE);
+    });
+
+    it('AC31: two consecutive mismatched requests enqueue TWICE — serialization is not coalescing', async () => {
+      vi.mocked(openCompanionEbook).mockResolvedValue({ outcome: 'outside_library' });
+      const app = await makeApp();
+
+      expect((await download(app)).statusCode).toBe(404);
+      expect((await download(app)).statusCode).toBe(404);
+
+      expect(companionReconciler.reconcileBook).toHaveBeenCalledTimes(2);
+    });
   });
 
   // --------------------------------------------------------------------------

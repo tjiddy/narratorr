@@ -1143,6 +1143,77 @@ describe('startJobs', () => {
         'Scheduled library rescan skipped',
       );
     });
+
+    // =======================================================================
+    // #1960 AC9/AC12 — the cron goes through the SAME wrapper as the route
+    // =======================================================================
+
+    it('AC9/AC12: a successful scheduled rescan triggers exactly one companion sweep', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>).mockResolvedValue({ scanned: 2, missing: 0, restored: 0 });
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await services.taskRegistry.executeTracked('library-rescan');
+
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+      expect(services.companionEbook.reconcileBook).not.toHaveBeenCalled();
+    });
+
+    it('AC12: ScanInProgressError triggers ZERO sweeps and still warns-and-returns', async () => {
+      const { ScanInProgressError } = await import('../services/library-scan.service.js');
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>).mockRejectedValue(new ScanInProgressError());
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await triggerCron('0 */6 * * *');
+
+      expect(services.companionEbook.reconcileAll).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ type: 'ScanInProgressError' }) }),
+        'Scheduled library rescan skipped',
+      );
+    });
+
+    it('AC12: LibraryPathError DOES sweep and the warn-and-swallow is unchanged', async () => {
+      const { LibraryPathError } = await import('../services/library-scan.service.js');
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new LibraryPathError('Library path is not configured'),
+      );
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await triggerCron('0 */6 * * *');
+
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ type: 'LibraryPathError' }) }),
+        'Scheduled library rescan skipped',
+      );
+      expect(log.error).not.toHaveBeenCalledWith(expect.anything(), 'library-rescan job error');
+    });
+
+    it('AC12: an unexpected error DOES sweep and still falls through to the cron error handler', async () => {
+      const unexpected = new Error('unexpected db failure');
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>).mockRejectedValue(unexpected);
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await triggerCron('0 */6 * * *');
+
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: unexpected.message, type: 'Error' }) }),
+        'library-rescan job error',
+      );
+    });
   });
 
   // #1270 — scheduleCron is the croner owner: it stores the engine's real next-fire
