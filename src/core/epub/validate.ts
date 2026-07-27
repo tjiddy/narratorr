@@ -1,8 +1,10 @@
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
+import type { EpubOptionalReader, EpubPackageView } from './extract.js';
+import { extractEpubCover, extractEpubMetadata, extractEpubToc } from './extract.js';
 import { MAX_ARCHIVE_BYTES, MAX_INSPECTION_BYTES, MAX_XML_BYTES } from './limits.js';
 import { resolveHref } from './paths.js';
-import type { EpubValidation, EpubValidationCode } from './result.js';
+import type { EpubInspection, EpubValidation, EpubValidationCode } from './result.js';
 import type { EpubXmlElement, EpubXmlResult } from './xml.js';
 import { attrByExactName, childrenByLocalName, parseEpubXml } from './xml.js';
 import type {
@@ -90,10 +92,21 @@ const FONT_MEDIA_TYPES = new Set([
   'application/x-font-ttf',
 ]);
 
-const AVAILABLE: EpubValidation = { status: 'available' };
-const DRM_PROTECTED: EpubValidation = { status: 'drm_protected' };
+/**
+ * Every verdict the **structural** pipeline can reach.
+ *
+ * `available` is deliberately absent: nothing before the encryption classifier
+ * can decide it, so the pipeline's verdict arm is a rejection by construction.
+ * Saying so in the type is what lets `inspectEpub` hand a pipeline verdict
+ * straight back as an `EpubInspection` — whose `available` arm carries a
+ * metadata/TOC/cover payload — without an unreachable branch to widen it.
+ */
+type EpubRejection = Exclude<EpubValidation, { status: 'available' }>;
 
-function invalid(code: EpubValidationCode): EpubValidation {
+const AVAILABLE: EpubValidation = { status: 'available' };
+const DRM_PROTECTED: EpubRejection = { status: 'drm_protected' };
+
+function invalid(code: EpubValidationCode): EpubRejection {
   return { status: 'invalid', code };
 }
 
@@ -105,7 +118,7 @@ function invalid(code: EpubValidationCode): EpubValidation {
  * field instead.) A second `classifyEpubReadError` call over an already-reported
  * label would be a defect — the classification already happened.
  */
-function fromReadFailure(label: ZipReadFailure): EpubValidation {
+function fromReadFailure(label: ZipReadFailure): EpubRejection {
   return invalid(label === 'cap-exceeded' ? 'limit_exceeded' : 'truncated');
 }
 
@@ -125,13 +138,44 @@ interface EpubInspectionBudget {
   /**
    * Read `entry` at `Math.min(remaining, ceiling)` and charge what came back.
    *
+   * The **mandatory** form. It neither pre-rejects nor charges a failed read,
+   * and deliberately so: a mandatory read that fails produces a verdict and the
+   * call ends right there, so there is nothing left for a forgiven byte to
+   * inflate.
+   *
    * `mimetype` is deliberately not exempted from the `MAX_XML_BYTES` ceiling.
    * It is not an XML document, but minting a seventh constant to bound a 20-byte
    * ASCII literal would force an edit to a merged sibling's exact-value pin
    * (`limits.test.ts:19-26`, "the six constants") for no behavioural gain.
    */
   read(entry: ZipArchiveEntry, ceiling: number): Promise<ZipEntryRead>;
+  /**
+   * The **optional** form: charge-as-you-go, never rolled back (#1990
+   * Decision 3).
+   *
+   * Two things separate it from {@link EpubInspectionBudget.read}:
+   *
+   * - **Pre-reject.** When nothing remains, or when the entry's *declared*
+   *   `uncompressedSize` already exceeds what does, it returns without calling
+   *   `entry.read` at all — `readEntry` calls `file.stream()` unconditionally
+   *   (`zip-source.ts:568-581`), so even a zero cap would open a stream. The
+   *   declared size is used **only** here, to skip work; it is never an
+   *   enforcement point and never substituted for the streamed count.
+   * - **Charge on failure.** A read that aborted on its cap, exhausted the
+   *   remainder, or failed mid-inflate still inflated bytes, and those stay
+   *   charged. Rolling them back would let one call inflate more than
+   *   `MAX_INSPECTION_BYTES` by failing repeatedly, which is the whole ceiling.
+   */
+  readOptional(entry: ZipArchiveEntry, ceiling: number): Promise<ZipEntryRead>;
 }
+
+/**
+ * What a pre-reject reports. `cap-exceeded` is the honest label — the read was
+ * refused precisely because performing it would cross the ceiling — and every
+ * optional read maps both failure labels to a `null` field anyway, so no caller
+ * has to tell a pre-reject from a streamed abort.
+ */
+const PRE_REJECTED: ZipEntryRead = { kind: 'failed', label: 'cap-exceeded', inflatedBytes: 0 };
 
 function createInspectionBudget(): EpubInspectionBudget {
   let consumed = 0;
@@ -142,6 +186,13 @@ function createInspectionBudget(): EpubInspectionBudget {
     async read(entry: ZipArchiveEntry, ceiling: number): Promise<ZipEntryRead> {
       const read = await entry.read(Math.min(MAX_INSPECTION_BYTES - consumed, ceiling));
       if (read.kind === 'bytes') consumed += read.bytes.length;
+      return read;
+    },
+    async readOptional(entry: ZipArchiveEntry, ceiling: number): Promise<ZipEntryRead> {
+      const remaining = MAX_INSPECTION_BYTES - consumed;
+      if (remaining <= 0 || entry.uncompressedSize > remaining) return PRE_REJECTED;
+      const read = await entry.read(Math.min(remaining, ceiling));
+      consumed += read.kind === 'bytes' ? read.bytes.length : read.inflatedBytes;
       return read;
     },
   };
@@ -158,6 +209,20 @@ type EpubXmlDocument = Extract<EpubXmlResult, { kind: 'document' }>;
 interface EpubPackageIndex {
   /** How many `<item>` elements the manifest declared, before any resolution. */
   readonly itemCount: number;
+  /**
+   * The manifest's `<item>` elements in document order.
+   *
+   * Retained rather than re-derived: nav and cover discovery both ask for "the
+   * first manifest item in document order satisfying a predicate", which neither
+   * lookup below can answer, and a second `childrenByLocalName` pass in
+   * `extract.ts` would give that ordering two homes.
+   */
+  readonly items: readonly EpubXmlElement[];
+  /**
+   * The **first** `<spine>` element, or `undefined`. EPUB 2 TOC discovery reads
+   * its `toc` attribute, which the derived lookups below do not carry.
+   */
+  readonly spine: EpubXmlElement | undefined;
   /**
    * Manifest items keyed by `id`. A **duplicated** id maps to `null`, so
    * "matches the `id` of exactly one manifest item" is decidable rather than
@@ -207,7 +272,7 @@ interface EpubStructure {
 /** The pipeline either produced a structure or already decided the verdict. */
 type EpubPipelineOutcome =
   | { kind: 'structure'; structure: EpubStructure }
-  | { kind: 'verdict'; validation: EpubValidation };
+  | { kind: 'verdict'; validation: EpubRejection };
 
 /**
  * The verdict arm, shared by all three staged unions below.
@@ -215,7 +280,7 @@ type EpubPipelineOutcome =
  * Typed as the literal shape rather than as `EpubPipelineOutcome`, so it is
  * assignable to whichever stage's union the call site returns.
  */
-function verdict(validation: EpubValidation): { kind: 'verdict'; validation: EpubValidation } {
+function verdict(validation: EpubRejection): { kind: 'verdict'; validation: EpubRejection } {
   return { kind: 'verdict', validation };
 }
 
@@ -235,7 +300,7 @@ function verdict(validation: EpubValidation): { kind: 'verdict'; validation: Epu
  * **No catch.** An `lstat` rejection propagates unchanged, which is the required
  * behaviour — I/O failure is never a verdict.
  */
-async function preOpenRejection(filePath: string): Promise<EpubValidation | null> {
+async function preOpenRejection(filePath: string): Promise<EpubRejection | null> {
   const stats = await lstat(filePath);
   if (!stats.isFile()) return invalid('not_a_zip');
   if (stats.size > MAX_ARCHIVE_BYTES) return invalid('limit_exceeded');
@@ -277,7 +342,7 @@ function hasZipSignature(bytes: Buffer): boolean {
 
 type ArchiveStage =
   | { kind: 'entries'; entries: ZipArchiveEntry[] }
-  | { kind: 'verdict'; validation: EpubValidation };
+  | { kind: 'verdict'; validation: EpubRejection };
 
 /**
  * Everything from the authoritative `fstat` through the ZIP-encryption-bit scan.
@@ -316,7 +381,7 @@ async function openArchive(session: ZipSourceSession): Promise<ArchiveStage> {
 /** One mandatory read: the inflated bytes, or the verdict the attempt produced. */
 type MandatoryRead =
   | { kind: 'bytes'; bytes: Buffer }
-  | { kind: 'verdict'; validation: EpubValidation };
+  | { kind: 'verdict'; validation: EpubRejection };
 
 async function readMandatory(
   entry: ZipArchiveEntry | undefined,
@@ -392,7 +457,7 @@ function indexPackage(document: EpubXmlDocument, baseDir: string): EpubPackageIn
     if (idref !== undefined) spineIdrefs.add(idref);
   }
 
-  return { itemCount: items.length, itemsById, itemsByName, spineIdrefs, itemrefs };
+  return { itemCount: items.length, items, spine, itemsById, itemsByName, spineIdrefs, itemrefs };
 }
 
 /**
@@ -659,5 +724,86 @@ async function runEpubPipeline<T>(
 export async function validateEpub(filePath: string): Promise<EpubValidation> {
   return runEpubPipeline(filePath, async (outcome) =>
     outcome.kind === 'verdict' ? outcome.validation : classifyEncryption(outcome.structure),
+  );
+}
+
+// --- the optional reads ------------------------------------------------------
+
+/**
+ * The package view `extract.ts` asks for, assembled from the private structure.
+ *
+ * Assembling it here rather than handing `extract.ts` an `EpubStructure` is what
+ * keeps the structure unnamed outside this module: `extract.ts` declares its own
+ * narrow interfaces, this satisfies them at the call site, and no private type
+ * appears in any export (#1990 Decision 2).
+ */
+function packageView(structure: EpubStructure): EpubPackageView {
+  return {
+    document: structure.packageDocument,
+    baseDir: structure.packageBaseDir,
+    items: structure.packageIndex.items,
+    itemsById: structure.packageIndex.itemsById,
+    spine: structure.packageIndex.spine,
+  };
+}
+
+/** The archive capability, bound to this call's one budget in its optional form. */
+function optionalReader(structure: EpubStructure): EpubOptionalReader {
+  return {
+    entry: (name) => structure.entriesByName.get(name),
+    read: (entry, ceiling) => structure.budget.readOptional(entry, ceiling),
+  };
+}
+
+/**
+ * The optional reads, in their frozen order, over the budget the mandatory reads
+ * left behind.
+ *
+ * **TOC first, then the cover** — and the order is a decision, not an accident.
+ * Because the budget is shared, a nav and a cover that are each within their own
+ * caps can jointly exceed what remains, so an unspecified order would make
+ * `{ toc, cover: null }` and `{ toc: null, cover }` equally compliant for the
+ * same file: a non-deterministic public result. The TOC goes first because it is
+ * the smaller read and feeds the plan's named consumer, the chapter count; the
+ * cover is the largest optional read and the most expendable.
+ *
+ * Metadata is not an optional read — it consumes no budget and cannot fail — so
+ * its position here says nothing.
+ */
+async function inspectStructure(structure: EpubStructure): Promise<EpubInspection> {
+  const validation = await classifyEncryption(structure);
+  if (validation.status !== 'available') return validation;
+
+  const view = packageView(structure);
+  const reader = optionalReader(structure);
+  const toc = await extractEpubToc(view, reader);
+  const cover = await extractEpubCover(view, reader);
+  return { status: 'available', metadata: extractEpubMetadata(view), toc, cover };
+}
+
+/**
+ * Structurally validate a companion `.epub` **and** read its metadata, table of
+ * contents, and cover.
+ *
+ * The pipeline is 1.1d's, run whole and re-implemented nowhere: the identical
+ * preflight, the identical structural checks in the identical precedence, and
+ * the identical `encryption.xml` classifier. Every non-`available` outcome is
+ * returned unchanged with no optional read attempted, so this and `validateEpub`
+ * cannot disagree about a book's status.
+ *
+ * **One call is one open is one budget.** The archive is opened once and bounded
+ * by `MAX_ARCHIVE_BYTES` and `MAX_INSPECTION_BYTES` for this call alone; there is
+ * no cross-call budget and no context to carry one. A caller that validates and
+ * then inspects opens twice and is bounded twice.
+ *
+ * **An optional read never changes the status** — see `extract.ts` for the
+ * disposition rule and its reasoning. Filesystem errors remain the exception and
+ * still propagate: a `throw` classification ignores the call site.
+ *
+ * The second and last export in this module (#1989 Decision 1).
+ */
+export async function inspectEpub(filePath: string): Promise<EpubInspection> {
+  return runEpubPipeline(filePath, async (outcome) =>
+    outcome.kind === 'verdict' ? outcome.validation : inspectStructure(outcome.structure),
   );
 }
