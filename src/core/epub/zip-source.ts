@@ -582,7 +582,7 @@ async function readEntry(file: File, cap: number): Promise<ZipEntryRead> {
     const chunks: Buffer[] = [];
     for await (const chunk of counter) chunks.push(chunk as Buffer);
     return { kind: 'bytes', bytes: Buffer.concat(chunks) };
-  } catch (caught) {
+  } catch (caught: unknown) {
     const value = sourceFailure ? sourceFailure.value : caught;
     const label = classifyEpubReadError(value, { archiveRead: true });
     if (label === 'throw') throw value;
@@ -646,7 +646,7 @@ async function preflightAndOpen(
   let directory: CentralDirectory;
   try {
     directory = await openCustom(control.source, { tailSize: size - outcome.eocdOffset });
-  } catch (error) {
+  } catch (error: unknown) {
     const label = classifyEpubReadError(error, { archiveRead: true });
     if (label === 'throw') throw error;
     return { kind: 'failed', label };

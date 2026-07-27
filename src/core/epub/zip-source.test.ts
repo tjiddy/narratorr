@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { FileHandle } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
 import * as F from '../__tests__/epub-archive.fixture.js';
+import { classifyEpubReadError } from './errors.js';
 import { MAX_ARCHIVE_ENTRIES } from './limits.js';
 import type { ZipArchiveResult, ZipSourceSession } from './zip-source.js';
 import { withZipSource, ZipSourceProtocolError } from './zip-source.js';
@@ -272,6 +273,39 @@ describe('the archive primitive', () => {
     expect(h.handles[0]?.raw.fd).toBe(-1);
   });
 
+  it('destroys an already-created live stream at teardown, before closing the handle', async () => {
+    // A stream created inside the callback and left un-drained is the case the
+    // post-close `stream()` guard cannot reach: the object already exists, so
+    // only session teardown can stop it. Without that, a pending positional read
+    // wakes up on a closed descriptor after the session is gone.
+    const body = Buffer.alloc(512 * 1024, 5);
+    const filePath = await place(body);
+
+    const escaped = await withZipSource(filePath, (session) =>
+      // Deliberately not consumed: `_read` has not run, so nothing is in flight
+      // and nothing but teardown will ever end it.
+      Promise.resolve(session.source.stream(0)),
+    );
+
+    expect(escaped.destroyed).toBe(true);
+
+    // And it stays inert: resuming it after teardown yields no bytes, no error,
+    // and no read against the closed handle.
+    const readsAtTeardown = h.reads.length;
+    const chunks: Buffer[] = [];
+    const errors: unknown[] = [];
+    escaped.on('data', (chunk: Buffer) => chunks.push(chunk));
+    escaped.on('error', (error: unknown) => errors.push(error));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(chunks).toEqual([]);
+    expect(errors).toEqual([]);
+    expect(h.reads).toHaveLength(readsAtTeardown);
+    expect(h.handles).toHaveLength(1);
+    expect(h.handles[0]?.closes).toBe(1);
+    expect(h.handles[0]?.raw.fd).toBe(-1);
+  });
+
   it('pins Decision 3 — a createReadStream-backed source kills the shared handle', async () => {
     // This is why the positional form exists. `unzipper` destroys every bounded
     // range stream it creates (`Open/unzip.js:100-108` calls `req.destroy()` on
@@ -485,7 +519,7 @@ describe('validated structural replay', () => {
         const before = h.reads.length;
         try {
           session.source.stream(999_999);
-        } catch (error) {
+        } catch (error: unknown) {
           thrown = error;
         }
         // A hard failure, never a silent live read.
@@ -992,6 +1026,40 @@ describe('the entry-count ceiling', () => {
 
     expect(await namesOf(filePath)).toEqual(['a.txt', 'b.txt']);
   });
+
+  it.each([
+    ['fewer', 0],
+    ['more', 2],
+  ])('throws when the reader returns %s members than the validated count', async (_label, count) => {
+    // The guard's whole purpose is a reader-version change, and the pinned
+    // reader cannot express the disagreement — `vars.files` is
+    // `Array(vars.numberOfRecords)` by construction. So the only way to give the
+    // failure arm a regression signal is to stub the reader with a cardinality
+    // the preflight did not validate.
+    const filePath = await place(
+      await F.buildArchive({ store: true, entries: [{ name: 'a.txt', content: 'hi' }] }),
+    );
+    h.openCustom.mockResolvedValueOnce({
+      files: Array.from({ length: count }, (_, index) => ({
+        pathBuffer: Buffer.from(`e${index}.txt`),
+        flags: 0,
+        uncompressedSize: 0,
+        stream: () => erroringStream(new Error('never read')),
+      })),
+    });
+
+    const thrown = await openArchive(filePath).catch((error: unknown) => error);
+
+    expect(thrown).toBeInstanceOf(ZipSourceProtocolError);
+    expect((thrown as Error).message).toContain(`returned ${count} members`);
+    expect((thrown as Error).message).toContain('validated declared count of 1');
+    // The identity is load-bearing, not free choice: a plain uncoded Error here
+    // would be labelled `decoder-failure` and persisted as "this book is
+    // corrupt" instead of surfacing the dependency drift.
+    expect(classifyEpubReadError(thrown, { archiveRead: true })).toBe('throw');
+    expect(h.handles).toHaveLength(1);
+    expect(h.handles[0]?.closes).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1287,6 +1355,74 @@ describe('adapter-owned OS failures', () => {
 
     expect(read).toEqual({ kind: 'bytes', bytes: Buffer.from('abcdefghijklmnopqrstuvwxyz') });
     expect(h.reads.every((record) => record.bytesRead <= 7)).toBe(true);
+    // The companion arm — an actual zero-byte result — is covered by the two
+    // early-EOF rows below; clamping to the frozen size means this fixture's
+    // ranges always end exactly on data.
+  });
+
+  /**
+   * Shrink the file underneath the frozen size through a second descriptor, so
+   * a range the source still believes in now runs past true EOF and `fh.read`
+   * genuinely returns `bytesRead === 0`. Nothing here is mocked: the divergence
+   * is real, which is the only way to prove the termination branches fire.
+   */
+  async function truncateUnderneath(filePath: string, to: number): Promise<void> {
+    const shrinker = await h.real.fsOpen(filePath, 'r+');
+    await shrinker.truncate(to);
+    await shrinker.close();
+  }
+
+  /**
+   * Turns a missing `bytesRead === 0` break into a fast, clean assertion failure
+   * instead of a suite-timeout hang — a loop that never terminates is exactly
+   * the regression these rows exist to catch.
+   */
+  function guardAgainstLooping(limit: number): void {
+    let reads = 0;
+    h.onRead = async (raw, args) => {
+      reads += 1;
+      if (reads > limit) throw errno('EPUB_TEST_READ_LOOP');
+      return raw.read(...args);
+    };
+  }
+
+  it('ends a live stream on a zero-byte read at true EOF, without looping or padding', async () => {
+    const body = Buffer.from('0123456789'.repeat(10));
+    const filePath = await place(body);
+
+    const observed = await withZipSource(filePath, async (session) => {
+      expect(await session.source.size()).toBe(100);
+      guardAgainstLooping(50);
+      await truncateUnderneath(filePath, 40);
+      return Buffer.concat(await drain(session.source.stream(0)));
+    });
+
+    // Exactly the surviving bytes — never the uninitialised tail of the scratch
+    // buffer, which a `push(chunk)` instead of `push(chunk.subarray(0, n))`
+    // would leak, and never a hang on the zero-byte result.
+    expect(observed).toEqual(body.subarray(0, 40));
+    expect(h.reads.filter((read) => read.bytesRead === 0)).toHaveLength(1);
+    expect(h.reads).toHaveLength(2);
+  });
+
+  it('ends a preflight range read on a zero-byte result at true EOF', async () => {
+    const bytes = await F.buildArchive({ store: true, entries: [{ name: 'a.txt', content: 'hi' }] });
+    const filePath = await place(bytes);
+
+    const result = await withZipSource(filePath, async (session) => {
+      expect(session.stat.size).toBe(bytes.length);
+      guardAgainstLooping(50);
+      // Well short of the EOCD, so the acquisition window can never be filled.
+      await truncateUnderneath(filePath, 20);
+      return session.preflightAndOpen();
+    });
+
+    // `readRange` returns the 20 bytes it actually got rather than a full-length
+    // buffer, so no candidate can satisfy the frozen size and the outcome is the
+    // frozen structural code — reached, not hung.
+    expect(result).toEqual({ kind: 'rejected', code: 'truncated' });
+    expect(h.reads.filter((read) => read.bytesRead === 0)).toHaveLength(1);
+    expect(h.openCustom).not.toHaveBeenCalled();
   });
 });
 
