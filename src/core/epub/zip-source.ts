@@ -109,10 +109,21 @@ export interface ZipPositionalSource {
 /** A failure reported rather than thrown. `throw` is never reported — it propagates. */
 export type ZipReadFailure = Exclude<EpubReadErrorLabel, 'throw'>;
 
-/** The outcome of reading one member through the counting transform. */
+/**
+ * The outcome of reading one member through the counting transform.
+ *
+ * The failed arm carries `inflatedBytes` — every byte the counting transform
+ * observed before it aborted, **including the chunk that crossed the cap**
+ * (`counting-stream.ts:57-63`). Nothing else exposes that count, and a caller
+ * sharing one budget across several reads has to charge it: forgiving a failed
+ * read's inflated bytes is a rollback, which would let one call inflate more
+ * than its ceiling by failing repeatedly (#1990 Decision 3). The successful arm
+ * needs no such field — a clean end pushes every counted chunk, so
+ * `bytes.length` *is* the observed count.
+ */
 export type ZipEntryRead =
   | { kind: 'bytes'; bytes: Buffer }
-  | { kind: 'failed'; label: ZipReadFailure };
+  | { kind: 'failed'; label: ZipReadFailure; inflatedBytes: number };
 
 /** One central-directory member, as this module hands it to the rest of `src/core/epub/`. */
 export interface ZipArchiveEntry {
@@ -586,7 +597,11 @@ async function readEntry(file: File, cap: number): Promise<ZipEntryRead> {
     const value = sourceFailure ? sourceFailure.value : caught;
     const label = classifyEpubReadError(value, { archiveRead: true });
     if (label === 'throw') throw value;
-    return { kind: 'failed', label };
+    // `counter.bytesCounted` rather than the bytes that reached us: a `Transform`
+    // aborted through `callback(error)` discards chunks it had already pushed but
+    // we had not yet pulled (#1992), so delivered and inflated diverge here and
+    // only the counter's total is the honest one.
+    return { kind: 'failed', label, inflatedBytes: counter.bytesCounted };
   } finally {
     // A cap breach aborts the counter while the entry stream is still flowing.
     // This releases the stream only — never the shared handle.

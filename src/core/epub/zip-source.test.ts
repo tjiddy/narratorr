@@ -227,7 +227,13 @@ describe('the archive primitive', () => {
       if (result.kind !== 'archive') throw new Error(`unexpected ${result.kind}`);
       // A 1-byte cap aborts the counting transform mid-entry, which destroys the
       // entry stream — the exact `req.destroy()` shape at `Open/unzip.js:100-108`.
-      expect(await result.entries[0]?.read(1)).toEqual({ kind: 'failed', label: 'cap-exceeded' });
+      expect(await result.entries[0]?.read(1)).toEqual({
+        kind: 'failed',
+        label: 'cap-exceeded',
+        // Chunked by the positional source, so the exact crossing chunk is a
+        // stream-plumbing detail; the dedicated row below pins the value.
+        inflatedBytes: expect.any(Number),
+      });
       return result.entries[1]?.read(1024);
     });
 
@@ -1147,7 +1153,30 @@ describe('bounded reads', () => {
       return result.entries[0]!.read(1_000);
     });
 
-    expect(read).toEqual({ kind: 'failed', label: 'cap-exceeded' });
+    expect(read).toEqual({
+      kind: 'failed',
+      label: 'cap-exceeded',
+      inflatedBytes: expect.any(Number),
+    });
+  });
+
+  it('reports the bytes the counting transform observed when a read aborts on its cap', async () => {
+    // STORE, so the whole member arrives in one chunk and the count is exact.
+    const filePath = await place(
+      await F.buildArchive({ store: true, entries: [{ name: 'a.txt', content: 'abcdefghij' }] }),
+    );
+
+    const read = await withZipSource(filePath, async (session) => {
+      const result = await session.preflightAndOpen();
+      if (result.kind !== 'archive') throw new Error(`unexpected ${result.kind}`);
+      return result.entries[0]!.read(4);
+    });
+
+    // The 10-byte chunk crossed the 4-byte cap and every byte of it is reported,
+    // not discarded. 1.1e charges exactly this against its shared inspection
+    // budget and never rolls it back, so a `failed` arm reporting nothing would
+    // silently forgive the inflation that already happened.
+    expect(read).toEqual({ kind: 'failed', label: 'cap-exceeded', inflatedBytes: 10 });
   });
 
   it('reads a member up to and including its cap', async () => {
@@ -1277,7 +1306,12 @@ describe('error classification', () => {
   it.each(REPORTED)('reports %s from File.stream() as a decoder failure', async (_label, value) => {
     const filePath = await archive();
     withErroringEntry(value);
-    expect(await readFirst(filePath)).toEqual({ kind: 'failed', label: 'decoder-failure' });
+    // The stream fails before a byte is inflated, so nothing is charged.
+    expect(await readFirst(filePath)).toEqual({
+      kind: 'failed',
+      label: 'decoder-failure',
+      inflatedBytes: 0,
+    });
   });
 });
 

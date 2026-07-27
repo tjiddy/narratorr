@@ -105,131 +105,27 @@ function fakeStats(options: { isFile: boolean; size: number }): Stats {
 
 // --- EPUB fixture shapes ----------------------------------------------------
 
-const EPUB_MEDIA_TYPE = 'application/epub+zip';
-const DEFAULT_PACKAGE = 'OEBPS/content.opf';
+/**
+ * The EPUB-document builders (`containerXml`, `packageXml`, `padTo`,
+ * `epubEntries`, `buildEpub`, …) live in the shared fixture module — #1990's
+ * `extract.test.ts` needs the same shapes. Only the `encryption.xml` builders
+ * below stay local: this is the only suite that classifies one.
+ */
 
-interface ManifestItem {
-  id: string;
-  href: string;
-  mediaType: string;
-  properties?: string;
-}
-
-interface SpineItemref {
-  idref?: string;
-  linear?: string;
-}
+const {
+  DEFAULT_PACKAGE,
+  EPUB_MEDIA_TYPE,
+  XHTML,
+  buildEpub,
+  containerXml,
+  padTo,
+} = F;
+type EpubOptions = F.EpubOptions;
+type ManifestItem = F.ManifestItem;
 
 const DEFAULT_ITEMS: ManifestItem[] = [
   { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' },
 ];
-const DEFAULT_ITEMREFS: SpineItemref[] = [{ idref: 'ch1' }];
-
-function containerXml(fullPath: string | null): string {
-  const rootfile =
-    fullPath === null
-      ? '<rootfile media-type="application/oebps-package+xml"/>'
-      : `<rootfile full-path="${fullPath}" media-type="application/oebps-package+xml"/>`;
-  return `<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>${rootfile}</rootfiles></container>`;
-}
-
-function itemXml(item: ManifestItem): string {
-  const properties = item.properties === undefined ? '' : ` properties="${item.properties}"`;
-  return `<item id="${item.id}" href="${item.href}" media-type="${item.mediaType}"${properties}/>`;
-}
-
-function itemrefXml(itemref: SpineItemref): string {
-  const idref = itemref.idref === undefined ? '' : ` idref="${itemref.idref}"`;
-  const linear = itemref.linear === undefined ? '' : ` linear="${itemref.linear}"`;
-  return `<itemref${idref}${linear}/>`;
-}
-
-interface PackageOptions {
-  items?: ManifestItem[];
-  itemrefs?: SpineItemref[];
-  /** Raw `<manifest>` override, for the shapes the typed form cannot express. */
-  manifest?: string;
-  /** Raw `<spine>` override. */
-  spine?: string;
-  /** Raw whole-document override. */
-  raw?: string;
-  /** Padding appended after the root element, for the byte-budget fixtures. */
-  padTo?: number;
-}
-
-function packageXml(options: PackageOptions = {}): string {
-  if (options.raw !== undefined) return options.raw;
-  const manifest =
-    options.manifest ?? `<manifest>${(options.items ?? DEFAULT_ITEMS).map(itemXml).join('')}</manifest>`;
-  const spine =
-    options.spine ?? `<spine>${(options.itemrefs ?? DEFAULT_ITEMREFS).map(itemrefXml).join('')}</spine>`;
-  const document =
-    `<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">` +
-    `<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Fixture</dc:title></metadata>` +
-    `${manifest}${spine}</package>`;
-  return options.padTo === undefined ? document : padTo(document, options.padTo);
-}
-
-/** Whitespace-pad an XML document to exactly `bytes`, outside the root element. */
-function padTo(document: string, bytes: number): string {
-  return document + ' '.repeat(bytes - Buffer.byteLength(document));
-}
-
-const XHTML = '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>c</title></head><body><p>c</p></body></html>';
-
-interface EpubOptions {
-  packageName?: string;
-  /** `false` omits the entry entirely. */
-  mimetype?: string | Buffer | false;
-  /** `false` omits `META-INF/container.xml`. */
-  container?: string | false;
-  /** The `full-path` written into a generated container. */
-  containerFullPath?: string | null;
-  /** `false` omits the package document entry. */
-  package?: string | false;
-  packageOptions?: PackageOptions;
-  encryption?: string | Buffer;
-  /** Extra members, appended after the standard ones. */
-  files?: F.ArchiveEntrySpec[];
-  /** Move `mimetype` to the end of the archive. */
-  mimetypeLast?: boolean;
-  store?: boolean;
-}
-
-function epubEntries(options: EpubOptions = {}): F.ArchiveEntrySpec[] {
-  const packageName = options.packageName ?? DEFAULT_PACKAGE;
-  const entries: F.ArchiveEntrySpec[] = [];
-  if (options.mimetype !== false) {
-    entries.push({ name: 'mimetype', content: options.mimetype ?? EPUB_MEDIA_TYPE });
-  }
-  if (options.container !== false) {
-    entries.push({
-      name: 'META-INF/container.xml',
-      content:
-        options.container ??
-        containerXml(
-          options.containerFullPath === undefined ? packageName : options.containerFullPath,
-        ),
-    });
-  }
-  if (options.package !== false) {
-    entries.push({ name: packageName, content: options.package ?? packageXml(options.packageOptions) });
-  }
-  entries.push({ name: path.posix.join(path.posix.dirname(packageName), 'ch1.xhtml'), content: XHTML });
-  if (options.encryption !== undefined) {
-    entries.push({ name: 'META-INF/encryption.xml', content: options.encryption });
-  }
-  entries.push(...(options.files ?? []));
-  if (options.mimetypeLast) {
-    const index = entries.findIndex((entry) => entry.name === 'mimetype');
-    if (index >= 0) entries.push(...entries.splice(index, 1));
-  }
-  return entries;
-}
-
-function buildEpub(options: EpubOptions = {}): Promise<Buffer> {
-  return F.buildArchive({ store: options.store ?? false, entries: epubEntries(options) });
-}
 
 // --- encryption.xml shapes --------------------------------------------------
 
