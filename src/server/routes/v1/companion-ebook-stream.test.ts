@@ -82,20 +82,26 @@ interface RawResponse {
   terminated: boolean;
 }
 
+/** What a caller can vary about one request. Both keys are independent and either may stand alone. */
+interface GetOptions {
+  /** Fires once the first response chunk lands — the disconnect rows use it to abort mid-stream. */
+  onFirstChunk?: (request: http.ClientRequest) => void;
+  /** Merged over the API-key headers. The `Range` row (#2026 row 14) is a request header and nothing else. */
+  headers?: http.OutgoingHttpHeaders;
+}
+
 /**
  * One real HTTP GET, resolved with whatever the client actually received.
  *
- * `extraHeaders` exists for the `Range` row (#2026 row 14): a request header is the whole
- * fixture there, and `app.inject()` cannot be used for it because the rest of this suite's
- * shape — a real bound port — is what the row is asserted against.
+ * An options object rather than positional optionals: the two knobs are used by disjoint
+ * callers — the disconnect rows want only `onFirstChunk`, the `Range` row wants only `headers` —
+ * and a positional list would force one of them to pass a meaningless `undefined` placeholder
+ * and would fix the ordering for anything added later.
  */
-function get(
-  url: string,
-  onFirstChunk?: (request: http.ClientRequest) => void,
-  extraHeaders: http.OutgoingHttpHeaders = {},
-): Promise<RawResponse> {
+function get(url: string, options: GetOptions = {}): Promise<RawResponse> {
   return new Promise<RawResponse>((resolve, reject) => {
     const chunks: Buffer[] = [];
+    const { onFirstChunk, headers: extraHeaders } = options;
     const request = http.get(url, { headers: { ...keyHeaders, ...extraHeaders } }, (response) => {
       const finish = (terminated: boolean) => {
         const body = Buffer.concat(chunks);
@@ -283,7 +289,7 @@ describe('v1 companion ebook stream — real socket', () => {
   it('closes the handle exactly once when the client aborts mid-stream, and returns the slot', async () => {
     spyOnHandle();
 
-    const res = await get(baseUrl, (request) => request.destroy()); // real client disconnect
+    const res = await get(baseUrl, { onFirstChunk: (request) => request.destroy() }); // real client disconnect
 
     expect(res.terminated).toBe(true);
     expect(res.length).toBeLessThan(PAYLOAD.length);
@@ -371,7 +377,7 @@ describe('v1 companion ebook stream — real socket', () => {
    * production change, and this row asserts what ships.
    */
   it('ignores a Range header and returns the complete body under a plain 200', async () => {
-    const res = await get(baseUrl, undefined, { Range: 'bytes=0-99' });
+    const res = await get(baseUrl, { headers: { Range: 'bytes=0-99' } });
 
     expect(res.status).toBe(200);
     expect(res.status).not.toBe(206);
