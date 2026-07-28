@@ -3,6 +3,7 @@ import { MAX_COVER_SIZE } from '@shared/constants.js';
 import {
   MAX_ARCHIVE_BYTES,
   MAX_ARCHIVE_ENTRIES,
+  MAX_CENTRAL_DIRECTORY_BYTES,
   MAX_INSPECTION_BYTES,
   MAX_XML_BYTES,
   MAX_EPUB_COVER_BYTES,
@@ -16,9 +17,10 @@ import {
  * than a behaviour change.
  */
 describe('core/epub limits', () => {
-  it('pins the exact value of each of the six constants', () => {
+  it('pins the exact value of each of the seven constants', () => {
     expect(MAX_ARCHIVE_BYTES).toBe(256 * 1024 * 1024);
     expect(MAX_ARCHIVE_ENTRIES).toBe(10000);
+    expect(MAX_CENTRAL_DIRECTORY_BYTES).toBe(8 * 1024 * 1024);
     expect(MAX_INSPECTION_BYTES).toBe(16 * 1024 * 1024);
     expect(MAX_XML_BYTES).toBe(4 * 1024 * 1024);
     expect(MAX_EPUB_COVER_BYTES).toBe(8 * 1024 * 1024);
