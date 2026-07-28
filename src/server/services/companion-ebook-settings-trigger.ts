@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { AppSettings, UpdateSettingsInput } from '../../shared/schemas.js';
+import type { AppSettings, UpdateSettingsInput } from '@shared/schemas.js';
 import type { SettingsService } from './settings.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, type vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
-import { scanDebugTraceSchema } from '../../shared/schemas.js';
+import { scanDebugTraceSchema } from '@shared/schemas.js';
 
 describe('POST /api/library/scan-debug', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;

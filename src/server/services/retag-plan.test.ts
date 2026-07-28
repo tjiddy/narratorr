@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SIMPLE_EXCLUDABLE_FIELDS } from './retag-plan.js';
-import { RETAG_EXCLUDABLE_FIELDS } from '../../shared/schemas.js';
+import { RETAG_EXCLUDABLE_FIELDS } from '@shared/schemas.js';
 
 describe('retag-plan SIMPLE_EXCLUDABLE_FIELDS', () => {
   // Guard A — binds the server-side string-field diff list to the canonical shared set.

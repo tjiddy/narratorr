@@ -4,10 +4,10 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { eq } from 'drizzle-orm';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
-import { books, bookAuthors, bookNarrators, authors, narrators } from '../../db/schema.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
+import { books, bookAuthors, bookNarrators, authors, narrators } from '@db/schema.js';
 import { BookListService } from './book-list.service.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 
 // #1143 follow-up — behavior-level coverage for server-side author/series/narrator filters.
 // Asserts returned IDs/totals (not just SQL fragments) against a real libsql DB.

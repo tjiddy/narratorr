@@ -1,13 +1,13 @@
 import { eq } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { indexers } from '../../db/schema.js';
+import { indexers } from '@db/schema.js';
 import {
   parseAudiobookTitle,
   scoreResult,
   type SearchResult,
   type SearchOptions,
-} from '../../core/index.js';
+} from '@core/index.js';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';

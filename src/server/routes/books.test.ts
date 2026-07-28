@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import { booksRoutes, type BookRouteDeps } from './books.js';
-import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
-import { DEFAULT_LIMITS } from '../../shared/schemas.js';
+import { DEFAULT_SETTINGS } from '@shared/schemas/settings/registry.js';
+import { DEFAULT_LIMITS } from '@shared/schemas.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { Services } from './index.js';
 import { RenameError } from '../services/rename.service.js';
@@ -3106,7 +3106,7 @@ import {
 } from 'fastify-type-provider-zod';
 import multipart from '@fastify/multipart';
 import { registerRoutes } from './index.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { inject } from '../__tests__/helpers.js';
 import { CoverUploadError } from '../services/book.service.js';
 

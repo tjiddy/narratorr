@@ -3,7 +3,7 @@ import { recordingVerdictSchema, type RecordingVerdict } from './recording-verdi
 // Test files are exempt from the `src/shared` → `src/core` import boundary
 // (eslint.config.js ignores `**/*.test.ts`), so this drift guard can reach into
 // core to pin the core ↔ shared relationship at the type level.
-import type { RecordingVerdict as CoreRecordingVerdict } from '../../core/utils/recording-identity.js';
+import type { RecordingVerdict as CoreRecordingVerdict } from '@core/utils/recording-identity.js';
 
 /** Compile-time mutual-assignability check — true only when A and B are the same union. */
 type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;

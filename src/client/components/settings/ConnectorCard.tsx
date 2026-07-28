@@ -5,11 +5,11 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import type { Connector, TestResult } from '@/lib/api';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
 import { ConnectorCardForm } from './ConnectorCardForm';
-import { CONNECTOR_REGISTRY, CONNECTOR_TYPES } from '../../../shared/connector-registry.js';
+import { CONNECTOR_REGISTRY, CONNECTOR_TYPES } from '@shared/connector-registry.js';
 import {
   createConnectorFormSchema,
   type CreateConnectorFormData,
-} from '../../../shared/schemas.js';
+} from '@shared/schemas.js';
 
 interface ConnectorCardProps {
   connector?: Connector;

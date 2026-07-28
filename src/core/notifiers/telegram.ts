@@ -1,9 +1,9 @@
 import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
 import { formatEventMessage } from './types.js';
-import { EVENT_TITLES } from '../../shared/notification-events.js';
+import { EVENT_TITLES } from '@shared/notification-events.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { NOTIFIER_TIMEOUT_MS } from '../utils/constants.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 
 export interface TelegramConfig {
   botToken: string;

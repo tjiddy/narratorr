@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 import { eq, and, asc, lt, inArray, sql } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { importSubmissions, importSubmissionItems } from '../../db/schema.js';
+import { importSubmissions, importSubmissionItems } from '@db/schema.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { serializeDbWrite } from '../utils/db-write-lane.js';
-import { isUniqueViolation } from '../../shared/error-message.js';
+import { isUniqueViolation } from '@shared/error-message.js';
 import { buildHeaderFields, drizzleHeaderInput, reportRowToDto, completeProgress, liveProgress } from './import-submission-dto.js';
 import {
   serializeSubmissionForDigest,
@@ -21,7 +21,7 @@ import {
   type SubmissionAggregates,
   type ItemDisposition,
   type FinalizeGaps,
-} from '../../core/import-staging/schemas.js';
+} from '@core/import-staging/schemas.js';
 
 type SubmissionRow = typeof importSubmissions.$inferSelect;
 type ItemRow = typeof importSubmissionItems.$inferSelect;

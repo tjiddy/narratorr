@@ -5,7 +5,7 @@ import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettings
 import { createMockDbIndexer } from '../__tests__/factories.js';
 import { IndexerService } from './indexer.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { SettingsService } from './settings.service.js';
 import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
 
@@ -603,7 +603,7 @@ describe('IndexerService', () => {
       expect(createSpy).toHaveBeenCalledWith(noProxyIndexer, 'socks5://proxy:1080');
       // Verify the adapter was created without proxy by checking the factory wasn't given proxyUrl
       // We need to check the actual adapter creation — spy on INDEXER_ADAPTER_FACTORIES
-      const { INDEXER_ADAPTER_FACTORIES } = await import('../../core/index.js');
+      const { INDEXER_ADAPTER_FACTORIES } = await import('@core/index.js');
       const factorySpy = vi.spyOn(INDEXER_ADAPTER_FACTORIES, 'abb');
 
       // Clear cache and create again
@@ -625,7 +625,7 @@ describe('IndexerService', () => {
         inject<FastifyBaseLogger>(createMockLogger()),
         inject<SettingsService>(mockSettingsService),
       );
-      const { INDEXER_ADAPTER_FACTORIES } = await import('../../core/index.js');
+      const { INDEXER_ADAPTER_FACTORIES } = await import('@core/index.js');
       const factorySpy = vi.spyOn(INDEXER_ADAPTER_FACTORIES, 'abb');
       const proxyIndexer = createMockDbIndexer({
         settings: { hostname: 'audiobookbay.lu', pageLimit: 2, useProxy: true },
@@ -792,7 +792,7 @@ describe('IndexerService', () => {
       });
 
       it('getAllProwlarrManaged excludes a persisted manual (source: null) row', async () => {
-        const { indexers } = await import('../../db/schema.js');
+        const { indexers } = await import('@db/schema.js');
         await realDb.insert(indexers).values([
           {
             name: 'Prowlarr Tracker',
@@ -825,7 +825,7 @@ describe('IndexerService', () => {
       });
 
       it('getAllProwlarrManaged excludes rows with non-prowlarr source values', async () => {
-        const { indexers } = await import('../../db/schema.js');
+        const { indexers } = await import('@db/schema.js');
         await realDb.insert(indexers).values([
           {
             name: 'Prowlarr', type: 'torznab', enabled: true, priority: 50,
@@ -848,7 +848,7 @@ describe('IndexerService', () => {
       });
 
       it('getByIdProwlarrManaged returns null for a persisted manual row at the requested id', async () => {
-        const { indexers } = await import('../../db/schema.js');
+        const { indexers } = await import('@db/schema.js');
         const inserted = await realDb
           .insert(indexers)
           .values({
@@ -872,7 +872,7 @@ describe('IndexerService', () => {
       });
 
       it('getByIdProwlarrManaged returns the row when id matches AND source = prowlarr', async () => {
-        const { indexers } = await import('../../db/schema.js');
+        const { indexers } = await import('@db/schema.js');
         const inserted = await realDb
           .insert(indexers)
           .values({
@@ -1155,7 +1155,7 @@ describe('IndexerService', () => {
     });
 
     it('returns matching host:port and hostname sets for two configured indexers', async () => {
-      const { indexers } = await import('../../db/schema.js');
+      const { indexers } = await import('@db/schema.js');
       await realDb.insert(indexers).values([
         {
           name: 'Prowlarr', type: 'torznab', enabled: true, priority: 50,
@@ -1177,7 +1177,7 @@ describe('IndexerService', () => {
     });
 
     it('produces no entries for empty/null/un-parseable apiUrl (no empty-string keys, no crash)', async () => {
-      const { indexers } = await import('../../db/schema.js');
+      const { indexers } = await import('@db/schema.js');
       await realDb.insert(indexers).values([
         {
           name: 'NoApiUrl', type: 'abb', enabled: true, priority: 50,
@@ -1203,7 +1203,7 @@ describe('IndexerService', () => {
     });
 
     it('IPv6 apiUrl emits unbracketed host:port and hostname keys', async () => {
-      const { indexers } = await import('../../db/schema.js');
+      const { indexers } = await import('@db/schema.js');
       await realDb.insert(indexers).values({
         name: 'IPv6 Indexer', type: 'torznab', enabled: true, priority: 50,
         settings: { apiUrl: 'http://[fe80::1]:8080/', apiKey: 'k' },

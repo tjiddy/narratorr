@@ -1,7 +1,7 @@
 import { type FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { type RemotePathMappingService } from '../services/remote-path-mapping.service.js';
-import { createRemotePathMappingSchema, updateRemotePathMappingSchema, idParamSchema, type CreateRemotePathMappingInput, type UpdateRemotePathMappingInput } from '../../shared/schemas.js';
+import { createRemotePathMappingSchema, updateRemotePathMappingSchema, idParamSchema, type CreateRemotePathMappingInput, type UpdateRemotePathMappingInput } from '@shared/schemas.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 

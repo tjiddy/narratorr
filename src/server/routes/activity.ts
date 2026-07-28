@@ -4,7 +4,7 @@ import type { DownloadOrchestrator } from '../services/download-orchestrator.js'
 import type { QualityGateService } from '../services/quality-gate.service.js';
 import type { QualityGateOrchestrator } from '../services/quality-gate-orchestrator.js';
 import type { BookImportService } from '../services/book-import.service.js';
-import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
+import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from '@shared/schemas.js';
 import { z } from 'zod';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 

@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import { importJobs, books } from '../../db/schema.js';
-import type { Db } from '../../db/index.js';
-import type { PhaseHistoryEntry } from '../../shared/schemas/import-job.js';
+import { importJobs, books } from '@db/schema.js';
+import type { Db } from '@db/index.js';
+import type { PhaseHistoryEntry } from '@shared/schemas/import-job.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { safeEmit } from '../utils/safe-emit.js';
 

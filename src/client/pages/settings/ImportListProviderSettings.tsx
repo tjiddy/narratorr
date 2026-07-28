@@ -1,6 +1,6 @@
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { compactInputClass as inputClass } from '@/components/settings/formStyles';
-import { parseHardcoverListUrl } from '../../../shared/hardcover-list-url.js';
+import { parseHardcoverListUrl } from '@shared/hardcover-list-url.js';
 
 interface SettingsProps {
   settings: Record<string, unknown>;

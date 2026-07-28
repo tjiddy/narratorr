@@ -10,7 +10,7 @@ import { findCommitPendingMarkers } from '../utils/import-marker-sweep.js';
 import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 /**

@@ -1,26 +1,26 @@
 import { eq, and } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { indexers } from '../../db/schema.js';
+import { indexers } from '@db/schema.js';
 import {
   INDEXER_ADAPTER_FACTORIES,
   type IndexerAdapter,
   type IndexerTestResult,
-} from '../../core/index.js';
+} from '@core/index.js';
 import type { SettingsService } from './settings.service.js';
 import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
-import { indexerSettingsSchemas, type IndexerSettings } from '../../shared/schemas/indexer.js';
+import { indexerSettingsSchemas, type IndexerSettings } from '@shared/schemas/indexer.js';
 import { parseEntitySettings } from '../utils/parse-entity-settings.js';
 import { stripReadarrEchoOnlyFields } from '../utils/readarr-echo-fields.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { IndexerRow } from './types.js';
-import { type LanAllowlist } from '../../core/utils/download-url.js';
-import { normalizedHostPortFromUrl, normalizedHostnameFromUrl } from '../../core/utils/network-service.js';
+import { type LanAllowlist } from '@core/utils/download-url.js';
+import { normalizedHostPortFromUrl, normalizedHostnameFromUrl } from '@core/utils/network-service.js';
 
-export type { LanAllowlist } from '../../core/utils/download-url.js';
+export type { LanAllowlist } from '@core/utils/download-url.js';
 
 
 type NewIndexer = typeof indexers.$inferInsert;

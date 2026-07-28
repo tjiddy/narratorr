@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import type { FastifyBaseLogger } from 'fastify';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import { assertPathInsideLibrary, PathOutsideLibraryError } from '../utils/paths.js';
 import { serializeError } from '../utils/serialize-error.js';
 

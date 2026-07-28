@@ -1,4 +1,4 @@
-import { resolveVersionTag } from '../../shared/user-agent.js';
+import { resolveVersionTag } from '@shared/user-agent.js';
 
 let packageVersion: string | undefined;
 let packageCommit: string | undefined;

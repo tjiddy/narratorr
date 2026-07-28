@@ -1,5 +1,5 @@
 import { basename, extname } from 'node:path';
-import { BYTES_PER_MB } from '../../shared/constants.js';
+import { BYTES_PER_MB } from '@shared/constants.js';
 
 /**
  * Merge-biased classifier for leaf folders containing 2+ loose audio files.

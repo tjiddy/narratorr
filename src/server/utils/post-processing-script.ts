@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import type { FastifyBaseLogger } from 'fastify';
-import { sanitizedEnv } from '../../core/utils/sanitized-env.js';
+import { sanitizedEnv } from '@core/utils/sanitized-env.js';
 import { getErrorMessage } from './error-message.js';
 import { serializeError } from './serialize-error.js';
 

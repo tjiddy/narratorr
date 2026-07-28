@@ -5,7 +5,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockLibraryBook, createMockAuthor } from '@/__tests__/factories';
 import { LibraryPage } from './LibraryPage';
-import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
+import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 
 // Mock api
 vi.mock('@/lib/api', async () => {

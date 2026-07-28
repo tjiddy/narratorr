@@ -8,7 +8,7 @@ import { statusConfig } from './helpers.js';
 import { DownloadProgress } from './DownloadProgress.js';
 import { DownloadActions } from './DownloadActions.js';
 import { QualityComparisonPanel } from './QualityComparisonPanel.js';
-import { requireDefined } from '../../../shared/utils/assert.js';
+import { requireDefined } from '@shared/utils/assert.js';
 
 function PendingReviewActions({
   onApprove,

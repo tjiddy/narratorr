@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import type { DownloadClientAdapter, DownloadItemInfo, DownloadArtifact, DownloadProtocol } from './types.js';
 import { createSsrfSafeDispatcher, fetchWithSsrfRedirect, mapNetworkError, redactUrlsFromMessage } from '../utils/network-service.js';
 import { DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
-import { getErrorMessage } from '../../shared/error-message.js';
-import { getUserAgent } from '../../shared/user-agent.js';
+import { getErrorMessage } from '@shared/error-message.js';
+import { getUserAgent } from '@shared/user-agent.js';
 
 export interface BlackholeConfig {
   watchDir: string;

@@ -1,16 +1,16 @@
 import { eq, and, inArray, desc, type SQL } from 'drizzle-orm';
-import type { Db, DbOrTx } from '../../db/index.js';
+import type { Db, DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, importJobs, bookAuthors, authors } from '../../db/schema.js';
+import { books, importJobs, bookAuthors, authors } from '@db/schema.js';
 import type {
   ImportJobStatus,
   ImportJobType,
   ImportJobPhase,
   PhaseHistoryEntry,
-} from '../../shared/schemas/import-job.js';
+} from '@shared/schemas/import-job.js';
 import { parsePhaseHistory } from '../utils/parse-phase-history.js';
 import { transitionBookStatus } from '../utils/book-status.js';
-import { isUniqueViolation } from '../../shared/error-message.js';
+import { isUniqueViolation } from '@shared/error-message.js';
 
 export interface ImportJobListing {
   id: number;

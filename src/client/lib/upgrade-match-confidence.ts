@@ -1,7 +1,7 @@
 import type { MatchResult } from './api/library-scan.js';
 import type { BookMetadata } from './api/books.js';
-import { withinDurationTolerance } from '../../shared/duration-tolerance.js';
-import { formatDurationSeconds } from '../../shared/format-duration.js';
+import { withinDurationTolerance } from '@shared/duration-tolerance.js';
+import { formatDurationSeconds } from '@shared/format-duration.js';
 
 /**
  * Upgrade a row's match confidence when the user selects provider metadata in the import editor.

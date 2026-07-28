@@ -1,6 +1,6 @@
-import type { BookStatus, EnrichmentStatus, LibraryFilterBucket, RetagExcludableField } from '../../../shared/schemas.js';
-import type { LibraryBookListItem, LibraryBookListResponse } from '../../../shared/schemas/library-book.js';
-import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '../../../core/metadata/types.js';
+import type { BookStatus, EnrichmentStatus, LibraryFilterBucket, RetagExcludableField } from '@shared/schemas.js';
+import type { LibraryBookListItem, LibraryBookListResponse } from '@shared/schemas/library-book.js';
+import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '@core/metadata/types.js';
 import { ApiError, fetchApi, fetchMultipart } from './client.js';
 import type { BookSeriesCardData, RefreshBookSeriesResponse, HardcoverSeriesCandidate } from './book-series.js';
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -9,19 +9,19 @@ vi.mock('./enrichment-utils.js', () => ({
   enrichBookFromAudio: vi.fn(),
 }));
 
-vi.mock('../../core/utils/ffprobe-path.js', () => ({
+vi.mock('@core/utils/ffprobe-path.js', () => ({
   resolveFfprobePathFromSettings: vi.fn(),
 }));
-vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../core/utils/audio-processor.js')>();
+vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') };
 });
 
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
+import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { orchestrateBookEnrichment, applyAudnexusEnrichment } from './enrichment-orchestration.helpers.js';
 import { mockDbChain } from '../__tests__/helpers.js';
-import { RateLimitError, TransientError } from '../../core/index.js';
+import { RateLimitError, TransientError } from '@core/index.js';
 
 /** A db whose `update().set().where()` chain resolves; returns the captured chain for assertions. */
 function dbWithUpdateChain() {

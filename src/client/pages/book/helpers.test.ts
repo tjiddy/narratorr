@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mergeBookData } from './helpers.js';
 import { bookStatusConfig } from '@/lib/status';
 import { createMockBook } from '@/__tests__/factories';
-import type { BookStatus } from '../../../shared/schemas.js';
+import type { BookStatus } from '@shared/schemas.js';
 
 describe('mergeBookData', () => {
   describe('status palette flow-through', () => {

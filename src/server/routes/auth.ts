@@ -1,7 +1,7 @@
 import { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import type { AuthService } from '../services/auth.service.js';
 import { UserExistsError, AuthConfigError, IncorrectPasswordError, NoCredentialsError, STREAM_TOKEN_TTL_MS } from '../services/auth.service.js';
-import { loginSchema, setupCredentialsSchema, changePasswordSchema, updateAuthConfigSchema, type LoginInput, type SetupCredentialsInput, type ChangePasswordInput, type UpdateAuthConfigInput } from '../../shared/schemas.js';
+import { loginSchema, setupCredentialsSchema, changePasswordSchema, updateAuthConfigSchema, type LoginInput, type SetupCredentialsInput, type ChangePasswordInput, type UpdateAuthConfigInput } from '@shared/schemas.js';
 import { config } from '../config.js';
 import { isPrivateIp } from '../plugins/auth.js';
 import { serializeError } from '../utils/serialize-error.js';

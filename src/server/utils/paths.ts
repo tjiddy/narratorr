@@ -1,9 +1,9 @@
 import { readdir, rename, rmdir, realpath } from 'node:fs/promises';
 import { join, extname, basename, dirname, normalize, resolve, relative, isAbsolute } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/index.js';
-import { compareAudioNames, disambiguateStems } from '../../core/utils/collect-audio-files.js';
-import type { NamingOptions } from '../../core/utils/naming.js';
+import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/index.js';
+import { compareAudioNames, disambiguateStems } from '@core/utils/collect-audio-files.js';
+import type { NamingOptions } from '@core/utils/naming.js';
 import { extractYear } from './import-helpers.js';
 import { serializeError } from './serialize-error.js';
 

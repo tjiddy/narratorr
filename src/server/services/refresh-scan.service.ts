@@ -1,10 +1,10 @@
 import { stat, readdir } from 'node:fs/promises';
 import { extname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
-import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
-import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
-import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
+import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
+import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
+import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import { getVisiblePathSize } from '../utils/import-helpers.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';

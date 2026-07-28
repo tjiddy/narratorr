@@ -3,8 +3,14 @@ import path from 'path';
 
 const sharedConfig = {
   resolve: {
+    // Order matters: Vite matches alias prefixes in order, so '@' must stay LAST or it
+    // would swallow '@core'/'@shared'/'@db'. There is deliberately no '@server' — server
+    // is not a lower layer, and an alias for it would add a second way for src/core to
+    // reach src/server past the `no-restricted-imports` boundary in eslint.config.js.
     alias: {
       '@core': path.resolve(__dirname, 'src/core'),
+      '@shared': path.resolve(__dirname, 'src/shared'),
+      '@db': path.resolve(__dirname, 'src/db'),
       '@': path.resolve(__dirname, 'src/client'),
     },
   },

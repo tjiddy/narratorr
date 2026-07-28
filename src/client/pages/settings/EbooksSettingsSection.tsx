@@ -5,7 +5,7 @@ import { InfoTip } from '@/components/settings/InfoTip';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { DEFAULT_SETTINGS, companionEpubFormSchema, type AppSettings } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, companionEpubFormSchema, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 type EbooksFormData = z.infer<typeof companionEpubFormSchema>;

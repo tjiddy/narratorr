@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
-import { downloads } from '../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { downloads } from '@db/schema.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -8,11 +8,11 @@ import type { NotifierService } from './notifier.service.js';
 import { inProgressDownloadCondition } from '../utils/download-state.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { mapHardcoverError } from '../utils/hardcover-error.js';
-import { HardcoverClient } from '../../core/metadata/hardcover.js';
+import { HardcoverClient } from '@core/metadata/hardcover.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { getUpdateStatus, checkForUpdate } from '../jobs/version-check.js';
-import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
+import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 
 
 export type HealthState = 'healthy' | 'warning' | 'error';

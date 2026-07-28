@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { EXPECTED_COUNT_MAX, MAX_SUBMISSION_BYTES, type StagedImportItem } from '../../../core/import-staging/schemas.js';
+import { EXPECTED_COUNT_MAX, MAX_SUBMISSION_BYTES, type StagedImportItem } from '@core/import-staging/schemas.js';
 import { preflightSubmission, cumulativeStagedBytes, stagedItemBytes, PREFLIGHT_COPY } from './preflight.js';
 
 const item = (path: string): StagedImportItem => ({ path, title: 'T' });

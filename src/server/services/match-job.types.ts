@@ -1,6 +1,6 @@
-import type { BookMetadata } from '../../core/metadata/index.js';
-import type { DuplicateReason, RecordingVerdict } from '../../shared/schemas.js';
-import type { MatchReasonKind } from '../../shared/match-reason-kind.js';
+import type { BookMetadata } from '@core/metadata/index.js';
+import type { DuplicateReason, RecordingVerdict } from '@shared/schemas.js';
+import type { MatchReasonKind } from '@shared/match-reason-kind.js';
 
 /**
  * Match-job data contracts. Extracted from `match-job.service.ts` (#1864 file-size

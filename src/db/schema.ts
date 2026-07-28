@@ -1,20 +1,20 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey, check } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
-import { CLIENT_STATUSES, PIPELINE_STAGES } from '../shared/schemas/activity';
-import { SUGGESTION_REASONS } from '../shared/schemas/discovery';
-import { BOOK_STATUSES, ENRICHMENT_STATUSES, PRODUCTION_TYPES } from '../shared/schemas/book';
-import { BLACKLIST_REASONS } from '../shared/schemas/blacklist';
-import { COMPANION_EBOOK_STATUSES } from '../shared/schemas/companion-ebook';
-import { INDEXER_TYPES } from '../shared/indexer-registry';
-import { DOWNLOAD_CLIENT_TYPES } from '../shared/download-client-registry';
-import { NOTIFIER_TYPES } from '../shared/notifier-registry';
-import { IMPORT_LIST_TYPES } from '../shared/import-list-registry';
-import { CONNECTOR_TYPES } from '../shared/connector-registry';
-import { IMPORT_JOB_TYPES, IMPORT_JOB_STATUSES, IMPORT_JOB_PHASES } from '../shared/schemas/import-job';
-import { PROTOCOLS } from '../shared/schemas/download-protocol';
-import { SUBMISSION_STATUSES, SUBMISSION_SOURCES, ITEM_DISPOSITIONS } from '../core/import-staging/schemas';
-import type { StagedImportItem } from '../core/import-staging/schemas';
-import type { NotificationEvent } from '../shared/notification-events';
+import { CLIENT_STATUSES, PIPELINE_STAGES } from '@shared/schemas/activity';
+import { SUGGESTION_REASONS } from '@shared/schemas/discovery';
+import { BOOK_STATUSES, ENRICHMENT_STATUSES, PRODUCTION_TYPES } from '@shared/schemas/book';
+import { BLACKLIST_REASONS } from '@shared/schemas/blacklist';
+import { COMPANION_EBOOK_STATUSES } from '@shared/schemas/companion-ebook';
+import { INDEXER_TYPES } from '@shared/indexer-registry';
+import { DOWNLOAD_CLIENT_TYPES } from '@shared/download-client-registry';
+import { NOTIFIER_TYPES } from '@shared/notifier-registry';
+import { IMPORT_LIST_TYPES } from '@shared/import-list-registry';
+import { CONNECTOR_TYPES } from '@shared/connector-registry';
+import { IMPORT_JOB_TYPES, IMPORT_JOB_STATUSES, IMPORT_JOB_PHASES } from '@shared/schemas/import-job';
+import { PROTOCOLS } from '@shared/schemas/download-protocol';
+import { SUBMISSION_STATUSES, SUBMISSION_SOURCES, ITEM_DISPOSITIONS } from '@core/import-staging/schemas';
+import type { StagedImportItem } from '@core/import-staging/schemas';
+import type { NotificationEvent } from '@shared/notification-events';
 
 // ============ LIBRARY ============
 

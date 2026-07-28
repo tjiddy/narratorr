@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { mapNetworkError } from '../utils/map-network-error.js';
 
 import { INDEXER_TIMEOUT_MS, PROXY_TIMEOUT_MS } from '../utils/constants.js';
-import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
+import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
 
 const flareSolverrResponseSchema = z.object({
   status: z.string(),

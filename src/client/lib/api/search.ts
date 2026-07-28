@@ -1,9 +1,9 @@
 import { fetchApi } from './client.js';
 import { type Download } from './activity.js';
-import type { SearchResult } from '../../../core/indexers/types.js';
-import { type GrabPayload } from '../../../shared/schemas/search.js';
+import type { SearchResult } from '@core/indexers/types.js';
+import { type GrabPayload } from '@shared/schemas/search.js';
 
-export type { SearchResult, DownloadProtocol } from '../../../core/indexers/types.js';
+export type { SearchResult, DownloadProtocol } from '@core/indexers/types.js';
 
 export interface SearchContext {
   author?: string | undefined;

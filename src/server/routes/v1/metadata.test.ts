@@ -12,8 +12,8 @@ import type { MetadataService } from '../../services/metadata.service.js';
 import type { BookService } from '../../services/book.service.js';
 import type { SettingsService } from '../../services/settings.service.js';
 import { v1MetadataRoutes } from './metadata.js';
-import { metadataSearchResultV1Schema } from '../../../shared/schemas/v1/metadata.js';
-import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { metadataSearchResultV1Schema } from '@shared/schemas/v1/metadata.js';
+import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors books.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));

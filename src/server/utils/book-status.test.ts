@@ -3,8 +3,8 @@ import type { Mock } from 'vitest';
 import { eq, and } from 'drizzle-orm';
 import { revertBookStatus, guardedRevertBookStatus, transitionBookStatus, REVERT_FALLBACK_STATUS } from './book-status.js';
 import { createMockDb, mockDbChain } from '../__tests__/helpers.js';
-import type { Db } from '../../db/index.js';
-import { books } from '../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { books } from '@db/schema.js';
 
 describe('transitionBookStatus', () => {
   it('sets only the provided fields (plus updatedAt) and targets the correct row', async () => {

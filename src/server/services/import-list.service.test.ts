@@ -1,18 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { ImportListService } from './import-list.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import { OwnedRecordingError } from './book-dedup.js';
 import type { MetadataService } from './metadata.service.js';
-import { RateLimitError, TransientError } from '../../core/index.js';
+import { RateLimitError, TransientError } from '@core/index.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
 import { randomBytes } from 'node:crypto';
 import { mockDbChain, createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
 import type { ImmediateSearchDeps } from './trigger-immediate-search.js';
 
 // Mock the adapter factories
-vi.mock('../../core/import-lists/index.js', () => ({
+vi.mock('@core/import-lists/index.js', () => ({
   IMPORT_LIST_ADAPTER_FACTORIES: {
     nyt: vi.fn(),
     hardcover: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock('./trigger-immediate-search.js', () => ({
   triggerImmediateSearch: vi.fn(),
 }));
 
-const { IMPORT_LIST_ADAPTER_FACTORIES } = await import('../../core/import-lists/index.js');
+const { IMPORT_LIST_ADAPTER_FACTORIES } = await import('@core/import-lists/index.js');
 const mockFactories = IMPORT_LIST_ADAPTER_FACTORIES as Record<string, ReturnType<typeof vi.fn>>;
 const { triggerImmediateSearch } = await import('./trigger-immediate-search.js');
 const mockTriggerImmediateSearch = triggerImmediateSearch as unknown as ReturnType<typeof vi.fn>;

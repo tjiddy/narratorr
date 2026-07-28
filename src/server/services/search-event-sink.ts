@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { SearchResult } from '../../core/index.js';
+import type { SearchResult } from '@core/index.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { safeEmit } from '../utils/safe-emit.js';
 

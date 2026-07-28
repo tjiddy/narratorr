@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { mockDbChain } from '../__tests__/helpers.js';
 import { OwnedRecordingError, buildForcedImportRefusedReason, toLibraryRecording, toRecordingCandidate, resolveDuplicate } from './book-dedup.js';
 import type { BookWithAuthor } from './book.service.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 
 // Build a minimal `BookWithAuthor` row exercising only the fields `toLibraryRecording` reads.
 function makeRow(overrides: {

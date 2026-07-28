@@ -1,13 +1,13 @@
 import { EventEmitter } from 'node:events';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
-import { importJobs, books } from '../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { importJobs, books } from '@db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { getImportAdapter } from './import-adapters/registry.js';
 import type { ImportAdapterContext } from './import-adapters/types.js';
 import { manualImportJobPayloadSchema } from './import-adapters/types.js';
 import type { ImportJobRow } from './types.js';
-import type { ImportJobPhase, ImportJobType, PhaseHistoryEntry } from '../../shared/schemas/import-job.js';
+import type { ImportJobPhase, ImportJobType, PhaseHistoryEntry } from '@shared/schemas/import-job.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { parsePhaseHistory } from '../utils/parse-phase-history.js';

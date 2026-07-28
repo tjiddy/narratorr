@@ -8,7 +8,7 @@ import {
 import cookie from '@fastify/cookie';
 import authPlugin from '../../plugins/auth.js';
 import type { AuthService } from '../../services/auth.service.js';
-import type { Db } from '../../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { BookService } from '../../services/book.service.js';
 import type { IndexerSearchService } from '../../services/indexer-search.service.js';
 import type { DownloadOrchestrator } from '../../services/download-orchestrator.js';
@@ -18,15 +18,15 @@ import type { SettingsService } from '../../services/settings.service.js';
 import type { IndexerService } from '../../services/indexer.service.js';
 import * as searchPipeline from '../../services/search-pipeline.js';
 import { DuplicateDownloadError } from '../../services/download.service.js';
-import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../../core/download-clients/errors.js';
+import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import { createMockDb, mockDbChain, inject } from '../../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../../__tests__/factories.js';
 import { v1ActionsRoutes } from './actions.js';
-import { releaseV1Schema, encodeReleaseId } from '../../../shared/schemas/v1/actions.js';
+import { releaseV1Schema, encodeReleaseId } from '@shared/schemas/v1/actions.js';
 import { signReleaseId } from '../../services/grab-token.js';
 import { initializeKey, _resetKey } from '../../utils/secret-codec.js';
-import { downloadV1Schema } from '../../../shared/schemas/v1/downloads.js';
-import { v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { downloadV1Schema } from '@shared/schemas/v1/downloads.js';
+import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors books.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));

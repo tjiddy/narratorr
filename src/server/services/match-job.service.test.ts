@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
-vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
 });
@@ -12,11 +12,11 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
-import type { BookMetadata } from '../../core/metadata/index.js';
-import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
+import type { BookMetadata } from '@core/metadata/index.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 // Mock audio scanner
-vi.mock('../../core/utils/audio-scanner.js', () => ({
+vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
@@ -28,7 +28,7 @@ vi.mock('node:crypto', async (importOriginal) => {
   return { ...actual, randomUUID: vi.fn().mockReturnValue('test-job-id') };
 });
 
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { randomUUID } from 'node:crypto';
 
 // -------- Helpers --------

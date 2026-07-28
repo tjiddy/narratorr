@@ -1,6 +1,6 @@
 import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
-import type { DbOrTx } from '../../../db/index.js';
-import type { authors, books, downloads, narrators, series } from '../../../db/schema.js';
+import type { DbOrTx } from '@db/index.js';
+import type { authors, books, downloads, narrators, series } from '@db/schema.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
 import { serializeError } from '../../utils/serialize-error.js';
 

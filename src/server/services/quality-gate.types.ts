@@ -1,4 +1,4 @@
-import type { QualityGateReason } from '../../shared/schemas.js';
+import type { QualityGateReason } from '@shared/schemas.js';
 
 export class QualityGateServiceError extends Error {
   constructor(

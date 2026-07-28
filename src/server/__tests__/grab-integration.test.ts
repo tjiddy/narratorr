@@ -5,7 +5,7 @@ import { createMockDb, createMockLogger, inject, mockDbChain } from './helpers.j
 import { DownloadService } from '../services/download.service.js';
 import { DownloadClientService } from '../services/download-client.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { initializeKey } from '../utils/secret-codec.js';
 
 const QB_BASE = 'http://localhost:8080';

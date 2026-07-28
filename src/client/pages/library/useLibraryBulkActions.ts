@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type LibraryBookListItem, type SingleBookSearchResult } from '@/lib/api';
-import type { BookStatus } from '../../../shared/schemas.js';
+import type { BookStatus } from '@shared/schemas.js';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { Db } from '../db/index.js';
+import type { Db } from '@db/index.js';
 import type { Services } from './services/di.js';
 import { startJobs, type JobScheduler } from './jobs/index.js';
 

@@ -8,7 +8,7 @@ import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
 import { buildSearchQuery, buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from './search-pipeline.js';
-import { resolveBookQualityInputs } from '../../core/utils/index.js';
+import { resolveBookQualityInputs } from '@core/utils/index.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import { getErrorMessage } from '../utils/error-message.js';

@@ -8,8 +8,8 @@ import {
   metadataSearchV1QuerySchema,
   toMetadataSearchResultV1,
   type MetadataSearchResultV1,
-} from '../../../shared/schemas/v1/metadata.js';
-import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+} from '@shared/schemas/v1/metadata.js';
+import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 import { v1ErrorHandler } from './_helpers.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import type { FastifyBaseLogger } from 'fastify';

@@ -22,7 +22,7 @@ import {
   searchIndexerErrorPayload,
   searchGrabbedPayload,
   searchCompletePayload,
-} from '../../../shared/schemas.js';
+} from '@shared/schemas.js';
 
 export function safeParseEvent<T extends z.ZodTypeAny>(
   type: string,

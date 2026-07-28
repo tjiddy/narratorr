@@ -4,8 +4,8 @@ import { rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
-import type * as NetworkServiceModule from '../../core/utils/network-service.js';
+import type { Db } from '@db/index.js';
+import type * as NetworkServiceModule from '@core/utils/network-service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 
 /**
@@ -28,7 +28,7 @@ const { fetchMock, dispatcherCloseSpy } = vi.hoisted(() => ({
 // Stub ONLY the network seam: `fetchWithSsrfRedirect` (so no real HTTP/DNS) and
 // `createSsrfSafeDispatcher` (so dispatcher.close() hits a spy). `downloadRemoteCover` itself — the
 // fs write, the coverUrl localization, the DB update — stays real.
-vi.mock('../../core/utils/network-service.js', async (importActual) => {
+vi.mock('@core/utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   return {
     ...actual,

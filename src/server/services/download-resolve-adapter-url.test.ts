@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { resolveAdapterDownloadUrl, type ResolveAdapterUrlParams } from './download-resolve-adapter-url.js';
-import { IndexerError } from '../../core/index.js';
+import { IndexerError } from '@core/index.js';
 
 function makeMockLog() {
   return {

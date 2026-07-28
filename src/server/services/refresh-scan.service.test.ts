@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return { ...actual, resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') };
 });
@@ -9,11 +9,11 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 
-vi.mock('../../core/utils/audio-scanner.js', () => ({
+vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn(),
 }));
 
-vi.mock('../../core/utils/ffprobe-path.js', () => ({
+vi.mock('@core/utils/ffprobe-path.js', () => ({
   resolveFfprobePathFromSettings: vi.fn().mockReturnValue('/usr/bin/ffprobe'),
 }));
 
@@ -26,8 +26,8 @@ vi.mock('node:fs/promises', () => ({
   readdir: vi.fn().mockResolvedValue([]),
 }));
 
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
-import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
+import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
+import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { getVisiblePathSize } from '../utils/import-helpers.js';
 import { readdir } from 'node:fs/promises';
 import { refreshScanBook, RefreshScanError } from './refresh-scan.service.js';

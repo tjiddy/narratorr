@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
-import type { NotificationEvent } from '../../shared/notification-events.js';
+import type { NotificationEvent } from '@shared/notification-events.js';
 
 const mockNotifier = {
   id: 1,

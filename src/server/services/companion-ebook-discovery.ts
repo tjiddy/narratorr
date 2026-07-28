@@ -1,7 +1,7 @@
 import { readdir, lstat } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { isHiddenName } from '../../core/utils/audio-constants.js';
+import { isHiddenName } from '@core/utils/audio-constants.js';
 import { isDefinitiveAbsence } from '../utils/fs-errno.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { isPersistableCompanionBasename } from './companion-ebook-observation.js';

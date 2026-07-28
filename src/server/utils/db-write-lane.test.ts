@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Db, Transaction } from '../../db/client.js';
+import type { Db, Transaction } from '@db/client.js';
 import { serializeDbWrite } from './db-write-lane.js';
 
 /**

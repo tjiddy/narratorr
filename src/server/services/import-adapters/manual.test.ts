@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Dirent, Stats } from 'node:fs';
 import { join, extname } from 'node:path';
 import { inject, createMockSettingsService } from '../../__tests__/helpers.js';
-import type { Db } from '../../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { OwnedRecordingError, type BookService } from '../book.service.js';
 import type { BookImportService } from '../book-import.service.js';

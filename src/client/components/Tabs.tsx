@@ -1,5 +1,5 @@
 import { useRef, type ReactNode } from 'react';
-import { requireDefined } from '../../shared/utils/assert.js';
+import { requireDefined } from '@shared/utils/assert.js';
 
 export interface TabItem {
   value: string;

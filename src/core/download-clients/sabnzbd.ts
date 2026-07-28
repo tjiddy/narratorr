@@ -10,7 +10,7 @@ import type {
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 import {
   sabnzbdQueueResponseSchema,
   sabnzbdHistoryResponseSchema,

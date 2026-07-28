@@ -1,15 +1,15 @@
 import { eq, and, desc, isNotNull, inArray } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books, bookEvents, bookNarrators, narrators } from '../../db/schema.js';
+import { downloads, books, bookEvents, bookNarrators, narrators } from '@db/schema.js';
 
 import type { BookRow, DownloadRow } from './types.js';
-import type { DownloadStatus } from '../../shared/schemas/activity.js';
+import type { DownloadStatus } from '@shared/schemas/activity.js';
 import { transitionDownloadState, completedDisplayDownloadCondition, qualityGateEligibleDownloadCondition } from '../utils/download-state.js';
 import { buildQualityAssessment } from './quality-gate.helpers.js';
 import { QualityGateServiceError } from './quality-gate.types.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
-import { qualityGateReasonSchema } from '../../shared/schemas.js';
+import { qualityGateReasonSchema } from '@shared/schemas.js';
 
 export { QualityGateServiceError, type QualityDecisionReason } from './quality-gate.types.js';
 

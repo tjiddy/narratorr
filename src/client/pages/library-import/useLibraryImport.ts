@@ -4,7 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, type ImportConfirmItem, type MatchResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
-import { matchesLibraryIdentity } from '../../../shared/dedup.js';
+import { matchesLibraryIdentity } from '@shared/dedup.js';
 import { mergeMatchIntoRow, type ImportRow, type BookEditState } from '@/components/manual-import';
 import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import type { DiscoveredBook } from '@/lib/api';

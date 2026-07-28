@@ -1,7 +1,7 @@
 import { eq, inArray, and, or, gt, lte, desc, count as countFn, sql } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { blacklist } from '../../db/schema.js';
+import { blacklist } from '@db/schema.js';
 import type { SettingsService } from './settings.service.js';
 import type { BlacklistRow } from './types.js';
 import { chunkArray } from '../utils/batch.js';

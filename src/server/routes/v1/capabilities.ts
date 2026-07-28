@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { SettingsService } from '../../services/settings.service.js';
-import { capabilitiesV1Schema } from '../../../shared/schemas/v1/capabilities.js';
+import { capabilitiesV1Schema } from '@shared/schemas/v1/capabilities.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import { v1ErrorHandler } from './_helpers.js';
 

@@ -1,6 +1,6 @@
 import { type FastifyInstance } from 'fastify';
 import { type z, type ZodTypeAny } from 'zod';
-import { idParamSchema } from '../../shared/schemas.js';
+import { idParamSchema } from '@shared/schemas.js';
 import { makeTestSchema, maskFields, type SecretEntity } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';

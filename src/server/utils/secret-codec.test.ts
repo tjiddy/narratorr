@@ -20,7 +20,7 @@ import {
   makeTestSchema,
   loosenSettingsSchemas,
 } from './secret-codec.js';
-import { notifierSettingsSchemas } from '../../shared/schemas/notifier.js';
+import { notifierSettingsSchemas } from '@shared/schemas/notifier.js';
 
 // Heuristic for detecting secret-shaped notifier field names. Today's 10
 // registered notifier secrets all match: `url`, `webhookUrl`, `headers`,
@@ -67,11 +67,11 @@ function findUnregisteredNotifierSecrets(
 ): Array<{ type: string; field: string }> {
   return findSecretShapedNotifierFields(schemas).filter(({ field }) => !registered.has(field));
 }
-import { createIndexerSchema } from '../../shared/schemas/indexer.js';
-import { createNotifierSchema } from '../../shared/schemas/notifier.js';
-import { createDownloadClientSchema } from '../../shared/schemas/download-client.js';
-import { createImportListSchema } from '../../shared/schemas/import-list.js';
-import { createConnectorSchema, makeUpdateConnectorSchema, connectorSettingsSchemas, connectorTypeSchema } from '../../shared/schemas/connector.js';
+import { createIndexerSchema } from '@shared/schemas/indexer.js';
+import { createNotifierSchema } from '@shared/schemas/notifier.js';
+import { createDownloadClientSchema } from '@shared/schemas/download-client.js';
+import { createImportListSchema } from '@shared/schemas/import-list.js';
+import { createConnectorSchema, makeUpdateConnectorSchema, connectorSettingsSchemas, connectorTypeSchema } from '@shared/schemas/connector.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 

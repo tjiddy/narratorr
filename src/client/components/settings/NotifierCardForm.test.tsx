@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { useForm } from 'react-hook-form';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { NotifierCardForm } from './NotifierCardForm';
-import type { CreateNotifierFormData } from '../../../shared/schemas.js';
+import type { CreateNotifierFormData } from '@shared/schemas.js';
 
 function NotifierCardFormWrapper({ onSubmit = vi.fn(), injectTypeError = false }: { onSubmit?: (data: CreateNotifierFormData) => void; injectTypeError?: boolean }) {
   const form = useForm<CreateNotifierFormData>({

@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type Download, type ActivityListParams } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useSSEConnected } from '@/hooks/useEventSource';
-import { isInProgressStatus } from '../../../shared/download-status-registry.js';
+import { isInProgressStatus } from '@shared/download-status-registry.js';
 
 export function useActivity(queueParams: ActivityListParams = {}) {
   const queryClient = useQueryClient();

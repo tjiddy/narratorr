@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { normalizeProductionType } from './production-type.js';
-import { PRODUCTION_TYPES } from '../../shared/schemas/book.js';
+import { PRODUCTION_TYPES } from '@shared/schemas/book.js';
 
 describe('normalizeProductionType (#1710)', () => {
   it('maps unabridged (any case / whitespace) → unabridged', () => {

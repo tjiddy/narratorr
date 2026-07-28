@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
-vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return { ...actual, resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') };
 });
@@ -8,17 +8,17 @@ import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettings
 import { ImportService } from './import.service.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
-import { sanitizePath } from '../../core/utils/index.js';
+import { sanitizePath } from '@core/utils/index.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { downloads, books } from '../../db/schema.js';
+import { downloads, books } from '@db/schema.js';
 
 // Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
@@ -72,7 +72,7 @@ vi.mock('./enrichment-utils.js', async (importOriginal) => {
 });
 
 // Mock audio scanner
-vi.mock('../../core/utils/audio-scanner.js', () => ({
+vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
@@ -104,7 +104,7 @@ vi.mock('../utils/import-steps.js', async (importOriginal) => {
 });
 
 import { mkdir, cp, stat, readdir, writeFile, rename, rm, rmdir, statfs } from 'node:fs/promises';
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import { copyToLibrary, MarkerPathConflictError } from '../utils/import-steps.js';

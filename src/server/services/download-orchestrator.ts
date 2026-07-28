@@ -1,15 +1,15 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { DownloadService, DownloadWithBook, RetryResult } from './download.service.js';
-import type { DownloadStatus } from '../../shared/schemas/activity.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { DownloadStatus } from '@shared/schemas/activity.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import type { NotifierService } from './notifier.service.js';
 import type { EventHistoryService, CreateEventInput } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { BlacklistService } from './blacklist.service.js';
-import type { DownloadProtocol } from '../../core/index.js';
+import type { DownloadProtocol } from '@core/index.js';
 import { eq } from 'drizzle-orm';
-import { books } from '../../db/schema.js';
+import { books } from '@db/schema.js';
 import { revertBookStatus, transitionBookStatus } from '../utils/book-status.js';
 import {
   emitGrabStarted, emitBookStatusChangeOnGrab, emitDownloadProgress,

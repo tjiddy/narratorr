@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastif
 import cookie from '@fastify/cookie';
 import authPlugin from './auth.js';
 import type { AuthService } from '../services/auth.service.js';
-import { v1ErrorEnvelopeSchema } from '../../shared/schemas/v1/common.js';
+import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 
 // Mock config to control authBypass per test
 vi.mock('../config.js', () => ({

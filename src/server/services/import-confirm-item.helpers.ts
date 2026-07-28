@@ -7,8 +7,8 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import { type BookService } from './book.service.js';
-import type { HeldReviewItem } from '../../shared/schemas/library-scan.js';
-import { normalizeProductionType } from '../../core/metadata/production-type.js';
+import type { HeldReviewItem } from '@shared/schemas/library-scan.js';
+import { normalizeProductionType } from '@core/metadata/production-type.js';
 import type { ImportConfirmItem } from './library-scan.service.js';
 
 /** The confirm dedup ASIN (#1662): the explicit top-level `asin`, else the matched metadata's. */

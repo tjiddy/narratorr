@@ -1,9 +1,9 @@
 import type { BookMetadata, BookWithAuthor, LibraryEntry, CreateBookPayload } from '@/lib/api';
-import { matchesLibraryIdentity } from '../../shared/dedup.js';
+import { matchesLibraryIdentity } from '@shared/dedup.js';
 // ES imports are file-scoped — `dedup.ts`'s private import does NOT re-export
 // `canonicalizeAsin`, so pull it directly from the shared ASIN module (#1907).
-import { canonicalizeAsin } from '../../shared/asin.js';
-import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
+import { canonicalizeAsin } from '@shared/asin.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 export function mapBookMetadataToPayload(
   book: BookMetadata,

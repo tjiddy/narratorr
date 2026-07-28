@@ -11,7 +11,7 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { MergeService } from './merge.service.js';
 import { MergeError } from './merge.service.js';
-import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import type { RetrySearchDeps } from './retry-search.js';
 import {
   emitDownloadImporting, emitBookImporting, emitImportStatusSuccess,

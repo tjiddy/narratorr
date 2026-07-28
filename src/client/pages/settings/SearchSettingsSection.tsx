@@ -6,7 +6,7 @@ import { NumberField } from '@/components/settings/NumberField';
 import { InfoTip } from '@/components/settings/InfoTip';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { protocolPreferenceSchema, searchPrioritySchema, searchFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { protocolPreferenceSchema, searchPrioritySchema, searchFormSchema, DEFAULT_SETTINGS, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const PROTOCOL_LABELS: Record<string, string> = { none: 'No Preference', usenet: 'Prefer Usenet', torrent: 'Prefer Torrent' };

@@ -1,4 +1,4 @@
-import type { AuthMode } from '../../../shared/schemas.js';
+import type { AuthMode } from '@shared/schemas.js';
 import { fetchApi } from './client.js';
 
 export interface AuthStatus {

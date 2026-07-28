@@ -10,7 +10,7 @@ import { XIcon, ArrowLeftIcon, BookOpenIcon } from '@/components/icons';
 import { Modal } from '@/components/Modal';
 import { MetadataSearchView } from '@/components/book/MetadataSearchView';
 import { resolveCoverUrl } from '@/lib/url-utils';
-import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 type Step = 'search' | 'confirm';
 

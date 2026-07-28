@@ -1,6 +1,6 @@
 import type { BookMetadata } from '@/lib/api';
 import type { BookEditState } from './types.js';
-import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 /**
  * Maps an Audnexus best-match result onto a BookEditState row, falling back to

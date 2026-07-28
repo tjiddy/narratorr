@@ -1,10 +1,10 @@
 import { eq, desc, like, and, lt, count as countFn, inArray } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { bookEvents, downloads } from '../../db/schema.js';
+import { bookEvents, downloads } from '@db/schema.js';
 import { type BlacklistService } from './blacklist.service.js';
 import { type BookService } from './book.service.js';
-import { actionableEventTypes, type EventType, type EventSource } from '../../shared/schemas/event-history.js';
+import { actionableEventTypes, type EventType, type EventSource } from '@shared/schemas/event-history.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { WireOnce } from './wire-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';

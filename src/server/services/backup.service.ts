@@ -10,7 +10,7 @@ import type { Readable } from 'stream';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { BYTES_PER_GB } from '../../shared/constants.js';
+import { BYTES_PER_GB } from '@shared/constants.js';
 
 /** Default cap on the uncompressed size of the extracted narratorr.db (1 GB; cf. MAX_COVER_SIZE). */
 const MAX_UNCOMPRESSED_DB_SIZE = BYTES_PER_GB;

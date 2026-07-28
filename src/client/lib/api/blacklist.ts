@@ -1,5 +1,5 @@
 import { fetchApi } from './client.js';
-import type { BlacklistReason } from '../../../shared/schemas/blacklist.js';
+import type { BlacklistReason } from '@shared/schemas/blacklist.js';
 
 export interface BlacklistEntry {
   id: number;

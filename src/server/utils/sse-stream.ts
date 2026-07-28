@@ -10,7 +10,7 @@
  * without importing across the `src/server/**` layer boundary. It is re-exported
  * below so this module's existing server consumers/tests keep importing it here.
  */
-import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_EVENT } from '../../shared/sse-constants.js';
+import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_EVENT } from '@shared/sse-constants.js';
 
 export { HEARTBEAT_INTERVAL_MS };
 

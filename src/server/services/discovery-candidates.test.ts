@@ -12,7 +12,7 @@ import {
   type ScoredCandidate,
 } from './discovery-candidates.js';
 import type { LibrarySignals } from './discovery.service.js';
-import type { BookMetadata } from '../../core/index.js';
+import type { BookMetadata } from '@core/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';

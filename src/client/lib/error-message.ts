@@ -1,1 +1,1 @@
-export { getErrorMessage } from '../../shared/error-message.js';
+export { getErrorMessage } from '@shared/error-message.js';

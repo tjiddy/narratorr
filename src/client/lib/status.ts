@@ -1,4 +1,4 @@
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 
 export interface BookStatusStyle {
   label: string;

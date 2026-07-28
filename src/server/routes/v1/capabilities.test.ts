@@ -11,7 +11,7 @@ import type { AuthService } from '../../services/auth.service.js';
 import type { SettingsService } from '../../services/settings.service.js';
 import { v1CapabilitiesRoutes } from './capabilities.js';
 import { v1SystemRoutes } from './system.js';
-import { capabilitiesV1Schema } from '../../../shared/schemas/v1/capabilities.js';
+import { capabilitiesV1Schema } from '@shared/schemas/v1/capabilities.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors system.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));

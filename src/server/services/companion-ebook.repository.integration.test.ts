@@ -4,8 +4,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { eq, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
-import { books, companionEbooks } from '../../db/schema.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
+import { books, companionEbooks } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { chunkArray } from '../utils/batch.js';
 import {

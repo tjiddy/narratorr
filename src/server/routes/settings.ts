@@ -1,16 +1,16 @@
 import { z } from 'zod';
 import { type FastifyInstance } from 'fastify';
 import { type SettingsService, type AppSettings } from '../services';
-import { updateSettingsSchema, type UpdateSettingsInput } from '../../shared/schemas.js';
+import { updateSettingsSchema, type UpdateSettingsInput } from '@shared/schemas.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { HealthCheckService } from '../services/health-check.service.js';
 import { maskFields, isSentinel } from '../utils/secret-codec.js';
 import { SETTINGS_SECRET_MAP } from '../utils/secret-category-map.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { HardcoverClient } from '../../core/metadata/hardcover.js';
+import { HardcoverClient } from '@core/metadata/hardcover.js';
 import { mapHardcoverError } from '../utils/hardcover-error.js';
-import { resolveFfmpegPath, probeFfmpeg } from '../../core/utils/audio-processor.js';
+import { resolveFfmpegPath, probeFfmpeg } from '@core/utils/audio-processor.js';
 import { triggerCompanionSweep, type CompanionSweepTrigger } from '../services/companion-ebook-trigger.js';
 import {
   snapshotCompanionSettings,

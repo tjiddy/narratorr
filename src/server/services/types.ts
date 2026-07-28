@@ -13,24 +13,24 @@ import type {
   series,
   seriesMembers,
   suggestions,
-} from '../../db/schema.js';
-import type { BookStatus, EnrichmentStatus, ProductionType } from '../../shared/schemas/book.js';
-import type { ClientStatus, PipelineStage } from '../../shared/schemas/activity.js';
-import type { BlacklistReason, BlacklistType } from '../../shared/schemas/blacklist.js';
-import type { DownloadProtocol } from '../../core/indexers/types.js';
-import type { DownloadClientType } from '../../shared/download-client-registry.js';
-import type { EventSource, EventType } from '../../shared/schemas/event-history.js';
+} from '@db/schema.js';
+import type { BookStatus, EnrichmentStatus, ProductionType } from '@shared/schemas/book.js';
+import type { ClientStatus, PipelineStage } from '@shared/schemas/activity.js';
+import type { BlacklistReason, BlacklistType } from '@shared/schemas/blacklist.js';
+import type { DownloadProtocol } from '@core/indexers/types.js';
+import type { DownloadClientType } from '@shared/download-client-registry.js';
+import type { EventSource, EventType } from '@shared/schemas/event-history.js';
 import type {
   ImportJobPhase,
   ImportJobStatus,
   ImportJobType,
-} from '../../shared/schemas/import-job.js';
-import type { ImportListType } from '../../shared/import-list-registry.js';
-import type { ConnectorType } from '../../shared/connector-registry.js';
-import type { IndexerType } from '../../shared/indexer-registry.js';
-import type { NotifierType } from '../../shared/notifier-registry.js';
-import type { SuggestionReason } from '../../shared/schemas/discovery.js';
-import type { CompanionEbookStatus } from '../../shared/schemas/companion-ebook.js';
+} from '@shared/schemas/import-job.js';
+import type { ImportListType } from '@shared/import-list-registry.js';
+import type { ConnectorType } from '@shared/connector-registry.js';
+import type { IndexerType } from '@shared/indexer-registry.js';
+import type { NotifierType } from '@shared/notifier-registry.js';
+import type { SuggestionReason } from '@shared/schemas/discovery.js';
+import type { CompanionEbookStatus } from '@shared/schemas/companion-ebook.js';
 
 // Drizzle's $inferSelect widens enum columns to bare `string` (CLAUDE.md gotcha).
 // Re-narrow the status / enrichmentStatus columns so callers can consume

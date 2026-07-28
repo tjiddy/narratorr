@@ -1,8 +1,8 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { OPF_FILENAME, NARRATORR_OPF_MARKER, hasNarratorrMarker } from '../../core/utils/opf-regex.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { OPF_FILENAME, NARRATORR_OPF_MARKER, hasNarratorrMarker } from '@core/utils/opf-regex.js';
+import { AUDIO_EXTENSIONS } from '@core/utils/audio-constants.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
 import { serializeError } from './serialize-error.js';
 

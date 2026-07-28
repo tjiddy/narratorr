@@ -1,8 +1,8 @@
 import { and, eq, isNotNull, sql } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db, DbOrTx } from '../../db/client.js';
-import { books } from '../../db/schema.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { Db, DbOrTx } from '@db/client.js';
+import { books } from '@db/schema.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { withBookAdmissionLock } from './book-admission.js';

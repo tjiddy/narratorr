@@ -1,15 +1,15 @@
 import { eq } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { notifiers } from '../../db/schema.js';
+import { notifiers } from '@db/schema.js';
 import {
   ADAPTER_FACTORIES,
   type NotifierAdapter,
   type NotificationEvent,
   type EventPayload,
-} from '../../core/index.js';
+} from '@core/index.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import { notifierSettingsSchemas, type NotifierSettings } from '../../shared/schemas/notifier.js';
+import { notifierSettingsSchemas, type NotifierSettings } from '@shared/schemas/notifier.js';
 import { parseEntitySettings } from '../utils/parse-entity-settings.js';
 import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';

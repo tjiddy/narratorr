@@ -6,7 +6,7 @@ import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { NumberField } from '@/components/settings/NumberField';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { FORMAT_LABELS, MERGE_LABELS } from '@/lib/constants';
-import { outputFormatSchema, mergeBehaviorSchema, bitrateField, maxConcurrentProcessingField, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { outputFormatSchema, mergeBehaviorSchema, bitrateField, maxConcurrentProcessingField, DEFAULT_SETTINGS, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import type { Db } from '../db/index.js';
+import type { Db } from '@db/index.js';
 import type { Services } from './services/di.js';
 
 // startJobs starts real croner/timeout schedulers — mock it so startRuntime's

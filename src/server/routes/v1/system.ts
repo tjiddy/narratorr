@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import os from 'os';
 import { getVersion, getCommit, getBuildTime } from '../../utils/version.js';
-import { systemV1Schema } from '../../../shared/schemas/v1/system.js';
+import { systemV1Schema } from '@shared/schemas/v1/system.js';
 import { v1ErrorHandler } from './_helpers.js';
 
 /**

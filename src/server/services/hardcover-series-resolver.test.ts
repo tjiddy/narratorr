@@ -5,7 +5,7 @@ import {
   pickBestSearchCandidate,
   resolveSeriesViaHardcover,
 } from './hardcover-series-resolver.js';
-import type { HardcoverClient, HardcoverSearchCandidate, HardcoverSeriesData } from '../../core/metadata/hardcover.js';
+import type { HardcoverClient, HardcoverSearchCandidate, HardcoverSeriesData } from '@core/metadata/hardcover.js';
 
 function makeClient(overrides: Partial<HardcoverClient>): HardcoverClient {
   return {

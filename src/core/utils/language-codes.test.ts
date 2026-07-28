@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { normalizeLanguage } from './language-codes.js';
-import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
+import { MAM_LANGUAGES } from '@shared/indexer-registry.js';
 
 describe('normalizeLanguage', () => {
   it('converts ISO 639 three-letter code to lowercase full name', () => {

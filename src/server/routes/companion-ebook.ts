@@ -1,12 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { Db } from '../../db/index.js';
-import { idParamSchema } from '../../shared/schemas/common.js';
-import { isCompanionEbookExposed } from '../../shared/companion-ebook-exposure.js';
-import type { CompanionEbookStatus } from '../../shared/schemas/companion-ebook.js';
+import type { Db } from '@db/index.js';
+import { idParamSchema } from '@shared/schemas/common.js';
+import { isCompanionEbookExposed } from '@shared/companion-ebook-exposure.js';
+import type { CompanionEbookStatus } from '@shared/schemas/companion-ebook.js';
 // Deep path, never a `core/index.js` barrel — the same rule `companion-ebook-observe.ts` follows.
-import { inspectEpub } from '../../core/epub/validate.js';
-import type { EpubInspection } from '../../core/epub/result.js';
+import { inspectEpub } from '@core/epub/validate.js';
+import type { EpubInspection } from '@core/epub/result.js';
 import type { BookService, SettingsService } from '../services/index.js';
 import { findCompanionEbook } from '../services/companion-ebook.repository.js';
 import { isCompanionEbookEligible } from '../services/companion-ebook-eligibility.js';

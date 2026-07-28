@@ -9,7 +9,7 @@ vi.mock('node:fs/promises', () => ({
 import { stat, realpath } from 'node:fs/promises';
 import { isCompanionEbookEligible } from './companion-ebook-eligibility.js';
 import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 const mockStat = stat as unknown as ReturnType<typeof vi.fn>;

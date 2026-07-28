@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { inject, createMockSettingsService } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -14,7 +14,7 @@ import { mkdir, writeFile, readFile, readdir, rm, stat, symlink } from 'node:fs/
 import { mkdtempSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createDb, runMigrations } from '../../db/index.js';
+import { createDb, runMigrations } from '@db/index.js';
 import type { ImportConfirmItem } from './library-scan.service.js';
 
 // copyToLibrary returns the target POSIX-normalized (paths are stored in the DB and consumed

@@ -5,9 +5,9 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { initializeKey, _resetKey, getKey } from '../utils/secret-codec.js';
 import { signReleaseId, verifyReleaseId } from './grab-token.js';
-import { encodeReleaseId, type ReleaseTokenPayload } from '../../shared/schemas/v1/actions.js';
+import { encodeReleaseId, type ReleaseTokenPayload } from '@shared/schemas/v1/actions.js';
 import { AuthService } from './auth.service.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 const TEST_KEY = Buffer.alloc(32, 0x2b);

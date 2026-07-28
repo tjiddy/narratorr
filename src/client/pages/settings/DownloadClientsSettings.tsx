@@ -3,7 +3,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { DownloadClientCard } from '@/components/settings/DownloadClientCard';
 import { ServerIcon } from '@/components/icons';
 import { CrudSettingsPage } from './CrudSettingsPage';
-import { type CreateDownloadClientFormData } from '../../../shared/schemas.js';
+import { type CreateDownloadClientFormData } from '@shared/schemas.js';
 
 export function DownloadClientsSettings() {
   return (

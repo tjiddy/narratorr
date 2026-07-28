@@ -2,8 +2,8 @@
 import type { DownloadClient, TestResult } from '@/lib/api';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
 import { DownloadClientForm } from './DownloadClientForm';
-import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
-import { DOWNLOAD_CLIENT_REGISTRY } from '../../../shared/download-client-registry.js';
+import type { CreateDownloadClientFormData } from '@shared/schemas.js';
+import { DOWNLOAD_CLIENT_REGISTRY } from '@shared/download-client-registry.js';
 
 const IMPLEMENTED_TYPES = Object.keys(DOWNLOAD_CLIENT_REGISTRY);
 

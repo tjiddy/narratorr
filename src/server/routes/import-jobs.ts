@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { BookImportService } from '../services/book-import.service.js';
-import { importJobStatusSchema, type ImportJobStatus } from '../../shared/schemas/import-job.js';
+import { importJobStatusSchema, type ImportJobStatus } from '@shared/schemas/import-job.js';
 
 const importJobsQuerySchema = z.object({
   status: z

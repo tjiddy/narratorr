@@ -1,8 +1,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import type { Db } from '../../../db/index.js';
-import { books } from '../../../db/schema.js';
-import { isCompanionEbookExposed } from '../../../shared/companion-ebook-exposure.js';
-import { v1PublicIdParamSchema, type V1PublicIdParam } from '../../../shared/schemas/v1/common.js';
+import type { Db } from '@db/index.js';
+import { books } from '@db/schema.js';
+import { isCompanionEbookExposed } from '@shared/companion-ebook-exposure.js';
+import { v1PublicIdParamSchema, type V1PublicIdParam } from '@shared/schemas/v1/common.js';
 import type { BookService } from '../../services/book.service.js';
 import type { SettingsService } from '../../services/settings.service.js';
 import { findCompanionEbook } from '../../services/companion-ebook.repository.js';

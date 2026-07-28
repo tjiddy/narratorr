@@ -9,7 +9,7 @@ import {
   toggleBlacklistTypeSchema,
   DEFAULT_LIMITS,
   type CreateBlacklistInput,
-} from '../../shared/schemas.js';
+} from '@shared/schemas.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 

@@ -7,14 +7,14 @@
  */
 
 import { eq, and, sql, notExists } from 'drizzle-orm';
-import { slugify } from '../../core/index.js';
-import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording, type RecordingVerdict, type RecordingReviewReason } from '../../core/utils/recording-identity.js';
-import { buildTitleShape, titlesMatchForDedup } from '../../shared/dedup.js';
-import { canonicalizeAsin } from '../../shared/asin.js';
-import { books, authors, bookAuthors } from '../../db/schema.js';
-import type { Db } from '../../db/index.js';
+import { slugify } from '@core/index.js';
+import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording, type RecordingVerdict, type RecordingReviewReason } from '@core/utils/recording-identity.js';
+import { buildTitleShape, titlesMatchForDedup } from '@shared/dedup.js';
+import { canonicalizeAsin } from '@shared/asin.js';
+import { books, authors, bookAuthors } from '@db/schema.js';
+import type { Db } from '@db/index.js';
 import type { BookWithAuthor } from './book.service.js';
-import type { ForcedImportRefusedReason } from '../../shared/schemas/sse-events.js';
+import type { ForcedImportRefusedReason } from '@shared/schemas/sse-events.js';
 
 /** Hydrate a book row by id — the `BookService.getById` bound method. */
 type GetByIdFn = (id: number) => Promise<BookWithAuthor | null>;

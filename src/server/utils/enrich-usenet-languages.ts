@@ -1,10 +1,10 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { SearchResult } from '../../core/indexers/types.js';
-import { normalizeLanguage } from '../../core/utils/language-codes.js';
-import { detectLanguageFromNewsgroup, detectLanguageFromText, parseNzbGroups, parseNzbName, parseNzbFileSubject } from '../../core/utils/detect-usenet-language.js';
-import { createSsrfSafeDispatcher, fetchWithSsrfRedirect } from '../../core/utils/network-service.js';
-import type { LanAllowlist } from '../../core/utils/download-url.js';
-import { getUserAgent } from '../../shared/user-agent.js';
+import type { SearchResult } from '@core/indexers/types.js';
+import { normalizeLanguage } from '@core/utils/language-codes.js';
+import { detectLanguageFromNewsgroup, detectLanguageFromText, parseNzbGroups, parseNzbName, parseNzbFileSubject } from '@core/utils/detect-usenet-language.js';
+import { createSsrfSafeDispatcher, fetchWithSsrfRedirect } from '@core/utils/network-service.js';
+import type { LanAllowlist } from '@core/utils/download-url.js';
+import { getUserAgent } from '@shared/user-agent.js';
 import { Semaphore } from './semaphore.js';
 import { serializeError } from './serialize-error.js';
 import { sanitizeLogUrl } from './sanitize-log-url.js';

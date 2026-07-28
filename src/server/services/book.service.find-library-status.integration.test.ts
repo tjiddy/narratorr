@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
-import { books, companionEbooks } from '../../db/schema.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
+import { books, companionEbooks } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { BookService } from './book.service.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
-import { COMPANION_EBOOK_STATUSES, type CompanionEbookStatus } from '../../shared/schemas/companion-ebook.js';
+import type { BookStatus } from '@shared/schemas/book.js';
+import { COMPANION_EBOOK_STATUSES, type CompanionEbookStatus } from '@shared/schemas/companion-ebook.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 // DB-backed coverage for the case-insensitive ASIN predicate (#1537, PR-review F1).

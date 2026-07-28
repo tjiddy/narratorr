@@ -5,8 +5,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
-import { books, series, seriesMembers } from '../../db/schema.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
+import { books, series, seriesMembers } from '@db/schema.js';
 import { relinkBookToBoundSeries, replaceSeriesLink, upsertSeriesLink } from './book-series-link.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 

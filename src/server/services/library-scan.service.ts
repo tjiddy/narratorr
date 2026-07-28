@@ -1,11 +1,11 @@
 import { access } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors, bookAuthors } from '../../db/schema.js';
+import { books, authors, bookAuthors } from '@db/schema.js';
 import { eq, inArray, and } from 'drizzle-orm';
-import { slugify } from '../../core/utils/parse.js';
-import { discoverBooks, type DiscoveredFolder } from '../../core/utils/book-discovery.js';
+import { slugify } from '@core/utils/parse.js';
+import { discoverBooks, type DiscoveredFolder } from '@core/utils/book-discovery.js';
 import { transitionBookStatus } from '../utils/book-status.js';
 import { errnoCode, isDefinitiveAbsence } from '../utils/fs-errno.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -13,18 +13,18 @@ import type { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
-import type { BookMetadata } from '../../core/metadata/index.js';
+import type { BookMetadata } from '@core/metadata/index.js';
 import { type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import { type ImportPipelineDeps } from './import-orchestration.helpers.js';
 import { buildDiscoveredBook } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
-import type { ConnectorImportItem } from '../../core/connectors/index.js';
+import type { ConnectorImportItem } from '@core/connectors/index.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
-import { buildTitleShape, titlesMatchForDedup, type TitleShape } from '../../shared/dedup.js';
-import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
+import { buildTitleShape, titlesMatchForDedup, type TitleShape } from '@shared/dedup.js';
+import type { DiscoveredBook } from '@shared/schemas/library-scan.js';
 
 
 export type { DiscoveredBook };

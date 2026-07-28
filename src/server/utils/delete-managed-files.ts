@@ -1,9 +1,9 @@
 import { readdir, readFile, rm, rmdir, lstat } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
-import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
-import { OPF_FILE_REGEX, hasNarratorrMarker } from '../../core/utils/opf-regex.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
+import { COVER_FILE_REGEX } from '@core/utils/cover-regex.js';
+import { OPF_FILE_REGEX, hasNarratorrMarker } from '@core/utils/opf-regex.js';
 import { assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import { serializeError } from './serialize-error.js';
 

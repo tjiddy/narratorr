@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES, NARRATOR_PLACEHOLDERS } from '../../core/index.js';
+import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES, NARRATOR_PLACEHOLDERS } from '@core/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { MetadataService, isRejectedByWords, PSEUDO_NARRATORS } from './metadata.service.js';
-import type { BookMetadata } from '../../core/index.js';
+import type { BookMetadata } from '@core/index.js';
 
 const mockFactories = vi.mocked(METADATA_SEARCH_PROVIDER_FACTORIES);
 
@@ -27,8 +27,8 @@ const mockAudnexus = {
   getChapterRuntime: vi.fn().mockResolvedValue({ kind: 'not_found' }),
 };
 
-vi.mock('../../core/index.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../core/index.js')>();
+vi.mock('@core/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/index.js')>();
   return {
     ...actual,
     METADATA_SEARCH_PROVIDER_FACTORIES: {
@@ -1974,7 +1974,7 @@ describe('MetadataService', () => {
 
   describe('Audnexus provider region threading (#1088)', () => {
     it('constructs AudnexusProvider with the resolved region', async () => {
-      const { AudnexusProvider } = await import('../../core/index.js');
+      const { AudnexusProvider } = await import('@core/index.js');
       const audnexusCtor = vi.mocked(AudnexusProvider);
       audnexusCtor.mockClear();
 

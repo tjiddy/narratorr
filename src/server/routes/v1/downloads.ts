@@ -1,14 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import type { Db } from '../../../db/index.js';
-import { downloads } from '../../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { downloads } from '@db/schema.js';
 import type { DownloadService } from '../../services/download.service.js';
 import {
   downloadV1Schema,
   downloadV1ListQuerySchema,
   toDownloadV1,
-} from '../../../shared/schemas/v1/downloads.js';
-import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+} from '@shared/schemas/v1/downloads.js';
+import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 
 export interface V1DownloadsRouteDeps {

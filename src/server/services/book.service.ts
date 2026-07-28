@@ -4,21 +4,21 @@ import { uploadBookCover, CoverUploadError } from './cover-upload.js';
 import type { CoverWriteOutcome } from './cover-write.js';
 import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
 import { eq, sql, inArray } from 'drizzle-orm';
-import type { Db, DbOrTx } from '../../db/index.js';
+import type { Db, DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
-import { slugify, findUnmatchedGenres, normalizeGenres } from '../../core/index.js';
+import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '@db/schema.js';
+import { slugify, findUnmatchedGenres, normalizeGenres } from '@core/index.js';
 import { replaceSeriesLink, upsertSeriesLink, type ReplaceSeriesLinkArgs } from './book-series-link.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BookRow, CompanionEbookRow } from './types.js';
-import { productionTypeSchema, type BookStatus } from '../../shared/schemas/book.js';
+import { productionTypeSchema, type BookStatus } from '@shared/schemas/book.js';
 import { findCompanionEbooksByBookIds } from './companion-ebook.repository.js';
-import { toCompanionEbookV1, type CompanionEbookV1 } from '../../shared/schemas/v1/companion-ebook.js';
+import { toCompanionEbookV1, type CompanionEbookV1 } from '@shared/schemas/v1/companion-ebook.js';
 import { buildNewBookValues, type CreateBookInput, type ResolvedBookCreateInput } from './book-create.js';
-import { canonicalizeAsin } from '../../shared/asin.js';
-import { isUniqueViolation } from '../../shared/error-message.js';
+import { canonicalizeAsin } from '@shared/asin.js';
+import { isUniqueViolation } from '@shared/error-message.js';
 import {
   OwnedRecordingError,
   ASIN_UNIQUE_VIOLATION,

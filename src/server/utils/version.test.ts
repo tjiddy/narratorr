@@ -51,7 +51,7 @@ describe('getVersion / getUserAgent shared resolver agreement', () => {
 
   async function loadBoth() {
     const versionMod = await import('./version.js');
-    const uaMod = await import('../../shared/user-agent.js');
+    const uaMod = await import('@shared/user-agent.js');
     return { getVersion: versionMod.getVersion, getUserAgent: uaMod.getUserAgent };
   }
 

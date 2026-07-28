@@ -1,4 +1,4 @@
-import type { MergeDisplayPhase } from '../../../shared/schemas/sse-events.js';
+import type { MergeDisplayPhase } from '@shared/schemas/sse-events.js';
 
 export function formatMergePhase(phase: MergeDisplayPhase, percentage?: number, position?: number): string {
   switch (phase) {

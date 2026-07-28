@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import type { AuthMode } from '../../../shared/schemas.js';
+import type { AuthMode } from '@shared/schemas.js';
 import {
   LoadingSpinner,
   ShieldIcon,

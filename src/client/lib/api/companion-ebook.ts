@@ -1,4 +1,4 @@
-import type { CompanionEbookStatus } from '../../../shared/schemas/companion-ebook.js';
+import type { CompanionEbookStatus } from '@shared/schemas/companion-ebook.js';
 import { fetchApi, URL_BASE } from './client.js';
 
 /**

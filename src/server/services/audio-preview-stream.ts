@@ -2,8 +2,8 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, basename } from 'node:path';
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
-import { collectAudioFilePaths } from '../../core/utils/collect-audio-files.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
+import { collectAudioFilePaths } from '@core/utils/collect-audio-files.js';
 
 const AUDIO_MIME_MAP: Record<string, string> = {
   '.mp3': 'audio/mpeg',

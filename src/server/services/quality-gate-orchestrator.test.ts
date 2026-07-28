@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
-vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
 });
@@ -14,7 +14,7 @@ import { gatherBookBlockers, classifyBlockers } from './download-blockers.js';
 import { runReplaceWorkflow, type ReplaceCtx } from './download-replace-workflow.js';
 import type { DownloadRow } from './types.js';
 import type { DownloadService as DownloadServiceType } from './download.service.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -26,7 +26,7 @@ vi.mock('../utils/enqueue-auto-import.js', () => ({
   enqueueAutoImport: vi.fn().mockResolvedValue(true),
 }));
 
-vi.mock('../../core/utils/audio-scanner.js', () => ({
+vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn(),
 }));
 
@@ -49,7 +49,7 @@ vi.mock('./retry-search.js', () => ({
 }));
 
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { revertBookStatus, transitionBookStatus } from '../utils/book-status.js';
 import { stat, rm } from 'node:fs/promises';

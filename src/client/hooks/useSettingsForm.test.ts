@@ -3,7 +3,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { z } from 'zod';
-import type { AppSettings } from '../../shared/schemas.js';
+import type { AppSettings } from '@shared/schemas.js';
 import { useDirtyFormsState, _resetForTesting } from './dirty-forms.js';
 
 vi.mock('sonner', () => ({

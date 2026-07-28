@@ -8,7 +8,7 @@ import {
 import cookie from '@fastify/cookie';
 import authPlugin from '../../plugins/auth.js';
 import type { AuthService } from '../../services/auth.service.js';
-import type { Db } from '../../../db/index.js';
+import type { Db } from '@db/index.js';
 import { createMockDb, inject } from '../../__tests__/helpers.js';
 import { registerV1OpenApi, V1_DOCS_BASE_PATH } from './openapi.js';
 import { v1BooksRoutes } from './books.js';

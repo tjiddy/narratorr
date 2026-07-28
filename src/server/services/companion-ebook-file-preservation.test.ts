@@ -4,7 +4,7 @@ import { mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook } from '../__tests__/factories.js';
 import { BookService, type BookWithAuthor } from './book.service.js';

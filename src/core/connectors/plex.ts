@@ -7,7 +7,7 @@ import type {
   ConnectorTestResult,
 } from './types.js';
 import { ConnectorRequestError } from './errors.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { CONNECTOR_TIMEOUT_MS } from '../utils/constants.js';
 

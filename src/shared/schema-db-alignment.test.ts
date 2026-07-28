@@ -21,9 +21,9 @@ import {
   submissionStatusSchema, SUBMISSION_STATUSES,
   itemDispositionSchema, ITEM_DISPOSITIONS,
   submissionSourceSchema, SUBMISSION_SOURCES,
-} from '../core/import-staging/schemas.js';
+} from '@core/import-staging/schemas.js';
 import { companionEbookStatusSchema, COMPANION_EBOOK_STATUSES } from './schemas/companion-ebook.js';
-import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents, connectors, importJobs, importSubmissions, importSubmissionItems, companionEbooks } from '../db/schema.js';
+import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents, connectors, importJobs, importSubmissions, importSubmissionItems, companionEbooks } from '@db/schema.js';
 
 describe('schema-DB alignment', () => {
   describe('adapter type enums derive from registries', () => {

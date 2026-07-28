@@ -1,5 +1,5 @@
-import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
-import type { BookMetadata } from '../../core/metadata/index.js';
+import type { AudioScanResult } from '@core/utils/audio-scanner.js';
+import type { BookMetadata } from '@core/metadata/index.js';
 import type { TagQuery } from './match-job.helpers.js';
 import { cleanTagTitle } from '../utils/folder-parsing.js';
 

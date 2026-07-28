@@ -1,7 +1,7 @@
 import type { EpubValidationCode } from '@core/epub/result.js';
 import { ApiError } from '@/lib/api';
 import type { BadgeVariant } from '@/components/Badge';
-import type { CompanionEbookStatus } from '../../../shared/schemas/companion-ebook.js';
+import type { CompanionEbookStatus } from '@shared/schemas/companion-ebook.js';
 
 // ============================================================================
 // Every string the Ebook panel owns, in ONE module (#1963).

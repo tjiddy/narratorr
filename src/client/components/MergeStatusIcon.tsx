@@ -1,6 +1,6 @@
 import { LoadingSpinner, CheckCircleIcon, AlertCircleIcon, RefreshIcon, XCircleIcon } from '@/components/icons';
 import type { MergeOutcome } from '@/hooks/useMergeProgress';
-import type { MergeDisplayPhase } from '../../shared/schemas/sse-events.js';
+import type { MergeDisplayPhase } from '@shared/schemas/sse-events.js';
 
 export function MergeStatusIcon({ outcome, phase }: { outcome?: MergeOutcome | undefined; phase: MergeDisplayPhase }) {
   if (outcome === 'success') return <CheckCircleIcon className="w-4 h-4 text-success" />;

@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { eq, asc } from 'drizzle-orm';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
-import { books, importJobs, importSubmissions, importSubmissionItems } from '../../db/schema.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
+import { books, importJobs, importSubmissions, importSubmissionItems } from '@db/schema.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { BookService } from './book.service.js';
@@ -13,7 +13,7 @@ import { ImportSubmissionRunner } from './import-submission-runner.js';
 import { ImportStagingService } from './import-staging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { NotifierService } from './notifier.service.js';
-import { serializeSubmissionForDigest, type StagedImportItem } from '../../core/import-staging/schemas.js';
+import { serializeSubmissionForDigest, type StagedImportItem } from '@core/import-staging/schemas.js';
 
 interface DrainSeam { drainOne(): Promise<boolean> }
 

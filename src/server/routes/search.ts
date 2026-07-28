@@ -3,11 +3,11 @@ import { type DownloadOrchestrator } from '../services/download-orchestrator.js'
 import { getErrorMessage } from '../utils/error-message.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import { DuplicateDownloadError } from '../services/download-errors.js';
-import { DownloadClientError } from '../../core/download-clients/errors.js';
+import { DownloadClientError } from '@core/download-clients/errors.js';
 import {
   grabBodySchema,
   type GrabInput,
-} from '../../shared/schemas.js';
+} from '@shared/schemas.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 

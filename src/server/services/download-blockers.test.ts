@@ -11,10 +11,10 @@ import {
 import { ClaimMissError } from './download-errors.js';
 import { createMockDb } from '../__tests__/helpers.js';
 import { and, eq } from 'drizzle-orm';
-import { downloads } from '../../db/schema.js';
-import { clientStatusSchema, pipelineStageSchema } from '../../shared/schemas/activity.js';
-import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
-import type { Db } from '../../db/index.js';
+import { downloads } from '@db/schema.js';
+import { clientStatusSchema, pipelineStageSchema } from '@shared/schemas/activity.js';
+import { deriveDisplayStatus } from '@shared/download-status-registry.js';
+import type { Db } from '@db/index.js';
 import type { DownloadRow } from './types.js';
 
 function dl(partial: Partial<DownloadRow>): DownloadRow {

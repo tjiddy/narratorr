@@ -1,7 +1,7 @@
-import type { BookSortField, BookSortDirection } from '../../shared/schemas/book.js';
+import type { BookSortField, BookSortDirection } from '@shared/schemas/book.js';
 import type { LibraryBookListItemRow } from './book-list.service.js';
-import { toSortTitle } from '../../core/utils/naming.js';
-import { resolveBookQualityInputs } from '../../core/utils/quality.js';
+import { toSortTitle } from '@core/utils/naming.js';
+import { resolveBookQualityInputs } from '@core/utils/quality.js';
 
 type SortKeyExtractor = (row: LibraryBookListItemRow) => string | number | null;
 

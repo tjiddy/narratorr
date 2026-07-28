@@ -1,4 +1,4 @@
-import type { SearchOptions } from '../../core/index.js';
+import type { SearchOptions } from '@core/index.js';
 
 /**
  * Strip punctuation that fragments indexer Torznab queries while preserving

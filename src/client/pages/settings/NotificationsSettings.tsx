@@ -3,7 +3,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { NotifierCard } from '@/components/settings/NotifierCard';
 import { BellIcon } from '@/components/icons';
 import { CrudSettingsPage } from './CrudSettingsPage';
-import { type CreateNotifierFormData } from '../../../shared/schemas.js';
+import { type CreateNotifierFormData } from '@shared/schemas.js';
 
 export function NotificationsSettings() {
   return (

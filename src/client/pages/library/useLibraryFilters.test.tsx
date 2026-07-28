@@ -5,7 +5,7 @@ import { MemoryRouter, useSearchParams } from 'react-router-dom';
 import { useLibraryFilters, applyClientFilters } from './useLibraryFilters';
 import type { LibraryBookListItem } from '@/lib/api';
 import { createMockLibraryBook } from '@/__tests__/factories';
-import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
+import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 
 /** Wrapper that provides Router context with optional initial URL */
 function createWrapper(route = '/library') {

@@ -5,7 +5,7 @@ import { join } from 'path';
 import { eq, sql } from 'drizzle-orm';
 import { createDb, runMigrations, type Db } from './index.js';
 import { books, companionEbooks } from './schema.js';
-import { COMPANION_EBOOK_STATUSES } from '../shared/schemas/companion-ebook.js';
+import { COMPANION_EBOOK_STATUSES } from '@shared/schemas/companion-ebook.js';
 import { generatePublicId } from '../server/utils/public-id.js';
 
 // Real-DB coverage for the #1957 companion_ebooks table. The eight CHECK constraints

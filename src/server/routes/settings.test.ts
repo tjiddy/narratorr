@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, installMockAppLog, resetMockServices } from '../__tests__/helpers.js';
-import { createMockSettings } from '../../shared/schemas/settings/create-mock-settings.fixtures.js';
-import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
-import { RateLimitError, TransientError, MetadataError } from '../../core/metadata/errors.js';
-import type * as HardcoverModule from '../../core/metadata/hardcover.js';
+import { createMockSettings } from '@shared/schemas/settings/create-mock-settings.fixtures.js';
+import { DEFAULT_SETTINGS } from '@shared/schemas/settings/registry.js';
+import { RateLimitError, TransientError, MetadataError } from '@core/metadata/errors.js';
+import type * as HardcoverModule from '@core/metadata/hardcover.js';
 import type { Services } from './index.js';
 import { SECRET_CATEGORIES } from '../utils/secret-category-map.js';
 import { getSecretFieldNames, SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
@@ -24,20 +24,20 @@ const { mockResolveFfmpegPath, mockProbeFfmpeg } = vi.hoisted(() => ({
   mockProbeFfmpeg: vi.fn(),
 }));
 
-vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../core/utils/audio-processor.js')>();
+vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: mockResolveFfmpegPath, probeFfmpeg: mockProbeFfmpeg };
 });
 
-vi.mock('../../core/utils/network-service.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../core/utils/network-service.js')>();
+vi.mock('@core/utils/network-service.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/utils/network-service.js')>();
   return {
     ...actual,
     fetchWithTimeout: mockFetchWithTimeout,
   };
 });
 
-vi.mock('../../core/metadata/hardcover.js', async (importOriginal) => {
+vi.mock('@core/metadata/hardcover.js', async (importOriginal) => {
   const actual = await importOriginal<typeof HardcoverModule>();
   class MockHardcoverClient {
     constructor(apiKey: string) {

@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { UseFormGetValues } from 'react-hook-form';
-import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
+import type { CreateDownloadClientFormData } from '@shared/schemas.js';
 import { downloadClientsApi, type CategoriesResult } from '@/lib/api/download-clients';
 import { getErrorMessage } from '@/lib/error-message.js';
 

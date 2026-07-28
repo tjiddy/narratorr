@@ -14,11 +14,11 @@ import {
   createMockLogger,
   inject,
 } from '../__tests__/helpers.js';
-import { createMockSettings } from '../../shared/schemas/settings/create-mock-settings.fixtures.js';
-import type { Db } from '../../db/index.js';
+import { createMockSettings } from '@shared/schemas/settings/create-mock-settings.fixtures.js';
+import type { Db } from '@db/index.js';
 import type { Services } from './index.js';
 import type { CompanionEbookRow } from '../services/types.js';
-import { isCompanionEbookExposed } from '../../shared/companion-ebook-exposure.js';
+import { isCompanionEbookExposed } from '@shared/companion-ebook-exposure.js';
 import { isCompanionEbookEligible } from '../services/companion-ebook-eligibility.js';
 import { findCompanionEbookCandidates } from '../services/companion-ebook-discovery.js';
 import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
@@ -27,8 +27,8 @@ import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
 // the fixture itself is unrepresentable on NTFS, so the test can only be skipped.
 const CASE_SENSITIVE_FS = process.platform !== 'win32';
 import { openCompanionEbook, resolveCompanionEbookPath } from '../services/companion-ebook-open.js';
-import * as F from '../../core/__tests__/epub-archive.fixture.js';
-import { MAX_EPUB_COVER_BYTES } from '../../core/epub/limits.js';
+import * as F from '@core/__tests__/epub-archive.fixture.js';
+import { MAX_EPUB_COVER_BYTES } from '@core/epub/limits.js';
 import { CompanionEbookReconciler, type CompanionSelectionResult } from '../services/companion-ebook-reconciler.js';
 
 /**
@@ -38,9 +38,9 @@ import { CompanionEbookReconciler, type CompanionSelectionResult } from '../serv
  * status" — stay assertable. They live in modules separate from the route, which is what makes
  * `vi.mock` intercept the route's call at all (esm-same-module-vi-mock-bypass).
  */
-vi.mock('../../shared/companion-ebook-exposure.js', async () => {
-  const actual = await vi.importActual<typeof import('../../shared/companion-ebook-exposure.js')>(
-    '../../shared/companion-ebook-exposure.js',
+vi.mock('@shared/companion-ebook-exposure.js', async () => {
+  const actual = await vi.importActual<typeof import('@shared/companion-ebook-exposure.js')>(
+    '@shared/companion-ebook-exposure.js',
   );
   return { ...actual, isCompanionEbookExposed: vi.fn(actual.isCompanionEbookExposed) };
 });

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { idParamSchema } from '../../shared/schemas.js';
+import { idParamSchema } from '@shared/schemas.js';
 import type { BookService, SeriesCardService } from '../services/index.js';
 
 type IdParam = z.infer<typeof idParamSchema>;

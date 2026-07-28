@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { FastifyReply } from 'fastify';
-import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-events.js';
+import type { SSEEventType, SSEEventPayloads } from '@shared/schemas/sse-events.js';
 import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_FRAME } from '../utils/sse-stream.js';
 
 // Re-exported for existing consumers/tests that import the cadence from the

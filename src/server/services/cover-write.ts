@@ -1,10 +1,10 @@
 import { readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books } from '../../db/schema.js';
-import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
+import { books } from '@db/schema.js';
+import { COVER_FILE_REGEX } from '@core/utils/cover-regex.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 /**

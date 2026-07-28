@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { MergeDisplayPhase } from '../../shared/schemas/sse-events.js';
+import type { MergeDisplayPhase } from '@shared/schemas/sse-events.js';
 
 export type MergeOutcome = 'success' | 'error' | 'cancelled';
 

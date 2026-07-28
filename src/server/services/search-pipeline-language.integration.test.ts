@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import type { SearchResult } from '../../core/index.js';
+import type { SearchResult } from '@core/index.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { IndexerService } from './indexer.service.js';
-import type * as NetworkServiceModule from '../../core/utils/network-service.js';
+import type * as NetworkServiceModule from '@core/utils/network-service.js';
 import { postProcessSearchResults } from './search-pipeline.js';
 
 // Mock the network boundary (not enrichUsenetLanguages itself) so the real
@@ -12,7 +12,7 @@ import { postProcessSearchResults } from './search-pipeline.js';
 // evidence the spec for #1142 calls for.
 const mockDispatcher = { close: vi.fn().mockResolvedValue(undefined) };
 
-vi.mock('../../core/utils/network-service.js', async (importActual) => {
+vi.mock('@core/utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   return {
     ...actual,
@@ -21,7 +21,7 @@ vi.mock('../../core/utils/network-service.js', async (importActual) => {
   };
 });
 
-import { fetchWithSsrfRedirect } from '../../core/utils/network-service.js';
+import { fetchWithSsrfRedirect } from '@core/utils/network-service.js';
 import { enrichmentCache } from '../utils/enrichment-cache.js';
 const mockFetchWithSsrfRedirect = vi.mocked(fetchWithSsrfRedirect);
 

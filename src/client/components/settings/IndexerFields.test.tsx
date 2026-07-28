@@ -4,8 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { useForm } from 'react-hook-form';
 import { IndexerFields } from './IndexerFields';
 import { renderWithProviders } from '@/__tests__/helpers';
-import type { CreateIndexerFormData } from '../../../shared/schemas.js';
-import type { IndexerType } from '../../../shared/indexer-registry.js';
+import type { CreateIndexerFormData } from '@shared/schemas.js';
+import type { IndexerType } from '@shared/indexer-registry.js';
 import type { Mock } from 'vitest';
 
 vi.mock('@/lib/api', () => ({

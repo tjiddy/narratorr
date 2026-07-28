@@ -4,14 +4,14 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
-import { books, importJobs, bookEvents } from '../../db/schema.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
+import { books, importJobs, bookEvents } from '@db/schema.js';
 import { BookService, OwnedRecordingError } from './book.service.js';
 import { ImportQueueWorker } from './import-queue-worker.js';
 import { registerImportAdapter, clearImportAdapters } from './import-adapters/registry.js';
 import type { ImportAdapter } from './import-adapters/types.js';
 import type { EventHistoryService } from './event-history.service.js';
-import { importFailedPayload } from '../../shared/schemas/sse-events.js';
+import { importFailedPayload } from '@shared/schemas/sse-events.js';
 
 const noopLog: FastifyBaseLogger = {
   info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(),

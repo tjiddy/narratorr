@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas.js';
+import type { SSEEventType, SSEEventPayloads } from '@shared/schemas.js';
 
 export interface IndexerState {
   name: string;

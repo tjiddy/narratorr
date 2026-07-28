@@ -1,5 +1,5 @@
 import { normalizeSeriesName } from './series-normalize.js';
-import type { BookMetadata } from '../../core/metadata/index.js';
+import type { BookMetadata } from '@core/metadata/index.js';
 
 /**
  * Identity used to scope a same-series lookup. Prefer `asin` (Audible series

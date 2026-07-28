@@ -3,7 +3,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { ConnectorCard } from '@/components/settings/ConnectorCard';
 import { RefreshIcon } from '@/components/icons';
 import { CrudSettingsPage } from './CrudSettingsPage';
-import { type CreateConnectorFormData } from '../../../shared/schemas.js';
+import { type CreateConnectorFormData } from '@shared/schemas.js';
 
 export function ConnectorsSettings() {
   return (

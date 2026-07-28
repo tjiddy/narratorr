@@ -1,14 +1,14 @@
 import { and, eq, isNotNull, ne, or, type SQL } from 'drizzle-orm';
-import { downloads } from '../../db/schema.js';
-import type { DbOrTx } from '../../db/index.js';
-import type { ClientStatus, DownloadStatus, PipelineStage } from '../../shared/schemas/activity.js';
+import { downloads } from '@db/schema.js';
+import type { DbOrTx } from '@db/index.js';
+import type { ClientStatus, DownloadStatus, PipelineStage } from '@shared/schemas/activity.js';
 import {
   getInProgressStatuses,
   getTerminalStatuses,
   getCompletedStatuses,
   getClientPolledStatuses,
   deriveDisplayStatus,
-} from '../../shared/download-status-registry.js';
+} from '@shared/download-status-registry.js';
 
 // ============================================================================
 // Two-axis download state transitions (#1445)

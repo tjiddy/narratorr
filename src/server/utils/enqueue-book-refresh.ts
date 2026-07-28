@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { ConnectorReason } from '../../core/connectors/types.js';
+import type { ConnectorReason } from '@core/connectors/types.js';
 import type { ConnectorService } from '../services/connector.service.js';
 import type { RetagResult } from '../services/tagging.service.js';
 import { fireAndForget } from './fire-and-forget.js';

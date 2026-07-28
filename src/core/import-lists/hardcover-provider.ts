@@ -2,11 +2,11 @@ import { z } from 'zod';
 import type { ImportListProvider, ImportListItem } from './types.js';
 import { ImportListError } from './errors.js';
 import { formatZodError } from './format-zod-error.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { IMPORT_LIST_TIMEOUT_MS } from '../utils/constants.js';
-import { parseHardcoverListUrl } from '../../shared/hardcover-list-url.js';
-import type { HardcoverListType, HardcoverImportMax } from '../../shared/hardcover-list-types.js';
+import { parseHardcoverListUrl } from '@shared/hardcover-list-url.js';
+import type { HardcoverListType, HardcoverImportMax } from '@shared/hardcover-list-types.js';
 
 export interface HardcoverConfig {
   apiKey: string;

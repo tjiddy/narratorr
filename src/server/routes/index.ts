@@ -1,5 +1,5 @@
 import { type FastifyInstance } from 'fastify';
-import { type Db } from '../../db/index.js';
+import { type Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import {
   SettingsService,
@@ -174,8 +174,8 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   await settings.migrateMaxConcurrentProcessingDefaults();
 
   // Health check service with system deps
-  const { resolveProxyIp } = await import('../../core/indexers/proxy.js');
-  const { probeFfmpeg } = await import('../../core/utils/audio-processor.js');
+  const { resolveProxyIp } = await import('@core/indexers/proxy.js');
+  const { probeFfmpeg } = await import('@core/utils/audio-processor.js');
   const healthCheck = new HealthCheckService(
     indexer, downloadClient, settings, notifier, db, log,
     { fsAccess: fsp.access, fsStatfs: fsp.statfs, probeFfmpeg, resolveProxyIp },

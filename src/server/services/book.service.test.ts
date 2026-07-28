@@ -5,12 +5,12 @@ import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js'
 import { BookService, CoverUploadError } from './book.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
-import type { ProductionType } from '../../shared/schemas/book.js';
+import type { ProductionType } from '@shared/schemas/book.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import { eq } from 'drizzle-orm';
-import { authors, books } from '../../db/schema.js';
+import { authors, books } from '@db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db, DbOrTx } from '../../db/index.js';
+import type { Db, DbOrTx } from '@db/index.js';
 import type { MetadataService } from './metadata.service.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {

@@ -1,21 +1,21 @@
 import { eq, and, or, ne } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books } from '../../db/schema.js';
-import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
+import { downloads, books } from '@db/schema.js';
+import { deriveDisplayStatus } from '@shared/download-status-registry.js';
 import {
   transitionDownloadState,
   clientPolledDownloadCondition,
   inProgressDownloadCondition,
   completedDisplayDownloadCondition,
 } from '../utils/download-state.js';
-import type { ClientStatus } from '../../shared/schemas/activity.js';
+import type { ClientStatus } from '@shared/schemas/activity.js';
 import type { DownloadClientService } from '../services';
 import type { NotifierService } from '../services';
 import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
 import type { BlacklistService } from '../services';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
-import type { DownloadStatus } from '../../shared/schemas/activity.js';
+import type { DownloadStatus } from '@shared/schemas/activity.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
@@ -23,7 +23,7 @@ import type { RemotePathMappingService } from '../services/remote-path-mapping.s
 import type { QualityGateOrchestrator } from '../services/quality-gate-orchestrator.js';
 import type { EventHistoryService } from '../services/event-history.service.js';
 import { recordDownloadFailedEvent } from '../utils/download-side-effects.js';
-import { applyPathMapping } from '../../core/utils/path-mapping.js';
+import { applyPathMapping } from '@core/utils/path-mapping.js';
 import { join } from 'node:path';
 import { serializeError } from '../utils/serialize-error.js';
 

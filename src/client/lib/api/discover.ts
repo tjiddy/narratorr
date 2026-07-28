@@ -1,4 +1,4 @@
-import type { SuggestionRowResponse } from '../../../shared/schemas/discovery.js';
+import type { SuggestionRowResponse } from '@shared/schemas/discovery.js';
 import { fetchApi } from './client.js';
 
 /** Client-facing alias for the discovery suggestion row wire shape. */

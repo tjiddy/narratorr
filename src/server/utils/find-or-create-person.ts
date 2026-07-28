@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
-import type { DbOrTx } from '../../db/index.js';
-import { authors, narrators } from '../../db/schema.js';
-import { slugify } from '../../shared/utils.js';
+import type { DbOrTx } from '@db/index.js';
+import { authors, narrators } from '@db/schema.js';
+import { slugify } from '@shared/utils.js';
 import { generatePublicId } from './public-id.js';
 
 /** Table reference for authors or narrators — both have id + slug columns. */

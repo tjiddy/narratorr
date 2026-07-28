@@ -22,7 +22,7 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useSSEConnected } from '@/hooks/useEventSource';
 import { getErrorMessage } from '@/lib/error-message.js';
-import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
+import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 
 const ACTIVITY_TABS: TabItem[] = [
   { value: 'active', label: 'Active', icon: <ActivityIcon className="w-4 h-4" /> },

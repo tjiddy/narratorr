@@ -15,9 +15,9 @@ import type { EventHistoryService } from './event-history.service.js';
 import type { RetrySearchDeps } from './retry-search.js';
 import type { CompanionBookReconcileTrigger } from './companion-ebook-trigger.js';
 import { CompanionEbookReconciler } from './companion-ebook-reconciler.js';
-import { buildEpub } from '../../core/__tests__/epub-archive.fixture.js';
+import { buildEpub } from '@core/__tests__/epub-archive.fixture.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 
 vi.mock('./rejection-helpers.js', () => ({
   blacklistAndRetrySearch: vi.fn().mockResolvedValue(undefined),

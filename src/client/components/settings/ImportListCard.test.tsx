@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { foreignRegistryKeys } from '@/__tests__/registry-foreign-keys';
 import { ImportListCard } from './ImportListCard';
-import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES, type ImportListType } from '../../../shared/import-list-registry.js';
+import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES, type ImportListType } from '@shared/import-list-registry.js';
 import type { ImportList } from '@/lib/api';
 import type { Mock } from 'vitest';
 

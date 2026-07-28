@@ -5,7 +5,7 @@ import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockIndexer } from '@/__tests__/factories';
 import { foreignRegistryKeys } from '@/__tests__/registry-foreign-keys';
 import { IndexerCard } from './IndexerCard';
-import { INDEXER_REGISTRY, INDEXER_TYPES } from '../../../shared/indexer-registry.js';
+import { INDEXER_REGISTRY, INDEXER_TYPES } from '@shared/indexer-registry.js';
 import type { Indexer, TestResult } from '@/lib/api';
 import type { IdTestResult } from './SettingsCardShell';
 import type { Mock } from 'vitest';

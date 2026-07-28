@@ -3,9 +3,9 @@ import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 import { createMockDb, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookListService } from './book-list.service.js';
-import type { Db } from '../../db/index.js';
-import { books } from '../../db/schema.js';
-import { BOOK_STATUSES, LIBRARY_FILTER_BUCKETS, type LibraryFilterBucket, type BookStatus } from '../../shared/schemas/book.js';
+import type { Db } from '@db/index.js';
+import { books } from '@db/schema.js';
+import { BOOK_STATUSES, LIBRARY_FILTER_BUCKETS, type LibraryFilterBucket, type BookStatus } from '@shared/schemas/book.js';
 
 // Serialize a Drizzle SQL expression to a raw SQL string + bound params so the
 // bucket-expansion predicate can be asserted against real SQL, not mock calls

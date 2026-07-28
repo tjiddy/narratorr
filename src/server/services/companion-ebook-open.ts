@@ -5,7 +5,7 @@ import { assertRealPathInsideLibraryStrict, PathOutsideLibraryError } from '../u
 import { isDefinitiveAbsence } from '../utils/fs-errno.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { isPersistableCompanionBasename } from './companion-ebook-observation.js';
-import { READ_NO_FOLLOW } from '../../core/utils/no-follow-open.js';
+import { READ_NO_FOLLOW } from '@core/utils/no-follow-open.js';
 
 export interface CompanionOpenInput {
   /** Public book id, carried solely so the log identity matches the shipped sibling's shape. */

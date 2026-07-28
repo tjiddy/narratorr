@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { RateLimitError, METADATA_SEARCH_PROVIDER_FACTORIES } from '../../core/index.js';
+import { RateLimitError, METADATA_SEARCH_PROVIDER_FACTORIES } from '@core/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { MatchJobService, type MatchCandidate } from './match-job.service.js';
 import { MetadataService } from './metadata.service.js';
@@ -41,8 +41,8 @@ const mockAudnexus = {
   getChapterRuntime: vi.fn().mockResolvedValue({ kind: 'not_found' }),
 };
 
-vi.mock('../../core/index.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../core/index.js')>();
+vi.mock('@core/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/index.js')>();
   return {
     ...actual,
     METADATA_SEARCH_PROVIDER_FACTORIES: {
@@ -52,11 +52,11 @@ vi.mock('../../core/index.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../../core/utils/audio-scanner.js', () => ({
+vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 
 async function waitForJob(service: MatchJobService, id: string, maxMs = 2000): Promise<void> {
   const start = Date.now();

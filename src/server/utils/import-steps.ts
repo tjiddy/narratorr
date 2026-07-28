@@ -5,13 +5,13 @@ import { pipeline } from 'node:stream/promises';
 import type { Stats } from 'node:fs';
 import { join, extname, basename, normalize } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { transitionDownloadState } from './download-state.js';
-import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/index.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/index.js';
 import { getErrorMessage } from './error-message.js';
 import type { TaggingService } from '../services/tagging.service.js';
 import { serializeError } from './serialize-error.js';
-import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
+import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 
 // Re-export side-effect functions for backwards compatibility
 export {
@@ -31,7 +31,7 @@ import {
 } from './import-helpers.js';
 import { runPostProcessingScript } from './post-processing-script.js';
 import { revertBookStatus } from './book-status.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import { assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import { removeImportSibling, removeMarker, markerPresent } from './import-staging.js';
 import { deleteManagedBookFiles } from './delete-managed-files.js';

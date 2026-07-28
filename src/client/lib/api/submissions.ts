@@ -6,7 +6,7 @@ import type {
   SubmissionListResponse,
   SubmissionResponse,
   SubmissionSource,
-} from '../../../core/import-staging/schemas.js';
+} from '@core/import-staging/schemas.js';
 
 export type {
   AttentionResponse,
@@ -21,7 +21,7 @@ export type {
   StagedItemResultDto,
   StagedImportItem,
   SubmissionAggregates,
-} from '../../../core/import-staging/schemas.js';
+} from '@core/import-staging/schemas.js';
 
 export interface ImportSubmissionListParams {
   source?: SubmissionSource;

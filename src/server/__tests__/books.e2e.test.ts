@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createE2EApp, type E2EApp } from './e2e-helpers.js';
-import { books } from '../../db/schema.js';
+import { books } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
-import { BOOK_STATUSES } from '../../shared/schemas/book.js';
-import { DEFAULT_LIMITS } from '../../shared/schemas/common.js';
+import { BOOK_STATUSES } from '@shared/schemas/book.js';
+import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 
 describe('Books E2E', () => {
   let e2e: E2EApp;

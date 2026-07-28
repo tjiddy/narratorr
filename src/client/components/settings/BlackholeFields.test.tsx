@@ -3,7 +3,7 @@ import { screen, render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm } from 'react-hook-form';
 import { BlackholeFields } from './BlackholeFields';
-import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
+import type { CreateDownloadClientFormData } from '@shared/schemas.js';
 
 function FieldWrapper({ isEdit, protocolError, watchDirError }: { isEdit?: boolean; protocolError?: boolean; watchDirError?: boolean }) {
   const { register, formState: { errors }, setError } = useForm<CreateDownloadClientFormData>({

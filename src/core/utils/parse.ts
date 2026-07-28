@@ -316,7 +316,7 @@ export function isMultiPartUsenetPost(title: string): MultiPartResult {
   return { match: false };
 }
 
-export { slugify } from '../../shared/utils.js';
+export { slugify } from '@shared/utils.js';
 
 export function formatBytes(bytes?: number): string {
   if (bytes == null || bytes === 0) return '0 B';

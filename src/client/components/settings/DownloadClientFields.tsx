@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import type { UseFormRegister, FieldErrors, UseFormSetValue, UseFormGetValues } from 'react-hook-form';
-import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
-import { DOWNLOAD_CLIENT_REGISTRY, type DownloadClientType } from '../../../shared/download-client-registry.js';
+import type { CreateDownloadClientFormData } from '@shared/schemas.js';
+import { DOWNLOAD_CLIENT_REGISTRY, type DownloadClientType } from '@shared/download-client-registry.js';
 import { RefreshIcon } from '../icons';
 import { ToolbarDropdown } from '../ToolbarDropdown';
 import { useFetchCategories } from './useFetchCategories';

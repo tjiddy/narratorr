@@ -1,18 +1,18 @@
 import { eq } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloadClients, remotePathMappings } from '../../db/schema.js';
+import { downloadClients, remotePathMappings } from '@db/schema.js';
 import {
   DOWNLOAD_CLIENT_ADAPTER_FACTORIES,
   type DownloadClientAdapter,
   type DownloadProtocol,
-} from '../../core/index.js';
-import { DOWNLOAD_CLIENT_REGISTRY } from '../../shared/download-client-registry.js';
+} from '@core/index.js';
+import { DOWNLOAD_CLIENT_REGISTRY } from '@shared/download-client-registry.js';
 import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import { downloadClientSettingsSchemas, type DownloadClientSettings } from '../../shared/schemas/download-client.js';
+import { downloadClientSettingsSchemas, type DownloadClientSettings } from '@shared/schemas/download-client.js';
 import { parseEntitySettings } from '../utils/parse-entity-settings.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { DownloadClientRow } from './types.js';

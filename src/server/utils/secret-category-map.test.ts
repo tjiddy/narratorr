@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SETTINGS_CATEGORIES } from '../../shared/schemas.js';
+import { SETTINGS_CATEGORIES } from '@shared/schemas.js';
 import { getSecretFieldNames } from './secret-codec.js';
 import {
   SECRET_CATEGORY_MAP,

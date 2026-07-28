@@ -5,7 +5,7 @@ import {
   validatorCompiler,
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
-import type { Db } from '../../../db/index.js';
+import type { Db } from '@db/index.js';
 import { createMockDb, mockDbChain, inject } from '../../__tests__/helpers.js';
 import { v1BooksRoutes } from './books.js';
 import { V1NotFoundError, v1ErrorHandler } from './_helpers.js';

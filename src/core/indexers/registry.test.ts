@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { ADAPTER_FACTORIES } from './registry.js';
-import { indexerTypeSchema, type IndexerSettings } from '../../shared/schemas/indexer.js';
+import { indexerTypeSchema, type IndexerSettings } from '@shared/schemas/indexer.js';
 
 const MAM_BASE = 'https://www.myanonamouse.net';
 

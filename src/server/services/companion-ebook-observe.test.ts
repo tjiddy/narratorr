@@ -3,7 +3,7 @@ import type { Stats } from 'node:fs';
 import { readdir, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { validateEpub } from '../../core/epub/validate.js';
+import { validateEpub } from '@core/epub/validate.js';
 import * as observeModule from './companion-ebook-observe.js';
 import { observeCompanionEbook, revalidateCompanionFile } from './companion-ebook-observe.js';
 import type { CompanionObserveInput, CompanionRevalidateInput } from './companion-ebook-observe.js';
@@ -22,7 +22,7 @@ import type { CompanionEbookRow } from './types.js';
  * a mocked discovery would assert this module against a fiction of its collaborator.
  */
 vi.mock('node:fs/promises', () => ({ readdir: vi.fn(), lstat: vi.fn() }));
-vi.mock('../../core/epub/validate.js', () => ({ validateEpub: vi.fn() }));
+vi.mock('@core/epub/validate.js', () => ({ validateEpub: vi.fn() }));
 
 const readdirMock = vi.mocked(readdir);
 const lstatMock = vi.mocked(lstat);

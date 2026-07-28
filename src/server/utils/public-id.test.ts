@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
-import { authors, books, downloads, narrators, series } from '../../db/schema.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
+import { authors, books, downloads, narrators, series } from '@db/schema.js';
 import { generatePublicId, resolveByPublicId } from './public-id.js';
 
 describe('generatePublicId()', () => {

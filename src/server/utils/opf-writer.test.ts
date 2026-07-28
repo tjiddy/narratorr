@@ -11,7 +11,7 @@ vi.mock('node:fs/promises', () => ({
 import { readFile, writeFile } from 'node:fs/promises';
 import { generateOpf, writeOpfForImport, writeOpfSidecar } from './opf-writer.js';
 import { parseOpfMetadata } from './abs-opf-parser.fixture.js';
-import { NARRATORR_OPF_MARKER } from '../../core/utils/opf-regex.js';
+import { NARRATORR_OPF_MARKER } from '@core/utils/opf-regex.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
 
 /** Wrap raw `<metadata>` children in a minimal OPF 2.0 package — for hand-built drift/negative cases. */

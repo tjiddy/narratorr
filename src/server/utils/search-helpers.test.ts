@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { searchWithSwapRetryTrace } from './search-helpers.js';
-import type { BookMetadata } from '../../core/metadata/index.js';
+import type { BookMetadata } from '@core/metadata/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 function createMockLog(): FastifyBaseLogger {

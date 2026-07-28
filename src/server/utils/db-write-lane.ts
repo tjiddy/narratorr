@@ -1,4 +1,4 @@
-import type { Db } from '../../db/client.js';
+import type { Db } from '@db/client.js';
 
 /**
  * An APPLICATION-level serialization lane, one per database connection (#1893 F36, re-homed by

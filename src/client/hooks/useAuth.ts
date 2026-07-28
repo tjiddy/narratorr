@@ -3,7 +3,7 @@ import { useCallback } from 'react';
 import { api } from '@/lib/api';
 import { URL_BASE } from '@/lib/api/client';
 import { queryKeys } from '@/lib/queryKeys';
-import type { AuthMode } from '../../shared/schemas.js';
+import type { AuthMode } from '@shared/schemas.js';
 
 export interface AuthState {
   mode: AuthMode;

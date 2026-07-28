@@ -8,7 +8,7 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { useTrackedForm } from '@/hooks/dirty-forms.js';
-import type { AppSettings, UpdateSettingsInput } from '../../shared/schemas.js';
+import type { AppSettings, UpdateSettingsInput } from '@shared/schemas.js';
 
 export interface UseSettingsFormConfig<T extends Record<string, unknown>> {
   // z.ZodType<T, T> is intentional: z.ZodType<T> sets _input to unknown, which conflicts

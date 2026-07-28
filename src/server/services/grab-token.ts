@@ -4,7 +4,7 @@ import {
   encodeReleaseId,
   decodeReleaseId,
   type ReleaseTokenPayload,
-} from '../../shared/schemas/v1/actions.js';
+} from '@shared/schemas/v1/actions.js';
 
 // ============================================================================
 // v1 grab-token signing/verification (#1488)

@@ -4,7 +4,7 @@ import { MetadataError, RateLimitError, TransientError } from './errors.js';
 import { normalizeGenres } from './genres.js';
 import { AUDNEXUS_TIMEOUT_MS } from '../utils/constants.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 import type {
   MetadataEnrichmentProvider,
   BookMetadata,

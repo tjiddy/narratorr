@@ -1,8 +1,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { eq } from 'drizzle-orm';
-import type { Db } from '../../../db/index.js';
-import { books, downloads } from '../../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { books, downloads } from '@db/schema.js';
 import type { BookService } from '../../services/book.service.js';
 import type { IndexerSearchService } from '../../services/indexer-search.service.js';
 import type { IndexerService } from '../../services/indexer.service.js';
@@ -11,18 +11,18 @@ import type { SettingsService } from '../../services/settings.service.js';
 import type { DownloadOrchestrator, GrabParams } from '../../services/download-orchestrator.js';
 import type { DownloadService } from '../../services/download.service.js';
 import { DuplicateDownloadError } from '../../services/download-errors.js';
-import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../../core/download-clients/errors.js';
-import { resolveBookQualityInputs } from '../../../core/utils/index.js';
+import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
+import { resolveBookQualityInputs } from '@core/utils/index.js';
 import { buildSearchQuery, postProcessSearchResults } from '../../services/search-pipeline.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
-import { downloadV1Schema, toDownloadV1 } from '../../../shared/schemas/v1/downloads.js';
-import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { downloadV1Schema, toDownloadV1 } from '@shared/schemas/v1/downloads.js';
+import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 import {
   releaseV1Schema,
   grabV1RequestSchema,
   toReleaseV1,
   type ReleaseTokenPayload,
-} from '../../../shared/schemas/v1/actions.js';
+} from '@shared/schemas/v1/actions.js';
 import { signReleaseId, verifyReleaseId } from '../../services/grab-token.js';
 import { V1NotFoundError, v1ErrorHandler } from './_helpers.js';
 

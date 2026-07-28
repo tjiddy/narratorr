@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { ChapterRuntimeOutcome } from '../../core/index.js';
+import type { ChapterRuntimeOutcome } from '@core/index.js';
 import {
   createChapterCorroborator,
   corroborateDurationVerdict,

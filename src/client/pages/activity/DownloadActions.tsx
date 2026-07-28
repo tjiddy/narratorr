@@ -5,7 +5,7 @@ import {
 } from '@/components/icons';
 import { Button } from '@/components/Button';
 import type { Download } from '@/lib/api';
-import { isTerminalStatus } from '../../../shared/download-status-registry.js';
+import { isTerminalStatus } from '@shared/download-status-registry.js';
 
 export function DownloadActions({
   download,

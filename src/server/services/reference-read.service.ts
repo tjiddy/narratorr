@@ -1,7 +1,7 @@
 import { asc, eq, count as countFn } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
-import { authors, narrators, series } from '../../db/schema.js';
-import type { PaginationParams } from '../../shared/schemas/common.js';
+import type { Db } from '@db/index.js';
+import { authors, narrators, series } from '@db/schema.js';
+import type { PaginationParams } from '@shared/schemas/common.js';
 
 // ============================================================================
 // Reference reads — authors / narrators / series (S4 — #1450)

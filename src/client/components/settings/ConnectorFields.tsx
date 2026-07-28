@@ -8,8 +8,8 @@ import {
   CONNECTOR_REGISTRY,
   type ConnectorSettingsField,
   type ConnectorType,
-} from '../../../shared/connector-registry.js';
-import type { CreateConnectorFormData } from '../../../shared/schemas.js';
+} from '@shared/connector-registry.js';
+import type { CreateConnectorFormData } from '@shared/schemas.js';
 
 type ConnectorForm = UseFormReturn<CreateConnectorFormData>;
 type SettingsErrors = Record<string, FieldError | undefined> | undefined;

@@ -1,7 +1,7 @@
-import { resolveBookQualityInputs } from '../../core/utils/quality.js';
-import { tokenizeNarrators, normalizeNarrator } from '../../core/utils/similarity.js';
+import { resolveBookQualityInputs } from '@core/utils/quality.js';
+import { tokenizeNarrators, normalizeNarrator } from '@core/utils/similarity.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
-import { withinDurationTolerance } from '../../shared/duration-tolerance.js';
+import { withinDurationTolerance } from '@shared/duration-tolerance.js';
 import type { BookRow } from './types.js';
 
 type BookWithNarrators = BookRow & { narrators?: Array<{ name: string }> };

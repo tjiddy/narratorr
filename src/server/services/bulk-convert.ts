@@ -1,17 +1,17 @@
 import { cp, mkdir, readdir, rename as fsRename, rm, unlink } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { BookService } from './book.service.js';
 import type { ConnectorService } from './connector.service.js';
 import { enqueueBookRefresh, type BookRefreshItem } from '../utils/enqueue-book-refresh.js';
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
+import { processAudioFiles } from '@core/utils/audio-processor.js';
 import { buildNamingContext } from '../utils/paths.js';
-import type { NamingOptions } from '../../core/utils/naming.js';
+import type { NamingOptions } from '@core/utils/naming.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
-import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
-import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
+import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
+import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 
 /** Deps for a single bulk-convert step. Extracted from `BulkOperationService` (it is at the line cap). */

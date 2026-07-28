@@ -4,7 +4,7 @@ import { resolveUrl } from '@/lib/url-utils';
 import { isBookInLibrary } from '@/lib/helpers';
 import { formatDurationMinutes } from '@/lib/format';
 import { HeadphonesIcon, CheckCircleIcon } from '@/components/icons';
-import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 export interface MetadataResultItemProps {
   meta: BookMetadata;

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ADAPTER_FACTORIES } from './registry.js';
-import { notifierTypeSchema, type NotifierSettings } from '../../shared/schemas/notifier.js';
+import { notifierTypeSchema, type NotifierSettings } from '@shared/schemas/notifier.js';
 
 describe('Notifier ADAPTER_FACTORIES', () => {
   const types = notifierTypeSchema.options;

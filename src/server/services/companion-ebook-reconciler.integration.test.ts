@@ -5,16 +5,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
-import { books, companionEbooks } from '../../db/schema.js';
-import { buildEpub } from '../../core/__tests__/epub-archive.fixture.js';
-import { validateEpub } from '../../core/epub/validate.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
+import { books, companionEbooks } from '@db/schema.js';
+import { buildEpub } from '@core/__tests__/epub-archive.fixture.js';
+import { validateEpub } from '@core/epub/validate.js';
 import { upsertCompanionEbook } from './companion-ebook.repository.js';
 import { generatePublicId } from '../utils/public-id.js';
 import type { SettingsService } from './settings.service.js';
 import { CompanionEbookReconciler } from './companion-ebook-reconciler.js';
 import { removeDirTolerant } from '../__tests__/windows-fs.js';
-import { isCompanionEbookExposed } from '../../shared/companion-ebook-exposure.js';
+import { isCompanionEbookExposed } from '@shared/companion-ebook-exposure.js';
 
 /**
  * The whole stack, unmocked: a real migrated libSQL database, real temp directories, real
@@ -44,8 +44,8 @@ vi.mock('node:fs/promises', async () => {
   return { ...actual, readdir: vi.fn(actual.readdir) };
 });
 
-vi.mock('../../core/epub/validate.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../core/epub/validate.js')>();
+vi.mock('@core/epub/validate.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/epub/validate.js')>();
   return { ...actual, validateEpub: vi.fn(actual.validateEpub) };
 });
 

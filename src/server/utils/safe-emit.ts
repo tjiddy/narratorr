@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-events.js';
+import type { SSEEventType, SSEEventPayloads } from '@shared/schemas/sse-events.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { serializeError } from './serialize-error.js';
 

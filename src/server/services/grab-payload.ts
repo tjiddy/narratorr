@@ -1,4 +1,4 @@
-import type { SearchResult } from '../../core/indexers/types.js';
+import type { SearchResult } from '@core/indexers/types.js';
 import type { GrabParams } from './download-orchestrator.js';
 
 /**

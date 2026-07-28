@@ -8,15 +8,15 @@ import {
 import cookie from '@fastify/cookie';
 import authPlugin from '../../plugins/auth.js';
 import type { AuthService } from '../../services/auth.service.js';
-import type { Db } from '../../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { BookService } from '../../services/book.service.js';
 import type { BookListService } from '../../services/book-list.service.js';
 import { createMockDb, mockDbChain, inject } from '../../__tests__/helpers.js';
 import { findCompanionEbooksByBookIds } from '../../services/companion-ebook.repository.js';
 import { createMockDbBook, createMockDbAuthor } from '../../__tests__/factories.js';
 import { v1BooksRoutes } from './books.js';
-import { bookV1Schema } from '../../../shared/schemas/v1/books.js';
-import { v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { bookV1Schema } from '@shared/schemas/v1/books.js';
+import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 import { triggerImmediateSearch } from '../../services/trigger-immediate-search.js';
 import { OwnedRecordingError } from '../../services/book-dedup.js';
 

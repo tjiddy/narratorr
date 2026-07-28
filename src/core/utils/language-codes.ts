@@ -4,7 +4,7 @@
  * into the app's canonical format (lowercase full names, matching region-languages.ts).
  */
 
-import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
+import { MAM_LANGUAGES } from '@shared/indexer-registry.js';
 
 const ISO_639_TO_NAME: Record<string, string> = {
   // ISO 639-2/B (bibliographic) — used by MAM and most Newznab indexers

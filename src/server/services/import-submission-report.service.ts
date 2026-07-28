@@ -1,7 +1,7 @@
 import { eq, asc, desc, inArray, sql } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
-import type { ImportMode } from '../../shared/schemas/library-scan.js';
-import { importSubmissions, importSubmissionItems } from '../../db/schema.js';
+import type { Db } from '@db/index.js';
+import type { ImportMode } from '@shared/schemas/library-scan.js';
+import { importSubmissions, importSubmissionItems } from '@db/schema.js';
 import {
   type AttentionResponse,
   type AttentionSubmission,
@@ -14,7 +14,7 @@ import {
   type SubmissionResponse,
   type SubmissionSource,
   type SubmissionStatus,
-} from '../../core/import-staging/schemas.js';
+} from '@core/import-staging/schemas.js';
 import { ABANDONED_UPLOAD_GRACE_MS, SubmissionError } from './import-staging.service.js';
 import {
   buildHeaderFields,

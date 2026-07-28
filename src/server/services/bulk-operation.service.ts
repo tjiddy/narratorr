@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
-import { books, bookAuthors, authors, narrators, bookNarrators } from '../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { books, bookAuthors, authors, narrators, bookNarrators } from '@db/schema.js';
 import type { RenameService } from './rename.service.js';
 import { RenameError } from './rename.service.js';
 import type { TaggingService } from './tagging.service.js';
@@ -16,8 +16,8 @@ import { BulkJob } from './bulk-job.js';
 import { runSidecarReconcile } from './bulk-sidecar-reconcile.js';
 import { triggerCompanionSweep, type CompanionSweepTrigger } from './companion-ebook-trigger.js';
 import { convertBook, type ConvertProcessingSettings } from './bulk-convert.js';
-import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
-import { toNamingOptions } from '../../core/utils/naming.js';
+import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
+import { toNamingOptions } from '@core/utils/naming.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 

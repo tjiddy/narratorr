@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
-import { books } from '../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { books } from '@db/schema.js';
 import type { BookService } from './book.service.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { BlacklistService } from './blacklist.service.js';

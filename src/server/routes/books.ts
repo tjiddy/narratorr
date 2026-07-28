@@ -52,7 +52,7 @@ import {
   type DeleteBookQuery,
   type RetagBody,
   type RetagPreviewQuery,
-} from '../../shared/schemas.js';
+} from '@shared/schemas.js';
 import { registerFixMatchRoute } from './books-fix-match.js';
 import { registerSeriesRoutes } from './books-series.js';
 import { refreshOpfForBook } from '../utils/opf-refresh.js';

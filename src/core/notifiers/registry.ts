@@ -1,6 +1,6 @@
 import type { NotifierAdapter } from './types.js';
-import type { NotifierType } from '../../shared/notifier-registry.js';
-import type { NotifierSettingsMap, NotifierSettings } from '../../shared/schemas/notifier.js';
+import type { NotifierType } from '@shared/notifier-registry.js';
+import type { NotifierSettingsMap, NotifierSettings } from '@shared/schemas/notifier.js';
 import { WebhookNotifier } from './webhook.js';
 import { DiscordNotifier } from './discord.js';
 import { ScriptNotifier } from './script.js';

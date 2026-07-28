@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DownloadProtocol } from '../indexers/types.js';
 import { parseInfoHash } from './magnet.js';
 import { normalizeInfoHash } from './normalize-info-hash.js';
-import { getUserAgent } from '../../shared/user-agent.js';
+import { getUserAgent } from '@shared/user-agent.js';
 import {
   createSsrfSafeDispatcher,
   fetchWithSsrfRedirect,

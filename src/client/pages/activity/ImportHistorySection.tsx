@@ -11,7 +11,7 @@ import { detailToSummary } from '@/lib/import-report/detailToSummary';
 import { patchImportHistoryCache } from '@/lib/import-report/cache';
 import { Pagination } from '@/components/Pagination';
 import { LoadingSpinner } from '@/components/icons';
-import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
+import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 import { ImportHistoryCard } from './ImportHistoryCard';
 
 /** Positive-integer deep-link `run` param, else null (invalid/non-positive → ignored). */

@@ -13,8 +13,8 @@ import {
   installMockAppLog,
   inject,
 } from '../__tests__/helpers.js';
-import { createMockSettings } from '../../shared/schemas/settings/create-mock-settings.fixtures.js';
-import type { Db } from '../../db/index.js';
+import { createMockSettings } from '@shared/schemas/settings/create-mock-settings.fixtures.js';
+import type { Db } from '@db/index.js';
 import type { Services } from './index.js';
 import type { CompanionEbookRow } from '../services/types.js';
 import { openCompanionEbook } from '../services/companion-ebook-open.js';

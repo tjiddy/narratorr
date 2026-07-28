@@ -10,9 +10,9 @@ import { DuplicateDownloadError } from './download.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { SearchResult } from '../../core/index.js';
-import { BYTES_PER_GB as GB, BYTES_PER_MB as MB } from '../../shared/constants.js';
-import type { SearchResponsePayload, SearchResultPayload } from '../../shared/schemas/search-stream.js';
+import type { SearchResult } from '@core/index.js';
+import { BYTES_PER_GB as GB, BYTES_PER_MB as MB } from '@shared/constants.js';
+import type { SearchResponsePayload, SearchResultPayload } from '@shared/schemas/search-stream.js';
 
 const mockIndexer = {
   getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }),

@@ -7,8 +7,8 @@ import {
   type ResolveFlush,
 } from './connector-refresh-queue.js';
 import { createMockLogger } from '../__tests__/helpers.js';
-import { ConnectorRequestError, type ConnectorImportBatch, type ConnectorRefreshResult } from '../../core/connectors/index.js';
-import { CONNECTOR_TIMEOUT_MS } from '../../core/utils/constants.js';
+import { ConnectorRequestError, type ConnectorImportBatch, type ConnectorRefreshResult } from '@core/connectors/index.js';
+import { CONNECTOR_TIMEOUT_MS } from '@core/utils/constants.js';
 
 // The queue touches connector/adapter/DB state ONLY through the injected
 // resolveFlush callback, so these tests drive a FAKE resolver (no db/getById/

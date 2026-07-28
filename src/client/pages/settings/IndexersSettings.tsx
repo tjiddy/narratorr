@@ -3,7 +3,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { IndexerCard } from '@/components/settings/IndexerCard';
 import { SearchIcon } from '@/components/icons';
 import { CrudSettingsPage } from './CrudSettingsPage';
-import { type CreateIndexerFormData } from '../../../shared/schemas.js';
+import { type CreateIndexerFormData } from '@shared/schemas.js';
 
 export function IndexersSettings() {
   return (

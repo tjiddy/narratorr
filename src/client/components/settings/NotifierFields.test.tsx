@@ -4,8 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { useForm } from 'react-hook-form';
 import { useEffect } from 'react';
 import { NotifierFields } from './NotifierFields';
-import type { CreateNotifierFormData } from '../../../shared/schemas.js';
-import type { NotifierType } from '../../../shared/notifier-registry.js';
+import type { CreateNotifierFormData } from '@shared/schemas.js';
+import type { NotifierType } from '@shared/notifier-registry.js';
 
 function FieldWrapper({ type }: { type: NotifierType }) {
   const { register, formState: { errors } } = useForm<CreateNotifierFormData>({

@@ -3,19 +3,19 @@ import { mkdir, rm, writeFile, readdir, stat } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
+import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { createMockLogger, createMockDb, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { MergeService } from './merge.service.js';
 import { findCommitPendingMarkers } from '../utils/import-marker-sweep.js';
 import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { processAudioFiles } from '@core/utils/audio-processor.js';
+import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 /**
@@ -28,8 +28,8 @@ import type { FastifyBaseLogger } from 'fastify';
  */
 
 // Only the audio engine + enrichment are mocked — fs and the recovery sequence are real.
-vi.mock('../../core/utils/audio-processor.js', () => ({ processAudioFiles: vi.fn(), resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') }));
-vi.mock('../../core/utils/audio-scanner.js', () => ({ scanAudioDirectory: vi.fn() }));
+vi.mock('@core/utils/audio-processor.js', () => ({ processAudioFiles: vi.fn(), resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') }));
+vi.mock('@core/utils/audio-scanner.js', () => ({ scanAudioDirectory: vi.fn() }));
 vi.mock('./enrichment-utils.js', () => ({ enrichBookFromAudio: vi.fn() }));
 
 const SCAN_RESULT = {

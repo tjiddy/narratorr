@@ -1,5 +1,5 @@
-import type { importSubmissions, importSubmissionItems } from '../../db/schema.js';
-import type { ImportMode } from '../../shared/schemas/library-scan.js';
+import type { importSubmissions, importSubmissionItems } from '@db/schema.js';
+import type { ImportMode } from '@shared/schemas/library-scan.js';
 import {
   aggregateDispositions,
   type ItemDisposition,
@@ -8,7 +8,7 @@ import {
   type SubmissionSource,
   type SubmissionStatus,
   type SubmissionSummary,
-} from '../../core/import-staging/schemas.js';
+} from '@core/import-staging/schemas.js';
 
 type SubmissionRow = typeof importSubmissions.$inferSelect;
 type ItemRow = typeof importSubmissionItems.$inferSelect;

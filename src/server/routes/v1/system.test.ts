@@ -10,7 +10,7 @@ import cookie from '@fastify/cookie';
 import authPlugin from '../../plugins/auth.js';
 import type { AuthService } from '../../services/auth.service.js';
 import { v1SystemRoutes } from './system.js';
-import { systemV1Schema } from '../../../shared/schemas/v1/system.js';
+import { systemV1Schema } from '@shared/schemas/v1/system.js';
 import { getVersion, getCommit, getBuildTime } from '../../utils/version.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors books.test).

@@ -1,21 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { inject, createMockDb, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { parseFolderStructure, extractYear, LibraryScanService, SCAN_WITHIN_SCAN_REVIEW_HINT, SCAN_RECORDING_REVIEW_HINT } from './library-scan.service.js';
-import { books } from '../../db/schema.js';
-import { buildTitleShape } from '../../shared/dedup.js';
+import { books } from '@db/schema.js';
+import { buildTitleShape } from '@shared/dedup.js';
 
 vi.mock('./enrichment-utils.js', () => ({
   enrichBookFromAudio: vi.fn().mockResolvedValue({ enriched: true }),
 }));
 
-vi.mock('../../core/utils/book-discovery.js', () => ({
+vi.mock('@core/utils/book-discovery.js', () => ({
   discoverBooks: vi.fn().mockResolvedValue([]),
 }));
 
@@ -23,7 +23,7 @@ vi.mock('../../core/utils/book-discovery.js', () => ({
 // cross-boundary ordering test) does not drag music-metadata into this suite. Leaf-folder
 // classification never calls readAlbumTag, so the stub is never invoked — it only keeps
 // the transitive module load light.
-vi.mock('../../core/utils/audio-scanner.js', () => ({
+vi.mock('@core/utils/audio-scanner.js', () => ({
   readAlbumTag: vi.fn(),
 }));
 
@@ -43,7 +43,7 @@ vi.mock('../utils/import-helpers.js', () => ({
 }));
 
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { discoverBooks } from '../../core/utils/book-discovery.js';
+import { discoverBooks } from '@core/utils/book-discovery.js';
 import { access, readdir, stat } from 'node:fs/promises';
 
 // ============================================================================
@@ -2450,8 +2450,8 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       // first) — is served in two readdir permutations. Because discoverBooks sorts, the
       // hint lands on the SAME folder across both; deleting the sort makes it
       // readdir-order dependent and fails this test.
-      const actual = await vi.importActual<typeof import('../../core/utils/book-discovery.js')>(
-        '../../core/utils/book-discovery.js',
+      const actual = await vi.importActual<typeof import('@core/utils/book-discovery.js')>(
+        '@core/utils/book-discovery.js',
       );
       const makeDirent = (name: string, isFile: boolean) => ({
         name,

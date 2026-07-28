@@ -1,12 +1,12 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { QualityGateService } from './quality-gate.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { DownloadRow } from './types.js';
 import { removeOrDeferTorrent, deleteDownloadOutputPath } from './torrent-removal.helpers.js';
 import { eq } from 'drizzle-orm';
-import { downloads } from '../../db/schema.js';
+import { downloads } from '@db/schema.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 

@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import type { FastifyBaseLogger } from 'fastify';
 import { openCompanionEbook, resolveCompanionEbookPath } from './companion-ebook-open.js';
 import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
-import { READ_NO_FOLLOW } from '../../core/utils/no-follow-open.js';
+import { READ_NO_FOLLOW } from '@core/utils/no-follow-open.js';
 
 /**
  * Driven against a REAL temp directory, never an `fs` mock: the symlink / regular-file /

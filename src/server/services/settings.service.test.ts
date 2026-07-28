@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { SettingsService } from './settings.service.js';
-import type { UpdateSettingsInput } from '../../shared/schemas/settings/registry.js';
+import type { UpdateSettingsInput } from '@shared/schemas/settings/registry.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
-import { settings, settingsMigrations } from '../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { settings, settingsMigrations } from '@db/schema.js';
 import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');

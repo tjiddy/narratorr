@@ -5,8 +5,8 @@ import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockNotifier } from '@/__tests__/factories';
 import { foreignRegistryKeys } from '@/__tests__/registry-foreign-keys';
 import { NotifierCard } from './NotifierCard';
-import { NOTIFIER_REGISTRY, NOTIFIER_TYPES, type NotifierType } from '../../../shared/notifier-registry.js';
-import { notifierSettingsSchemas } from '../../../shared/schemas.js';
+import { NOTIFIER_REGISTRY, NOTIFIER_TYPES, type NotifierType } from '@shared/notifier-registry.js';
+import { notifierSettingsSchemas } from '@shared/schemas.js';
 import type { Notifier, TestResult } from '@/lib/api';
 import type { IdTestResult } from './SettingsCardShell';
 

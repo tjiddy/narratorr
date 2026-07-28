@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { sql } from 'drizzle-orm';
 import type { Services } from './index.js';
 import fsp from 'fs/promises';

@@ -4,10 +4,10 @@ import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fas
 import { createTestApp, createMockServices, installMockAppLog, resetMockServices, inject } from '../__tests__/helpers.js';
 import { registerRoutes, type Services } from './index.js';
 import { filterAndRankResults } from '../services/search-pipeline.js';
-import type { SearchResult } from '../../core/index.js';
+import type { SearchResult } from '@core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
-import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError } from '../../core/download-clients/errors.js';
-import type { Db } from '../../db/index.js';
+import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
+import type { Db } from '@db/index.js';
 
 // Helper to build SearchResult with specific fields
 function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {

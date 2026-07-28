@@ -1,4 +1,4 @@
-import type { ConnectorType } from '../../shared/connector-registry.js';
+import type { ConnectorType } from '@shared/connector-registry.js';
 
 export type { ConnectorType };
 

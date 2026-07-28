@@ -1,6 +1,6 @@
 import type { ImportListProvider } from './types.js';
-import type { ImportListType } from '../../shared/import-list-registry.js';
-import type { ImportListSettingsMap, ImportListSettings } from '../../shared/schemas/import-list.js';
+import type { ImportListType } from '@shared/import-list-registry.js';
+import type { ImportListSettingsMap, ImportListSettings } from '@shared/schemas/import-list.js';
 import { NytProvider } from './nyt-provider.js';
 import { HardcoverProvider } from './hardcover-provider.js';
 

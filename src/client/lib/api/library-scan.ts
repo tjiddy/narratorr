@@ -1,10 +1,10 @@
 import { fetchApi } from './client.js';
 import type { BookMetadata } from './books.js';
 
-export type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem } from '../../../shared/schemas/library-scan.js';
-import type { DiscoveredBook, DuplicateReason } from '../../../shared/schemas/library-scan.js';
-import type { RecordingVerdict } from '../../../shared/schemas/recording-verdict.js';
-import type { MatchReasonKind } from '../../../shared/match-reason-kind.js';
+export type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem } from '@shared/schemas/library-scan.js';
+import type { DiscoveredBook, DuplicateReason } from '@shared/schemas/library-scan.js';
+import type { RecordingVerdict } from '@shared/schemas/recording-verdict.js';
+import type { MatchReasonKind } from '@shared/match-reason-kind.js';
 
 export interface ImportConfirmItem {
   path: string;

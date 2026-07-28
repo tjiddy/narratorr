@@ -3,7 +3,7 @@
 // All functions are pure (no `this`, no I/O).
 
 import { extname } from 'node:path';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { AUDIO_EXTENSIONS } from '@core/utils/audio-constants.js';
 import {
   tryTitleDashSeriesBook,
   tryCrossSegmentAgreement,
@@ -19,7 +19,7 @@ import {
   NARRATOR_PAREN_REGEX,
   applyLastFirstSwap,
 } from './folder-parsing-primitives.js';
-import { TAG_TITLE_SERIES_MARKER_REGEX } from '../../shared/dedup.js';
+import { TAG_TITLE_SERIES_MARKER_REGEX } from '@shared/dedup.js';
 
 // Re-export so the public import surface is unchanged (consumers import
 // CODEC_TEST_REGEX from this module — see folder-parsing.test.ts).

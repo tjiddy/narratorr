@@ -5,9 +5,9 @@ import {
   type ConnectorImportItem,
   type ConnectorReason,
   type ConnectorRefreshResult,
-} from '../../core/connectors/index.js';
+} from '@core/connectors/index.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { CONNECTOR_TIMEOUT_MS, CONNECTOR_SHUTDOWN_DRAIN_MS } from '../../core/utils/constants.js';
+import { CONNECTOR_TIMEOUT_MS, CONNECTOR_SHUTDOWN_DRAIN_MS } from '@core/utils/constants.js';
 
 export interface ConnectorRefreshQueueOptions {
   /** Debounce window before a coalesced burst flushes (ms). */

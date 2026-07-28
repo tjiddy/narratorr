@@ -3,13 +3,13 @@ import { didRenameChangeAnything } from '../services/rename.service.js';
 import { triggerCompanionReconcile } from '../services/companion-ebook-trigger.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { idParamSchema, fixMatchRequestSchema, type FixMatchRequest } from '../../shared/schemas.js';
-import type { BookMetadata } from '../../core/index.js';
+import { idParamSchema, fixMatchRequestSchema, type FixMatchRequest } from '@shared/schemas.js';
+import type { BookMetadata } from '@core/index.js';
 import type { BookRouteDeps } from './books.js';
 import type { FixMatchReplacement } from '../services/book.service.js';
 import { refreshOpfForBook } from '../utils/opf-refresh.js';
 import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
-import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 import { type z } from 'zod';
 
 type IdParam = z.infer<typeof idParamSchema>;

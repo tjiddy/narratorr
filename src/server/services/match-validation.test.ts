@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { BookMetadata } from '../../core/metadata/types.js';
-import { diceCoefficient } from '../../core/utils/similarity.js';
+import type { BookMetadata } from '@core/metadata/types.js';
+import { diceCoefficient } from '@core/utils/similarity.js';
 import {
   matchPassesValidation,
   authorOverlap,

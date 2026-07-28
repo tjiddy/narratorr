@@ -14,7 +14,7 @@ import { BookRejectionError } from '../services/book-rejection.service.js';
 import { RefreshScanError } from '../services/refresh-scan.service.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import { CoverUploadError } from '../services/cover-upload.js';
-import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../core/download-clients/errors.js';
+import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import { SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
 import { BackupRecoveryError, BackupAmbiguityError, MarkerPathConflictError } from '../utils/import-staging.js';
 

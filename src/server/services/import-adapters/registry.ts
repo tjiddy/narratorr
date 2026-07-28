@@ -1,4 +1,4 @@
-import type { ImportJobType } from '../../../shared/schemas/import-job.js';
+import type { ImportJobType } from '@shared/schemas/import-job.js';
 import type { ImportAdapter } from './types.js';
 
 const adapters = new Map<ImportJobType, ImportAdapter>();

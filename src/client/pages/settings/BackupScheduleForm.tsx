@@ -3,7 +3,7 @@ import { ClockIcon } from '@/components/icons';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { NumberField } from '@/components/settings/NumberField';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { DEFAULT_SETTINGS, systemFormSchema, type AppSettings } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, systemFormSchema, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 type SystemFormData = z.infer<typeof systemFormSchema>;

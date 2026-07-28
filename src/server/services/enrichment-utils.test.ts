@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { BookService } from './book.service.js';
 
-vi.mock('../../core/utils/audio-scanner.js', () => ({
+vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn(),
 }));
 
@@ -13,7 +13,7 @@ vi.mock('node:fs/promises', () => ({
   readdir: vi.fn().mockResolvedValue([]),
 }));
 
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { writeFile, readdir } from 'node:fs/promises';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 

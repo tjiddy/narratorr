@@ -71,7 +71,7 @@ import {
   validatorCompiler,
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
-import { createDb, runMigrations } from '../db/index.js';
+import { createDb, runMigrations } from '@db/index.js';
 import { config } from './config.js';
 import { createServices, registerRoutes } from './routes';
 import { startRuntime } from './startup.js';

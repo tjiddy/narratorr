@@ -8,12 +8,12 @@ import {
 import cookie from '@fastify/cookie';
 import authPlugin from '../../plugins/auth.js';
 import type { AuthService } from '../../services/auth.service.js';
-import type { Db } from '../../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { ReferenceReadService } from '../../services/reference-read.service.js';
 import { createMockDb, mockDbChain, inject } from '../../__tests__/helpers.js';
 import { v1AuthorsRoutes } from './authors.js';
-import { authorV1Schema } from '../../../shared/schemas/v1/authors.js';
-import { v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { authorV1Schema } from '@shared/schemas/v1/authors.js';
+import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors books.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));

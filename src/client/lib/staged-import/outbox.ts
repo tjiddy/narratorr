@@ -5,7 +5,7 @@ import {
   payloadDigestSchema,
   submissionSourceSchema,
   type SubmissionSource,
-} from '../../../core/import-staging/schemas.js';
+} from '@core/import-staging/schemas.js';
 
 /**
  * Best-effort, source-scoped submission outbox (#1902, F69/F12).

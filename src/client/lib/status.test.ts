@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { bookStatusConfig, bookStatusChipStyles } from './status.js';
 import type { BookStatusStyle } from './status.js';
-import { BOOK_STATUSES } from '../../shared/schemas/book.js';
+import { BOOK_STATUSES } from '@shared/schemas/book.js';
 
 // Verify the interface is exported (compile-time check — if this import fails, the test file won't compile)
 // PHASE 1 SKIPPED — needs human review

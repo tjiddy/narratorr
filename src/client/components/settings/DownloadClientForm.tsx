@@ -14,8 +14,8 @@ import {
   createDownloadClientFormSchema,
   downloadClientTypeSchema,
   type CreateDownloadClientFormData,
-} from '../../../shared/schemas.js';
-import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES, settingsFromClient } from '../../../shared/download-client-registry.js';
+} from '@shared/schemas.js';
+import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES, settingsFromClient } from '@shared/download-client-registry.js';
 
 const IMPLEMENTED_TYPES = Object.keys(DOWNLOAD_CLIENT_REGISTRY);
 

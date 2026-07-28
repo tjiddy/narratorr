@@ -1,4 +1,4 @@
-import type { StagedImportItem } from '../../core/import-staging/schemas.js';
+import type { StagedImportItem } from '@core/import-staging/schemas.js';
 
 /**
  * Byte-budgeted chunk packer for the Library/Manual Import confirm POST (#1831).

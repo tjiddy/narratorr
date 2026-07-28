@@ -6,8 +6,8 @@ import { queryKeys } from '@/lib/queryKeys';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { Pagination } from '@/components/Pagination';
 import { usePagination } from '@/hooks/usePagination';
-import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
-import { REASON_LABELS } from '../../../shared/schemas/blacklist.js';
+import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
+import { REASON_LABELS } from '@shared/schemas/blacklist.js';
 import {
   LoadingSpinner,
   ShieldBanIcon,

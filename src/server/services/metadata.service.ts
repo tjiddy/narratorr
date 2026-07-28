@@ -14,9 +14,9 @@ import {
   type SeriesMetadata,
   type SearchBooksOptions,
   type SearchBooksResult,
-} from '../../core/index.js';
-import { filterByLanguage } from '../../core/utils/index.js';
-import { parseWordList, matchesWord } from '../../shared/parse-word-list.js';
+} from '@core/index.js';
+import { filterByLanguage } from '@core/utils/index.js';
+import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';

@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import type { Db } from '../../../db/index.js';
-import { books } from '../../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { books } from '@db/schema.js';
 import { OwnedRecordingError, type BookService, type BookWithAuthor } from '../../services/book.service.js';
 import type { BookListService } from '../../services/book-list.service.js';
 import type {
@@ -19,20 +19,20 @@ import type { FixMatchLookupResult } from '../../services/metadata-fix-match.js'
 import { triggerImmediateSearch } from '../../services/trigger-immediate-search.js';
 import { snapshotBookForEvent } from '../../utils/event-helpers.js';
 import { serializeError } from '../../utils/serialize-error.js';
-import type { BookMetadata } from '../../../core/index.js';
-import { normalizeProductionType } from '../../../core/metadata/production-type.js';
+import type { BookMetadata } from '@core/index.js';
+import { normalizeProductionType } from '@core/metadata/production-type.js';
 import {
   bookV1Schema,
   bookV1ListQuerySchema,
   createBookV1RequestSchema,
   bookExistsV1Schema,
   toBookV1,
-} from '../../../shared/schemas/v1/books.js';
-import { toCompanionEbookV1 } from '../../../shared/schemas/v1/companion-ebook.js';
+} from '@shared/schemas/v1/books.js';
+import { toCompanionEbookV1 } from '@shared/schemas/v1/companion-ebook.js';
 import { findCompanionEbooksByBookIds } from '../../services/companion-ebook.repository.js';
 import type { CompanionEbookRow } from '../../services/types.js';
-import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
-import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
+import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 
 export interface V1BooksRouteDeps {

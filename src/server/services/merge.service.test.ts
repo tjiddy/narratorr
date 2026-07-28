@@ -2,19 +2,19 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockLogger, createMockDb, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { MergeService, clampConcurrency } from './merge.service.js';
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { processAudioFiles } from '@core/utils/audio-processor.js';
+import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { readdir, mkdir, cp, unlink, stat, rm, rename } from 'node:fs/promises';
 import { join } from 'node:path';
-import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
+import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -32,14 +32,14 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
-vi.mock('../../core/utils/audio-processor.js', () => ({
+vi.mock('@core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn(),
   // Plain arrow over a hoisted toggle so vi.clearAllMocks() never wipes it; flip false for the
   // not-detected gate test. Default detected — merge gates on a resolvable ffmpeg path.
   resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null),
 }));
 
-vi.mock('../../core/utils/audio-scanner.js', () => ({
+vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn(),
 }));
 

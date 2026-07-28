@@ -1,9 +1,9 @@
 import { eq, and, like, desc, asc, sql, count as countFn, inArray, or, getTableColumns, type SQL } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
-import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '../../db/schema.js';
-import type { BookSortField, BookSortDirection, BookStatus, LibraryFilterBucket } from '../../shared/schemas/book.js';
-import { LIBRARY_FILTER_BUCKETS } from '../../shared/schemas/book.js';
-import type { LibraryBookListItem } from '../../shared/schemas/library-book.js';
+import type { Db } from '@db/index.js';
+import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '@db/schema.js';
+import type { BookSortField, BookSortDirection, BookStatus, LibraryFilterBucket } from '@shared/schemas/book.js';
+import { LIBRARY_FILTER_BUCKETS } from '@shared/schemas/book.js';
+import type { LibraryBookListItem } from '@shared/schemas/library-book.js';
 import { sortCollapsedRows, collapseRows, buildFallbackCompare } from './book-list-collapse.js';
 import type { BookWithAuthor } from './book.service.js';
 import type { BookRow } from './types.js';

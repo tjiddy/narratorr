@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../../db/index.js';
-import type { ImportJobType, ImportJobPhase } from '../../../shared/schemas/import-job.js';
-import { importConfirmItemSchema, importModeSchema } from '../../../shared/schemas/library-scan.js';
-import type { BookMetadata } from '../../../core/metadata/index.js';
+import type { Db } from '@db/index.js';
+import type { ImportJobType, ImportJobPhase } from '@shared/schemas/import-job.js';
+import { importConfirmItemSchema, importModeSchema } from '@shared/schemas/library-scan.js';
+import type { BookMetadata } from '@core/metadata/index.js';
 import type { ImportJobRow } from '../types.js';
 
 /** Row shape returned by querying the import_jobs table. */

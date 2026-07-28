@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { SUPPORTED_COVER_MIMES } from '../../shared/mime.js';
-import { MAX_COVER_SIZE } from '../../shared/constants.js';
+import { SUPPORTED_COVER_MIMES } from '@shared/mime.js';
+import { MAX_COVER_SIZE } from '@shared/constants.js';
 import type { UseMutationResult } from '@tanstack/react-query';
 import type { BookWithAuthor } from '@/lib/api';
 

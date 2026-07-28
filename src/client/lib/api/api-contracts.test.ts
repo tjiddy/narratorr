@@ -35,7 +35,7 @@ import { filesystemApi } from './filesystem.js';
 import { indexersApi } from './indexers.js';
 import { libraryScanApi } from './library-scan.js';
 import { notifiersApi } from './notifiers.js';
-import type { NotificationEvent } from '../../../shared/notification-events.js';
+import type { NotificationEvent } from '@shared/notification-events.js';
 import { remotePathMappingsApi } from './remote-path-mappings.js';
 import { searchApi } from './search.js';
 import { settingsApi } from './settings.js';

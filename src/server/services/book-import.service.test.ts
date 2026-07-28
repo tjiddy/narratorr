@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { desc } from 'drizzle-orm';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { BookImportService } from './book-import.service.js';
-import { importJobs } from '../../db/schema.js';
-import type { Db } from '../../db/index.js';
+import { importJobs } from '@db/schema.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 describe('BookImportService', () => {

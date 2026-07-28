@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Mock } from 'vitest';
 import { createMockDb, mockDbChain, inject } from '../__tests__/helpers.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import {
   transitionDownloadState,
   displayStatusCondition,
@@ -13,7 +13,7 @@ import {
   clientPolledDownloadCondition,
   isQualityGateEligibleRow,
 } from './download-state.js';
-import type { ClientStatus, PipelineStage } from '../../shared/schemas/activity.js';
+import type { ClientStatus, PipelineStage } from '@shared/schemas/activity.js';
 
 function setup(returning: unknown[] = []) {
   const db = createMockDb();

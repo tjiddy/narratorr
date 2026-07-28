@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { buildQualityAssessment } from './quality-gate.helpers.js';
-import * as qualityModule from '../../core/utils/quality.js';
+import * as qualityModule from '@core/utils/quality.js';
 
 const baseBook = {
   id: 1, publicId: 'bk_test000000000000000', title: 'Test Book', status: 'imported' as const,

@@ -8,7 +8,7 @@ import { LibraryBookCard } from './LibraryBookCard';
 import { createMockLibraryBook } from '@/__tests__/factories';
 import * as ImageErrorModule from '@/hooks/useImageError';
 import { api } from '@/lib/api';
-import type { BookStatus } from '../../../shared/schemas.js';
+import type { BookStatus } from '@shared/schemas.js';
 import { bookStatusConfig } from '@/lib/status';
 
 vi.mock('@/lib/api', () => ({

@@ -1,11 +1,11 @@
 import type { IndexerAdapter } from './types.js';
-import type { IndexerType } from '../../shared/indexer-registry.js';
-import type { IndexerSettingsMap, IndexerSettings } from '../../shared/schemas/indexer.js';
+import type { IndexerType } from '@shared/indexer-registry.js';
+import type { IndexerSettingsMap, IndexerSettings } from '@shared/schemas/indexer.js';
 import { AudioBookBayIndexer } from './abb.js';
 import { NewznabIndexer } from './newznab.js';
 import { TorznabIndexer } from './torznab.js';
 import { MyAnonamouseIndexer } from './myanonamouse.js';
-import { coerceSearchType } from '../../shared/indexer-registry.js';
+import { coerceSearchType } from '@shared/indexer-registry.js';
 
 const TYPED_FACTORIES: { [K in IndexerType]: (settings: IndexerSettingsMap[K], name: string, proxyUrl?: string) => IndexerAdapter } = {
   abb: (s, _name, proxyUrl) => new AudioBookBayIndexer({

@@ -8,12 +8,12 @@ import {
 import cookie from '@fastify/cookie';
 import authPlugin from '../../plugins/auth.js';
 import type { AuthService } from '../../services/auth.service.js';
-import type { Db } from '../../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { ReferenceReadService } from '../../services/reference-read.service.js';
 import { createMockDb, mockDbChain, inject } from '../../__tests__/helpers.js';
 import { v1NarratorsRoutes } from './narrators.js';
-import { narratorV1Schema } from '../../../shared/schemas/v1/narrators.js';
-import { v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { narratorV1Schema } from '@shared/schemas/v1/narrators.js';
+import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
 

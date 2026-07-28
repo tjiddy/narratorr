@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildFfmpegArgs, type TagMetadata } from './tagging.service.js';
-import { extractFfmpegMajor } from '../../core/utils/ffmpeg-version.js';
+import { extractFfmpegMajor } from '@core/utils/ffmpeg-version.js';
 
 const FFMPEG = 'ffmpeg';
 const FFPROBE = 'ffprobe';

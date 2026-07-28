@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { connectors } from '../../db/schema.js';
+import { connectors } from '@db/schema.js';
 import {
   ADAPTER_FACTORIES,
   ConnectorRequestError,
@@ -10,10 +10,10 @@ import {
   type ConnectorReason,
   type ConnectorTarget,
   type ConnectorTestResult,
-} from '../../core/connectors/index.js';
+} from '@core/connectors/index.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { z } from 'zod';
-import { connectorSettingsSchemas, connectorTargetsSettingsSchemas, type ConnectorSettings } from '../../shared/schemas/connector.js';
+import { connectorSettingsSchemas, connectorTargetsSettingsSchemas, type ConnectorSettings } from '@shared/schemas/connector.js';
 import { parseEntitySettings } from '../utils/parse-entity-settings.js';
 import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';

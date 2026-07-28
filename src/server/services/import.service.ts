@@ -1,21 +1,21 @@
 import { eq, and, isNotNull } from 'drizzle-orm';
 import { normalize } from 'node:path';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads } from '../../db/schema.js';
+import { downloads } from '@db/schema.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
-import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
+import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
+import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
-import type { DownloadStatus } from '../../shared/schemas/activity.js';
+import type { BookStatus } from '@shared/schemas/book.js';
+import type { DownloadStatus } from '@shared/schemas/activity.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
-import { toNamingOptions } from '../../core/utils/naming.js';
+import { toNamingOptions } from '@core/utils/naming.js';
 import {
   validateSource, checkDiskSpace, prepareImportSiblings, copyToLibrary,
   verifyCopy, commitStagedImport, cleanupOldBookPath, handleImportFailure,
@@ -26,11 +26,11 @@ import type { DownloadRow } from './types.js';
 import { removeOrDeferTorrent, type TorrentRemovalResult } from './torrent-removal.helpers.js';
 import { transitionDownloadState, qualityGateEligibleDownloadCondition } from '../utils/download-state.js';
 import { transitionBookStatus } from '../utils/book-status.js';
-import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
+import { deriveDisplayStatus } from '@shared/download-status-registry.js';
 
 import type { ImportResult } from '../utils/import-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
-import type { ImportJobPhase } from '../../shared/schemas/import-job.js';
+import type { ImportJobPhase } from '@shared/schemas/import-job.js';
 
 export type { ImportResult } from '../utils/import-helpers.js';
 

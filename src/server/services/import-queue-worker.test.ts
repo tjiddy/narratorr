@@ -4,7 +4,7 @@ import { mkdir, rm, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inject, createMockSettingsService } from '../__tests__/helpers.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { ImportQueueWorker } from './import-queue-worker.js';
 import { registerImportAdapter, clearImportAdapters } from './import-adapters/registry.js';
@@ -14,8 +14,8 @@ import { ManualImportAdapter } from './import-adapters/manual.js';
 import { ImportOrchestrator } from './import-orchestrator.js';
 import type { ImportService, ImportContext, ImportResult, ImportProgressCallbacks } from './import.service.js';
 import type { ImportPipelineDeps } from './import-orchestration.helpers.js';
-import { importFailedPayload } from '../../shared/schemas/sse-events.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import { importFailedPayload } from '@shared/schemas/sse-events.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 
 function createMockLogger(): FastifyBaseLogger {
   return {

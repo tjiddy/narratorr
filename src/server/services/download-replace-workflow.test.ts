@@ -17,7 +17,7 @@ import { DuplicateDownloadError } from './download-errors.js';
 import { createMockDb, mockDbChain, createMockLogger, inject } from '../__tests__/helpers.js';
 import { emitDownloadStatusChange, emitBookStatusChange, recordDownloadFailedEvent } from '../utils/download-side-effects.js';
 import { guardedRevertBookStatus } from '../utils/book-status.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { DownloadService } from './download.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { GrabParams } from './download-orchestrator.js';

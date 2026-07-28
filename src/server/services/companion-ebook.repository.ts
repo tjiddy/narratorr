@@ -1,6 +1,6 @@
 import { eq, inArray } from 'drizzle-orm';
-import type { DbOrTx } from '../../db/client.js';
-import { companionEbooks } from '../../db/schema.js';
+import type { DbOrTx } from '@db/client.js';
+import { companionEbooks } from '@db/schema.js';
 import { chunkArray } from '../utils/batch.js';
 import {
   companionEbookObservationSchema,

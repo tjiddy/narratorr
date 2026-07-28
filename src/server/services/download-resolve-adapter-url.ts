@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { IndexerAdapter, DownloadProtocol, ResolveDownloadContext, ResolveDownloadResult } from '../../core/index.js';
-import { IndexerError } from '../../core/index.js';
+import type { IndexerAdapter, DownloadProtocol, ResolveDownloadContext, ResolveDownloadResult } from '@core/index.js';
+import { IndexerError } from '@core/index.js';
 import type { IndexerService } from './indexer.service.js';
 
 export interface ResolveAdapterUrlParams {

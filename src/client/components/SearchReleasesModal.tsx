@@ -2,8 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'reac
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type SearchResult } from '@/lib/api';
-import type { BookStatus } from '../../shared/schemas/book.js';
-import { grabSchema, type GrabPayload } from '../../shared/schemas/search.js';
+import type { BookStatus } from '@shared/schemas/book.js';
+import { grabSchema, type GrabPayload } from '@shared/schemas/search.js';
 import { searchResultKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { resolveBookQualityInputs, calculateQuality } from '@core/utils/index.js';
 import { queryKeys } from '@/lib/queryKeys';

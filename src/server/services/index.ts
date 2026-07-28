@@ -41,4 +41,4 @@ export {
 export { ReferenceReadService, type ReferenceRow, type ReferenceListResult } from './reference-read.service.js';
 export { CompanionEbookReconciler, RECONCILE_CONCURRENCY } from './companion-ebook-reconciler.js';
 export { normalizeSeriesName } from '../utils/series-normalize.js';
-export type { SuggestionReason } from '../../shared/schemas/discovery.js';
+export type { SuggestionReason } from '@shared/schemas/discovery.js';

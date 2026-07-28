@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ADAPTER_FACTORIES } from './registry.js';
-import { downloadClientTypeSchema, type DownloadClientSettings } from '../../shared/schemas/download-client.js';
+import { downloadClientTypeSchema, type DownloadClientSettings } from '@shared/schemas/download-client.js';
 
 describe('Download Client ADAPTER_FACTORIES', () => {
   const types = downloadClientTypeSchema.options;

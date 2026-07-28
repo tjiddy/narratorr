@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { IndexerRow } from '../services/types.js';
-import type { IndexerType } from '../../shared/indexer-registry.js';
+import type { IndexerType } from '@shared/indexer-registry.js';
 import { maskFields, isSentinel } from '../utils/secret-codec.js';
 import { getVersion } from '../utils/version.js';
 import { READARR_ECHO_ONLY_FIELDS } from '../utils/readarr-echo-fields.js';

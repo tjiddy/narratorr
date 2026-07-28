@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MAX_COVER_SIZE } from '../../shared/constants.js';
+import { MAX_COVER_SIZE } from '@shared/constants.js';
 import {
   MAX_ARCHIVE_BYTES,
   MAX_ARCHIVE_ENTRIES,

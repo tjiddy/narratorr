@@ -1,9 +1,9 @@
 import { extname } from 'node:path';
 import type { SQL } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
-import { books } from '../../db/schema.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import type { Db } from '@db/index.js';
+import { books } from '@db/schema.js';
+import { AUDIO_EXTENSIONS } from '@core/utils/audio-constants.js';
 import { writeOpfSidecar } from '../utils/opf-writer.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';

@@ -1,6 +1,6 @@
 import { ApiError } from '@/lib/api';
 import type { SubmissionAggregates, StagedItemResultDto } from '@/lib/api';
-import type { ImportSkipReason } from '../../shared/schemas/library-scan.js';
+import type { ImportSkipReason } from '@shared/schemas/library-scan.js';
 import { getErrorMessage } from '@/lib/error-message.js';
 
 /**

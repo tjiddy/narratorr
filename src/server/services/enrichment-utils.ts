@@ -1,11 +1,11 @@
 import { writeFile, readdir } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { eq } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books } from '../../db/schema.js';
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
-import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
+import { books } from '@db/schema.js';
+import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import type { BookService } from './book.service.js';
 import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
 import { mimeToExt } from '../utils/mime.js';

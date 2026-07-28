@@ -12,8 +12,8 @@ import {
   type CacheInvalidationRule,
   type SSEEventType,
   sseEventTypeSchema,
-} from '../../shared/schemas.js';
-import { HEARTBEAT_INTERVAL_MS } from '../../shared/sse-constants.js';
+} from '@shared/schemas.js';
+import { HEARTBEAT_INTERVAL_MS } from '@shared/sse-constants.js';
 
 vi.mock('./useSearchProgress', () => ({
   handleSearchEvent: vi.fn(),

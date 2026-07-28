@@ -1,6 +1,6 @@
 import { type FastifyInstance } from 'fastify';
 import type { ImportListService } from '../services/import-list.service.js';
-import { createImportListSchema, updateImportListSchema, previewImportListSchema } from '../../shared/schemas.js';
+import { createImportListSchema, updateImportListSchema, previewImportListSchema } from '@shared/schemas.js';
 import { registerCrudRoutes } from './crud-routes.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { NOTIFIER_FIELD_COMPONENTS } from './index.js';
-import { NOTIFIER_TYPES } from '../../../../shared/notifier-registry.js';
+import { NOTIFIER_TYPES } from '@shared/notifier-registry.js';
 
 describe('NOTIFIER_FIELD_COMPONENTS', () => {
   it('has a field component for every NOTIFIER_TYPES entry', () => {

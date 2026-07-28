@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { classifyLeafFolder, hasStrongChapterSetEvidence, type ClassifierFile } from './book-classifier.js';
-import { BYTES_PER_MB } from '../../shared/constants.js';
+import { BYTES_PER_MB } from '@shared/constants.js';
 
 const LARGE = 300 * BYTES_PER_MB;
 const SMALL = 30 * BYTES_PER_MB;

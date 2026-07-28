@@ -3,11 +3,11 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createHash } from 'node:crypto';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
-import { importSubmissions, importSubmissionItems, books } from '../../db/schema.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
+import { importSubmissions, importSubmissionItems, books } from '@db/schema.js';
 import { eq } from 'drizzle-orm';
 import { ImportStagingService } from './import-staging.service.js';
-import { serializeSubmissionForDigest, submissionResponseSchema, MAX_SUBMISSION_BYTES, EXPECTED_COUNT_MAX, type StagedImportItem } from '../../core/import-staging/schemas.js';
+import { serializeSubmissionForDigest, submissionResponseSchema, MAX_SUBMISSION_BYTES, EXPECTED_COUNT_MAX, type StagedImportItem } from '@core/import-staging/schemas.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 const noopLog = {

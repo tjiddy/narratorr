@@ -1,5 +1,5 @@
 import { ApiError, type Api, type ImportMode } from '@/lib/api';
-import { SUBMISSION_ERROR_CODES, type StagedImportItem, type SubmissionSource } from '../../../core/import-staging/schemas.js';
+import { SUBMISSION_ERROR_CODES, type StagedImportItem, type SubmissionSource } from '@core/import-staging/schemas.js';
 import { packStagedChunks } from '@/lib/confirm-chunks.js';
 import { runWithRetry, isRetryableError, withSignal, type RetryOptions } from './retry.js';
 

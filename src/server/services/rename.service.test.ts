@@ -7,7 +7,7 @@ import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { rename, readdir, mkdir, stat, rm, cp, realpath } from 'node:fs/promises';
 

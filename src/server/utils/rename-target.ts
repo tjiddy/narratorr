@@ -1,6 +1,6 @@
 import { normalize, resolve, relative } from 'node:path';
 import { buildTargetPath } from './import-helpers.js';
-import type { NamingOptions } from '../../core/utils/naming.js';
+import type { NamingOptions } from '@core/utils/naming.js';
 
 /**
  * Row shape needed to compute a book's folder target. Mirrors the fields

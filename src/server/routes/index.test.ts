@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { routeRegistry } from './index.js';
 import type { FastifyInstance } from 'fastify';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { Services } from './index.js';
 
 // ---------------------------------------------------------------------------
@@ -101,8 +101,8 @@ vi.mock('./settings.js', () => ({ settingsRoutes: vi.fn() }));
 vi.mock('./library-scan.js', () => ({ libraryScanRoutes: vi.fn() }));
 vi.mock('./books.js', () => ({ booksRoutes: vi.fn() }));
 vi.mock('../config.js', () => ({ config: { configPath: '/tmp/config', dbPath: '/tmp/db.sqlite' } }));
-vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(), probeFfmpeg: vi.fn() }));
-vi.mock('../../core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
+vi.mock('@core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(), probeFfmpeg: vi.fn() }));
+vi.mock('@core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
 
 describe('routeRegistry', () => {
   it('contains all 39 route factories', () => {

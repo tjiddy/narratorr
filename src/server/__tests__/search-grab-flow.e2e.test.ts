@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { createE2EApp, type E2EApp } from './e2e-helpers.js';
-import { downloads } from '../../db/schema.js';
+import { downloads } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import {
   INDEXER_BASE,

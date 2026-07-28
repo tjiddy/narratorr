@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
-import type { GrabPayload } from '../../shared/schemas/search.js';
+import type { GrabPayload } from '@shared/schemas/search.js';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 

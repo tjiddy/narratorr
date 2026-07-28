@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type ImportConfirmItem, type ImportMode, type HeldReviewItem, type SubmissionResponse, type StagedItemResultDto } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import type { SubmissionSource } from '../../../core/import-staging/schemas.js';
+import type { SubmissionSource } from '@core/import-staging/schemas.js';
 import { classifySubmission } from './classify.js';
 import { preflightSubmission, PREFLIGHT_COPY } from './preflight.js';
 import { computeSubmissionDigest } from './digest.js';

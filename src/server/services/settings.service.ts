@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { settings, settingsMigrations } from '../../db/schema.js';
+import { settings, settingsMigrations } from '@db/schema.js';
 import {
   type AppSettings,
   type SettingsCategory,
@@ -9,10 +9,10 @@ import {
   SETTINGS_CATEGORIES,
   DEFAULT_SETTINGS,
   CATEGORY_SCHEMAS,
-} from '../../shared/schemas.js';
-import { DEFAULT_REJECT_WORDS } from '../../shared/schemas/settings/quality.js';
-import { normalizeLanguage } from '../../core/utils/language-codes.js';
-import { CANONICAL_LANGUAGES } from '../../shared/language-constants.js';
+} from '@shared/schemas.js';
+import { DEFAULT_REJECT_WORDS } from '@shared/schemas/settings/quality.js';
+import { normalizeLanguage } from '@core/utils/language-codes.js';
+import { CANONICAL_LANGUAGES } from '@shared/language-constants.js';
 import { decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings } from '../utils/sentinel-resolver.js';
 import { SECRET_CATEGORIES } from '../utils/secret-category-map.js';

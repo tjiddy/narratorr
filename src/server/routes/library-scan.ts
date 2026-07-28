@@ -18,7 +18,7 @@ import {
   scanDebugBodySchema,
   type ScanDebugBody,
   type ScanDebugTrace,
-} from '../../shared/schemas.js';
+} from '@shared/schemas.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { mintPreviewToken } from '../services/preview-token.js';
 

@@ -1,18 +1,18 @@
 import { basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import type { BookMetadata } from '../../core/metadata/index.js';
-import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
-import { compareNarratorSignals, diceCoefficient, normalizeNarrator, scoreResult } from '../../core/utils/similarity.js';
-import { normalizeProductionType } from '../../core/metadata/production-type.js';
+import type { BookMetadata } from '@core/metadata/index.js';
+import type { AudioScanResult } from '@core/utils/audio-scanner.js';
+import { compareNarratorSignals, diceCoefficient, normalizeNarrator, scoreResult } from '@core/utils/similarity.js';
+import { normalizeProductionType } from '@core/metadata/production-type.js';
 import { cleanTagTitle, extractYear, hasTagSeriesMarker, isPureVolumeMarker } from '../utils/folder-parsing.js';
 import type { Confidence, MatchCandidate, MatchResult } from './match-job.types.js';
-import type { MatchReasonKind } from '../../shared/match-reason-kind.js';
+import type { MatchReasonKind } from '@shared/match-reason-kind.js';
 import type { MatchSource, TagSearchOutcome } from './tag-search-planner.js';
 import type { BookService } from './book.service.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
-import { withinDurationTolerance } from '../../shared/duration-tolerance.js';
-import { formatDurationSeconds } from '../../shared/format-duration.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
+import { withinDurationTolerance } from '@shared/duration-tolerance.js';
+import { formatDurationSeconds } from '@shared/format-duration.js';
 
 /** User-facing reason surfaced on a post-match recording-review row (#1711). */
 export const RECORDING_REVIEW_REASON =

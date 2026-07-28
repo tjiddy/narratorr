@@ -13,8 +13,8 @@ import {
   createIndexerFormSchema,
   indexerTypeSchema,
   type CreateIndexerFormData,
-} from '../../../shared/schemas.js';
-import {INDEXER_REGISTRY, INDEXER_TYPES, coerceSearchType} from '../../../shared/indexer-registry.js';
+} from '@shared/schemas.js';
+import {INDEXER_REGISTRY, INDEXER_TYPES, coerceSearchType} from '@shared/indexer-registry.js';
 
 const IMPLEMENTED_TYPES = Object.keys(INDEXER_REGISTRY);
 

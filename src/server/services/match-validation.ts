@@ -1,5 +1,5 @@
-import { diceCoefficient } from '../../core/utils/similarity.js';
-import type { BookMetadata } from '../../core/metadata/types.js';
+import { diceCoefficient } from '@core/utils/similarity.js';
+import type { BookMetadata } from '@core/metadata/types.js';
 
 /** Title fuzzy threshold for the search-candidate path (Dice coefficient). */
 export const TITLE_MATCH_THRESHOLD = 0.7;

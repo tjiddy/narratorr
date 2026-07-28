@@ -1,6 +1,6 @@
 import type { UseFormRegister, FieldErrors } from 'react-hook-form';
-import type { CreateNotifierFormData } from '../../../shared/schemas.js';
-import type { NotifierType } from '../../../shared/notifier-registry.js';
+import type { CreateNotifierFormData } from '@shared/schemas.js';
+import type { NotifierType } from '@shared/notifier-registry.js';
 import { NOTIFIER_FIELD_COMPONENTS } from './notifier-fields/index.js';
 
 interface NotifierFieldsProps {

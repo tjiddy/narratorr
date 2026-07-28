@@ -4,7 +4,7 @@ import {
   type MetadataSearchProvider,
   type BookMetadata,
   type SearchBooksResult,
-} from '../../core/index.js';
+} from '@core/index.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { matchPassesValidation } from './match-validation.js';
 

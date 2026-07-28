@@ -1,7 +1,7 @@
 import { type FastifyInstance } from 'fastify';
 import { type z } from 'zod';
 import { type DownloadClientService } from '../services';
-import { createDownloadClientSchema, updateDownloadClientSchema, idParamSchema, type CreateDownloadClientInput } from '../../shared/schemas.js';
+import { createDownloadClientSchema, updateDownloadClientSchema, idParamSchema, type CreateDownloadClientInput } from '@shared/schemas.js';
 import { registerCrudRoutes } from './crud-routes.js';
 import { makeTestSchema } from '../utils/secret-codec.js';
 import { resolveSentinelSettings } from '../utils/sentinel-resolver.js';

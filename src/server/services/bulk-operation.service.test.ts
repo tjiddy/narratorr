@@ -11,14 +11,14 @@ import { BulkOperationService, BulkOpError } from './bulk-operation.service.js';
 import { RenameError } from './rename.service.js';
 import { RetagError } from './tagging.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
-import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
+import { processAudioFiles } from '@core/utils/audio-processor.js';
+import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { writeOpfSidecar } from '../utils/opf-writer.js';
 import { downloadRemoteCover } from './cover-download.js';
 import { cp, mkdir, rename, rm, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { RenameService } from './rename.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { BookService } from './book.service.js';
@@ -38,7 +38,7 @@ vi.mock('./enrichment-utils.js', () => ({
 }));
 
 const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
-vi.mock('../../core/utils/audio-processor.js', () => ({
+vi.mock('@core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn(),
   // Plain arrow over a hoisted toggle — survives vi.clearAllMocks; flip false for the not-detected test.
   resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null),

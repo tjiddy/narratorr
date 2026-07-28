@@ -10,7 +10,7 @@ import { mapBookMetadataToPayload, findLibraryMatch, type LibraryMatch } from '@
 import { formatDurationMinutes } from '@/lib/format';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
-import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 import {
   BookOpenIcon,
   HeadphonesIcon,

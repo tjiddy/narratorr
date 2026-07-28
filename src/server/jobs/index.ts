@@ -1,7 +1,7 @@
 import { Cron } from 'croner';
 import { sql, inArray } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
-import { downloads } from '../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { downloads } from '@db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Services } from '../services/di.js';
 import type { TaskRegistry } from '../services/task-registry.js';

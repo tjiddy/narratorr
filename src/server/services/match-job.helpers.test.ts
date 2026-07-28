@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
-import type { BookMetadata } from '../../core/metadata/index.js';
+import type { AudioScanResult } from '@core/utils/audio-scanner.js';
+import type { BookMetadata } from '@core/metadata/index.js';
 import type { MatchCandidate, MatchResult } from './match-job.service.js';
 import type * as FolderParsing from '../utils/folder-parsing.js';
-import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 // Spy on cleanTagTitle so a single test can force the empty-cleaned-title path
 // (the deriveTagQuery guard at match-job.helpers.ts is otherwise unreachable
@@ -33,7 +33,7 @@ import {
   tagTitleScore,
   type NarratorCapContext,
 } from './match-job.helpers.js';
-import { DURATION_TOLERANCE_SECONDS } from '../../shared/duration-tolerance.js';
+import { DURATION_TOLERANCE_SECONDS } from '@shared/duration-tolerance.js';
 
 // -------- Factories --------
 

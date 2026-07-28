@@ -4,7 +4,7 @@ import {
   FOLDER_ALLOWED_TOKENS,
   FILE_ALLOWED_TOKENS,
   TOKEN_PATTERN_SOURCE,
-} from '../../shared/naming-constants.js';
+} from '@shared/naming-constants.js';
 import { IMPORT_SIBLING_SUFFIXES } from './import-sibling-suffixes.js';
 
 export {

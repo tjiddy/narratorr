@@ -4,7 +4,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { rescanLibraryWithCompanionSweep } from './library-rescan-sweep.js';
 import { LibraryScanService, ScanInProgressError, LibraryPathError, type RescanResult } from './library-scan.service.js';

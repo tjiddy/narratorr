@@ -2,10 +2,10 @@ import type { Stats } from 'node:fs';
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import type { EpubValidation } from '../../core/epub/result.js';
+import type { EpubValidation } from '@core/epub/result.js';
 // Deep path, never a `core/index.js` barrel: #1956's scope note reserved a barrel export for a
 // consumer that actually wants one, and this issue does not (#1959 AC13).
-import { validateEpub } from '../../core/epub/validate.js';
+import { validateEpub } from '@core/epub/validate.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { findCompanionEbookCandidates } from './companion-ebook-discovery.js';
 import type { CompanionEbookObservation } from './companion-ebook-observation.js';

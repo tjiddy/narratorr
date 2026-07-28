@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { EventReasonDetails } from './eventReasonFormatters';
-import { qualityGateReasonSchema } from '../../shared/schemas.js';
+import { qualityGateReasonSchema } from '@shared/schemas.js';
 
 /** A fully-populated, well-formed held_for_review reason blob. */
 const fullReason = {

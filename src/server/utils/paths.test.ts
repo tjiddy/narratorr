@@ -5,8 +5,8 @@ import { basename } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { renameFilesWithTemplate, planFileRenames, padWidth, buildBookNameTokens, assertPathInsideLibrary, assertRealPathInsideLibrary, assertRealPathInsideLibraryStrict, PathOutsideLibraryError } from './paths.js';
 import type { RenameableBook } from './paths.js';
-import { renderFilename } from '../../core/utils/naming.js';
-import { compareAudioNames, disambiguateStems } from '../../core/utils/collect-audio-files.js';
+import { renderFilename } from '@core/utils/naming.js';
+import { compareAudioNames, disambiguateStems } from '@core/utils/collect-audio-files.js';
 
 vi.mock('node:fs/promises', async () => ({
   ...(await vi.importActual('node:fs/promises')),

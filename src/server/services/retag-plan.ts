@@ -1,6 +1,6 @@
 import { parseFile } from 'music-metadata';
 import { basename, extname } from 'node:path';
-import type { TagMode, RetagExcludableField } from '../../shared/schemas.js';
+import type { TagMode, RetagExcludableField } from '@shared/schemas.js';
 import type { TagMetadata } from './tagging.service.js';
 import { extractYear } from '../utils/import-helpers.js';
 
