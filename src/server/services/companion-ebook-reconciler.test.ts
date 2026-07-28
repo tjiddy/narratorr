@@ -741,6 +741,22 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(summaries(spies)[0]).toMatchObject({ books: 1, observed: 1 });
     });
 
+    // Slot count, and *only* slot count. This suite replaces the whole observe
+    // module, so the callbacks below never reach `validateEpub` and no reader
+    // spy exists here — what a per-book pass costs is not observable from this
+    // file. That half is proved independently and deterministically by the
+    // `src/core/epub/` suites, which pin that an archive over
+    // `MAX_ARCHIVE_ENTRIES` or `MAX_CENTRAL_DIRECTORY_BYTES` is rejected
+    // *before* `Open.custom()` is called, so a hostile book costs a slot and a
+    // preflight rather than a materialised central directory (#2025). (Named
+    // loosely on purpose — the archive adapter's own suite asserts that no file
+    // outside `src/core/epub/` so much as mentions its module name.)
+    //
+    // Deliberately no heap assertion, here or there: a Vitest worker cannot
+    // lower its own V8 ceiling, most of the retention is `external` rather than
+    // heap so `--max-old-space-size` would not bound it anyway, and RSS sampling
+    // without process isolation is nondeterministic. The retention measurements
+    // behind the span cap are PR evidence, not a test.
     it(`never runs more than ${RECONCILE_CONCURRENCY} per-book passes at once (case 37)`, async () => {
       const gate = deferred();
       let inFlight = 0;

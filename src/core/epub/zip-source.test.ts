@@ -6,7 +6,7 @@ import type { FileHandle } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
 import * as F from '../__tests__/epub-archive.fixture.js';
 import { classifyEpubReadError } from './errors.js';
-import { MAX_ARCHIVE_ENTRIES } from './limits.js';
+import { MAX_ARCHIVE_ENTRIES, MAX_CENTRAL_DIRECTORY_BYTES } from './limits.js';
 import type { ZipArchiveResult, ZipSourceSession } from './zip-source.js';
 import { withZipSource, ZipSourceProtocolError } from './zip-source.js';
 
@@ -880,7 +880,12 @@ describe('the declared-entry-count preflight', () => {
     [
       'offsetToStartOfCentralDirectory',
       [{ at: 16, size: 4 as const, value: 0xfffffffe }],
-      { kind: 'failed', label: 'decoder-failure' },
+      // Read as a legacy offset, 0xfffffffe is far past the EOCD, so the span
+      // check (#2025) answers `truncated` structurally. Before that check it
+      // reached the reader, which seeked past EOF and reported
+      // `decoder-failure`; same verdict for the book, one phase earlier and
+      // without opening the archive.
+      { kind: 'rejected', code: 'truncated' },
     ],
   ])('does not take the ZIP64 branch on a near-sentinel %s', async (_field, patches, expected) => {
     const bytes = await F.buildArchive({ store: true, entries: [{ name: 'a.txt', content: 'hi' }] });
@@ -1065,6 +1070,139 @@ describe('the entry-count ceiling', () => {
     expect(classifyEpubReadError(thrown, { archiveRead: true })).toBe('throw');
     expect(h.handles).toHaveLength(1);
     expect(h.handles[0]?.closes).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('the central-directory span ceiling', () => {
+  /** Long names, few entries: the span is tripped in isolation, far under the entry ceiling. */
+  const SPAN_FIXTURE_ENTRIES = 150;
+  const CAP = MAX_CENTRAL_DIRECTORY_BYTES;
+
+  /** span === CAP exactly. */
+  let atCap: string;
+  /** span === CAP + 1, built genuinely — one more byte of filename, not a patched offset. */
+  let overCap: string;
+  /** The `atCap` central directory under a forged ZIP64 tail: span === CAP + 76. */
+  let zip64OverCap: string;
+
+  beforeAll(async () => {
+    // The only heavyweight fixtures in this section, built once and shared: an
+    // 8 MiB span is a ~17 MB temp file and cannot be smaller. `span ≤ eocdOffset
+    // ≤ fileSize`, so unlike a declared *count* an over-cap span has no 213-byte
+    // analogue — the bytes have to exist.
+    const atCapBytes = await F.buildArchiveWithCentralDirectorySpan({
+      span: CAP,
+      filler: SPAN_FIXTURE_ENTRIES,
+    });
+    const overCapBytes = await F.buildArchiveWithCentralDirectorySpan({
+      span: CAP + 1,
+      filler: SPAN_FIXTURE_ENTRIES,
+    });
+    const forged = F.forgeZip64Tail(atCapBytes, { declaredRecords: BigInt(SPAN_FIXTURE_ENTRIES) });
+    // Precondition for the parity row: the forged tail splices exactly the
+    // 56-byte record and 20-byte locator into the capped pre-EOCD envelope.
+    expect(F.centralDirectorySpan(forged)).toBe(CAP + 76);
+
+    atCap = await place(atCapBytes);
+    overCap = await place(overCapBytes);
+    zip64OverCap = await place(forged);
+  });
+
+  it('rejects a central directory one byte over the cap, without calling the reader', async () => {
+    // The motivating case, and the upper half of the boundary: this file differs
+    // from the accepted one below by a single byte of filename.
+    //
+    // Measured through the production path — `withZipSource` →
+    // `preflightAndOpen()` → `normalizeEntries`, holding the returned entries
+    // live, `heapUsed + external` after a forced GC, one fresh process per point
+    // — retention tracks this span linearly at **2.06–2.39×** (4.3 MiB span →
+    // 9.2 MiB; 17.2 MiB span → 35.4 MiB). Uncapped, a ~112–128 MiB span fits
+    // inside the 256 MiB file ceiling, which is ~230–305 MiB per reader and
+    // ~0.9–1.2 GiB across the four concurrent reconciler slots. The four-slot
+    // process death is an extrapolation along that measured slope, not a crash
+    // that was watched; the proportionality is what was measured.
+    expect(await openArchive(overCap)).toEqual({ kind: 'rejected', code: 'limit_exceeded' });
+    expect(h.openCustom).not.toHaveBeenCalled();
+  });
+
+  it('opens an archive whose central directory sits exactly at the cap', async () => {
+    // The ceiling is `>`, not `>=`.
+    const result = await openArchive(atCap);
+
+    expect(result.kind).toBe('archive');
+    if (result.kind === 'archive') expect(result.entries).toHaveLength(SPAN_FIXTURE_ENTRIES);
+  });
+
+  it('accepts a span of exactly zero', async () => {
+    // The `< 0` versus `<= 0` regression guard. The empty archive is the
+    // degenerate layout — EOCD at 0 and central directory at 0 — and it reached
+    // the reader before this ceiling existed, so it still must.
+    const bytes = await F.buildArchive({ entries: [] });
+    expect(F.eocdOffset(bytes)).toBe(0);
+    expect(F.centralDirectorySpan(bytes)).toBe(0);
+    const filePath = await place(bytes);
+
+    expect(await openArchive(filePath)).toEqual({ kind: 'archive', entries: [] });
+    expect(h.openCustom).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a central-directory offset past the EOCD as truncated, not limit_exceeded', async () => {
+    const bytes = await F.buildArchive({ store: true, entries: [{ name: 'a.txt', content: 'hi' }] });
+    const eocd = F.eocdOffset(bytes);
+    const filePath = await place(
+      F.patchArchive(bytes, [
+        { offset: eocd + 16, size: 4, value: eocd + 1, why: 'central directory starts after the EOCD' },
+      ]),
+    );
+
+    expect(await openArchive(filePath)).toEqual({ kind: 'rejected', code: 'truncated' });
+    expect(h.openCustom).not.toHaveBeenCalled();
+  });
+
+  it('reports a negative span as truncated even when the declared count is over the ceiling', async () => {
+    // Precedence: structure is validated before either resource ceiling, so a
+    // strictly negative span is `truncated` regardless of the count.
+    //
+    // Both count fields are patched to the *same* over-ceiling value on purpose.
+    // `preflight` requires `recordsOnDisk === numberOfRecords` before it reaches
+    // any ceiling, so patching +10 alone would return `truncated` for a
+    // structural count mismatch and would pass just as happily against a
+    // count-first implementation — proving nothing about the ordering.
+    const bytes = await F.buildArchive({ store: true, entries: [{ name: 'a.txt', content: 'hi' }] });
+    const eocd = F.eocdOffset(bytes);
+    const filePath = await place(
+      F.patchArchive(bytes, [
+        { offset: eocd + 8, size: 2, value: MAX_ARCHIVE_ENTRIES + 1, why: 'recordsOnDisk over the ceiling' },
+        { offset: eocd + 10, size: 2, value: MAX_ARCHIVE_ENTRIES + 1, why: 'numberOfRecords, kept coherent' },
+        { offset: eocd + 16, size: 4, value: eocd + 1, why: 'central directory starts after the EOCD' },
+      ]),
+    );
+
+    expect(await openArchive(filePath)).toEqual({ kind: 'rejected', code: 'truncated' });
+    expect(h.openCustom).not.toHaveBeenCalled();
+  });
+
+  it('caps the ZIP64 branch on the same span, pre-EOCD envelope included', async () => {
+    // The row that fails if only the legacy path is capped. These are the very
+    // bytes accepted at the cap above; the forged tail pushes the envelope 76
+    // bytes over, and the ZIP64 branch has to read its own central-directory
+    // offset out of the record to see it — the legacy field is the 0xffffffff
+    // sentinel here, which would compute a wildly negative span and answer
+    // `truncated` instead.
+    expect(await openArchive(zip64OverCap)).toEqual({ kind: 'rejected', code: 'limit_exceeded' });
+    expect(h.openCustom).not.toHaveBeenCalled();
+  });
+
+  it('leaves a conformant archive at the entry ceiling far under the cap', async () => {
+    // Why the cap cannot go much lower: `MAX_ARCHIVE_ENTRIES` already allows
+    // 10,000 members, and a conformant book at that ceiling with 100-char names
+    // spans 1.57 MiB — so a 1 MiB cap would reject a legitimate archive. That
+    // this fixture still opens is pinned by the entry-ceiling section above.
+    const { readFile } = await import('node:fs/promises');
+
+    expect(F.centralDirectorySpan(await readFile(manyAtCeiling))).toBeLessThan(CAP);
   });
 });
 

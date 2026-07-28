@@ -4,7 +4,12 @@ import path from 'node:path';
 import type { FileHandle } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
 import * as F from '../__tests__/epub-archive.fixture.js';
-import { MAX_ARCHIVE_BYTES, MAX_INSPECTION_BYTES, MAX_XML_BYTES } from './limits.js';
+import {
+  MAX_ARCHIVE_BYTES,
+  MAX_CENTRAL_DIRECTORY_BYTES,
+  MAX_INSPECTION_BYTES,
+  MAX_XML_BYTES,
+} from './limits.js';
 import type { EpubValidation } from './result.js';
 import { validateEpub } from './validate.js';
 
@@ -652,6 +657,42 @@ describe('limit_exceeded', () => {
 
     expect(await validateEpub(filePath)).toEqual({ status: 'invalid', code: 'limit_exceeded' });
     expect(h.fsOpen).not.toHaveBeenCalled();
+  });
+
+  it('rejects an otherwise-valid EPUB whose central directory is over the span cap', async () => {
+    // Everything an EPUB needs is present — mimetype, container, package
+    // document, content — and none of it is ever read: the span ceiling is a
+    // pre-open structural bound, so the reader is never called and this maps
+    // straight through as `limit_exceeded`. The span-arithmetic, boundary,
+    // precedence, and ZIP64-parity rows live with the preflight in
+    // `zip-source.test.ts`; this row is the public outcome only.
+    //
+    // The ~17 MB fixture is unavoidable: `span ≤ eocdOffset ≤ fileSize`, so an
+    // over-cap central directory cannot be forged into a small file.
+    const filePath = await place(
+      await F.buildArchiveWithCentralDirectorySpan({
+        span: MAX_CENTRAL_DIRECTORY_BYTES + 1,
+        entries: F.epubEntries({}),
+      }),
+    );
+
+    expect(await validateEpub(filePath)).toEqual({ status: 'invalid', code: 'limit_exceeded' });
+    expect(h.openCustom).not.toHaveBeenCalled();
+  });
+
+  it('validates a conformant EPUB carrying several hundred small resources', async () => {
+    // The false-positive guard for the span cap: 300 extra members is a
+    // perfectly ordinary illustrated book, and its whole central directory is
+    // three orders of magnitude under the ceiling.
+    const bytes = await buildEpub({
+      files: Array.from({ length: 300 }, (_, index) => ({
+        name: `OEBPS/text/section-${index}.xhtml`,
+        content: XHTML,
+      })),
+    });
+    expect(F.centralDirectorySpan(bytes)).toBeLessThan(MAX_CENTRAL_DIRECTORY_BYTES);
+
+    expect(await validateEpub(await place(bytes))).toEqual({ status: 'available' });
   });
 });
 

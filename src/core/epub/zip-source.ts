@@ -7,7 +7,7 @@ import type { CentralDirectory, File } from 'unzipper';
 import { createCountingStream } from './counting-stream.js';
 import type { EpubReadErrorLabel } from './errors.js';
 import { classifyEpubReadError } from './errors.js';
-import { MAX_ARCHIVE_ENTRIES } from './limits.js';
+import { MAX_ARCHIVE_ENTRIES, MAX_CENTRAL_DIRECTORY_BYTES } from './limits.js';
 import { READ_NO_FOLLOW } from '../utils/no-follow-open.js';
 import { decodeEntryName, findDuplicateEntry, normalizeArchivePath } from './paths.js';
 import type { EpubValidationCode } from './result.js';
@@ -194,6 +194,17 @@ interface ReplayEntry {
 interface ScratchWindow {
   readonly offset: number;
   readonly bytes: Buffer;
+}
+
+/**
+ * What a validated EOCD (legacy) or ZIP64 record declares about the central
+ * directory: how many records it holds, and where it starts. Both branches
+ * surface both fields so the count and span ceilings apply identically to each.
+ */
+interface DeclaredDirectory {
+  readonly count: number;
+  /** Absolute offset the reader will seek to. The span is `eocdOffset - this`. */
+  readonly centralDirectoryOffset: number;
 }
 
 type PreflightOutcome =
@@ -454,7 +465,8 @@ function validateZip64Locator(locator: Buffer, eocdOffset: number): number | nul
 }
 
 /**
- * Validate the ZIP64 record and return its declared entry count.
+ * Validate the ZIP64 record and return its declared entry count **and** the
+ * central-directory offset it declares.
  *
  * The legacy disk fields are not authoritative on this branch, but these are:
  * `diskNumber` (+16) and `diskStart` (+20) must be 0, and
@@ -464,8 +476,13 @@ function validateZip64Locator(locator: Buffer, eocdOffset: number): number | nul
  * held to the same safe-integer and in-range rule as the locator's — without it
  * a record with a safe count and an offset of `2^53 + 1` reaches `Open.custom()`
  * and is silently rounded before use.
+ *
+ * The offset is *returned* rather than validated and dropped (#2025): it is the
+ * only place the ZIP64 branch can learn where its central directory starts, and
+ * the span ceiling needs it. The legacy field cannot stand in — on this branch it
+ * carries the `0xffffffff` sentinel by definition.
  */
-function validateZip64Record(record: Buffer, size: number): number | null {
+function validateZip64Record(record: Buffer, size: number): DeclaredDirectory | null {
   if (record.length < ZIP64_RECORD_BYTES) return null;
   if (record.readUInt32LE(0) !== ZIP64_RECORD_SIGNATURE) return null;
   if (record.readUInt32LE(16) !== 0 || record.readUInt32LE(20) !== 0) return null;
@@ -474,7 +491,7 @@ function validateZip64Record(record: Buffer, size: number): number | null {
   const centralDirectoryOffset = record.readBigUInt64LE(48);
   if (centralDirectoryOffset > MAX_SAFE || centralDirectoryOffset >= BigInt(size)) return null;
   if (count > MAX_SAFE) return null;
-  return Number(count);
+  return { count: Number(count), centralDirectoryOffset: Number(centralDirectoryOffset) };
 }
 
 /** `0` or the `0xffff` sentinel — a conformant ZIP64 writer may emit either. */
@@ -493,7 +510,7 @@ async function preflightZip64(
   eocdOffset: number,
   size: number,
   queue: ReplayEntry[],
-): Promise<number | null> {
+): Promise<DeclaredDirectory | null> {
   // 20 bytes of locator plus a 56-byte record must physically precede the EOCD;
   // a smaller offset leaves no room, and rejecting here means no out-of-range
   // read is ever attempted.
@@ -505,11 +522,11 @@ async function preflightZip64(
   if (recordOffset === null) return null;
 
   const record = await acquireRange(fh, window, recordOffset, ZIP64_RECORD_BYTES);
-  const count = validateZip64Record(record, size);
-  if (count === null) return null;
+  const declared = validateZip64Record(record, size);
+  if (declared === null) return null;
 
   queue.push({ offset: locatorOffset, bytes: locator }, { offset: recordOffset, bytes: record });
-  return count;
+  return declared;
 }
 
 /**
@@ -521,8 +538,13 @@ async function preflightZip64(
  * 76 bytes on the ZIP64 branch. The scratch window is released on return.
  *
  * Outcome mapping is exact and non-overlapping: any structural failure is
- * `truncated`; a well-formed count above `MAX_ARCHIVE_ENTRIES` is
+ * `truncated`; a well-formed declaration over either resource ceiling is
  * `limit_exceeded`. In both cases `Open.custom()` is never called.
+ *
+ * **Structure is decided before the ceilings.** A central directory declared to
+ * start *after* the EOCD is a broken file, not an oversized one, so it is
+ * `truncated` whatever it declares — that ordering is contractual (#2025), and
+ * only the two ceilings below it are order-independent relative to each other.
  */
 async function preflight(fh: FileHandle, size: number): Promise<PreflightOutcome> {
   const windowLength = Math.min(size, EOCD_WINDOW_BYTES);
@@ -546,25 +568,35 @@ async function preflight(fh: FileHandle, size: number): Promise<PreflightOutcome
     legacy.numberOfRecords === DISK_SENTINEL ||
     legacy.centralDirectoryOffset === OFFSET_SENTINEL;
 
-  let declaredCount: number | null;
+  let declared: DeclaredDirectory | null;
   if (isZip64) {
-    declaredCount =
+    declared =
       isZeroOrDiskSentinel(legacy.diskNumber) && isZeroOrDiskSentinel(legacy.diskStart)
         ? await preflightZip64(fh, window, eocdOffset, size, queue)
         : null;
   } else {
     // OCF forbids split containers, and the reader checks none of these fields.
-    declaredCount =
+    declared =
       legacy.diskNumber === 0 &&
       legacy.diskStart === 0 &&
       legacy.recordsOnDisk === legacy.numberOfRecords
-        ? legacy.numberOfRecords
+        ? { count: legacy.numberOfRecords, centralDirectoryOffset: legacy.centralDirectoryOffset }
         : null;
   }
 
-  if (declaredCount === null) return TRUNCATED;
-  if (declaredCount > MAX_ARCHIVE_ENTRIES) return { kind: 'rejected', code: 'limit_exceeded' };
-  return { kind: 'ok', eocdOffset, declaredCount, queue };
+  if (declared === null) return TRUNCATED;
+  // One formula, both branches. On the ZIP64 branch this is the *pre-EOCD
+  // envelope*: it includes the 56-byte record and 20-byte locator sitting
+  // between the directory and the EOCD, over-counting the true extent by exactly
+  // 76 bytes. Accepted deliberately — one mental model, and 76 bytes is nothing
+  // against a multi-MiB ceiling. `recordOffset` is not the endpoint.
+  const span = eocdOffset - declared.centralDirectoryOffset;
+  // Structural, and therefore first. A span of exactly 0 is the empty archive,
+  // which is well-formed and must still reach the reader — `< 0`, never `<= 0`.
+  if (span < 0) return TRUNCATED;
+  if (declared.count > MAX_ARCHIVE_ENTRIES) return { kind: 'rejected', code: 'limit_exceeded' };
+  if (span > MAX_CENTRAL_DIRECTORY_BYTES) return { kind: 'rejected', code: 'limit_exceeded' };
+  return { kind: 'ok', eocdOffset, declaredCount: declared.count, queue };
 }
 
 /**

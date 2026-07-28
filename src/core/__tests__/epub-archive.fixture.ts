@@ -97,6 +97,56 @@ export async function buildArchive(options: BuildArchiveOptions): Promise<Buffer
   return Buffer.concat(chunks);
 }
 
+export interface CentralDirectorySpanOptions {
+  /** The exact `eocdOffset - centralDirectoryOffset` the built archive must have. */
+  span: number;
+  /** Members written first, verbatim. Their central-directory records count toward the span. */
+  entries?: readonly ArchiveEntrySpec[];
+  /** How many long-named filler members carry the remaining span. */
+  filler?: number;
+}
+
+/**
+ * Build an archive whose central directory spans **exactly** `span` bytes
+ * (#2025). Every record costs `46 + nameLength` — the fixed header plus the
+ * name, with no extra field and no comment from the pinned writer — so the span
+ * is fully determined by the names, and the builder asserts the result rather
+ * than trusting that arithmetic.
+ *
+ * **Long names, few entries.** `patchEntryName` is same-length only and cannot
+ * lengthen a name, so the span is built by passing long names straight to
+ * {@link buildArchive}. Few-and-long is also what keeps such a fixture clear of
+ * `MAX_ARCHIVE_ENTRIES`, so it trips the span ceiling *in isolation* — 150
+ * entries reach 8 MiB, where 10,000 conformant 100-char names reach only
+ * 1.57 MiB. `fileNameLength` is a 2-byte field, so 65,535 is the per-name
+ * ceiling.
+ *
+ * The file on disk is roughly twice the span: every name is written again in its
+ * local file header. An 8 MiB span is a ~17 MB temp file, and there is no way
+ * around that — `span ≤ eocdOffset ≤ fileSize` means an over-cap span cannot be
+ * forged into a small file the way a declared *count* can.
+ */
+export async function buildArchiveWithCentralDirectorySpan(
+  options: CentralDirectorySpanOptions,
+): Promise<Buffer> {
+  const { span, entries: base = [], filler = 150 } = options;
+  const fixed = base.reduce((total, entry) => total + 46 + Buffer.byteLength(entry.name), 0);
+  const nameBytes = span - fixed - filler * 46;
+  const each = Math.floor(nameBytes / filler);
+  const last = nameBytes - each * (filler - 1);
+  if (each < 7 || last > 65535) throw new Error(`${nameBytes} name bytes do not fit ${filler} entries`);
+  const fillerEntries = Array.from({ length: filler }, (_, index) => ({
+    // A unique numeric prefix, then padding — no leading traversal, absolute, or
+    // drive-letter shape, so `archiver-utils`' `sanitizePath` leaves it verbatim.
+    name: `${String(index).padStart(6, '0')}${'a'.repeat((index === filler - 1 ? last : each) - 6)}`,
+    content: 'x',
+  }));
+  const archive = await buildArchive({ store: true, entries: [...base, ...fillerEntries] });
+  const built = centralDirectorySpan(archive);
+  if (built !== span) throw new Error(`fixture span is ${built} bytes, expected exactly ${span}`);
+  return archive;
+}
+
 /** A per-suite temp directory. Callers `rm` it in `afterAll`. */
 export async function createArchiveDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'narratorr-epub-'));
@@ -146,6 +196,26 @@ export function zip64LocatorOffset(archive: Buffer): number {
 /** The ZIP64 record offset, read out of the locator's 8-byte field at +8. */
 export function zip64RecordOffset(archive: Buffer): number {
   return Number(archive.readBigUInt64LE(zip64LocatorOffset(archive) + 8));
+}
+
+/**
+ * `eocdOffset - centralDirectoryOffset`, the quantity the preflight caps
+ * (#2025), read from whichever field is authoritative — the ZIP64 record's when
+ * the legacy field carries its `0xffffffff` sentinel.
+ *
+ * On the ZIP64 branch this is the *pre-EOCD envelope*: it includes the 56-byte
+ * record and the 20-byte locator that sit between the end of the central
+ * directory and the EOCD, so it exceeds the true directory extent by exactly 76
+ * bytes. That is the same one formula production applies on both branches.
+ */
+export function centralDirectorySpan(archive: Buffer): number {
+  const eocd = eocdOffset(archive);
+  const legacyOffset = archive.readUInt32LE(eocd + 16);
+  const start =
+    legacyOffset === 0xffffffff
+      ? Number(archive.readBigUInt64LE(zip64RecordOffset(archive) + 48))
+      : legacyOffset;
+  return eocd - start;
 }
 
 /** One rewritten integer field. */
