@@ -88,20 +88,11 @@ describe('booksApi.listLibraryBooks — collapse serialization (#1169)', () => {
   });
 });
 
-describe('booksApi.getBooks — collapse isolation (#1169)', () => {
-  beforeEach(() => {
-    vi.mocked(fetchApi).mockReset();
-  });
-
-  it('does not serialize collapse param on non-library endpoint', async () => {
-    vi.mocked(fetchApi).mockResolvedValue({ data: [], total: 0 });
-    await booksApi.getBooks({ status: 'wanted' });
-    const [path] = vi.mocked(fetchApi).mock.calls[0]!;
-    expect(path).not.toContain('collapse');
-    expect(path).toContain('/books?');
-    expect(path).not.toContain('/library/');
-  });
-});
+// The '#1169 collapse isolation' suite that used to sit here proved `getBooks` (the
+// non-library list endpoint) never serialized `collapse`. #1951 removed that wrapper —
+// `listLibraryBooks` is now the client's only list endpoint — so the isolation it
+// guarded is structural rather than behavioural, and there is no second endpoint left
+// to leak the param onto. The positive direction is still pinned above.
 
 describe('booksApi.uploadBookCover', () => {
   beforeEach(() => {

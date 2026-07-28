@@ -8,7 +8,6 @@ import type { BookFile, BookIdentifier, BookStats } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
   api: {
-    getBooks: vi.fn(),
     listLibraryBooks: vi.fn(),
     getBookById: vi.fn(),
     getBookFiles: vi.fn(),

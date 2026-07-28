@@ -208,42 +208,13 @@ describe('blacklistApi', () => {
 });
 
 describe('booksApi', () => {
-  it('getBooks → GET /books', async () => {
-    await booksApi.getBooks();
-    expect(mockFetchApi).toHaveBeenCalledWith('/books');
-  });
-
-  it('getBooks with status filter → GET /books?status=...', async () => {
-    await booksApi.getBooks({ status: 'missing' });
-    expect(mockFetchApi).toHaveBeenCalledWith('/books?status=missing');
-  });
-
-  it('getBooks with all params → GET /books?status=wanted&search=tolkien&sortField=title&sortDirection=asc&limit=10&offset=20', async () => {
-    await booksApi.getBooks({ status: 'wanted', search: 'tolkien', sortField: 'title', sortDirection: 'asc', limit: 10, offset: 20 });
-    expect(mockFetchApi).toHaveBeenCalledWith('/books?status=wanted&search=tolkien&sortField=title&sortDirection=asc&limit=10&offset=20');
-  });
+  // `getBooks` was removed in #1951 (no client callers left — see the comment on
+  // `booksApi` in books.ts). The shared `buildBookListQuery` it used is still reached
+  // through `listLibraryBooks` via `buildLibraryBookListQuery`, so the serialization
+  // contract below covers the same builder; only the dead wrapper's duplicate cases
+  // went away.
 
   // #1143 — server-side author/series/narrator filters: URL serialization contract
-  it('getBooks with author filter → GET /books?author=...', async () => {
-    await booksApi.getBooks({ author: 'Brandon Sanderson' });
-    expect(mockFetchApi).toHaveBeenCalledWith('/books?author=Brandon+Sanderson');
-  });
-
-  it('getBooks with series filter → GET /books?series=...', async () => {
-    await booksApi.getBooks({ series: 'The Stormlight Archive' });
-    expect(mockFetchApi).toHaveBeenCalledWith('/books?series=The+Stormlight+Archive');
-  });
-
-  it('getBooks with narrator filter → GET /books?narrator=...', async () => {
-    await booksApi.getBooks({ narrator: 'Michael Kramer' });
-    expect(mockFetchApi).toHaveBeenCalledWith('/books?narrator=Michael+Kramer');
-  });
-
-  it('getBooks with author + series + narrator combined → URL carries all three (#1143)', async () => {
-    await booksApi.getBooks({ author: 'Sanderson', series: 'Stormlight', narrator: 'Kramer' });
-    expect(mockFetchApi).toHaveBeenCalledWith('/books?author=Sanderson&series=Stormlight&narrator=Kramer');
-  });
-
   it('listLibraryBooks with author → GET /library/books?author=...', async () => {
     await booksApi.listLibraryBooks({ author: 'Brandon Sanderson' });
     expect(mockFetchApi).toHaveBeenCalledWith('/library/books?author=Brandon+Sanderson');
@@ -264,20 +235,30 @@ describe('booksApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/library/books?status=imported&search=kings&author=Sanderson');
   });
 
-  it('getBooks omits author/series/narrator from URL when not set', async () => {
-    await booksApi.getBooks({ status: 'wanted' });
+  // Retargeted from `getBooks` when it was removed (#1951). These pin
+  // `buildBookListQuery`'s falsy-skip (`if (value)`), which is shared machinery — not
+  // anything specific to the wrapper that used to call it.
+  it('listLibraryBooks omits author/series/narrator from URL when not set', async () => {
+    await booksApi.listLibraryBooks({ status: 'wanted' });
     const url = (mockFetchApi.mock.calls[0]?.[0] ?? '') as string;
     expect(url).not.toContain('author=');
     expect(url).not.toContain('series=');
     expect(url).not.toContain('narrator=');
   });
 
-  it('getBooks omits author/series/narrator when passed as empty strings', async () => {
-    await booksApi.getBooks({ author: '', series: '', narrator: '' });
+  it('listLibraryBooks omits author/series/narrator when passed as empty strings', async () => {
+    await booksApi.listLibraryBooks({ author: '', series: '', narrator: '' });
     const url = (mockFetchApi.mock.calls[0]?.[0] ?? '') as string;
     expect(url).not.toContain('author=');
     expect(url).not.toContain('series=');
     expect(url).not.toContain('narrator=');
+  });
+
+  // Also retargeted from `getBooks` (#1951): the full param set, which the
+  // listLibraryBooks cases above do not otherwise cover (sort fields, limit, offset).
+  it('listLibraryBooks with all params serializes every field', async () => {
+    await booksApi.listLibraryBooks({ status: 'wanted', search: 'tolkien', sortField: 'title', sortDirection: 'asc', limit: 10, offset: 20 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/library/books?status=wanted&search=tolkien&sortField=title&sortDirection=asc&limit=10&offset=20');
   });
 
   it('getBookStats → GET /books/stats', async () => {
@@ -745,10 +726,10 @@ describe('response pass-through', () => {
     expect(result).toBe(data);
   });
 
-  it('booksApi.getBooks returns fetchApi response', async () => {
+  it('booksApi.listLibraryBooks returns fetchApi response', async () => {
     const data = { data: [{ id: 1, title: 'Book' }], total: 1 };
     mockFetchApi.mockResolvedValue(data);
-    const result = await booksApi.getBooks();
+    const result = await booksApi.listLibraryBooks();
     expect(result).toBe(data);
   });
 

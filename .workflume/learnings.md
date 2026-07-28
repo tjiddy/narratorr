@@ -1223,11 +1223,17 @@ that was proposed in #1940 and closed not-planned.
 
 ---
 
-**Never use `GET /api/books` (via `api.getBooks()`) as a client-side ownership or duplicate-detection
-source.** The route applies `limit ?? DEFAULT_LIMITS.books` (120) ordered created-at-descending, so on
-a library larger than one page the oldest rows — the ones most likely to be the owned incumbent — are
-invisible to the check. **The bug never reproduces on a small dev library**, which is what makes it
-worth an entry rather than a code comment.
+**Never use `GET /api/books` as a client-side ownership or duplicate-detection source.** The route
+applies `limit ?? DEFAULT_LIMITS.books` (120) ordered created-at-descending, so on a library larger
+than one page the oldest rows — the ones most likely to be the owned incumbent — are invisible to the
+check. **The bug never reproduces on a small dev library**, which is what makes it worth an entry
+rather than a code comment.
+
+**As of #1951 the `api.getBooks()` wrapper no longer exists** — it was deleted once it had no client
+callers left, so the capped endpoint is not reachable from `src/client` at all and the guard is now
+structural. `src/client/lib/api/books.ts` carries a comment on `booksApi` explaining why it is absent.
+**Do not re-add it.** The server route stays live because it is part of the v1 API contract; that is
+not a reason to reintroduce a client wrapper for it.
 
 The canonical client ownership source is `useBookIdentifiers()` (`src/client/hooks/useLibrary.ts`) →
 `GET /api/books/identifiers` → `BookListService.getIdentifiers()`: no `where`, no `limit`, no

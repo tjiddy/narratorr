@@ -13,9 +13,6 @@ vi.mock('@/lib/api', async (importOriginal) => {
     ...actual,
     api: {
       ...(actual.api as Record<string, unknown>),
-      // Kept as a spy (never as the real function) so the #1916 negative
-      // assertion below is a real mock-call check rather than a no-op.
-      getBooks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
       getBookIdentifiers: vi.fn().mockResolvedValue([]),
       addBook: vi.fn(),
     },
@@ -270,18 +267,20 @@ describe('SearchResults', () => {
     });
   });
 
-  // #1916 — ownership on the search page must come from the unpaginated
-  // identifiers endpoint, not from the 120-row-capped `/api/books` page.
+  // #1916 — ownership on the search page must come from the unpaginated identifiers
+  // endpoint, not from the 120-row-capped `/api/books` page. This used to also assert
+  // `api.getBooks` was never called; #1951 deleted that wrapper once it had no callers
+  // left, so the capped endpoint is no longer reachable from the client at all and the
+  // guard is now structural (see the comment on `booksApi` in lib/api/books.ts).
   describe('#1916 ownership source', () => {
     const results = { books: [createMockBookMetadata()], authors: [] };
 
-    it('reads ownership from getBookIdentifiers and never calls the capped getBooks', async () => {
+    it('reads ownership from getBookIdentifiers', async () => {
       renderResults({ searchTerm: 'fantasy', results });
 
       await waitFor(() => {
         expect(api.getBookIdentifiers).toHaveBeenCalledTimes(1);
       });
-      expect(api.getBooks).not.toHaveBeenCalled();
     });
 
     it('passes the identifiers array through to BooksTabContent so cards derive ownership from it', async () => {

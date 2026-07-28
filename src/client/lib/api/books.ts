@@ -318,9 +318,15 @@ function buildLibraryBookListQuery(params?: LibraryBookListParams): string {
   return base;
 }
 
+// No `getBooks` wrapper here on purpose. The server's `GET /api/books` route is still
+// live (it is part of the v1 API contract), but no client code may read it: the route
+// applies a default limit of 120 ordered created-at-descending, so on a real library the
+// oldest rows — the likely owned incumbent — are invisible to an ownership or duplicate
+// check, and the bug never reproduces on a small dev library (#1916). The library list
+// uses `listLibraryBooks`; every ownership surface uses `getBookIdentifiers`, which is
+// unlimited and unordered. The wrapper was removed in #1951 once it had no callers left,
+// so the wrong choice is no longer reachable from the client.
 export const booksApi = {
-  getBooks: (params?: BookListParams) =>
-    fetchApi<{ data: BookWithAuthor[]; total: number }>(`/books${buildBookListQuery(params)}`),
   listLibraryBooks: (params?: LibraryBookListParams) =>
     fetchApi<LibraryBookListResponse>(`/library/books${buildLibraryBookListQuery(params)}`),
   getBookStats: () =>
