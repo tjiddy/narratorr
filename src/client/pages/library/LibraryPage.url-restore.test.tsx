@@ -25,7 +25,6 @@ vi.mock('@/lib/api', async () => {
     ...actual,
     api: {
       ...(actual as { api: object }).api,
-      getBooks: vi.fn(),
       listLibraryBooks: vi.fn(),
       getBookStats: vi.fn(),
       getSettings: vi.fn(),
