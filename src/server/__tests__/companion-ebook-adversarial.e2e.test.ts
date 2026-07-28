@@ -453,19 +453,39 @@ describe('row 1 — a 213-byte archive declaring half a billion members', () => 
    * worker with it — which is the honest signal, and the ceiling itself is independently pinned
    * in the `src/core/epub/` suites.
    */
+  const DECLARED_RECORDS = 500_000_000n;
+
   async function forged(): Promise<Buffer> {
     const base = await F.buildArchive({
       store: true,
       entries: [{ name: 'chapter-one.xhtml', content: 'hello' }],
     });
-    return F.forgeZip64Tail(base, { declaredRecords: 500_000_000n });
+    return F.forgeZip64Tail(base, { declaredRecords: DECLARED_RECORDS });
   }
 
   it('rejects it at /metadata and streams it back untouched on both download paths', async () => {
     const bytes = await forged();
-    // Precondition: the bytes on disk really are the 213-byte forgery, not something the
-    // builder quietly reshaped.
+
+    /**
+     * Precondition, read back from the AUTHORITATIVE bytes rather than from the builder's
+     * arguments — and the byte length alone is not it. `213` says the file is small; it says
+     * nothing about the half-billion count, and the route observables cannot tell the
+     * difference: `/metadata` flattens every archive rejection to the same 404 and neither
+     * streaming path parses at all. So a fixture that kept its 213 bytes while losing the
+     * hazardous declaration would leave every assertion below green and falsely certify
+     * protection against the ZIP64 OOM path.
+     *
+     * Three fields have to be right for this to be that attack. The EOCD sentinel is what
+     * makes the reader consult the ZIP64 record in the first place — without it the count is
+     * read from the legacy 2-byte field and the 8-byte quantity is never reached — and the
+     * record's two count fields are the unchecked quantity itself.
+     */
     expect(bytes).toHaveLength(213);
+    expect(bytes.readUInt16LE(F.eocdOffset(bytes) + 10)).toBe(0xffff);
+    const record = F.zip64RecordOffset(bytes);
+    expect(bytes.readBigUInt64LE(record + 24)).toBe(DECLARED_RECORDS);
+    expect(bytes.readBigUInt64LE(record + 32)).toBe(DECLARED_RECORDS);
+
     const seeded = await seedAvailableCompanion({ filename: 'forged.epub', bytes });
 
     // The inspecting surface refuses it pre-open. `limit_exceeded` is a validationCode, not a
@@ -824,25 +844,49 @@ describe('row 7 — general-purpose bit 0 on a content entry', () => {
 describe('row 8 — the public stream against a file that moved under it', () => {
   const ORIGINAL = Buffer.from('original companion bytes');
 
-  /** The two negatives must be byte-identical, so their raw payloads are captured and compared. */
-  let deletedPayload: Buffer;
-  let directoryPayload: Buffer;
+  /**
+   * The exact bytes the route is expected to put on the wire for BOTH negatives.
+   *
+   * A module-level constant rather than a payload captured from a sibling test: byte identity
+   * between 8a and 8c has to be a property of each response independently, or a focused filter
+   * (`-t 8c`), a shuffled order, or a `.only` turns correct production behaviour into a failure
+   * against an uninitialised variable. Each subcase now compares against this and the identity
+   * follows transitively — and 8c additionally proves it directly, in-test, below.
+   */
+  const UNAVAILABLE_PAYLOAD = Buffer.from(JSON.stringify(UNAVAILABLE_BODY), 'utf8');
 
-  function expectUnavailableEnvelope(res: { statusCode: number; headers: Record<string, unknown>; payload: string }) {
+  type StreamResponse = {
+    statusCode: number;
+    headers: Record<string, unknown>;
+    payload: string;
+    rawPayload: Buffer;
+  };
+
+  /** Seed a book, then leave its companion path in whatever hostile shape `arrange` makes. */
+  async function streamAfter(
+    filename: string,
+    arrange: (filePath: string) => Promise<void>,
+  ): Promise<StreamResponse> {
+    const seeded = await seedAvailableCompanion({ filename, bytes: ORIGINAL });
+    await arrange(seeded.filePath);
+    return publicStream(seeded.publicId);
+  }
+
+  function expectUnavailableEnvelope(res: StreamResponse) {
     expect(res.statusCode).toBe(404);
     // No EPUB payload bytes — the route answers JSON, and the body parses as exactly the
     // canonical envelope.
     expect(res.headers['content-type']).not.toBe(EPUB_MEDIA_TYPE);
     expect(JSON.parse(res.payload)).toEqual(UNAVAILABLE_BODY);
+    // And byte-for-byte, so "the public route never sends an empty body" and "both negatives
+    // are indistinguishable" are pinned on the wire form, not merely on the parsed shape.
+    expect(res.rawPayload).toEqual(UNAVAILABLE_PAYLOAD);
   }
 
   it('8a — a deleted file answers the canonical unavailable envelope', async () => {
-    const seeded = await seedAvailableCompanion({ filename: 'gone.epub', bytes: ORIGINAL });
-    await unlink(seeded.filePath);
+    const res = await streamAfter('gone.epub', (filePath) => unlink(filePath));
 
-    const res = await publicStream(seeded.publicId);
     expectUnavailableEnvelope(res);
-    deletedPayload = res.rawPayload;
   });
 
   it('8b — a replacement regular file streams coherently at its own length', async () => {
@@ -867,19 +911,21 @@ describe('row 8 — the public stream against a file that moved under it', () =>
   });
 
   it('8c — a directory in the file\'s place answers the same envelope, byte for byte', async () => {
-    const seeded = await seedAvailableCompanion({ filename: 'dir.epub', bytes: ORIGINAL });
-    await unlink(seeded.filePath);
-    await mkdir(seeded.filePath);
+    const directoryRes = await streamAfter('dir.epub', async (filePath) => {
+      await unlink(filePath);
+      await mkdir(filePath);
+    });
 
-    const res = await publicStream(seeded.publicId);
-    expectUnavailableEnvelope(res);
-    directoryPayload = res.rawPayload;
+    expectUnavailableEnvelope(directoryRes);
 
-    // `verifyPath`'s `lstat().isFile()` rejects this as `not_regular_file` while 8a's `lstat`
-    // threw `ENOENT` — two different internal outcomes, one indistinguishable public answer.
-    expect(deletedPayload, '8a captures the payload this compares against, so it must run first')
-      .toBeDefined();
-    expect(directoryPayload).toEqual(deletedPayload);
+    // The anti-oracle property, proved DIRECTLY and inside this one test: a second book whose
+    // file was deleted is driven through the same route here, so the comparison needs nothing
+    // from 8a and holds under any test order or filter. `verifyPath`'s `lstat().isFile()`
+    // rejects the directory as `not_regular_file` while the deletion makes `lstat` throw
+    // `ENOENT` — two different internal outcomes, one indistinguishable public answer.
+    const deletedRes = await streamAfter('also-gone.epub', (filePath) => unlink(filePath));
+
+    expect(directoryRes.rawPayload).toEqual(deletedRes.rawPayload);
   });
 });
 
