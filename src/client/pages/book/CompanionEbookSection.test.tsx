@@ -16,6 +16,7 @@ import {
   NONE_BODY,
   SELECTION_ERROR_FALLBACK,
   SELECTION_SUCCESS_TOAST,
+  invalidSentence,
 } from './companion-ebook-copy.js';
 
 // ============================================================================
@@ -994,6 +995,58 @@ describe('CompanionEbookSection — stale settlements', () => {
     panel.rerenderBook(2); // synchronous book-change commit
 
     expect(orderMarks).toEqual(['A-teardown', 'B-interactive']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hostile filenames (#2026 row 15)
+// ---------------------------------------------------------------------------
+
+/**
+ * The two sites that render a server-supplied basename: `AmbiguousBody`'s radio list and
+ * `InvalidBody`'s panel. A companion basename is whatever the owner named the file on disk, so
+ * it is attacker-influenced in exactly the way a filename always is.
+ *
+ * React escapes text children by default and `companion-ebook-copy.ts` has no
+ * `dangerouslySetInnerHTML` — so this passes today for structural reasons, which is precisely
+ * why it is asserted rather than assumed. The assumption is what a future refactor breaks: a
+ * switch to `dangerouslySetInnerHTML` for highlighting, or a copy helper that interpolates the
+ * filename into a markup string, would turn both sites into injection points and neither of
+ * this suite's other rows would notice.
+ */
+describe('CompanionEbookSection — a hostile filename renders as text', () => {
+  const HOSTILE = '<img src=x onerror=alert(1)>.epub';
+
+  /** No markup was interpreted anywhere under the panel — the literal is the whole answer. */
+  function expectRenderedAsText(container: HTMLElement): void {
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('script')).toBeNull();
+    // Present as a text node, escaped: `getByText` matches on textContent, never on markup.
+    expect(screen.getByText(HOSTILE)).toBeInTheDocument();
+    // And on the `title` attribute both sites set for the truncated spelling.
+    expect(attributeText(container)).toContain(HOSTILE);
+  }
+
+  it('escapes it in the ambiguous picker', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(
+      ambiguous(candidateList(HOSTILE, 'ordinary.epub')),
+    );
+    const { container } = renderPanel();
+
+    expect(await screen.findByText(AMBIGUOUS_QUESTION)).toBeInTheDocument();
+    expectRenderedAsText(container);
+    // The radio carries it as a VALUE, not as parsed markup.
+    expect(screen.getByRole('radio', { name: HOSTILE })).toHaveAttribute('value', HOSTILE);
+  });
+
+  it('escapes it in the invalid panel', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(
+      makeState({ status: 'invalid', filename: HOSTILE, sizeBytes: SIZE, validationCode: 'empty_spine' }),
+    );
+    const { container } = renderPanel();
+
+    expect(await screen.findByText(invalidSentence('empty_spine'))).toBeInTheDocument();
+    expectRenderedAsText(container);
   });
 });
 
