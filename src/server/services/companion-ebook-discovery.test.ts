@@ -7,6 +7,11 @@ import type { FastifyBaseLogger } from 'fastify';
 import { findCompanionEbookCandidates } from './companion-ebook-discovery.js';
 import { isPersistableCompanionBasename } from './companion-ebook-observation.js';
 import { openCompanionEbook } from './companion-ebook-open.js';
+import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
+
+// Two files differing only by case cannot coexist on a case-insensitive FS —
+// the fixture itself is unrepresentable on NTFS, so the test can only be skipped.
+const CASE_SENSITIVE_FS = process.platform !== 'win32';
 
 /**
  * Real temp directories throughout — the dotfile / subdirectory / symlink / unpersistable-name
@@ -87,7 +92,7 @@ describe('findCompanionEbookCandidates', () => {
   }
 
   describe('membership', () => {
-    it('includes visible top-level regular .epub files, case-insensitively', async () => {
+    it.skipIf(!CASE_SENSITIVE_FS)('includes visible top-level regular .epub files, case-insensitively', async () => {
       await touch('book.epub', 'Book.EPUB', 'other.Epub');
       const result = await call();
       expect(result).toEqual({ outcome: 'ok', candidates: ['Book.EPUB', 'book.epub', 'other.Epub'] });
@@ -116,7 +121,7 @@ describe('findCompanionEbookCandidates', () => {
       expect(await call()).toEqual({ outcome: 'ok', candidates: ['book.epub'] });
     });
 
-    it('excludes a symlinked .epub', async () => {
+    it.skipIf(!CAN_SYMLINK)('excludes a symlinked .epub', async () => {
       await touch('real.epub');
       await symlink(join(bookPath, 'real.epub'), join(bookPath, 'linked.epub'));
       expect(await call()).toEqual({ outcome: 'ok', candidates: ['real.epub'] });
@@ -166,7 +171,7 @@ describe('findCompanionEbookCandidates', () => {
   });
 
   describe('ordering', () => {
-    it('is a total, locale-independent code-point sort', async () => {
+    it.skipIf(!CASE_SENSITIVE_FS)('is a total, locale-independent code-point sort', async () => {
       await touch('B.epub', 'a.epub', 'A.epub', '10.epub', '9.epub', 'é.epub');
       const result = await call();
 

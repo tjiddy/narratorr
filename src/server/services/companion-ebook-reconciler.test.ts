@@ -10,6 +10,7 @@ import { books, companionEbooks } from '../../db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import type { SettingsService } from './settings.service.js';
 import { CompanionEbookReconciler, RECONCILE_CONCURRENCY } from './companion-ebook-reconciler.js';
+import { CAN_SYMLINK, removeDirTolerant } from '../__tests__/windows-fs.js';
 import {
   observeCompanionEbook,
   revalidateCompanionFile,
@@ -268,7 +269,8 @@ describe('CompanionEbookReconciler (#1959)', () => {
   });
 
   afterAll(() => {
-    rmSync(dir, { recursive: true, force: true });
+    // Tolerant on Windows: the libSQL handle keeps the dir undeletable (EPERM).
+    removeDirTolerant(dir);
   });
 
   beforeEach(async () => {
@@ -1920,7 +1922,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
        * — so the swap has to happen between discovery and the resolver, and the outcome has to
        * be produced by the REAL resolver rather than by a stub.
        */
-      it('is reachable: discovery saw a regular file, the real resolver sees a symlink out of the root', async () => {
+      it.skipIf(!CAN_SYMLINK)('is reachable: discovery saw a regular file, the real resolver sees a symlink out of the root', async () => {
         const outside = mkdtempSync(join(tmpdir(), 'companion-select-outside-'));
         try {
           await writeFile(join(outside, 'secret.epub'), 'secret');

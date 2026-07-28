@@ -21,6 +21,11 @@ import type { CompanionEbookRow } from '../services/types.js';
 import { isCompanionEbookExposed } from '../../shared/companion-ebook-exposure.js';
 import { isCompanionEbookEligible } from '../services/companion-ebook-eligibility.js';
 import { findCompanionEbookCandidates } from '../services/companion-ebook-discovery.js';
+import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
+
+// Two files differing only by case cannot coexist on a case-insensitive FS —
+// the fixture itself is unrepresentable on NTFS, so the test can only be skipped.
+const CASE_SENSITIVE_FS = process.platform !== 'win32';
 import { openCompanionEbook, resolveCompanionEbookPath } from '../services/companion-ebook-open.js';
 import * as F from '../../core/__tests__/epub-archive.fixture.js';
 import { MAX_EPUB_COVER_BYTES } from '../../core/epub/limits.js';
@@ -506,7 +511,7 @@ describe('companion ebook owner routes', () => {
         });
       });
 
-      it('issues identical indices across two consecutive requests', async () => {
+      it.skipIf(!CASE_SENSITIVE_FS)('issues identical indices across two consecutive requests', async () => {
         await writeEpub('B.epub');
         await writeEpub('a.epub');
         await writeEpub('A.epub');
@@ -763,7 +768,7 @@ describe('companion ebook owner routes', () => {
 
     // Resolver negatives, driven for REAL — never "the open throws", and never a dev/ino
     // comparison (plan §5 declines that binding).
-    it('returns 404 for a symlink at the stored basename, via not_regular_file', async () => {
+    it.skipIf(!CAN_SYMLINK)('returns 404 for a symlink at the stored basename, via not_regular_file', async () => {
       const realTarget = join(bookPath, 'real.epub');
       await writeFile(realTarget, await F.buildEpub());
       await symlink(realTarget, join(bookPath, EPUB));
@@ -779,7 +784,7 @@ describe('companion ebook owner routes', () => {
       await expect(result!.value).resolves.toEqual({ outcome: 'missing' });
     });
 
-    it('returns 404 when the realpath escapes the library root', async () => {
+    it.skipIf(!CAN_SYMLINK)('returns 404 when the realpath escapes the library root', async () => {
       const outside = mkdtempSync(join(tmpdir(), 'narratorr-1976-out-'));
       try {
         const externalBook = join(outside, 'Title');

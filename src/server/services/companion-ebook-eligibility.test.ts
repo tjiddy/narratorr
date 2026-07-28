@@ -8,6 +8,7 @@ vi.mock('node:fs/promises', () => ({
 
 import { stat, realpath } from 'node:fs/promises';
 import { isCompanionEbookEligible } from './companion-ebook-eligibility.js';
+import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
 import type { FastifyBaseLogger } from 'fastify';
 
@@ -193,7 +194,7 @@ describe('isCompanionEbookEligible', () => {
   // serve-time authority is 1.5's lstat + containment on the file itself. Do not
   // "fix" this into an assertRealPathInsideLibrary / realpath call — the sibling
   // guard exists and is deliberately not used here.
-  it('accepts a real in-root symlink whose target lies outside the root, and never consults realpath', async () => {
+  it.skipIf(!CAN_SYMLINK)('accepts a real in-root symlink whose target lies outside the root, and never consults realpath', async () => {
     const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     const os = await import('node:os');
     const dir = await realFs.mkdtemp(join(os.tmpdir(), 'companion-eligibility-'));

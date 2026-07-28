@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { FastifyBaseLogger } from 'fastify';
 import { openCompanionEbook, resolveCompanionEbookPath } from './companion-ebook-open.js';
+import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
 
 /**
  * Driven against a REAL temp directory, never an `fs` mock: the symlink / regular-file /
@@ -105,7 +106,7 @@ describe('openCompanionEbook', () => {
   });
 
   describe('not_regular_file', () => {
-    it('rejects a symlink whose target is outside the root', async () => {
+    it.skipIf(!CAN_SYMLINK)('rejects a symlink whose target is outside the root', async () => {
       await writeFile(join(outside, 'secret.epub'), 'secret');
       await symlink(join(outside, 'secret.epub'), join(bookPath, 'book.epub'));
 
@@ -113,7 +114,7 @@ describe('openCompanionEbook', () => {
       await expect(call('book.epub')).resolves.toEqual({ outcome: 'not_regular_file' });
     });
 
-    it('rejects a symlink whose target is inside the root', async () => {
+    it.skipIf(!CAN_SYMLINK)('rejects a symlink whose target is inside the root', async () => {
       await writeFile(join(bookPath, 'real.epub'), 'real');
       await symlink(join(bookPath, 'real.epub'), join(bookPath, 'book.epub'));
 
@@ -132,7 +133,7 @@ describe('openCompanionEbook', () => {
   });
 
   describe('outside_library', () => {
-    it('rejects a parent-directory symlink escape', async () => {
+    it.skipIf(!CAN_SYMLINK)('rejects a parent-directory symlink escape', async () => {
       // <root>/escape is a symlink to a real folder outside the root holding a real book.epub.
       const externalBook = join(outside, 'Title');
       await mkdir(externalBook, { recursive: true });
@@ -391,7 +392,7 @@ describe('resolveCompanionEbookPath', () => {
   });
 
   describe('not_regular_file', () => {
-    it('rejects a symlink whose target is outside the root', async () => {
+    it.skipIf(!CAN_SYMLINK)('rejects a symlink whose target is outside the root', async () => {
       await writeFile(join(outside, 'secret.epub'), 'secret');
       await symlink(join(outside, 'secret.epub'), join(bookPath, 'book.epub'));
 
@@ -399,7 +400,7 @@ describe('resolveCompanionEbookPath', () => {
       expectNoDescriptorOpened();
     });
 
-    it('rejects a symlink whose target is inside the root', async () => {
+    it.skipIf(!CAN_SYMLINK)('rejects a symlink whose target is inside the root', async () => {
       await writeFile(join(bookPath, 'real.epub'), 'real');
       await symlink(join(bookPath, 'real.epub'), join(bookPath, 'book.epub'));
 
@@ -424,7 +425,7 @@ describe('resolveCompanionEbookPath', () => {
     // The PARENT-component escape, not merely a final-component one: this is the case
     // `isCompanionEbookEligible`'s directory-level guard cannot cover once a component is
     // swapped after it ran, and the only reason step 6 of the selection pass exists (AC28).
-    it('rejects a parent-directory symlink escape whose final component is a real file', async () => {
+    it.skipIf(!CAN_SYMLINK)('rejects a parent-directory symlink escape whose final component is a real file', async () => {
       const externalBook = join(outside, 'Title');
       await mkdir(externalBook, { recursive: true });
       await writeFile(join(externalBook, 'book.epub'), 'outside bytes');

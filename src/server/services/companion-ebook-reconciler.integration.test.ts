@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { chmod, mkdir, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +13,7 @@ import { upsertCompanionEbook } from './companion-ebook.repository.js';
 import { generatePublicId } from '../utils/public-id.js';
 import type { SettingsService } from './settings.service.js';
 import { CompanionEbookReconciler } from './companion-ebook-reconciler.js';
+import { removeDirTolerant } from '../__tests__/windows-fs.js';
 import { isCompanionEbookExposed } from '../../shared/companion-ebook-exposure.js';
 
 /**
@@ -59,6 +60,9 @@ const upsertCompanionEbookMock = vi.mocked(upsertCompanionEbook);
 
 /** True where mode bits cannot produce EACCES — root defeats them entirely. */
 const IS_ROOT = process.getuid?.() === 0;
+// chmod 0o000 does not deny the OWNER on Windows, so the readdir keeps
+// succeeding and the case-52 premise (listing fails) never holds.
+const CHMOD_DENIES_OWNER = process.platform !== 'win32';
 
 describe('CompanionEbookReconciler end-to-end (#1959)', () => {
   let dir: string;
@@ -101,7 +105,9 @@ describe('CompanionEbookReconciler end-to-end (#1959)', () => {
     await reconciler.stop();
     // Restore any mode the permission case dropped, or the cleanup itself fails.
     await chmod(bookDir, 0o755).catch(() => undefined);
-    rmSync(dir, { recursive: true, force: true });
+    // Tolerant on Windows: the libSQL handle keeps the dir undeletable (EPERM),
+    // which would otherwise fail every test in this suite at teardown.
+    removeDirTolerant(dir);
   });
 
   async function writeEpub(name: string, options: Parameters<typeof buildEpub>[0] = {}): Promise<string> {
@@ -247,7 +253,7 @@ describe('CompanionEbookReconciler end-to-end (#1959)', () => {
   // The same contract against a REAL permission wall rather than an injected errno. Skipped —
   // visibly, not silently — where mode bits cannot produce EACCES; the forced-errno cases above
   // carry the behavioural guarantee everywhere.
-  it.skipIf(IS_ROOT)('leaves the previous observation untouched when the folder is chmod 000 (case 52)', async () => {
+  it.skipIf(IS_ROOT || !CHMOD_DENIES_OWNER)('leaves the previous observation untouched when the folder is chmod 000 (case 52)', async () => {
     const path = await writeEpub('book.epub');
     await reconciler.reconcileAll();
     const before = await readRow();

@@ -30,7 +30,15 @@ describe('per-connection transaction serialization (#1959 F12)', () => {
   });
 
   afterAll(() => {
-    rmSync(dir, { recursive: true, force: true });
+    // Tolerant on Windows only: the libSQL handle keeps the dir undeletable
+    // (EPERM) even after close — see src/server/__tests__/e2e-helpers.ts:38 and
+    // the `windows-hostile-test-primitives` learning. Inlined rather than using
+    // src/server/__tests__/windows-fs.ts because src/db does not import server.
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (error) {
+      if (process.platform !== 'win32') throw error;
+    }
   });
 
   beforeEach(async () => {

@@ -688,3 +688,93 @@ Any adapter whose outcome gets CACHED must classify the response deliberately; t
 - **Bytes arriving is not authority.** This boundary explicitly expects HTML interstitials, rate-limit pages, and upstream shape changes. If the cached verdict is about a specific entity, require an identity predicate (`body.asin === requestedAsin`) AND a shape predicate (the expected collection is present) — an OR admits both wrong-entity records and error envelopes.
 
 Reference implementation and full status/body test matrix: `AudnexusProvider.getChapterRuntime` / `classifyChapterBody` in src/core/metadata/audnexus.ts, tests in audnexus.test.ts ('getChapterRuntime — chapter-runtime adapter (#1942)'). Related: zod-nullish-external-api (optional external fields alone cannot prove a record is genuine).
+
+## windows-hostile-test-primitives
+
+**source:** #1959, #1976, #1989
+**added:** 2026-07-27
+**files:** src/server/services/**/*.test.ts, src/core/**/*.test.ts, src/db/**/*.test.ts, src/server/utils/**/*.test.ts
+**tags:** windows, vitest, filesystem, symlink, chmod, libsql, tmpdir, cross-platform
+
+---
+
+Four filesystem primitives behave differently on Windows and will fail a suite that passes on the
+Linux pipeline. **The pipeline cannot observe any of them**, so they land green in CI and only surface
+when Todd runs `pnpm verify` on his machine — which is his gate before every push, so a suite carrying
+these blocks *all* local verification, not just its own file. One companion-ebook slate landed 38 such
+failures across 7 files in a single night, none of them production defects.
+
+**1. `symlink()` raises `EPERM`.** Windows requires Developer Mode or an elevated shell. A junction is
+not a substitute — it is directory-only and `lstat().isSymbolicLink()` is what production actually
+tests. Gate on a **capability probe**, not `process.platform === 'win32'`: a dev box with Developer
+Mode on can run it, and these assertions usually guard a security property worth skipping as rarely as
+possible.
+
+```ts
+const CAN_SYMLINK = await (async () => {
+  const { mkdtemp, writeFile, symlink, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const probe = await mkdtemp(path.join(tmpdir(), 'symlink-probe-'));
+  try { const t = path.join(probe, 't'); await writeFile(t, ''); await symlink(t, path.join(probe, 'l')); return true; }
+  catch { return false; }
+  finally { await rm(probe, { recursive: true, force: true }); }
+})();
+
+it.skipIf(!CAN_SYMLINK)('rejects a symlink ...', async () => { /* ... */ });
+```
+
+**2. `chmod 000` does not deny the owner.** The permission-denied branch never triggers, so a test
+asserting an `EACCES` path silently exercises the success path instead and fails on the *outcome*, not
+with an error. `it.skipIf(process.platform === 'win32')`. Prior art: the `case 52` chmod test in
+companion-ebook-reconciler.integration.test.ts.
+
+**3. The filesystem is case-insensitive — `a.epub` and `A.epub` cannot coexist.** A fixture that
+creates both silently produces **one** file, so candidate counts come up short and the failure reads
+as a logic bug. This is **not fixable by rewriting the fixture**: the scenario is unrepresentable on
+NTFS. If a test's whole point is case-distinct filenames (e.g. proving a code-point sort orders `A`
+before `a` where `localeCompare` ties them), it can only be skipped on win32. Prefer designing
+fixtures that do not need two names differing solely by case.
+
+**4. `rmSync(dir, { recursive: true, force: true })` in `afterAll` raises `EPERM`** when the directory
+held a libSQL database. Windows refuses to delete a directory containing open handles; Linux unlinks
+open files happily. **Closing the client first is NOT sufficient** — see the documented repro at
+src/server/__tests__/e2e-helpers.ts:38 (`create-client → close → rmSync fails EPERM`). Make temp-dir
+teardown tolerant rather than fighting it; a leaked tmpdir is cheaper than a red suite:
+
+```ts
+afterAll(() => {
+  try { rmSync(dir, { recursive: true, force: true }); } catch { /* Windows keeps libSQL handles open; see windows-hostile-test-primitives */ }
+});
+```
+
+**Separately and already known:** `path.join()` yields backslashes on Windows. Never assert a
+hardcoded-separator path — normalize the actual with `.split('\\').join('/')`, or use
+`expect.stringContaining()`. Production code that persists paths (DB, API responses) normalizes to
+POSIX because the app runs in Docker.
+
+## max-lines-counts-code-not-raw-lines
+
+**source:** #1989
+**added:** 2026-07-27
+**files:** eslint.config.js, src/**/*.ts
+**tags:** eslint, max-lines, file-splitting, comments
+
+---
+
+`max-lines` (400) and `max-lines-per-function` (150) are configured with `skipBlankLines: true,
+skipComments: true` (eslint.config.js:190-191) — they count **code lines only**. Files in this repo
+run 40-50% comment density, so raw size is roughly double the counted size: `validate.ts` at 809 raw
+lines counts ~331 and passes the 400 cap cleanly.
+
+Two decisions this changes:
+
+- **Do not split a file (or decline to co-locate two concerns) because `wc -l` or the editor's line
+  count approaches 400.** Measure what the rule measures. Quick check:
+  `pnpm exec eslint <file> --rule '{"max-lines":["error",{"max":400,"skipBlankLines":true,"skipComments":true}]}'`
+  — or just run lint and see if it fires.
+- **Do not pad toward the cap either** — a heavily-commented 700-raw-line file that lints clean is
+  compliant, but the cap is a ceiling, not a target; the SRP question ("does this file have one
+  reason to change?") is still the real splitting criterion.
+
+Same trap in reverse for reviews: a "this file exceeds max-lines" finding based on raw line count is
+a false positive unless lint actually fires.

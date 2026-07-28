@@ -25,6 +25,35 @@ import { validateEpub } from './validate.js';
  * close.
  */
 
+/**
+ * Can this machine create a symlink at all?
+ *
+ * Windows needs Developer Mode or an elevated shell for `symlink()`; without one
+ * it raises `EPERM` and the symlink-rejection fixture cannot be built. A junction
+ * is not a substitute — it is directory-only and `lstat().isSymbolicLink()` is
+ * what the production path actually tests.
+ *
+ * Probed rather than gated on `process.platform === 'win32'`, because a Windows
+ * dev box with Developer Mode enabled *can* run this, and the assertion guards a
+ * security property (a symlink named `book.epub` pointing at `<config>/secret.key`)
+ * that should be skipped as rarely as possible.
+ */
+const CAN_SYMLINK = await (async (): Promise<boolean> => {
+  const { mkdtemp, writeFile, symlink, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const probe = await mkdtemp(path.join(tmpdir(), 'narratorr-symlink-probe-'));
+  try {
+    const target = path.join(probe, 'target');
+    await writeFile(target, '');
+    await symlink(target, path.join(probe, 'link'));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await rm(probe, { recursive: true, force: true });
+  }
+})();
+
 type ReadArgs = [buffer: Buffer, offset: number, length: number, position: number];
 type ReadResult = { bytesRead: number; buffer: Buffer };
 
@@ -309,7 +338,7 @@ describe('not_a_zip', () => {
     expect(h.fsOpen).not.toHaveBeenCalled();
   });
 
-  it('rejects a symlink pointing at a valid EPUB without ever opening it', async () => {
+  it.skipIf(!CAN_SYMLINK)('rejects a symlink pointing at a valid EPUB without ever opening it', async () => {
     const { symlink } = await import('node:fs/promises');
     const target = await place(await buildEpub());
     const link = path.join(dir, `link-${(sequence += 1)}.epub`);
