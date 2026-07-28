@@ -42,6 +42,7 @@ import { settingsApi } from './settings.js';
 import { eventHistoryApi } from './event-history.js';
 import { systemApi } from './system.js';
 import { submissionsApi } from './submissions.js';
+import { companionEbookApi } from './companion-ebook.js';
 
 beforeEach(() => {
   mockFetchApi.mockClear();
@@ -884,5 +885,21 @@ describe('submissionsApi', () => {
   it('getImportSubmissionByClientId (detail) → GET /import/submissions/by-client/:uuid?includeItems=true', async () => {
     await submissionsApi.getImportSubmissionByClientId('abc', true);
     expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/by-client/abc?includeItems=true');
+  });
+});
+
+describe('companionEbookApi', () => {
+  it('getCompanionEbookState → GET /books/7/companion-epub/state', async () => {
+    await companionEbookApi.getCompanionEbookState(7);
+    expect(mockFetchApi).toHaveBeenCalledWith('/books/7/companion-epub/state');
+  });
+
+  // The route's body schema is `.strict()`, so an extra key is a 400 before the handler runs.
+  it('putCompanionEbookSelection → PUT /books/7/companion-epub/selection with only {index}', async () => {
+    await companionEbookApi.putCompanionEbookSelection(7, 2);
+    expect(mockFetchApi).toHaveBeenCalledWith('/books/7/companion-epub/selection', {
+      method: 'PUT',
+      body: JSON.stringify({ index: 2 }),
+    });
   });
 });

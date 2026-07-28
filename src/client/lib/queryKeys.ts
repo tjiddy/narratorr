@@ -12,6 +12,9 @@ export const queryKeys = {
   bookIdentifiers: () => ['books', 'identifiers'] as const,
   book: (id: number) => ['books', id] as const,
   bookFiles: (id: number) => ['books', id, 'files'] as const,
+  // Prefix-child of `book(id)` (the `bookFiles` convention), so `invalidateBookQueries()`
+  // in useBookActions cascades to the Ebook panel with no new invalidate call (#1963 AC29).
+  companionEbook: (id: number) => ['books', id, 'companion-epub'] as const,
   // Singular `book` namespace (distinct from the plural `books` list namespace above).
   bookSeries: (id: number) => ['book', id, 'series'] as const,
   // Prefix-extension of bookSeries(id) so invalidating the base key cascades to the

@@ -8,12 +8,23 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMockBook } from '@/__tests__/factories';
 import { BookPage } from './BookPage';
 
-vi.mock('@/lib/api', () => ({
-  api: {
-    getBookById: vi.fn(),
-    getBook: vi.fn(),
-  },
-}));
+// importOriginal form, NOT a bare replacement factory: BookDetails transitively loads
+// CompanionEbookSection, which imports `formatBytes` and reads `ApiError.status` at RUNTIME
+// (#1963). A replacement factory turns every unlisted named export into `undefined`, and the
+// break surfaces only when those paths execute — never under tsc
+// (`vimock-barrel-replace-drops-named-exports`).
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      getBookById: vi.fn(),
+      getBook: vi.fn(),
+      getCompanionEbookState: vi.fn(),
+    },
+  };
+});
 
 vi.mock('sonner', () => ({
   toast: {

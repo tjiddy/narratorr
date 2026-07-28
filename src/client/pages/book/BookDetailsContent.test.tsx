@@ -18,7 +18,10 @@ vi.mock('@/hooks/useLibrary', async (importOriginal) => {
 });
 
 // vi.hoisted() so the mock fn exists before vi.mock's factory runs at the top of the module.
-const { getBookSeriesMock } = vi.hoisted(() => ({ getBookSeriesMock: vi.fn() }));
+const { getBookSeriesMock, getCompanionEbookStateMock } = vi.hoisted(() => ({
+  getBookSeriesMock: vi.fn(),
+  getCompanionEbookStateMock: vi.fn(),
+}));
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -28,6 +31,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       ...(actual.api as Record<string, unknown>),
       getBookSeries: getBookSeriesMock,
       refreshBookSeries: vi.fn(),
+      getCompanionEbookState: getCompanionEbookStateMock,
     },
   };
 });
@@ -35,6 +39,10 @@ vi.mock('@/lib/api', async (importOriginal) => {
 beforeEach(() => {
   getBookSeriesMock.mockReset();
   getBookSeriesMock.mockResolvedValue({ series: null });
+  // Every book with a path now issues the Ebook panel's /state query. A rejection is enough
+  // for the cases that don't care: #1963 AC3 makes an initial-load failure silently absent.
+  getCompanionEbookStateMock.mockReset();
+  getCompanionEbookStateMock.mockRejectedValue(new Error('no companion state in this fixture'));
 });
 
 function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
@@ -158,5 +166,40 @@ describe('BookDetailsContent — series sidebar gate (#1071)', () => {
     // Wait a tick so the resolved query updates state
     await new Promise((r) => setTimeout(r, 0));
     expect(container.querySelector('h2')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1963 AC1 — the Ebook section sits IMMEDIATELY before Location.
+//
+// Adjacency, not mere ordering: the `none` copy says "shown under Location below", so an
+// interposed sidebar section would make that sentence wrong while a precedes-check stayed
+// green. The fixture deliberately carries series, audio, and genres so an interposed section
+// would actually be caught.
+// ---------------------------------------------------------------------------
+describe('BookDetailsContent — Ebook section placement', () => {
+  it('renders the Ebook heading immediately before the Location heading', async () => {
+    getBookSeriesMock.mockResolvedValue({ series: { name: 'Stormlight', position: 1, members: [] } });
+    getCompanionEbookStateMock.mockResolvedValue({
+      status: 'none', filename: null, sizeBytes: null, validationCode: null,
+      candidateCount: 0, selectedFilename: null, candidates: [],
+    });
+
+    const { container } = renderWithProviders(
+      <BookDetailsContent
+        libraryBook={makeBook({ status: 'imported', path: '/library/book', seriesName: 'Stormlight', audioCodec: 'AAC' })}
+        merged={{ genres: ['Fantasy', 'Epic'] }}
+      />,
+    );
+
+    const ebookHeading = await screen.findByRole('heading', { name: 'Ebook' });
+    const headings = screen.getAllByRole('heading').map((h) => h.textContent);
+    const ebookIndex = headings.indexOf('Ebook');
+    expect(headings[ebookIndex + 1]).toBe('Location');
+
+    // Same claim through the DOM: the section wrapper's next sibling holds Location.
+    const section = ebookHeading.parentElement!;
+    expect(section.nextElementSibling?.querySelector('h2')?.textContent).toBe('Location');
+    expect(container.querySelectorAll('h2')).not.toHaveLength(0);
   });
 });
