@@ -147,7 +147,16 @@ const EMPTY_ENCRYPTION =
   '<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"></encryption>';
 
 let e2e: E2EApp;
-/** Every per-scenario library root, torn down together at the end of the file. */
+/**
+ * One library root PER SCENARIO — that is where the no-cross-test-leakage property lives: no
+ * two rows ever share a book folder, a book row, or an observation row.
+ *
+ * Removal is deferred to `afterAll` rather than done in `afterEach`, deliberately. Almost every
+ * row's request enqueues a fire-and-forget reconcile that is still in flight when the test
+ * returns (there is no completion signal to await — `fire-and-forget-preflight`), and deleting
+ * the directory out from under it would turn an unrelated background pass into filesystem noise
+ * on the next row's failure output. Sixteen small directories are cheap; a racing delete is not.
+ */
 const libraryRoots: string[] = [];
 /** Scratch directories that are NOT library roots — row 4's entity targets. */
 const scratchDirs: string[] = [];
@@ -868,6 +877,8 @@ describe('row 8 — the public stream against a file that moved under it', () =>
 
     // `verifyPath`'s `lstat().isFile()` rejects this as `not_regular_file` while 8a's `lstat`
     // threw `ENOENT` — two different internal outcomes, one indistinguishable public answer.
+    expect(deletedPayload, '8a captures the payload this compares against, so it must run first')
+      .toBeDefined();
     expect(directoryPayload).toEqual(deletedPayload);
   });
 });
@@ -971,9 +982,17 @@ describe('row 11 — a central directory larger than any entry budget', () => {
      *
      * #2025 has landed (`51e5900c`); this asserts its cap, and there is deliberately no
      * conditional and no placeholder here.
+     *
+     * **The archive is a conformant EPUB carrying the over-cap directory**, not an arbitrary
+     * ZIP, and that is what makes the row's `404` attributable to the span ceiling. Built the
+     * other way — 150 long-named filler members and nothing else — removing the cap merely
+     * moves the rejection to `bad_mimetype` and `/metadata` answers `404` either way, so the
+     * test would stay green against a build with no span ceiling at all. Here, with the cap
+     * gone, the archive opens and inspects as a perfectly readable book.
      */
     const bytes = await F.buildArchiveWithCentralDirectorySpan({
       span: MAX_CENTRAL_DIRECTORY_BYTES + 1,
+      entries: F.epubEntries(),
       filler: 150,
     });
     // Precondition: the span really is one byte over the cap — a genuine byte of filename, not
