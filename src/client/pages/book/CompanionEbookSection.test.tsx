@@ -218,20 +218,29 @@ describe('CompanionEbookSection — presence and absence', () => {
   // AC3: on an initial-load failure every cause means the same thing — no panel, no error
   // text, no skeleton, no retry affordance — so this is table-driven over all of them rather
   // than over two hand-picked statuses.
-  const initialFailures: Array<[string, unknown]> = [
-    ['404 (feature does not apply)', new ApiError(404, { error: 'Companion ebook not found' })],
-    ['409 (feature disabled)', new ApiError(409, { error: 'Companion ebooks are disabled' })],
-    ['503 (candidates undetermined)', new ApiError(503, { error: 'Companion ebook candidates could not be listed' })],
-    ['a plain network rejection', new Error('network down')],
+  //
+  // Each case waits for the query to reach its TERMINAL error state, not merely for the first
+  // request to have been issued. While the retry ladder is still running the query is pending,
+  // and a pending query renders nothing for the correct reason — so an assertion made there is
+  // blind to what the component does once the failure is final. The expected request count is
+  // asserted alongside it so the wait is pinned to the end of the ladder rather than to
+  // whatever `waitFor` happened to observe (409 is the one status the predicate never retries).
+  const initialFailures: Array<[string, unknown, number]> = [
+    ['404 (feature does not apply)', new ApiError(404, { error: 'Companion ebook not found' }), 4],
+    ['409 (feature disabled)', new ApiError(409, { error: 'Companion ebooks are disabled' }), 1],
+    ['503 (candidates undetermined)', new ApiError(503, { error: 'Companion ebook candidates could not be listed' }), 4],
+    ['a plain network rejection', new Error('network down'), 4],
   ];
 
-  for (const [label, failure] of initialFailures) {
-    it(`renders nothing when the first response is ${label}`, async () => {
+  for (const [label, failure, expectedRequests] of initialFailures) {
+    it(`renders nothing once the first response fails terminally with ${label}`, async () => {
       mockApi.getCompanionEbookState.mockRejectedValue(failure);
-      const { container } = renderPanel();
+      const { container, client } = renderPanel();
 
-      await waitFor(() => expect(mockApi.getCompanionEbookState).toHaveBeenCalled());
-      await act(async () => { await Promise.resolve(); });
+      await waitFor(() =>
+        expect(client.getQueryState(queryKeys.companionEbook(BOOK_ID))?.status).toBe('error'));
+      expect(mockApi.getCompanionEbookState).toHaveBeenCalledTimes(expectedRequests);
+      expect(client.getQueryData(queryKeys.companionEbook(BOOK_ID))).toBeUndefined();
 
       expect(heading()).toBeNull();
       expect(container.textContent).toBe('');
@@ -696,6 +705,40 @@ describe('CompanionEbookSection — the ambiguous picker', () => {
     await waitFor(() => expect(submit).toBeDisabled());
 
     await act(async () => { held.resolve(AVAILABLE); await held.promise; });
+  });
+
+  // AC26: "No optimistic pre-write update anywhere: nothing is written to the cache until the
+  // server confirms." Asserting only that the submit button is disabled does not reject an
+  // `onMutate` that projects the post-selection state — especially one that rolls back on
+  // error, which would leave every settled-state test green. So this pins BOTH surfaces while
+  // the PUT is still in flight: the picker is still on screen, and the cache still holds the
+  // pre-write ambiguous payload.
+  it('writes nothing to the UI or the cache while the selection is in flight', async () => {
+    const held = makeDeferred<CompanionEbookState>();
+    mockApi.putCompanionEbookSelection.mockReturnValue(held.promise);
+    const client = makeClient();
+    await renderPicker(TWO, client);
+    const before = client.getQueryData(queryKeys.companionEbook(BOOK_ID));
+
+    await userEvent.click(screen.getByRole('radio', { name: 'B.epub' }));
+    await userEvent.click(screen.getByRole('button', { name: AMBIGUOUS_SUBMIT }));
+    await waitFor(() => expect(mockApi.putCompanionEbookSelection).toHaveBeenCalled());
+
+    // Still the picker, unchanged, with the owner's pick intact.
+    expect(screen.getByText(AMBIGUOUS_QUESTION)).toBeInTheDocument();
+    expect(screen.getAllByRole('radio')).toHaveLength(2);
+    expect(screen.getByRole('radio', { name: 'B.epub' })).toBeChecked();
+    expect(screen.getByText('2 found')).toBeInTheDocument();
+    expect(screen.queryByText('Available')).toBeNull();
+    expect(screen.queryByRole('link', { name: /download/i })).toBeNull();
+
+    // And the cache is byte-for-byte the pre-write payload.
+    expect(client.getQueryData(queryKeys.companionEbook(BOOK_ID))).toEqual(ambiguous(TWO));
+    expect(client.getQueryData(queryKeys.companionEbook(BOOK_ID))).toEqual(before);
+
+    // Only after the server confirms does the panel move.
+    await act(async () => { held.resolve(AVAILABLE); await held.promise; });
+    expect(await screen.findByText('Available')).toBeInTheDocument();
   });
 
   // AC22/AC23 — an index-backed implementation fails both assertions.
