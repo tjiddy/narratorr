@@ -169,6 +169,28 @@ function heading(): HTMLElement | null {
   return screen.queryByRole('heading', { name: 'Ebook' });
 }
 
+/**
+ * The silent-absence contract, in ONE predicate (AC2/AC3): *"no error text, no skeleton, no
+ * placeholder, and no retry affordance"*.
+ *
+ * `toBeEmptyDOMElement` is the load-bearing assertion — it requires the component to have
+ * rendered NO node at all. Checking absent text, an absent heading, and an absent `.glass-card`
+ * is not the same claim: a bare `<div className="animate-pulse" />` has no text and no heading
+ * and is not a card, so it satisfies all three while putting a visible loading/error skeleton
+ * on screen. The named absences are kept alongside it because they say what specifically must
+ * not come back, and they produce a far more legible failure than "expected element to be
+ * empty" when a real panel regresses into one of these paths.
+ */
+function expectSilentAbsence(container: HTMLElement): void {
+  expect(container).toBeEmptyDOMElement();
+  expect(heading()).toBeNull();
+  expect(container.textContent).toBe('');
+  expect(container.querySelector('.glass-card')).toBeNull();
+  expect(screen.queryByTestId('badge')).toBeNull();
+  expect(screen.queryByRole('link', { name: /download/i })).toBeNull();
+  expect(screen.queryByRole('button')).toBeNull();
+}
+
 function card(container: HTMLElement): HTMLElement {
   return container.querySelector('.glass-card') as HTMLElement;
 }
@@ -211,8 +233,7 @@ describe('CompanionEbookSection — presence and absence', () => {
   it('renders nothing while the state query is pending', () => {
     mockApi.getCompanionEbookState.mockReturnValue(new Promise(() => {}));
     const { container } = renderPanel();
-    expect(heading()).toBeNull();
-    expect(container.textContent).toBe('');
+    expectSilentAbsence(container);
   });
 
   // AC3: on an initial-load failure every cause means the same thing — no panel, no error
@@ -242,9 +263,7 @@ describe('CompanionEbookSection — presence and absence', () => {
       expect(mockApi.getCompanionEbookState).toHaveBeenCalledTimes(expectedRequests);
       expect(client.getQueryData(queryKeys.companionEbook(BOOK_ID))).toBeUndefined();
 
-      expect(heading()).toBeNull();
-      expect(container.textContent).toBe('');
-      expect(container.querySelector('.glass-card')).toBeNull();
+      expectSilentAbsence(container);
     });
   }
 
@@ -318,20 +337,19 @@ describe('CompanionEbookSection — presence and absence', () => {
     mockApi.getCompanionEbookState.mockRejectedValue(new ApiError(409, { error: 'Companion ebooks are disabled' }));
     await triggerRefetch(panel.client);
 
+    // The whole panel goes, not just its recognisable parts — a disabled feature leaves no
+    // skeleton or placeholder behind either.
     await waitFor(() => expect(heading()).toBeNull());
-    expect(screen.queryByTestId('badge')).toBeNull();
-    expect(screen.queryByRole('link', { name: /download/i })).toBeNull();
+    expectSilentAbsence(panel.container);
 
     // The cache survives navigation because the client is created outside the router;
     // `staleTime: 0` is what guarantees the remount re-requests rather than serving the entry.
     mockApi.getCompanionEbookState.mockClear();
-    panel.remount();
+    const remounted = panel.remount();
     await waitFor(() => expect(mockApi.getCompanionEbookState).toHaveBeenCalled());
     await act(async () => { await Promise.resolve(); });
 
-    expect(heading()).toBeNull();
-    expect(screen.queryByTestId('badge')).toBeNull();
-    expect(screen.queryByRole('link', { name: /download/i })).toBeNull();
+    expectSilentAbsence(remounted.container);
   });
 
   it('renders exactly one Ebook heading inside a glass-card container', async () => {
