@@ -73,16 +73,30 @@ async function waitUntil(predicate: () => boolean, label: string): Promise<void>
 interface RawResponse {
   status?: number;
   contentLength?: string;
+  /** Whatever the response advertised, or `undefined` when the header is absent. */
+  acceptRanges?: string;
+  /** Every response header, for assertions about a header's ABSENCE. */
+  headers: http.IncomingHttpHeaders;
   length: number;
   tail: string;
   terminated: boolean;
 }
 
-/** One real HTTP GET, resolved with whatever the client actually received. */
-function get(url: string, onFirstChunk?: (request: http.ClientRequest) => void): Promise<RawResponse> {
+/**
+ * One real HTTP GET, resolved with whatever the client actually received.
+ *
+ * `extraHeaders` exists for the `Range` row (#2026 row 14): a request header is the whole
+ * fixture there, and `app.inject()` cannot be used for it because the rest of this suite's
+ * shape — a real bound port — is what the row is asserted against.
+ */
+function get(
+  url: string,
+  onFirstChunk?: (request: http.ClientRequest) => void,
+  extraHeaders: http.OutgoingHttpHeaders = {},
+): Promise<RawResponse> {
   return new Promise<RawResponse>((resolve, reject) => {
     const chunks: Buffer[] = [];
-    const request = http.get(url, { headers: keyHeaders }, (response) => {
+    const request = http.get(url, { headers: { ...keyHeaders, ...extraHeaders } }, (response) => {
       const finish = (terminated: boolean) => {
         const body = Buffer.concat(chunks);
         resolve({
@@ -90,6 +104,10 @@ function get(url: string, onFirstChunk?: (request: http.ClientRequest) => void):
           ...(typeof response.headers['content-length'] === 'string' && {
             contentLength: response.headers['content-length'],
           }),
+          ...(typeof response.headers['accept-ranges'] === 'string' && {
+            acceptRanges: response.headers['accept-ranges'],
+          }),
+          headers: response.headers,
           length: body.length,
           tail: body.subarray(-400).toString('utf8'),
           terminated,
@@ -107,7 +125,7 @@ function get(url: string, onFirstChunk?: (request: http.ClientRequest) => void):
       response.on('error', () => finish(true));
       response.on('end', () => finish(false));
     });
-    request.on('error', () => resolve({ length: 0, tail: '', terminated: true }));
+    request.on('error', () => resolve({ headers: {}, length: 0, tail: '', terminated: true }));
     setTimeout(() => reject(new Error('request never settled')), 15_000);
   });
 }
@@ -334,5 +352,35 @@ describe('v1 companion ebook stream — real socket', () => {
     const after = await get(baseUrl);
     expect(after.status).toBe(200);
     expect(after.length).toBe(PAYLOAD.length);
+  });
+
+  /**
+   * #2026 row 14 — a `Range` request header.
+   *
+   * `streamCompanionEbook` has NO range handling: it opens the whole file, sets one
+   * `Content-Length` from the live `fstat`, and sends. So the honest, correct answer to a
+   * ranged request is the complete body under a plain `200` — never a `206`, never an
+   * `Accept-Ranges` advertisement, and above all never a truncated body under a
+   * `Content-Length` that promised more.
+   *
+   * The dangerous regression is not "no range support"; it is a partial body served as if it
+   * were whole. Asserting the delivered byte count against the advertised length is what
+   * catches that, so this row is asserted on RECEIVED BYTES rather than on the status alone.
+   *
+   * Adding range support so this could assert a `206` is explicitly out of scope — that is a
+   * production change, and this row asserts what ships.
+   */
+  it('ignores a Range header and returns the complete body under a plain 200', async () => {
+    const res = await get(baseUrl, undefined, { Range: 'bytes=0-99' });
+
+    expect(res.status).toBe(200);
+    expect(res.status).not.toBe(206);
+    // The full file, and the advertised length agrees with it — no corrupt partial.
+    expect(res.contentLength).toBe(String(PAYLOAD.length));
+    expect(res.length).toBe(PAYLOAD.length);
+    expect(res.terminated).toBe(false);
+    // Absent, not merely `none`: the route advertises no range capability at all.
+    expect(res.acceptRanges).toBeUndefined();
+    expect(res.headers).not.toHaveProperty('content-range');
   });
 });
