@@ -3,7 +3,7 @@ import { deleteManagedBookFiles, type DeleteManagedFilesResult } from '../utils/
 import { uploadBookCover, CoverUploadError } from './cover-upload.js';
 import type { CoverWriteOutcome } from './cover-write.js';
 import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
-import { eq, sql, inArray } from 'drizzle-orm';
+import { eq, sql, inArray, and, isNotNull } from 'drizzle-orm';
 import type { Db, DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '@db/schema.js';
@@ -179,13 +179,26 @@ export class BookService {
    * (the parser uppercases, but API validators only `.trim()` and add-by-ASIN
    * stores as-is), so an exact `IN` would silently miss a case-drifted stored
    * ASIN and wrongly show every such book as "not owned". We match on
-   * `lower(asin)` (the `book-list.service` precedent) and uppercase both the keys
-   * and the result rows. The query is bounded by the small search result set
-   * (currently ≤10) over the partial unique `idx_books_asin_unique`, so no
+   * `upper(asin)` — matching `idx_books_asin_unique`, which is
+   * `upper("asin") WHERE asin IS NOT NULL`, and matching what `:367` and `:484`
+   * already do. (An earlier revision used `lower(asin)` and cited a
+   * `book-list.service` precedent; that was the wrong precedent, and it made this
+   * query unable to use the index at all.)
+   *
+   * **`asin IS NOT NULL` in the predicate is NOT redundant.** SQLite will only use a
+   * PARTIAL index when the query restates its condition, even where the condition is
+   * logically implied. Measured with EXPLAIN QUERY PLAN against the real schema:
+   * `lower(asin) IN (…)` → `SCAN books`; `upper(asin) IN (…)` → **still** `SCAN books`;
+   * `upper(asin) IN (…) AND asin IS NOT NULL` → `SEARCH books USING INDEX
+   * idx_books_asin_unique`. Dropping either half silently returns this to a full scan
+   * of `books` on every metadata search.
+   *
+   * The query is bounded by the small search result set (currently ≤10), so no
    * chunking is needed — but guard the empty list so we never emit `IN ()`.
    *
-   * Null-ASIN owned books cannot match (the unique index is partial,
-   * `asin IS NOT NULL`); that limitation is accepted and documented in #1537.
+   * Null-ASIN owned books cannot match (the index is partial); that limitation is
+   * accepted and documented in #1537, so the added predicate encodes an existing
+   * invariant rather than changing behaviour.
    *
    * **Companion ebooks (#1961).** `companionEnabled` is supplied BY THE CALLER —
    * this service takes no `SettingsService`, matching the convention
@@ -210,11 +223,16 @@ export class BookService {
     const map = new Map<string, LibraryStatusByAsin>();
     if (asins.length === 0) return map;
 
-    const lowered = asins.map((a) => a.toLowerCase());
+    const uppered = asins.map((a) => a.toUpperCase());
     const rows = await this.db
       .select({ id: books.id, bookId: books.publicId, status: books.status, asin: books.asin })
       .from(books)
-      .where(inArray(sql`lower(${books.asin})`, lowered));
+      // `upper()`, and the redundant-looking `asin IS NOT NULL`, are BOTH required to hit
+      // `idx_books_asin_unique` — see the note above the method. Measured with
+      // EXPLAIN QUERY PLAN: `lower(asin) IN (…)` and `upper(asin) IN (…)` both SCAN;
+      // only `upper(asin) IN (…) AND asin IS NOT NULL` produces
+      // `SEARCH books USING INDEX idx_books_asin_unique`.
+      .where(and(inArray(sql`upper(${books.asin})`, uppered), isNotNull(books.asin)));
 
     const matchedIds = rows.filter((r) => r.asin != null).map((r) => r.id);
     const companionByBookId: Map<number, CompanionEbookRow> =

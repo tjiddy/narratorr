@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books, companionEbooks } from '@db/schema.js';
+import { sql } from 'drizzle-orm';
 import { generatePublicId } from '../utils/public-id.js';
 import { BookService } from './book.service.js';
 import type { BookStatus } from '@shared/schemas/book.js';
@@ -16,7 +17,10 @@ import type { FastifyBaseLogger } from 'fastify';
 // `findLibraryStatusByAsins` regressed to an exact `inArray(books.asin, asins)`
 // match. This seeds a REAL libsql DB with a case-drifted asin and queries with the
 // opposite casing; it FAILS under an exact predicate and passes only with the
-// case-insensitive `lower(asin)` condition.
+// case-insensitive `upper(asin)` condition.
+//
+// The DB is also what makes the query-plan assertion below possible: correctness and
+// index usage are independent properties here, and only the second one degrades silently.
 
 const noopLog = {
   info() {}, warn() {}, error() {}, debug() {}, fatal() {}, trace() {},
@@ -130,6 +134,39 @@ describe('BookService.findLibraryStatusByAsins — case-insensitive ASIN predica
 
     expect(map.get('B00AAA')).toEqual({ bookId: idA, status: 'imported', companionEbook: null });
     expect(map.get('B00BBB')).toEqual({ bookId: idB, status: 'wanted', companionEbook: null });
+  });
+
+  /**
+   * The predicate must USE `idx_books_asin_unique`, not merely be correct.
+   *
+   * Every behavioral test above passes under a full table scan, so nothing here would
+   * notice this query silently degrading — and it runs on every metadata search, which
+   * Narratorr Requests now also hits. SQLite uses a PARTIAL index only when the query
+   * restates its condition, even where the condition is logically implied, so `upper()`
+   * alone is not enough: `asin IS NOT NULL` has to be in the WHERE clause too.
+   *
+   * **MIRRORS the predicate in `book.service.ts` `findLibraryStatusByAsins` — change
+   * both together.** The shapes are asserted in one place rather than shared as a
+   * helper because extracting one would not close the drift gap (a service that stopped
+   * calling it would still pass) while adding an export whose only consumer is a test.
+   */
+  it('uses idx_books_asin_unique rather than scanning books', async () => {
+    const plan = async (where: string) => {
+      const rows = await db.all<{ detail: string }>(
+        sql.raw(`EXPLAIN QUERY PLAN SELECT id FROM books WHERE ${where}`),
+      );
+      return rows.map((r) => r.detail).join(' | ');
+    };
+
+    // The shipped predicate.
+    expect(await plan(`upper(asin) IN ('B00AAA') AND asin IS NOT NULL`)).toContain(
+      'USING INDEX idx_books_asin_unique',
+    );
+
+    // Both degradations that a well-meaning simplification would produce. These are the
+    // reason the assertion above is not simply `.not.toContain('SCAN')`.
+    expect(await plan(`upper(asin) IN ('B00AAA')`)).toContain('SCAN');
+    expect(await plan(`lower(asin) IN ('b00aaa') AND asin IS NOT NULL`)).toContain('SCAN');
   });
 
   // #1961 — the companion annotation against a REAL libSQL DB, so the numeric
