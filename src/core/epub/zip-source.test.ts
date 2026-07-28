@@ -1601,6 +1601,10 @@ describe('adapter-owned OS failures', () => {
 // ---------------------------------------------------------------------------
 
 describe('the internal-only surface', () => {
+  // This is a raw full-text scan, not an import parser, and it does not strip comments — so a
+  // prose mention of this module's name in any file outside src/core/epub/ fails it, and only a
+  // full-suite run reveals which one. When documenting a relationship to this module from
+  // outside the folder, name the folder ("the `src/core/epub/` suites"), not the module.
   it('is imported by no module outside src/core/epub/', async () => {
     const { readdir, readFile } = await import('node:fs/promises');
     const root = path.resolve(import.meta.dirname, '../..');
