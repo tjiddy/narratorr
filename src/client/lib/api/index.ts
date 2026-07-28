@@ -21,6 +21,7 @@ export type { ImportList, ImportListItem, ImportListPreview } from './import-lis
 export type { SuggestionRow, MarkAddedResult, RefreshResult } from './discover.js';
 export type { BulkOpType, BulkJobStatus, BulkRenamePreview, BulkRenamePreviewItem } from './bulk-operations.js';
 export type { ImportJobWithBook, ImportJobBook, ImportJobsParams } from './import-jobs.js';
+export type { CompanionEbookState, CompanionEbookCandidate } from './companion-ebook.js';
 export type { ImportSubmissionListParams, AttentionResponse, AttentionSubmission, SubmissionAttention, CreateSubmissionBody, PutItemsBody, PutItemRow, SubmissionListResponse, SubmissionResponse, SubmissionSummary, StagedItemResultDto, StagedImportItem, SubmissionAggregates } from './submissions.js';
 
 export { formatBytes } from '@core/utils/parse.js';
@@ -48,6 +49,7 @@ import { discoverApi } from './discover.js';
 import { bulkOperationsApi } from './bulk-operations.js';
 import { importJobsApi } from './import-jobs.js';
 import { submissionsApi } from './submissions.js';
+import { companionEbookApi } from './companion-ebook.js';
 
 /**
  * Single source of truth for the API barrel. Both the runtime `api` object and
@@ -79,6 +81,7 @@ export const apiModules = [
   { name: 'bulkOperationsApi', api: bulkOperationsApi },
   { name: 'importJobsApi', api: importJobsApi },
   { name: 'submissionsApi', api: submissionsApi },
+  { name: 'companionEbookApi', api: companionEbookApi },
 ];
 
 type UnionToIntersection<U> = (U extends unknown ? (arg: U) => void : never) extends (

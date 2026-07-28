@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Routes, Route } from 'react-router-dom';
@@ -8,12 +8,33 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMockBook } from '@/__tests__/factories';
 import { BookPage } from './BookPage';
 
-vi.mock('@/lib/api', () => ({
-  api: {
-    getBookById: vi.fn(),
-    getBook: vi.fn(),
-  },
-}));
+// importOriginal form, NOT a bare replacement factory: BookDetails transitively loads
+// CompanionEbookSection, which imports `formatBytes` and reads `ApiError.status` at RUNTIME
+// (#1963). A replacement factory turns every unlisted named export into `undefined`, and the
+// break surfaces only when those paths execute — never under tsc
+// (`vimock-barrel-replace-drops-named-exports`).
+//
+// The tradeoff to hold onto: preserving the barrel also keeps every API METHOD real unless it
+// is overridden here, and an unstubbed method reaches `fetchApi`, which resolves a relative
+// `/api/...` URL against jsdom's base and issues a genuine `fetch`. Rendering this page fires
+// three such queries beyond the book loaders — the series card, the ffmpeg gate behind the
+// merge/retag buttons, and the search modal's stream-token mint. All three are stubbed below,
+// and the `issues no real network request` test fails if a fourth ever appears.
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      getBookById: vi.fn(),
+      getBook: vi.fn(),
+      getCompanionEbookState: vi.fn(),
+      getBookSeries: vi.fn(),
+      getFfmpegStatus: vi.fn(),
+      mintStreamToken: vi.fn(),
+    },
+  };
+});
 
 vi.mock('sonner', () => ({
   toast: {
@@ -70,10 +91,34 @@ function renderBookPage(id = '1') {
 }
 
 describe('BookPage', () => {
+  let fetchSpy: MockInstance<typeof globalThis.fetch>;
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(api.getBookById).mockResolvedValue(mockLibraryBook);
     vi.mocked(api.getBook).mockResolvedValue(mockMetadataBook);
+    // Deterministic stubs for the three secondary queries this page fires. Rejections are
+    // enough — every one of them degrades silently — but they must not be left real.
+    vi.mocked(api.getBookSeries).mockResolvedValue({ series: null });
+    vi.mocked(api.getFfmpegStatus).mockResolvedValue({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' });
+    vi.mocked(api.mintStreamToken).mockRejectedValue(new Error('no stream token in this suite'));
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  // The guard for the whole file: this suite must never touch the network. A method left real
+  // by the preserved barrel reaches `fetchApi`, which resolves a relative `/api/...` URL
+  // against jsdom's base and issues a genuine request, making results depend on the host's
+  // fetch behaviour. Renders the fully-loaded page so every secondary query has fired.
+  it('issues no real network request while rendering the fully-loaded page', async () => {
+    renderBookPage();
+    await waitFor(() => expect(screen.getByText('The Way of Kings')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Fantasy')).toBeInTheDocument());
+
+    expect(fetchSpy.mock.calls.map((call) => String(call[0]))).toEqual([]);
   });
 
   it('shows loading state with book content not yet visible', () => {

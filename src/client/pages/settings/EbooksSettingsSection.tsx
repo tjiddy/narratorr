@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import { useQueryClient } from '@tanstack/react-query';
 import { BookOpenIcon } from '@/components/icons';
 import { InfoTip } from '@/components/settings/InfoTip';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
@@ -28,7 +29,8 @@ const DOC_LINK_CLASS =
  * its own default `More info` label rather than taking a feature-specific override.
  */
 export function EbooksSettingsSection() {
-  const { form, mutation, onSubmit } = useSettingsForm<EbooksFormData>({
+  const queryClient = useQueryClient();
+  const { form, mutation } = useSettingsForm<EbooksFormData>({
     schema: companionEpubFormSchema,
     defaultValues: pickFormFields(DEFAULT_SETTINGS.companionEpub),
     select: (s: AppSettings) => pickFormFields(s.companionEpub),
@@ -39,13 +41,35 @@ export function EbooksSettingsSection() {
 
   const { register, handleSubmit, formState: { isDirty } } = form;
 
+  /**
+   * Turning the feature off must also drop every cached Ebook-panel observation (#1963 AC2),
+   * or a book page rendered before the flip could keep an `Available` pill and a download link
+   * alive from cache. Evicted on ANY successful save, in both directions, so there is no
+   * direction branching to get wrong.
+   *
+   * The seam is `mutation.mutate(data, { onSuccess })` at the call site rather than the hook's
+   * `onSubmit(data)` — `useSettingsForm` is shared and stays untouched. Call-site callbacks are
+   * skipped if the page unmounts mid-save (`react-query-mutation-callbacks-post-unmount`);
+   * that is acceptable because this is polish, not the correctness guarantee. The panel's own
+   * `409` rule plus its retry predicate holds the invariant, so a skipped eviction degrades to
+   * one brief render before the refetch `409`s, never to a persistent panel.
+   */
+  const evictCompanionEbookCache = () => {
+    queryClient.removeQueries({
+      predicate: (query) => query.queryKey[0] === 'books' && query.queryKey[2] === 'companion-epub',
+    });
+  };
+
   return (
     <SettingsSection
       icon={<BookOpenIcon className="w-5 h-5 text-primary" />}
       title={CARD_LABEL}
       description="Show ebooks you've stored alongside your audiobooks."
     >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+      <form
+        onSubmit={handleSubmit((data) => mutation.mutate(data, { onSuccess: evictCompanionEbookCache }))}
+        className="space-y-5"
+      >
         <SettingsTable>
           {/* "Enable ebook support", not bare "Ebooks" — the section title is already "Ebooks"
               and a same-text row label would break every getByText('Ebooks') query. */}

@@ -55,6 +55,9 @@ vi.mock('@/lib/api', async (importOriginal) => {
       getFfmpegStatus: vi.fn(),
       retryBookImport: vi.fn(),
       checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
+      // #1963 — every book with a path now issues the Ebook panel's /state query. A rejection
+      // is enough: AC3 makes an initial-load failure render nothing at all.
+      getCompanionEbookState: vi.fn().mockRejectedValue(new Error('no companion state in this fixture')),
     },
   };
 });

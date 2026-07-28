@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { queryKeys } from '@/lib/queryKeys';
 import { createMockSettings } from '@/__tests__/factories';
 import { EbooksSettingsSection } from './EbooksSettingsSection';
 
@@ -40,8 +42,8 @@ beforeEach(() => {
   mockApi.updateSettings.mockResolvedValue(createMockSettings({ companionEpub: { enabled: true } }));
 });
 
-async function renderSection() {
-  renderWithProviders(<EbooksSettingsSection />);
+async function renderSection(queryClient?: QueryClient) {
+  renderWithProviders(<EbooksSettingsSection />, queryClient ? { queryClient } : {});
   await waitFor(() => {
     expect(screen.getByLabelText('Enable ebook support')).toBeInTheDocument();
   });
@@ -140,6 +142,57 @@ describe('EbooksSettingsSection', () => {
     it("uses the InfoTip component's own default accessible name, proving the label prop was not overridden", async () => {
       await renderSection();
       expect(screen.getByRole('button', { name: 'More info' })).toBeInTheDocument();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // #1963 AC2 — a successful save evicts every cached Ebook-panel observation.
+  //
+  // Behaviour-only: nothing the owner sees in this section changes, and every existing
+  // assertion above still holds unchanged. Direction-independent by design, so a
+  // direction-branching implementation fails the "turns it off" case.
+  // ---------------------------------------------------------------------------
+  describe('companion-ebook cache eviction on save', () => {
+    const CACHED = { status: 'available' as const, filename: 'a.epub', sizeBytes: 10, validationCode: null, candidateCount: 0, selectedFilename: 'a.epub', candidates: [] };
+
+    function seedClient(): QueryClient {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      client.setQueryData(queryKeys.companionEbook(1), CACHED);
+      client.setQueryData(queryKeys.companionEbook(2), CACHED);
+      client.setQueryData(queryKeys.bookFiles(1), [{ name: 'a.m4b', size: 1 }]);
+      return client;
+    }
+
+    async function saveToggle(client: QueryClient) {
+      await renderSection(client);
+      await userEvent.click(screen.getByLabelText('Enable ebook support'));
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(mockApi.updateSettings).toHaveBeenCalled());
+    }
+
+    it('drops every companion entry when the toggle is turned on, leaving unrelated keys alone', async () => {
+      const client = seedClient();
+      await saveToggle(client);
+
+      await waitFor(() => expect(client.getQueryData(queryKeys.companionEbook(1))).toBeUndefined());
+      expect(client.getQueryData(queryKeys.companionEbook(2))).toBeUndefined();
+      expect(client.getQueryData(queryKeys.bookFiles(1))).toEqual([{ name: 'a.m4b', size: 1 }]);
+    });
+
+    it('drops them when the toggle is turned off too', async () => {
+      mockApi.getSettings.mockResolvedValue(createMockSettings({ companionEpub: { enabled: true } }));
+      mockApi.updateSettings.mockResolvedValue(createMockSettings({ companionEpub: { enabled: false } }));
+      const client = seedClient();
+      await renderSection(client);
+      await waitFor(() => expect(screen.getByLabelText('Enable ebook support')).toBeChecked());
+
+      await userEvent.click(screen.getByLabelText('Enable ebook support'));
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => expect(mockApi.updateSettings).toHaveBeenCalledWith({ companionEpub: { enabled: false } }));
+      await waitFor(() => expect(client.getQueryData(queryKeys.companionEbook(1))).toBeUndefined());
+      expect(client.getQueryData(queryKeys.companionEbook(2))).toBeUndefined();
+      expect(client.getQueryData(queryKeys.bookFiles(1))).toEqual([{ name: 'a.m4b', size: 1 }]);
     });
   });
 
