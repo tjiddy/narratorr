@@ -220,6 +220,16 @@ export async function v1CompanionEbookRoutes(
             semaphore.release();
           };
 
+          // Registered HERE, before the `await` below, not only inside `streamCompanionEbook`.
+          // A client that disconnects while the open is in flight fires `close` before the
+          // helper ever runs; the helper's own `once('close', …)` then attaches to an already-
+          // closed socket and never fires, so the slot was held for the life of the process.
+          // Repeat that `maxConcurrentStreams` times and this route answers 503 forever — with
+          // no library write access required, just an API key and a hangup. Double registration
+          // is safe by construction: `slotReleased` makes the releaser idempotent, which is the
+          // same guard that already lets the stream's `error` and `close` paths both call it.
+          reply.raw.once('close', releaseSlot);
+
           // The ONLY statement inside the acquired window, and it is documented never to throw
           // — every errno is absorbed into its outcome union. It therefore needs no `try`.
           //

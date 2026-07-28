@@ -8,6 +8,7 @@ import { createCountingStream } from './counting-stream.js';
 import type { EpubReadErrorLabel } from './errors.js';
 import { classifyEpubReadError } from './errors.js';
 import { MAX_ARCHIVE_ENTRIES } from './limits.js';
+import { READ_NO_FOLLOW } from '../utils/no-follow-open.js';
 import { decodeEntryName, findDuplicateEntry, normalizeArchivePath } from './paths.js';
 import type { EpubValidationCode } from './result.js';
 
@@ -693,7 +694,9 @@ export async function withZipSource<T>(
   filePath: string,
   callback: (session: ZipSourceSession) => Promise<T>,
 ): Promise<T> {
-  const handle = await open(filePath, 'r');
+  // `READ_NO_FOLLOW`, never `'r'`: callers verify the path before handing it here, so this open
+  // is a second resolution of a pathname they already checked. See no-follow-open.ts.
+  const handle = await open(filePath, READ_NO_FOLLOW);
   let disarm: (() => void) | undefined;
   try {
     const stat = await handle.stat();

@@ -307,4 +307,32 @@ describe('v1 companion ebook stream — real socket', () => {
     // idempotent releaser is what keeps that from raising the effective cap for the process.
     await expectCapacityIsExactlyOne();
   });
+
+  it('returns the slot when the client disconnects BEFORE the stream starts (open still in flight)', async () => {
+    // The regression this pins: the slot is acquired before `openCompanionEbook` is awaited,
+    // but the disconnect listener used to be registered only inside `streamCompanionEbook`,
+    // which runs AFTER that await. A client that hung up while the open was in flight fired
+    // `close` with nothing listening; the helper then attached `once('close', …)` to an
+    // already-closed socket, so it never fired and the slot was held for the life of the
+    // process. `maxConcurrentStreams` repeats and this route answers 503 permanently — no
+    // library write access needed, just an API key and a hangup.
+    const calls = () => vi.mocked(openCompanionEbook).mock.calls.length;
+    const before = calls();
+    const { open } = gateOpen(1);
+
+    // Not `get()`: its abort hook fires on the first response chunk, which is far too late —
+    // the disconnect has to land while the open is still gated.
+    const aborted = http.get(baseUrl, { headers: keyHeaders }, () => undefined);
+    aborted.on('error', () => undefined);
+
+    await waitUntil(() => calls() > before, 'the gated open to acquire the slot');
+    aborted.destroy();
+    open();
+    await wait(150);
+
+    // The slot must be back: a fresh request gets 200, not the 503 a leaked slot would force.
+    const after = await get(baseUrl);
+    expect(after.status).toBe(200);
+    expect(after.length).toBe(PAYLOAD.length);
+  });
 });

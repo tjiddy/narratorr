@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { mkdir, writeFile, symlink, realpath, lstat, open } from 'node:fs/promises';
+import { mkdir, writeFile, symlink, realpath, lstat, open, rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { FastifyBaseLogger } from 'fastify';
 import { openCompanionEbook, resolveCompanionEbookPath } from './companion-ebook-open.js';
 import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
+import { READ_NO_FOLLOW } from '../../core/utils/no-follow-open.js';
 
 /**
  * Driven against a REAL temp directory, never an `fs` mock: the symlink / regular-file /
@@ -103,6 +105,62 @@ describe('openCompanionEbook', () => {
       expect(result.sizeBytes).toBe(Buffer.byteLength(bytes));
       await result.handle.close();
     });
+
+    /**
+     * Containment is verified against a PATHNAME, and the open below is a second resolution of
+     * it. Both tests here defend the gap between those two steps; the first runs everywhere and
+     * catches a regression to `'r'`, the second proves the flag actually refuses the swap.
+     */
+    it('opens with O_NOFOLLOW rather than a symlink-following read flag', async () => {
+      await writeFile(join(bookPath, 'book.epub'), 'x');
+      const result = await call('book.epub');
+
+      expect(result.outcome).toBe('ok');
+      expect(open).toHaveBeenCalledWith(join(bookPath, 'book.epub'), READ_NO_FOLLOW);
+      if (result.outcome === 'ok') await result.handle.close();
+    });
+
+    /**
+     * The half of the TOCTOU defence that is OURS to prove, and it runs on every platform.
+     * `O_NOFOLLOW → ELOOP on a symlink` is POSIX's contract, not this module's; what this
+     * module owes is that the resulting errno becomes a refusal rather than a served file.
+     * The end-to-end case below needs a real symlink AND a real flag, so it can only run on
+     * Linux — without this test, the classification would ship unproven on Todd's machine.
+     */
+    it('classifies an ELOOP from the open as unreadable, never as a served handle', async () => {
+      await writeFile(join(bookPath, 'book.epub'), 'x');
+      vi.mocked(open).mockRejectedValueOnce(
+        Object.assign(new Error('ELOOP: too many symbolic links'), { code: 'ELOOP' }),
+      );
+
+      await expect(call('book.epub')).resolves.toEqual({ outcome: 'unreadable' });
+    });
+
+    it.skipIf(!CAN_SYMLINK || !constants.O_NOFOLLOW)(
+      'refuses the open when the verified path becomes a symlink before it (TOCTOU, Linux only)',
+      async () => {
+        const secret = join(outside, 'secret.key');
+        await writeFile(secret, 'SUPER-SECRET-KEY-MATERIAL');
+        const path = join(bookPath, 'book.epub');
+        await writeFile(path, 'a real epub at verification time');
+
+        // The race, made deterministic: resolve() has already lstat'd a regular file and
+        // realpath'd it inside the root. Swapping HERE — after the checks, before the open —
+        // is exactly the window an attacker with write access to the book folder gets.
+        const { open: actualOpen } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+        vi.mocked(open).mockImplementationOnce(async (...args) => {
+          await rm(path);
+          await symlink(secret, path);
+          return actualOpen(...(args as Parameters<typeof actualOpen>));
+        });
+
+        const result = await call('book.epub');
+
+        // ELOOP is not definitive absence, so `classifyFailure` reports `unreadable` and the
+        // route 404s. The bytes of `secret` must never reach a handle.
+        expect(result.outcome).toBe('unreadable');
+      },
+    );
   });
 
   describe('not_regular_file', () => {

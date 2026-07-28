@@ -5,6 +5,7 @@ import { assertRealPathInsideLibraryStrict, PathOutsideLibraryError } from '../u
 import { isDefinitiveAbsence } from '../utils/fs-errno.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { isPersistableCompanionBasename } from './companion-ebook-observation.js';
+import { READ_NO_FOLLOW } from '../../core/utils/no-follow-open.js';
 
 export interface CompanionOpenInput {
   /** Public book id, carried solely so the log identity matches the shipped sibling's shape. */
@@ -181,7 +182,10 @@ export async function openCompanionEbook(
 
   let handle: FileHandle;
   try {
-    handle = await open(path, 'r');
+    // `READ_NO_FOLLOW`, never `'r'`: containment was verified against this PATHNAME above, and
+    // the open below is a second resolution of it. A symlink swapped into the gap would other-
+    // wise be followed, and the `fstat` that follows reads only `size`. See no-follow-open.ts.
+    handle = await open(path, READ_NO_FOLLOW);
   } catch (error: unknown) {
     log.debug({ bookId, path, error: serializeError(error) }, 'Companion ebook open failed');
     return { outcome: classifyFailure(error) };
