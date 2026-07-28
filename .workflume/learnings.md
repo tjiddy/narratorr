@@ -693,10 +693,18 @@ Reference implementation and full status/body test matrix: `AudnexusProvider.get
 
 **source:** #1959, #1976, #1989
 **added:** 2026-07-27
-**files:** src/server/services/**/*.test.ts, src/core/**/*.test.ts, src/db/**/*.test.ts, src/server/utils/**/*.test.ts
+**files:** src/server/**/*.test.ts, src/server/__tests__/**/*.ts, src/core/**/*.test.ts, src/core/__tests__/**/*.ts, src/db/**/*.test.ts, src/shared/**/*.test.ts
 **tags:** windows, vitest, filesystem, symlink, chmod, libsql, tmpdir, cross-platform
 
 ---
+
+**Scope note.** The `files` list above is deliberately broad: it covers every server, core, db and
+shared test PLUS the test-infrastructure files under `__tests__/` (`e2e-helpers.ts`, `windows-fs.ts`,
+`epub-archive.fixture.ts`), because that is where these traps are actually written. It was originally
+scoped to the four directories where one batch's failures happened to land, which silently excluded
+`src/server/routes/**` and `src/server/__tests__/**` — the latter is where e2e suites live, and it
+missed the very next one written. Scope this by where the trap *applies*, not where it last bit.
+Client tests are excluded on purpose: jsdom touches no filesystem.
 
 Four filesystem primitives behave differently on Windows and will fail a suite that passes on the
 Linux pipeline. **The pipeline cannot observe any of them**, so they land green in CI and only surface
