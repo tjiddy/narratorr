@@ -432,3 +432,83 @@ describe('v1 docs surface — URL_BASE honored', () => {
     }
   });
 });
+
+/**
+ * #1979 — `buildApp()` composes the v1 surface BY HAND, so before this guard a new
+ * v1 route added to `routeRegistry` but forgotten here was silently absent from the
+ * spec this suite asserts, and every test above still passed. (Production is not the
+ * victim — the runtime spec is generated from the real app — the victim is this
+ * suite's coverage, which is what third parties' contract is verified against.)
+ *
+ * The guard drives the REAL production `routeRegistry` against a collector app and
+ * requires SET EQUALITY between the native-v1 routes the registry mounts and the
+ * paths in buildApp's spec. Equality, not containment, on purpose:
+ *  - registry mounts a route buildApp forgot → collected ⊃ spec → red;
+ *  - buildApp registers a route the registry dropped → spec ⊃ collected → red;
+ *  - every v1 factory silently throwing under the proxies → collected = ∅ ≠ spec → red,
+ *    so the guard cannot pass vacuously.
+ */
+describe('spec completeness against the production routeRegistry (#1979)', () => {
+  it('documents exactly the native-v1 surface the registry mounts', async () => {
+    const { routeRegistry } = await import('../index.js');
+
+    const collector = Fastify({ logger: false, routerOptions: { maxParamLength: 2048 } }).withTypeProvider<ZodTypeProvider>();
+    collector.setValidatorCompiler(validatorCompiler);
+    collector.setSerializerCompiler(serializerCompiler);
+
+    // Fastify `:param` → OpenAPI `{param}`; collapse HEAD (added implicitly with GET).
+    // The same native-v1 predicate `createV1Transform` applies (openapi.ts): under
+    // /api/v1, minus the Prowlarr-compat shim and the docs subtree. Reusing the real
+    // exclusion helper keeps guard and transform from drifting apart.
+    const { isProwlarrCompatPath } = await import('../prowlarr-compat.js');
+    const collected = new Set<string>();
+    collector.addHook('onRoute', (route) => {
+      if (!(route.url === '/api/v1' || route.url.startsWith('/api/v1/'))) return;
+      if (isProwlarrCompatPath(route.url, '')) return; // compat shim: hidden from the spec on purpose
+      if (route.url.startsWith('/api/v1/docs')) return; // the docs subtree documents, it is not documented
+      const specPath = route.url.replace(/:([A-Za-z0-9_]+)/g, '{$1}');
+      const methods = Array.isArray(route.method) ? route.method : [route.method];
+      for (const m of methods) {
+        if (m === 'HEAD' || m === 'OPTIONS') continue;
+        collected.add(`${m.toLowerCase()} ${specPath}`);
+      }
+    });
+
+    // The registry's factories close over a full `Services` object; the memoizing
+    // proxy hands each property a stable stub (same shape as routes/index.test.ts).
+    // Factories only CLOSE OVER deps at registration, so stubs are never invoked.
+    const stubs = new Map<string, object>();
+    const services = new Proxy({}, {
+      get(_t, prop: string) {
+        if (!stubs.has(prop)) stubs.set(prop, { __service: prop });
+        return stubs.get(prop);
+      },
+    }) as never;
+    const db = inject<Db>(createMockDb());
+
+    // Non-v1 factories may throw against this partially-stubbed environment — fine,
+    // their routes are hidden from the spec anyway. A v1 factory that throws shows up
+    // as a set inequality below, never as a silent pass.
+    for (const factory of routeRegistry) {
+      try {
+        await factory(collector as never, services, db);
+      } catch {
+        /* non-v1 factory incompatible with the stub environment */
+      }
+    }
+    await collector.close();
+
+    const app = await buildApp('');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spec = (app as any).swagger();
+    await app.close();
+
+    const documented = new Set<string>();
+    for (const [pathKey, item] of Object.entries<Record<string, unknown>>(spec.paths)) {
+      for (const method of Object.keys(item)) documented.add(`${method} ${pathKey}`);
+    }
+
+    expect(collected.size).toBeGreaterThan(0); // anti-vacuity floor
+    expect([...documented].sort()).toEqual([...collected].sort());
+  });
+});
