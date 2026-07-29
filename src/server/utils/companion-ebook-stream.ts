@@ -22,8 +22,9 @@ export interface CompanionStreamOptions {
   /**
    * Invoked from INSIDE the idempotent `release()` closure (#1975 AC13), so it fires exactly
    * once per response on the `end`, `error`, and client-abort paths alike. #1975 uses it to
-   * return a semaphore slot: `Semaphore.release()` decrements with no floor, so a second call
-   * would permanently raise the process's effective concurrency cap.
+   * return a semaphore slot. (Since #1984 the slot token is itself single-use, so a duplicate
+   * call is harmless at the Semaphore too — this closure's exactly-once guarantee is about the
+   * stream teardown as a whole, not just the slot.)
    */
   onTeardown?: () => void;
 }

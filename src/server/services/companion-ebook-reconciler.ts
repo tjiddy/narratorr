@@ -362,11 +362,11 @@ export class CompanionEbookReconciler {
    */
   private async sweepBook(bookId: number, libraryRoot: string): Promise<BookDisposition> {
     if (this.stopping) return 'stopped';
-    await sweepSemaphore.acquire();
+    const release = await sweepSemaphore.acquire();
     try {
       return await this.acceptBookRun(bookId, true, libraryRoot);
     } finally {
-      sweepSemaphore.release();
+      release();
     }
   }
 

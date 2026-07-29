@@ -184,13 +184,13 @@ class MatchJob {
 
   private async matchWithSemaphore(book: MatchCandidate): Promise<void> {
     if (this.isCancelled) return;
-    await this.semaphore.acquire();
+    const release = await this.semaphore.acquire();
     try {
       if (this.isCancelled) return;
       const result = await this.matchSingleBook(book);
       this.results.push(result);
     } finally {
-      this.semaphore.release();
+      release();
     }
   }
 

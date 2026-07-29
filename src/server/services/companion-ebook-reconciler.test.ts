@@ -108,14 +108,16 @@ vi.mock('./book-admission.js', async (importOriginal) => {
 vi.mock('../utils/semaphore.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/semaphore.js')>();
   class RecordingSemaphore extends actual.Semaphore {
-    override async acquire(): Promise<void> {
+    // Since #1984 release is a single-use token minted by acquire, so the release
+    // event is recorded by wrapping the token rather than overriding a method.
+    override async acquire(): Promise<() => void> {
       hoisted.events.push('semaphore.wait');
-      await super.acquire();
+      const release = await super.acquire();
       hoisted.events.push('semaphore.acquired');
-    }
-    override release(): void {
-      hoisted.events.push('semaphore.release');
-      super.release();
+      return () => {
+        hoisted.events.push('semaphore.release');
+        release();
+      };
     }
   }
   return { ...actual, Semaphore: RecordingSemaphore };

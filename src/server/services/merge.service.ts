@@ -20,7 +20,7 @@ import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
-import { Semaphore } from '../utils/semaphore.js';
+import { Semaphore, type SemaphoreRelease } from '../utils/semaphore.js';
 import type { MergePhase, MergeFailedReason } from '@shared/schemas/sse-events.js';
 import type { EventSource } from '@shared/schemas/event-history.js';
 import { safeEmit } from '../utils/safe-emit.js';
@@ -192,8 +192,11 @@ export class MergeService {
 
     // Start the new request immediately ONLY when nothing is queued ahead of it and a
     // slot is free. tryAcquire() is short-circuited away when the queue is non-empty so
-    // the new request never grabs a freed slot ahead of older queued work.
-    if (this.queue.length === 0 && this.semaphore.tryAcquire()) {
+    // the new request never grabs a freed slot ahead of older queued work. The release
+    // token travels with the merge that holds the slot (#1984) — each running merge owns
+    // exactly one, and its finally is the only place it is spent.
+    const releaseSlot = this.queue.length === 0 ? this.semaphore.tryAcquire() : null;
+    if (releaseSlot) {
       this.executeMerge(bookId)
         .catch((error: unknown) => {
           this.log.error({ error: serializeError(error) }, 'Merge failed for book %d', bookId);
@@ -201,7 +204,7 @@ export class MergeService {
         .finally(() => {
           this.inProgress.delete(bookId);
           this.origins.delete(bookId);
-          this.processNext(); // Pass the slot or release if empty
+          this.processNext(releaseSlot); // Release this merge's slot, then re-drain
         });
       return { status: 'started', bookId };
     }
@@ -231,9 +234,12 @@ export class MergeService {
 
   /** Promote queued jobs from the front while free slots can be acquired. */
   private drainQueue(): void {
-    while (this.queue.length > 0 && this.semaphore.tryAcquire()) {
+    for (;;) {
+      if (this.queue.length === 0) return;
+      const releaseSlot = this.semaphore.tryAcquire();
+      if (!releaseSlot) return;
       const nextBookId = this.queue.shift()!;
-      this.startQueuedMerge(nextBookId);
+      this.startQueuedMerge(nextBookId, releaseSlot);
     }
   }
 
@@ -245,13 +251,13 @@ export class MergeService {
    * took effect while a backlog existed because the slot was handed forward without
    * consulting max). Releasing first lets drainQueue's tryAcquire honor the current max.
    */
-  private processNext(): void {
-    this.semaphore.release();
+  private processNext(releaseSlot: SemaphoreRelease): void {
+    releaseSlot();
     this.drainQueue();
   }
 
-  /** Run a queued merge that already holds a semaphore slot (acquired by drainQueue's tryAcquire). */
-  private startQueuedMerge(bookId: number): void {
+  /** Run a queued merge that already holds a semaphore slot (its token, minted by drainQueue's tryAcquire). */
+  private startQueuedMerge(bookId: number, releaseSlot: SemaphoreRelease): void {
     this.inProgress.add(bookId);
 
     this.emitQueuePositionUpdates().catch((error: unknown) => {
@@ -265,7 +271,7 @@ export class MergeService {
       .finally(() => {
         this.inProgress.delete(bookId);
         this.origins.delete(bookId);
-        this.processNext(); // Pass the slot or release if empty
+        this.processNext(releaseSlot); // Release this merge's slot, then re-drain
       });
   }
 

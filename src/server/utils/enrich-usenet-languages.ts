@@ -429,7 +429,7 @@ export async function enrichUsenetLanguages(
   const semaphore = new Semaphore(NZB_FETCH_CONCURRENCY);
 
   async function fetchAndEnrich(result: SearchResult): Promise<void> {
-    await semaphore.acquire();
+    const release = await semaphore.acquire();
     nzbFetched++;
     const cacheKey = cacheKeyFor(result)!;
     const dispatcher = createSsrfSafeDispatcher(lanAllowlist?.hostname);
@@ -506,7 +506,7 @@ export async function enrichUsenetLanguages(
       enrichmentCache.set(cacheKey, { outcome: 'fetch-failed', language: result.language, nzbName: undefined });
     } finally {
       await dispatcher.close().catch(() => { /* best-effort cleanup */ });
-      semaphore.release();
+      release();
     }
   }
 
