@@ -6,6 +6,7 @@ import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import { getVisiblePathSize } from '../utils/import-helpers.js';
+import { isDefinitiveAbsence } from '../utils/fs-errno.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 
@@ -46,7 +47,13 @@ export async function refreshScanBook(
   try {
     await stat(book.path);
   } catch (error: unknown) {
-    if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+    // `isDefinitiveAbsence` is the shared discriminator for "the filesystem looked
+    // and found nothing" (src/server/utils/fs-errno.ts, #1955). It covers ENOTDIR as
+    // well as ENOENT — a book whose library path became a regular file, or whose
+    // parent did, statted ENOTDIR and used to escape as a raw errno instead of the
+    // intended PATH_MISSING. Everything else (EACCES on a re-mounting share, ESTALE,
+    // EIO) is undetermined and must still rethrow rather than claim the path is gone.
+    if (isDefinitiveAbsence(error)) {
       throw new RefreshScanError('PATH_MISSING', `Book path does not exist on disk: ${book.path}`);
     }
     throw error;

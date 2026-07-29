@@ -343,6 +343,27 @@ describe('refreshScanBook', () => {
       .rejects.toMatchObject({ code: 'PATH_MISSING' });
   });
 
+  it('throws RefreshScanError PATH_MISSING when the path statted ENOTDIR (#1965)', async () => {
+    // ENOTDIR is the other definitive absence: the book's library path (or a parent)
+    // became a regular file. Before #1965 the inline check tested `code === 'ENOENT'`
+    // only, so this escaped as a raw errno instead of PATH_MISSING.
+    const { stat: statFn } = await import('node:fs/promises');
+    const enotdir = Object.assign(new Error('ENOTDIR: not a directory'), { code: 'ENOTDIR' });
+    vi.mocked(statFn).mockRejectedValueOnce(enotdir);
+    await expect(refreshScanBook(1, mockBookService, mockSettingsService, log))
+      .rejects.toMatchObject({ code: 'PATH_MISSING' });
+  });
+
+  it('classifies a plain non-Error throw carrying a definitive errno (#1965)', async () => {
+    // The old inline check also required `error instanceof Error`, so a bare
+    // `{ code: 'ENOENT' }` — which some fs wrappers throw — fell through to the
+    // rethrow. `isDefinitiveAbsence` reads the code off any object.
+    const { stat: statFn } = await import('node:fs/promises');
+    vi.mocked(statFn).mockRejectedValueOnce({ code: 'ENOENT' });
+    await expect(refreshScanBook(1, mockBookService, mockSettingsService, log))
+      .rejects.toMatchObject({ code: 'PATH_MISSING' });
+  });
+
   it('rethrows non-ENOENT stat errors as unexpected failures', async () => {
     const { stat: statFn } = await import('node:fs/promises');
     const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
