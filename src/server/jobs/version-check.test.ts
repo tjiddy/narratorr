@@ -2,6 +2,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockLogger } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type * as versionModule from '../utils/version.js';
+import { SHORT_SHA_LENGTH } from '../utils/version.js';
+
+// The develop HEAD sha the compare fixtures return, abbreviated the way the job
+// abbreviates it. Derived from the constant so a width change does not have to be
+// re-typed here — see SHORT_SHA_LENGTH's doc comment for why the width is fixed.
+const DEVELOP_HEAD_SHA = 'def56780000';
+const DEVELOP_HEAD_SHORT = DEVELOP_HEAD_SHA.slice(0, SHORT_SHA_LENGTH);
 
 // Mock global fetch
 const mockFetch = vi.fn();
@@ -32,7 +39,7 @@ function makeGitHubRelease(tagName: string, htmlUrl: string) {
 
 const COMPARE_HTML_URL = 'https://github.com/tjiddy/narratorr/compare/abc1234...develop';
 
-function makeGitHubCompare(aheadBy: number, htmlUrl: string, headSha = 'def56780000') {
+function makeGitHubCompare(aheadBy: number, htmlUrl: string, headSha = DEVELOP_HEAD_SHA) {
   return {
     ok: true,
     json: () => Promise.resolve({
@@ -260,13 +267,13 @@ describe('version check job', () => {
     });
 
     it('develop HEAD ahead → populates a develop update from the compare URL', async () => {
-      mockFetch.mockResolvedValue(makeGitHubCompare(5, COMPARE_HTML_URL, 'def56780000'));
+      mockFetch.mockResolvedValue(makeGitHubCompare(5, COMPARE_HTML_URL, DEVELOP_HEAD_SHA));
 
       await runCheck();
 
       const status = getUpdateStatus();
       expect(status).toEqual({
-        latestVersion: 'def5678', // develop HEAD short sha (bare, no v-prefix)
+        latestVersion: DEVELOP_HEAD_SHORT, // develop HEAD short sha (bare, no v-prefix)
         releaseUrl: COMPARE_HTML_URL,
         channel: 'develop',
       });
@@ -362,7 +369,7 @@ describe('version check job', () => {
         json: () => Promise.resolve({
           ahead_by: 2,
           html_url: COMPARE_HTML_URL,
-          commits: [{ sha: '1111111aaaa' }, { sha: 'def56780000' }],
+          commits: [{ sha: '1111111aaaa' }, { sha: DEVELOP_HEAD_SHA }],
           status: 'ahead',
           total_commits: 2,
           behind_by: 0,
@@ -372,7 +379,7 @@ describe('version check job', () => {
       await runCheck();
 
       expect(getUpdateStatus()).toEqual({
-        latestVersion: 'def5678',
+        latestVersion: DEVELOP_HEAD_SHORT,
         releaseUrl: COMPARE_HTML_URL,
         channel: 'develop',
       });

@@ -102,21 +102,23 @@ describe('getCommit', () => {
     expect(getCommit()).toBe('unknown');
   });
 
-  it('truncates 40-char SHA to 7-character prefix', async () => {
+  it('caps a 40-char SHA at SHORT_SHA_LENGTH', async () => {
     process.env.GIT_COMMIT = 'abc1234def456789abc1234def456789abc12345';
     const getCommit = await loadGetCommit();
-    expect(getCommit()).toBe('abc1234');
+    const { SHORT_SHA_LENGTH } = await import('./version.js');
+    expect(getCommit()).toBe('abc1234def456789abc1234def456789abc12345'.slice(0, SHORT_SHA_LENGTH));
+    expect(getCommit()).toHaveLength(SHORT_SHA_LENGTH);
     delete process.env.GIT_COMMIT;
   });
 
-  it('returns already-short 7-char SHA as-is (no double-truncation)', async () => {
-    process.env.GIT_COMMIT = 'abc1234';
+  it('returns an already-abbreviated SHA as-is (no double-truncation)', async () => {
+    process.env.GIT_COMMIT = 'abc1234d';
     const getCommit = await loadGetCommit();
-    expect(getCommit()).toBe('abc1234');
+    expect(getCommit()).toBe('abc1234d');
     delete process.env.GIT_COMMIT;
   });
 
-  it('returns SHA shorter than 7 chars unchanged', async () => {
+  it('returns a SHA shorter than SHORT_SHA_LENGTH unchanged', async () => {
     process.env.GIT_COMMIT = 'abc12';
     const getCommit = await loadGetCommit();
     expect(getCommit()).toBe('abc12');
@@ -203,4 +205,28 @@ describe('isNewerVersion', () => {
     expect(isNewerVersion('invalid', '1.2.3')).toBe(false);
     expect(isNewerVersion('1.2.3', '')).toBe(false);
   });
+});
+
+describe('SHORT_SHA_LENGTH — the one number, and the sites that must agree with it', () => {
+  it('is the width every in-app abbreviation site uses', async () => {
+    const { SHORT_SHA_LENGTH } = await import('./version.js');
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const root = join(import.meta.dirname, '..', '..', '..');
+
+    // version-check.ts abbreviates the develop HEAD sha for display beside
+    // getCommit()'s output. A bare `slice(0, <number>)` there would drift.
+    const versionCheck = readFileSync(join(root, 'src/server/jobs/version-check.ts'), 'utf8');
+    expect(versionCheck).toContain('slice(0, SHORT_SHA_LENGTH)');
+    expect(versionCheck).not.toMatch(/sha\.slice\(0,\s*\d+\)/);
+
+    // 7 is git's own floor (a fresh repo abbreviates to 7); anything below that
+    // would be shorter than git will ever print.
+    expect(SHORT_SHA_LENGTH).toBeGreaterThanOrEqual(7);
+  });
+
+  // The fourth site — `${GITHUB_SHA::N}` in .github/workflows/docker.yml — is
+  // deliberately NOT asserted here. docker/docker-workflow.test.ts already owns
+  // "what docker.yml contains" and now derives that width from SHORT_SHA_LENGTH.
+  // Asserting it in both places would be the same decision in two homes.
 });
