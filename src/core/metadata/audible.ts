@@ -15,8 +15,12 @@ import type {
   SearchBooksResult,
 } from './types.js';
 
-/** Default wait time (ms) when rate-limited without a Retry-After header. */
-const DEFAULT_RATE_LIMIT_WAIT_MS = 60_000;
+// Retry-After interpretation lives in retry-after.ts (#1948) — both 429 arms below
+// route through it. The old inline `parseInt(header, 10) * 1000` read yielded NaN
+// for the HTTP-date form RFC 9110 permits, and a NaN window is falsy at
+// MetadataService.isRateLimited, so the backoff gate went dead (not mis-timed) and
+// a rate-limited Audible — the primary search provider — kept being hammered.
+import { parseRetryAfterMs } from './retry-after.js';
 
 export interface AudibleConfig {
   region?: string;
@@ -217,9 +221,7 @@ export class AudibleProvider implements MetadataSearchProvider {
     try {
       const res = await fetchWithTimeout(url, {}, REQUEST_TIMEOUT_MS);
       if (res.status === 429) {
-        const retryAfter = res.headers.get('Retry-After');
-        const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : DEFAULT_RATE_LIMIT_WAIT_MS;
-        throw new RateLimitError(waitMs, this.name);
+        throw new RateLimitError(parseRetryAfterMs(res.headers.get('Retry-After')), this.name);
       }
       if (res.status >= 500) {
         throw new TransientError(this.name, `HTTP ${res.status} ${res.statusText}`);
@@ -265,9 +267,7 @@ export class AudibleProvider implements MetadataSearchProvider {
       return { kind: 'transient_failure', message: getErrorMessage(error) };
     }
     if (res.status === 429) {
-      const retryAfter = res.headers.get('Retry-After');
-      const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : DEFAULT_RATE_LIMIT_WAIT_MS;
-      return { kind: 'rate_limited', retryAfterMs };
+      return { kind: 'rate_limited', retryAfterMs: parseRetryAfterMs(res.headers.get('Retry-After')) };
     }
     if (res.status >= 500) {
       return { kind: 'transient_failure', message: `HTTP ${res.status} ${res.statusText}` };

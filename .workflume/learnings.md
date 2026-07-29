@@ -1201,18 +1201,21 @@ HTTP-date**, so `parseInt(header, 10) * 1000` yields NaN for the date form — w
 serialises NaN to `null`, so the one operator-visible signal reads as a *missing* field rather than a
 broken one.
 
-Reference implementation: `parseRetryAfterMs` / `finiteWindowMs` in `src/core/metadata/audnexus.ts:78-101`
-— the single Retry-After interpretation home for all three of that provider's 429 arms. Tests:
-`audnexus.test.ts` '429 retry-window normalization across both helper paths'; service-side pins in
+Reference implementation: `parseRetryAfterMs` in `src/core/metadata/retry-after.ts` — the single
+Retry-After interpretation home for the provider side; Audnexus's three 429 arms (#1944) and
+Audible's two (#1948) all route through it. (The client's `parseRetryAfterMs` in
+`src/client/lib/api/client.ts` is deliberately separate — it answers "may the UI show a retry hint"
+with `number | undefined`, not "close the gate with a finite window"; don't couple them.) Tests:
+`audnexus.test.ts` '429 retry-window normalization across both helper paths', `audible.test.ts` '429
+retry-window normalization across both request paths'; service-side pins in
 `metadata.service.test.ts` (finite closes the gate / NaN leaves it open). For HTTP-date assertions
 freeze only `Date` (`vi.useFakeTimers({ toFake: ['Date'] })`) — full fake timers stall MSW and the
 native `AbortSignal.timeout` inside `fetchWithTimeout` (see
 `abortsignal-timeout-native-timer-retry-tests`).
 
-**Known remaining site:** `src/core/metadata/audible.ts:220,268` still reads the raw header — tracked
-as debt, not accepted behaviour. **Scope note:** this is about deadline/threshold values reaching a
-falsy-guarded gate. It is NOT a mandate to sweep every external numeric field through a Zod NaN guard —
-that was proposed in #1940 and closed not-planned.
+**Scope note:** this is about deadline/threshold values reaching a falsy-guarded gate. It is NOT a
+mandate to sweep every external numeric field through a Zod NaN guard — that was proposed in #1940
+and closed not-planned.
 
 ## identity-reads-use-book-identifiers
 

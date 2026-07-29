@@ -2,6 +2,9 @@ import { z } from 'zod';
 import { BookMetadataSchema, AuthorMetadataSchema } from './schemas.js';
 import { MetadataError, RateLimitError, TransientError } from './errors.js';
 import { normalizeGenres } from './genres.js';
+// All three 429 arms (chapters, book, author) route through the shared normalizer —
+// no path may hand the service a window it cannot honor. See retry-after.ts (#1944).
+import { parseRetryAfterMs } from './retry-after.js';
 import { AUDNEXUS_TIMEOUT_MS } from '../utils/constants.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { getErrorMessage } from '@shared/error-message.js';
@@ -61,44 +64,6 @@ const audnexusChaptersSchema = z.object({
   isAccurate: z.boolean().nullish(),
   chapters: z.array(z.unknown()).nullish(),
 }).passthrough();
-
-const DEFAULT_RETRY_AFTER_MS = 60_000;
-
-/**
- * A backoff window is only usable if it is finite and non-negative — every arm of
- * `parseRetryAfterMs` funnels its arithmetic RESULT through here so no branch can
- * return a window the caller cannot honor.
- *
- * The finiteness check must be on the product, not the operand: `1e306` written
- * out in digits is a perfectly finite Number, but `× 1000` overflows to
- * `Infinity`, and `setRateLimited(Date.now() + Infinity)` is a deadline that never
- * expires — a malformed-but-numeric upstream header would then suppress every
- * Audnexus lookup for the life of the process.
- */
-function finiteWindowMs(candidateMs: number): number {
-  return Number.isFinite(candidateMs) && candidateMs >= 0 ? candidateMs : DEFAULT_RETRY_AFTER_MS;
-}
-
-/**
- * Normalize a `Retry-After` header to a FINITE, non-negative millisecond window.
- *
- * The single home for `Retry-After` interpretation in this file — all three 429
- * arms (chapters, book, author) route through it, so no path can hand the service
- * a window it cannot honor. RFC 9110 permits both delay-seconds and an HTTP-date,
- * and a naive seconds-only read of the date form produces `NaN`; `NaN` is falsy at
- * `MetadataService.isRateLimited`, so `setRateLimited(Date.now() + NaN)` leaves the
- * backoff gate dead rather than merely mis-timed and a rate-limited Audnexus keeps
- * being retried. Absent, unparseable, negative, and overflowing values all fall
- * back to the same 60s default the absent-header case has always used.
- */
-export function parseRetryAfterMs(header: string | null): number {
-  const raw = header?.trim();
-  if (!raw) return DEFAULT_RETRY_AFTER_MS;
-  if (/^[+-]?\d+$/.test(raw)) return finiteWindowMs(Number(raw) * 1000);
-  const dateMs = Date.parse(raw);
-  if (Number.isNaN(dateMs)) return DEFAULT_RETRY_AFTER_MS;
-  return finiteWindowMs(dateMs - Date.now());
-}
 
 const audnexusAuthorSchema = z.object({
   asin: z.string().nullish(),
