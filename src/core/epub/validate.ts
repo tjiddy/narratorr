@@ -82,14 +82,27 @@ const EMPTY_ARCHIVE_SIGNATURE = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
  * both irrelevant.
  */
 const FONT_MEDIA_TYPES = new Set([
+  // RFC 8081 registered types.
   'font/ttf',
   'font/otf',
   'font/woff',
   'font/woff2',
+  'font/sfnt',
+  'font/collection',
+  // Pre-RFC-8081 spellings still emitted by real publishers. The x- family is the
+  // treacherous one: it has no canonical form, so every generation of tooling coined
+  // its own. The first live falsification was The Shining (dev UAT, 2026-07-29):
+  // Adobe-obfuscated fonts manifest-declared `application/x-font-truetype` — a
+  // DRM-free book read as drm_protected because only the `x-font-ttf` sibling was
+  // listed. When a legit book trips the classifier, suspect THIS list first.
   'application/font-sfnt',
   'application/vnd.ms-opentype',
   'application/font-woff',
   'application/x-font-ttf',
+  'application/x-font-truetype',
+  'application/x-truetype-font',
+  'application/x-font-otf',
+  'application/x-font-opentype',
 ]);
 
 /**

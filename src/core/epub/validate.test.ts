@@ -1057,6 +1057,37 @@ describe('the encryption.xml classifier', () => {
     expect(await validateBuilt(adobeFontShape())).toEqual({ status: 'available' });
   });
 
+  it('accepts The Shining shape: Adobe obfuscation over x-font-truetype manifest fonts (dev UAT 2026-07-29)', async () => {
+    // The first live false positive. A DRM-free commercial EPUB: three embedded
+    // fonts, Adobe RC obfuscation algorithm, all manifest-declared and unspined —
+    // exactly the shape isObfuscatedFont exists to accept — but the manifest spells
+    // the media type `application/x-font-truetype`, and only the `x-font-ttf`
+    // sibling was in FONT_MEDIA_TYPES. Verdict was drm_protected; every reader
+    // opened the book fine. This pins the spelling end-to-end through the real
+    // classifier rather than only via the MEDIA_TYPES matrix, because the matrix is
+    // easy to edit in lockstep with the production set while a named regression is
+    // not. The classifier's own doc comment was built from ONE real book; this is
+    // the second real book, the one that falsified it.
+    const fonts = [1, 2, 3].map((n) => ({
+      id: `id${n}`,
+      href: `Fonts/0000${n}.ttf`,
+      mediaType: 'application/x-font-truetype',
+    }));
+    const result = await validateBuilt({
+      packageOptions: {
+        items: [
+          { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' },
+          ...fonts,
+        ],
+        itemrefs: [{ idref: 'ch1' }],
+      },
+      files: fonts.map((font) => ({ name: `OEBPS/${font.href}`, content: 'font-bytes' })),
+      encryption: encryptionXml(fonts.map((font) => ({ uri: `OEBPS/${font.href}` }))),
+    });
+
+    expect(result).toEqual({ status: 'available' });
+  });
+
   it('treats an EPUB with no encryption.xml as unaffected', async () => {
     expect(await validateBuilt()).toEqual({ status: 'available' });
   });
@@ -1122,10 +1153,19 @@ describe('the encryption.xml classifier', () => {
     'font/otf',
     'font/woff',
     'font/woff2',
+    'font/sfnt',
+    'font/collection',
     'application/font-sfnt',
     'application/vnd.ms-opentype',
     'application/font-woff',
     'application/x-font-ttf',
+    // The legacy x- family has no canonical spelling — each of these is a distinct
+    // coinage real tooling emitted. `x-font-truetype` is the one The Shining proved
+    // live (see the regression test below); the rest are its documented siblings.
+    'application/x-font-truetype',
+    'application/x-truetype-font',
+    'application/x-font-otf',
+    'application/x-font-opentype',
     'FONT/TTF',
     ' font/ttf ',
   ];
