@@ -107,9 +107,10 @@ async function buildApp(urlBase = ''): Promise<FastifyInstance> {
     });
     await v1SystemRoutes(scoped);
     await v1CapabilitiesRoutes(scoped, { settingsService: capabilitiesSettingsService as never });
-    // #1975 AC27 — `buildApp()` composes the v1 surface by hand and is NOT coupled to
-    // `routeRegistry` (open debt #1979), so a new v1 route is silently absent from the
-    // asserted spec unless it is registered here too.
+    // `buildApp()` composes the v1 surface by hand (#1975 AC27) and is not coupled to
+    // `routeRegistry` — but forgetting a route here is no longer silent: the #1979
+    // completeness guard at the bottom of this file diffs the spec against the routes
+    // the production registry actually mounts, so this list going stale fails loudly.
     await v1CompanionEbookRoutes(scoped, {
       bookService: bookService as never,
       settingsService: settingsService as never,
