@@ -137,6 +137,46 @@ describe('per-connection transaction serialization (#1959 F12)', () => {
     await expect(db.transaction(async () => 'fine')).resolves.toBe('fine');
   });
 
+  it('lets a continuation born inside the callback open a transaction AFTER the outer settles (#2008)', async () => {
+    // AsyncLocalStorage context is captured at async-resource creation and kept forever, so
+    // this `.then` continuation holds the transaction's store long after the commit. The
+    // deadlock the guard prevents is only possible while the outer is PENDING — a descendant
+    // invoked post-settle must queue like any other caller, not reject. Before #2008 the
+    // marker was immortal set-membership and this rejected with NestedTransactionError.
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    let descendant!: Promise<string>;
+
+    await db.transaction(async (tx) => {
+      await tx.insert(books).values(insert('outer write'));
+      // Created INSIDE the transaction's context; invoked only when the gate opens.
+      descendant = gate.then(() =>
+        db.transaction(async (tx2) => {
+          await tx2.insert(books).values(insert('descendant write'));
+          return 'queued fine';
+        }),
+      );
+    });
+
+    releaseGate(); // strictly after the outer settled
+    await expect(descendant).resolves.toBe('queued fine');
+    expect((await db.select().from(books)).map((row) => row.title))
+      .toEqual(['outer write', 'descendant write']);
+  });
+
+  it('still rejects a created-inside continuation that calls while the outer is PENDING (#2008)', async () => {
+    // The twin that pins the flip did not over-relax: same async-resource shape, but the
+    // outer awaits it, so the outer is still pending when the inner call happens — that is
+    // the real deadlock case and it must keep rejecting.
+    await expect(
+      db.transaction(async () => {
+        return Promise.resolve().then(() => db.transaction(async () => 'inner'));
+      }),
+    ).rejects.toBeInstanceOf(NestedTransactionError);
+
+    await expect(db.transaction(async () => 'fine')).resolves.toBe('fine');
+  });
+
   it('does not make one connection wait on another', async () => {
     const otherFile = join(dir, 'other.db');
     await runMigrations(otherFile);

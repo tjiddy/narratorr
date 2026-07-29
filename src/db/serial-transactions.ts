@@ -27,14 +27,30 @@ import { AsyncLocalStorage } from 'node:async_hooks';
  */
 
 /**
+ * A per-transaction marker: `open` is true exactly while that transaction's promise is
+ * pending. Mutable on purpose — every async context that inherits it sees the flip.
+ */
+interface TransactionMarker {
+  open: boolean;
+}
+
+/**
  * The connections whose transaction is open in the CURRENT async context.
  *
  * A plain flag cannot express this: while a transaction is in flight, an unrelated concurrent
  * task calling `db.transaction` must queue (that is the whole point), whereas a call made from
  * *inside* the transaction's own continuation must be refused — it would wait on a tail its own
  * caller is holding and hang forever. Only async-context propagation distinguishes the two.
+ *
+ * The map's value is a mutable marker rather than bare membership (#2008): AsyncLocalStorage
+ * context is captured at async-resource CREATION and kept forever, so a timer or promise
+ * continuation born inside the callback still holds this store long after the transaction
+ * committed. The deadlock the guard exists to prevent — an inner transaction waiting on a tail
+ * its own outer holds — is only possible while the outer is still PENDING, so the marker is
+ * flipped off the moment the outer settles and a continuation that outlives its transaction
+ * queues like any other caller instead of being refused.
  */
-const openConnections = new AsyncLocalStorage<ReadonlySet<object>>();
+const openConnections = new AsyncLocalStorage<ReadonlyMap<object, TransactionMarker>>();
 
 /** One serialization tail per connection object. Weakly held, so a per-test database is collected with its tail. */
 const tails = new WeakMap<object, Promise<unknown>>();
@@ -67,14 +83,30 @@ export class NestedTransactionError extends Error {
  * next one — the rejection still reaches its own caller unchanged.
  */
 export function runSerializedTransaction<T>(connection: object, open: () => Promise<T>): Promise<T> {
-  const alreadyOpen = openConnections.getStore();
-  if (alreadyOpen?.has(connection)) return Promise.reject(new NestedTransactionError());
+  const inherited = openConnections.getStore();
+  if (inherited?.get(connection)?.open) return Promise.reject(new NestedTransactionError());
 
-  // A set rather than a single value: a transaction on connection A may legitimately contain
-  // one on connection B, and B's context must still remember that A is open.
-  const nowOpen = new Set(alreadyOpen ?? []);
-  nowOpen.add(connection);
-  const enter = () => openConnections.run(nowOpen, open);
+  // A map rather than a single value: a transaction on connection A may legitimately contain
+  // one on connection B, and B's context must still remember that A is open. Copies made by
+  // such nested transactions share each marker BY REFERENCE, so flipping one off is visible
+  // through every context that inherited it, however deep.
+  const marker: TransactionMarker = { open: true };
+  const nowOpen = new Map(inherited ?? []);
+  nowOpen.set(connection, marker);
+  // The flip lives in the transaction promise's own first continuation — the earliest point
+  // any awaiter can observe the settle — so by the time `await db.transaction(...)` returns,
+  // the marker is already off and a descendant calling in queues rather than rejects.
+  const enter = () =>
+    openConnections.run(nowOpen, open).then(
+      (value) => {
+        marker.open = false;
+        return value;
+      },
+      (error: unknown) => {
+        marker.open = false;
+        throw error;
+      },
+    );
 
   const previous = tails.get(connection) ?? Promise.resolve();
   const run = previous.then(enter, enter);
