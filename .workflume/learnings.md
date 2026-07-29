@@ -175,7 +175,7 @@ Request-body schemas for API-impersonation/compatibility surfaces (narratorr's P
 
 Drizzle SQLite's `text(name, { enum: [...] })` produces a TS-only narrow union — no DB-level CHECK constraint is emitted. Adding/removing enum values requires no migration (`pnpm db:generate` reports `No schema changes`), and rows with any string value will be accepted at the DB layer. Enforce enum integrity by: (a) Zod `.parse()` on inbound writes, and (b) a schema-alignment test asserting `<zodEnum>.options ↔ <table>.<column>.enumValues` set equality.
 
-**Correction (#1957).** This entry used to end "Adding a manual CHECK constraint requires a hand-written SQL migration since Drizzle won't emit one." **That was false and it mis-steered a design document.** The claim holds only for the enum COLUMN helper above. The `check()` TABLE-CONSTRAINT helper from `drizzle-orm/sqlite-core` is a different API and it DOES emit DB-level constraints: return `` check('<name>', sql`<predicate>`) `` from the table's second-argument array and an ordinary `pnpm exec drizzle-kit generate --name <slug>` writes inline `CONSTRAINT "<name>" CHECK(...)` clauses into the CREATE TABLE. Verified on drizzle-orm@0.45.2 / drizzle-kit@0.31.10, dialect `turso` — see `src/db/schema.ts` (eight of them) and `drizzle/0001_companion_ebooks.sql`, with real-DB proof in `src/db/companion-ebooks-schema.integration.test.ts`.
+**Correction (#1957).** This entry used to end "Adding a manual CHECK constraint requires a hand-written SQL migration since Drizzle won't emit one." **That was false and it mis-steered a design document.** The claim holds only for the enum COLUMN helper above. The `check()` TABLE-CONSTRAINT helper from `drizzle-orm/sqlite-core` is a different API and it DOES emit DB-level constraints: return `` check('<name>', sql`<predicate>`) `` from the table's second-argument array and an ordinary `pnpm exec drizzle-kit generate --name <slug>` writes inline `CONSTRAINT "<name>" CHECK(...)` clauses into the CREATE TABLE. Verified on drizzle-orm@0.45.2 / drizzle-kit@0.31.10, dialect `turso` — see `src/db/schema.ts` (eight of them) and the emitted `CONSTRAINT "ck_companion_ebooks_*" CHECK(...)` clauses in `drizzle/0000_baseline.sql`, with real-DB proof in `src/db/companion-ebooks-schema.integration.test.ts`. (Cite the constraint names, not a migration index — the index is not stable pre-1.0; these clauses were emitted into a `0001_companion_ebooks` that has since been flattened into the baseline.)
 
 Four traps when writing them:
 
@@ -1090,8 +1090,8 @@ return parts.join(' | ');
 binds the default value rather than omitting the column and letting the database apply its DDL
 default. So `db.insert(t).values({ /* column omitted */ })` followed by `expect(stored.col).toBe(v)`
 does NOT pin the migration's `DEFAULT v`. Measured on `companion_ebooks.candidate_count`: deleting
-`DEFAULT 0` from `drizzle/0001_companion_ebooks.sql` left that test green and failed only the raw-SQL
-test (1 failed | 61 passed). Pin the two halves separately:
+its `DEFAULT 0` from the generated migration left that test green and failed only the raw-SQL test
+(1 failed | 61 passed). Pin the two halves separately:
 
 - **ORM half** — typed insert omitting the column, asserting the stored value; plus
   `t.col.hasDefault === true` and an `$inferInsert` object literal omitting the field (removing

@@ -12,10 +12,11 @@ import { generatePublicId } from '../server/utils/public-id.js';
 // onDelete clause is enforced. This suite also proves the staged-import FK delete
 // actions survive migrate-from-scratch against the flattened `0000_baseline`.
 //
-// (It used to say "proves the 0001 migration runs from scratch", which dated from
-// before the flattening — the staged-import DDL was collapsed into 0000_baseline
-// and there was no 0001 at all. `drizzle/0001_companion_ebooks.sql` now exists and
-// is an unrelated table this suite does not exercise.)
+// (It used to say "proves the 0001 migration runs from scratch". That numbering has
+// not survived two flattenings: the staged-import DDL was collapsed into
+// 0000_baseline, a 0001_companion_ebooks briefly existed, and it was folded into the
+// baseline too. Name the guarantee, not the migration index — the index is not stable
+// pre-1.0.)
 
 describe('import-staging schema — FK delete actions (DB-backed, #1893)', () => {
   let dir: string;
