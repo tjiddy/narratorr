@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createTestApp,
+  createAuthTestApp,
   createMockServices,
   resetMockServices,
   createMockDb,
@@ -13,6 +14,7 @@ import {
   installMockAppLog,
   createMockLogger,
   inject,
+  type ZodTestApp,
 } from '../__tests__/helpers.js';
 import { createMockSettings } from '@shared/schemas/settings/create-mock-settings.fixtures.js';
 import type { Db } from '@db/index.js';
@@ -1800,7 +1802,7 @@ describe('companion ebook owner routes', () => {
     /**
      * AC13 — auth and CSRF are AMBIENT, so they need their own app: `createTestApp` deliberately
      * registers no `authPlugin`, which is why every other case in this file reaches the handler
-     * unauthenticated. Built the way `system.test.ts`'s CSRF block builds its own.
+     * unauthenticated. Built on the shared `createAuthTestApp`, which installs the real plugin.
      *
      * The route wires nothing itself. What these two cases prove is that it inherits the
      * protection: `POST` is a non-safe method, so `enforceCsrf` covers it, and the path is not in
@@ -1808,22 +1810,14 @@ describe('companion ebook owner routes', () => {
      * observable for that).
      */
     describe('AC13: ambient auth and CSRF, in basic-auth mode', () => {
-      let csrfApp: Awaited<ReturnType<typeof createTestApp>>;
-      const basicAuthHeader = `Basic ${Buffer.from('admin:password123').toString('base64')}`;
+      let csrfApp: ZodTestApp;
+      let basicAuthHeader: string;
       const url = `/api/books/${BOOK_ID}/companion-epub/refresh`;
 
       beforeEach(async () => {
-        const { default: cookie } = await import('@fastify/cookie');
-        const { default: authPlugin } = await import('../plugins/auth.js');
-        const { default: Fastify } = await import('fastify');
-        const { validatorCompiler, serializerCompiler } = await import('fastify-type-provider-zod');
         const { companionEbookRoutes } = await import('./companion-ebook.js');
 
         const csrfServices = createMockServices();
-        const authSvc = csrfServices.auth as unknown as Record<string, Mock>;
-        authSvc.getStatus = vi.fn().mockResolvedValue({ mode: 'basic', hasUser: true, localBypass: false });
-        authSvc.verifyCredentials = vi.fn().mockResolvedValue({ username: 'admin' });
-        authSvc.validateApiKey = vi.fn().mockResolvedValue(false);
         (csrfServices.companionEbook.reconcileBook as unknown as Mock).mockResolvedValue(undefined);
         const settings = createMockSettings({
           companionEpub: { enabled: true },
@@ -1835,27 +1829,20 @@ describe('companion ebook owner routes', () => {
           id: BOOK_ID, status: 'imported', path: bookPath, title: 'Title',
         });
 
-        // No `withTypeProvider` — it is a type-level operation only, and the handler is reached
-        // through a `never` cast below. The two COMPILERS are what matter at runtime.
-        const built = Fastify({ logger: false });
-        built.setValidatorCompiler(validatorCompiler);
-        built.setSerializerCompiler(serializerCompiler);
-        await built.register(cookie);
-        const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
-        await built.register(errorHandlerPlugin);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await built.register(authPlugin, { authService: csrfServices.auth as any });
-        await companionEbookRoutes(
-          built as never,
-          {
-            bookService: csrfServices.book,
-            settingsService: csrfServices.settings,
-            reconciler: csrfServices.companionEbook as never,
-          },
-          inject<Db>(createMockDb()),
-        );
-        await built.ready();
-        csrfApp = built as never;
+        ({ app: csrfApp, authHeader: basicAuthHeader } = await createAuthTestApp(csrfServices, {
+          db: inject<Db>(createMockDb()),
+          // `companionEbookRoutes` is reached through a `never` cast — `withTypeProvider` is a
+          // type-level operation only, so the two COMPILERS the helper sets are what matter.
+          routes: (app, services, db) => companionEbookRoutes(
+            app as never,
+            {
+              bookService: services.book,
+              settingsService: services.settings,
+              reconciler: services.companionEbook as never,
+            },
+            db,
+          ),
+        }));
       });
 
       afterEach(async () => {

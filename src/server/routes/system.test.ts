@@ -7,7 +7,7 @@ import multipart from '@fastify/multipart';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Db } from '@db/index.js';
-import { createTestApp, createMockServices, installMockAppLog, resetMockServices, inject } from '../__tests__/helpers.js';
+import { createTestApp, createAuthTestApp, createMockServices, installMockAppLog, resetMockServices, inject, type ZodTestApp } from '../__tests__/helpers.js';
 import { DEFAULT_SETTINGS } from '@shared/schemas/settings/registry.js';
 import { registerRoutes, type Services } from './index.js';
 import { TaskRegistry, TaskRegistryError } from '../services/task-registry.js';
@@ -1065,36 +1065,22 @@ describe('POST /api/system/restore', () => {
   });
 
   describe('CSRF protection — basic-auth mode', () => {
-    let csrfApp: Awaited<ReturnType<typeof Fastify>>;
+    let csrfApp: ZodTestApp;
     let csrfServices: Services;
-    const basicAuthHeader = `Basic ${Buffer.from('admin:password123').toString('base64')}`;
+    let basicAuthHeader: string;
 
     beforeAll(async () => {
-      const { default: cookie } = await import('@fastify/cookie');
-      const { default: authPlugin } = await import('../plugins/auth.js');
       const { systemRoutes } = await import('./system.js');
       const { bookFilesRoute } = await import('./book-files.js');
 
       csrfServices = createMockServices();
-      const authSvc = csrfServices.auth as unknown as Record<string, Mock>;
-      authSvc.getStatus = vi.fn().mockResolvedValue({ mode: 'basic', hasUser: true, localBypass: false });
-      authSvc.verifyCredentials = vi.fn().mockResolvedValue({ username: 'admin' });
-      authSvc.validateApiKey = vi.fn().mockResolvedValue(false);
-
-      csrfApp = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
-      csrfApp.setValidatorCompiler(validatorCompiler);
-      csrfApp.setSerializerCompiler(serializerCompiler);
-      await csrfApp.register(cookie);
-      await csrfApp.register(multipart);
-      const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
-      await csrfApp.register(errorHandlerPlugin);
-      // Cast service shape for plugin parameter
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await csrfApp.register(authPlugin, { authService: csrfServices.auth as any });
-      const mockDb = inject<Db>({ run: vi.fn().mockResolvedValue(undefined) });
-      await systemRoutes(csrfApp, csrfServices, mockDb);
-      await bookFilesRoute(csrfApp, csrfServices.book, csrfServices.settings);
-      await csrfApp.ready();
+      ({ app: csrfApp, authHeader: basicAuthHeader } = await createAuthTestApp(csrfServices, {
+        register: async (app) => { await app.register(multipart); },
+        routes: async (app, services, db) => {
+          await systemRoutes(app, services, db);
+          await bookFilesRoute(app, services.book, services.settings);
+        },
+      }));
     });
 
     afterAll(async () => { await csrfApp.close(); });
