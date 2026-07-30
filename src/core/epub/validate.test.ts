@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { FileHandle } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
 import * as F from '../__tests__/epub-archive.fixture.js';
+import { scanProductionSources } from '../__tests__/source-scan.js';
 import {
   MAX_ARCHIVE_BYTES,
   MAX_CENTRAL_DIRECTORY_BYTES,
@@ -798,18 +799,9 @@ describe('ZIP-level encryption', () => {
   });
 
   it('passes no password argument to any read or stream call in src/core/epub/', async () => {
-    const { readdir, readFile } = await import('node:fs/promises');
-    const files = (await readdir(import.meta.dirname, { recursive: true })).filter(
-      (entry) => entry.endsWith('.ts') && !entry.endsWith('.test.ts'),
-    );
-    const sources = await Promise.all(
-      files.map(async (file) => ({
-        file,
-        code: (await readFile(path.join(import.meta.dirname, file), 'utf8'))
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/\/\/.*$/gm, ''),
-      })),
-    );
+    // Comments are stripped: the folder's prose discusses passwords at length,
+    // and only real call sites are the violation.
+    const sources = await scanProductionSources(import.meta.dirname, { stripComments: true });
     const offenders = sources
       .filter(({ code }) => /\b(?:stream|read)\s*\(\s*[^)]*password/i.test(code))
       .map(({ file }) => file);
@@ -1430,9 +1422,10 @@ describe('public surface and guardrails', () => {
   // The "no module outside `src/core/epub/` imports zip-source.ts" guard — the
   // externally-reachable half of #1990 Decision 2, and what keeps the exported
   // `withZipSource(filePath, …)` folder-internal — is **not** re-asserted here.
-  // `zip-source.test.ts:1465-1479` already owns it, over the whole of `src/`
-  // outside this folder. A second scan of the same boundary would be a fourth
-  // hand-rolled source scan (#2000) and, being `from`-anchored, a weaker one.
+  // `zip-source.test.ts` › `describe('the internal-only surface')` already owns
+  // it, over the whole of `src/` outside this folder. A second scan of the same
+  // boundary would restate a decision that now has one home (#2000) and, being
+  // `from`-anchored, would be the weaker of the two.
 
   it('exports no type either, so the internal structure cannot escape the open', async () => {
     // Type-only exports are erased at runtime, so the runtime check above cannot
@@ -1473,10 +1466,10 @@ describe('public surface and guardrails', () => {
   });
 
   it('is picked up by the folder layer guard with no edit to its named-file list', async () => {
-    const { readdir, readFile } = await import('node:fs/promises');
-    const scanned = (await readdir(import.meta.dirname, { recursive: true })).filter(
-      (entry) => entry.endsWith('.ts') && !entry.endsWith('.test.ts'),
-    );
+    const { readFile } = await import('node:fs/promises');
+    // The *same* preset call `layer-guard.test.ts` makes, so this proves that
+    // guard's real reach instead of re-deriving the selection here.
+    const scanned = (await scanProductionSources(import.meta.dirname)).map(({ file }) => file);
     const guard = await readFile(path.join(import.meta.dirname, 'layer-guard.test.ts'), 'utf8');
 
     expect(scanned).toContain('validate.ts');

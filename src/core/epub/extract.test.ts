@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import path from 'node:path';
 import type { FileHandle } from 'node:fs/promises';
 import * as F from '../__tests__/epub-archive.fixture.js';
+import { scanProductionSources } from '../__tests__/source-scan.js';
 import { MAX_EPUB_COVER_BYTES, MAX_INSPECTION_BYTES, MAX_TOC_ENTRIES, MAX_XML_BYTES } from './limits.js';
 import type { EpubInspection } from './result.js';
 import { inspectEpub, validateEpub } from './validate.js';
@@ -1683,16 +1684,12 @@ describe('public surface and guardrails', () => {
   });
 
   it('imports no image library anywhere in src/core/epub', async () => {
-    const { readdir, readFile } = await import('node:fs/promises');
-    const files = (await readdir(import.meta.dirname, { recursive: true })).filter(
-      (entry) => entry.endsWith('.ts') && !entry.endsWith('.test.ts'),
-    );
-    const sources = await Promise.all(
-      files.map(async (file) => readFile(path.join(import.meta.dirname, file), 'utf8')),
-    );
+    // Comments are not stripped: an `import` written in prose is still a claim
+    // this folder decodes images, and the `from '…'` anchor keeps it precise.
+    const sources = await scanProductionSources(import.meta.dirname);
 
     const offenders = IMAGE_LIBRARIES.filter((name) =>
-      sources.some((source) => new RegExp(`from\\s+['"]${name}['"]`).test(source)),
+      sources.some(({ code }) => new RegExp(`from\\s+['"]${name}['"]`).test(code)),
     );
     expect(offenders).toEqual([]);
   });
@@ -1716,11 +1713,11 @@ describe('public surface and guardrails', () => {
   });
 
   // `extract.ts`'s layer-guard coverage is **not** asserted here.
-  // `layer-guard.test.ts:32-63` discovers every production module in this folder
-  // by recursive `readdir` and names its files with `expect.arrayContaining`, so
-  // a new module is in scope automatically and with no edit. Re-scanning the
-  // folder to prove that would duplicate the selection decision — the fourth
-  // hand-rolled source scan #2000 tracks and the issue says not to add.
+  // `layer-guard.test.ts` › `describe('src/core/epub layer guard')` discovers
+  // every production module in this folder through the shared recursive scan
+  // and names its files with `expect.arrayContaining`, so a new module is in
+  // scope automatically and with no edit. Re-scanning the folder to prove that
+  // would restate the selection decision #2000 gave a single home.
 
   it('leaves the ebook-only search guard byte-for-byte unchanged', async () => {
     const { readFile } = await import('node:fs/promises');

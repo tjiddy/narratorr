@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readdir, readFile } from 'node:fs/promises';
-import path from 'node:path';
+import { scanProductionSources } from '../__tests__/source-scan.js';
 
 /**
  * Static source guard for `src/core/epub/`.
@@ -17,6 +16,10 @@ import path from 'node:path';
  * fail on itself or push the matchers into obfuscated string construction. The
  * scan is recursive, so future production EPUB modules stay in scope. It makes
  * no claim about the rest of `src/core/`.
+ *
+ * **Comments are not stripped**, so the patterns below are written to avoid
+ * matching their own prose. Turning stripping on would be a separate,
+ * reviewable decision that requires re-verifying every pattern.
  */
 
 const EPUB_DIR = import.meta.dirname;
@@ -29,23 +32,12 @@ const FORBIDDEN: Array<[label: string, pattern: RegExp]> = [
   ['a logger call', /\b(?:log|logger)\s*\.\s*(?:trace|debug|info|warn|error|fatal)\b/],
 ];
 
-async function productionSources(): Promise<Array<{ file: string; source: string }>> {
-  const entries = await readdir(EPUB_DIR, { recursive: true });
-  const files = entries.filter((entry) => entry.endsWith('.ts') && !entry.endsWith('.test.ts'));
-  return Promise.all(
-    files.map(async (file) => ({
-      file,
-      source: await readFile(path.join(EPUB_DIR, file), 'utf8'),
-    })),
-  );
-}
-
 describe('src/core/epub layer guard', () => {
   it('scans every production module in the folder', async () => {
     // Pins that the scan below is not silently looking at nothing. Named rather
     // than counted, so a sibling adding `xml.ts` or `zip-source.ts` extends the
     // guard's reach without editing this list.
-    const files = (await productionSources()).map((s) => s.file);
+    const files = (await scanProductionSources(EPUB_DIR)).map((s) => s.file);
     expect(files).toEqual(
       expect.arrayContaining([
         'counting-stream.ts',
@@ -58,8 +50,8 @@ describe('src/core/epub layer guard', () => {
   });
 
   it.each(FORBIDDEN)('contains no %s', async (_label, pattern) => {
-    const sources = await productionSources();
-    const offenders = sources.filter(({ source }) => pattern.test(source)).map(({ file }) => file);
+    const sources = await scanProductionSources(EPUB_DIR);
+    const offenders = sources.filter(({ code }) => pattern.test(code)).map(({ file }) => file);
     expect(offenders).toEqual([]);
   });
 });
