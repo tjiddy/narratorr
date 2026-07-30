@@ -6,6 +6,7 @@ import { v1PublicIdParamSchema, type V1PublicIdParam } from '@shared/schemas/v1/
 import type { BookService } from '../../services/book.service.js';
 import type { SettingsService } from '../../services/settings.service.js';
 import { findCompanionEbook } from '../../services/companion-ebook.repository.js';
+import { evaluateCompanionEbookGate } from '../../services/companion-ebook-gate.js';
 import { openCompanionEbook } from '../../services/companion-ebook-open.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
 import { Semaphore } from '../../utils/semaphore.js';
@@ -151,56 +152,58 @@ export async function v1CompanionEbookRoutes(
         async (request, reply) => {
           const { publicId } = request.params;
 
-          // AC6 — the flag is read FIRST, before the publicId is resolved. When the feature
-          // is off, NONE of the three book-existence reads runs (`resolveByPublicId`,
-          // `bookService.getById`, `findCompanionEbook`), so a disabled server cannot be used
-          // to probe whether a given publicId exists. `SettingsService.get` may itself hit the
-          // `settings` table on a cold cache — "no DB read at all" is not satisfiable and is
-          // not what the no-oracle property needs.
+          // The whole eight-rung ladder, shared with the owner file routes (#2013). This
+          // handler keeps only the v1 VOCABULARY — the helper returns a discriminated rejection
+          // and never a reply, so the frozen envelope below cannot leak into shared code.
           //
-          // AC11 — a REJECTION here propagates to `v1ErrorHandler`'s catch-all `500`. That is
-          // deliberately unlike `v1/capabilities.ts` (fail-closed to `enabled: false`) and
-          // `v1/books.ts`'s `loadCompanionContext` (degrade to `companionEbook: null`): both
-          // of those guard an ADDITIVE ENRICHMENT of a read that already worked, whereas this
-          // route's entire answer is the file. There is no degraded answer to give.
-          const { enabled } = await deps.settingsService.get('companionEpub');
-          if (!enabled) return reply.status(409).send(DISABLED_BODY);
-
+          // AC6 — the helper reads the flag FIRST, before the publicId is resolved. When the
+          // feature is off, NONE of the three book-existence reads runs (`resolveByPublicId`,
+          // `bookService.getById`, `findCompanionEbook`), so a disabled server cannot be used
+          // to probe whether a given publicId exists. That is why identity resolution is passed
+          // in as a THUNK rather than a resolved `bookId`: the helper invokes it after the flag
+          // read. `SettingsService.get` may itself hit the `settings` table on a cold cache —
+          // "no DB read at all" is not satisfiable and is not what the no-oracle property needs.
+          //
           // `resolveByPublicId` directly, NOT `fetchByPublicId`: the latter throws
           // `V1NotFoundError`, which the handler maps to `404 { code: 'NOT_FOUND' }` — the
           // wrong code for this route's frozen contract.
-          const bookId = await resolveByPublicId(db, books, publicId);
-          if (bookId === null) return unavailable(reply);
+          //
+          // The ADVERTISEMENT predicate, never the owner one (#2038): a `drm_protected` EPUB
+          // genuinely fails Amazon's Kindle converter, so this surface admits `available` only.
+          // The three terms are never re-spelled here — that drift is exactly what the named
+          // gates exist to prevent. `isCompanionEbookEligible` is deliberately NOT called: its
+          // filesystem term stats the book DIRECTORY, while the open helper's containment check
+          // on the FILE is the authority. Same decision as the owner download route.
+          //
+          // AC20 — the helper's own library read (rung 8) therefore still completes BEFORE the
+          // acquire below. Ordered the other way, a rejecting `get('library')` strands a slot
+          // permanently and the route answers `503` forever after N rejections, repairable only
+          // by a restart.
+          //
+          // AC11 — a REJECTION from any of those reads propagates to `v1ErrorHandler`'s
+          // catch-all `500`; the helper wraps none of them in a `catch`. That is deliberately
+          // unlike `v1/capabilities.ts` (fail-closed to `enabled: false`) and `v1/books.ts`'s
+          // `loadCompanionContext` (degrade to `companionEbook: null`): both of those guard an
+          // ADDITIVE ENRICHMENT of a read that already worked, whereas this route's entire
+          // answer is the file. There is no degraded answer to give.
+          const gated = await evaluateCompanionEbookGate({
+            settingsService: deps.settingsService,
+            bookService: deps.bookService,
+            resolveBookId: () => resolveByPublicId(db, books, publicId),
+            findObservation: (id) => findCompanionEbook(db, id),
+            isExposed: isCompanionEbookExposed,
+          });
 
-          const book = await deps.bookService.getById(bookId);
-          if (!book) return unavailable(reply);
-
-          // The SHARED predicate. The three terms (`enabled && imported && available`) are
-          // never re-spelled here — that drift is exactly what the helper exists to prevent.
-          // `isCompanionEbookEligible` is deliberately NOT called: its filesystem term stats
-          // the book DIRECTORY, while the open helper's containment check on the FILE is the
-          // authority. Same decision as the owner download route.
-          const observation = await findCompanionEbook(db, bookId);
-          if (!isCompanionEbookExposed({
-            enabled,
-            bookStatus: book.status,
-            observationStatus: observation?.status,
-          })) {
+          if ('rejection' in gated) {
+            // Feature-disabled is the ONE arm this surface distinguishes. Every book-shaped
+            // negative — no such book, row gone, not exposed, no filename, blank path —
+            // collapses into the single `unavailable` 404, because that distinction is
+            // precisely the existence oracle this endpoint must not become.
+            if (gated.rejection === 'disabled') return reply.status(409).send(DISABLED_BODY);
             return unavailable(reply);
           }
 
-          // Both narrow nullable columns that `ck_companion_ebooks_file_present` already makes
-          // non-null for an `available` row — unreachable in practice, expressible in the type.
-          const filename = observation?.filename;
-          if (!filename) return unavailable(reply);
-          if (!book.path || book.path.trim() === '') return unavailable(reply);
-
-          // AC20 — the library read happens BEFORE the acquire. Ordered the other way, a
-          // rejecting `get('library')` strands a slot permanently and the route answers `503`
-          // forever after N rejections, repairable only by a restart. Hoisting the read
-          // removes that failure window instead of guarding it with a `catch`, and reading the
-          // root has no bearing on concurrency, so nothing is lost.
-          const { path: libraryRoot } = await deps.settingsService.get('library');
+          const { bookId, bookPath, filename, libraryRoot } = gated.context;
 
           // `tryAcquire()`, never `acquire()` (AC19): saturation must answer immediately
           // rather than queue behind a multi-megabyte transfer. The returned token IS the
@@ -230,7 +233,7 @@ export async function v1CompanionEbookRoutes(
           // than on concurrent streams — the one thing the semaphore exists for. The release
           // rides the stream's teardown instead.
           const opened = await openCompanionEbook(
-            { bookId, bookPath: book.path, filename, libraryRoot },
+            { bookId, bookPath, filename, libraryRoot },
             request.log,
           );
           if (opened.outcome !== 'ok') {

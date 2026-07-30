@@ -9,6 +9,7 @@ import { inspectEpub } from '@core/epub/validate.js';
 import type { EpubInspection } from '@core/epub/result.js';
 import type { BookService, SettingsService } from '../services/index.js';
 import { findCompanionEbook } from '../services/companion-ebook.repository.js';
+import { evaluateCompanionEbookGate } from '../services/companion-ebook-gate.js';
 import { isCompanionEbookEligible } from '../services/companion-ebook-eligibility.js';
 import { findCompanionEbookCandidates } from '../services/companion-ebook-discovery.js';
 import { openCompanionEbook, resolveCompanionEbookPath } from '../services/companion-ebook-open.js';
@@ -190,19 +191,30 @@ interface ExposedCompanionContext {
 }
 
 /**
- * **The** owner-readable decision, at one site (PR #2010 F2).
+ * **The** owner-readable decision, at one site (PR #2010 F2) — now a thin adapter over the
+ * shared ladder in `services/companion-ebook-gate.ts` (#2013).
  *
- * `companionEpub.enabled` false → `409` · `bookService.getById` null → `404` ·
- * `isCompanionEbookOwnerReadable` false → `404` · `observation.filename` null → `404` ·
- * blank `books.path` → `404`. Then the library root, which every opener needs.
+ * The helper owns the eight rungs; this function owns only the OWNER vocabulary:
+ * `disabled` → the `409`, every other arm → the `404`. The v1 stream runs the same rungs and
+ * maps them to its own frozen envelope, which is why the shared code returns a discriminated
+ * rejection instead of a reply.
  *
- * **The owner gate, not the advertisement gate (#2038).** `isCompanionEbookOwnerReadable` admits
- * a stored `drm_protected` row as well as an `available` one; `isCompanionEbookExposed` — which
- * this module no longer calls at all — keeps `available` only for the public producers and the
- * public stream, because a DRM'd EPUB genuinely fails Kindle conversion. Serving the owner their
- * own bytes removes no DRM, and the classifier has been wrong about a real book, so the block
- * only ever converted a misclassification into denied access. The live term is unaffected: a
- * genuinely encrypted file still fails `inspectEpub` on both read routes below.
+ * **The owner gate, not the advertisement gate (#2038).** `isCompanionEbookOwnerReadable` —
+ * passed in as rung 5 — admits a stored `drm_protected` row as well as an `available` one;
+ * `isCompanionEbookExposed` keeps `available` only for the public producers and the public
+ * stream, because a DRM'd EPUB genuinely fails Kindle conversion. Serving the owner their own
+ * bytes removes no DRM, and the classifier has been wrong about a real book, so the block only
+ * ever converted a misclassification into denied access. The live term is unaffected: a
+ * genuinely encrypted file still fails `inspectEpub` on both read routes below. The predicate is
+ * a PARAMETER of the shared helper precisely so neither surface can inherit the other's gate.
+ *
+ * Rung 2 (identity resolution) is `async () => id` here: these routes already hold the numeric
+ * param, so the owner side issues no resolution read — but the rung still exists, because the
+ * shared helper must run it after the flag read for v1's no-oracle property.
+ *
+ * The shared context's `bookId` is DISCARDED: `ExposedCompanionContext` and its four consumers
+ * use the route's own `id`, and widening the route-local shape would touch code this refactor
+ * has no reason to touch.
  *
  * All three companion-file routes run this and only this: download applies
  * `openCompanionEbook` to the result, metadata and cover apply the resolver plus
@@ -223,26 +235,20 @@ async function loadExposedCompanionContext(
   reply: FastifyReply,
   id: number,
 ): Promise<{ context: ExposedCompanionContext } | { reply: FastifyReply }> {
-  const { enabled } = await deps.settingsService.get('companionEpub');
-  if (!enabled) return { reply: featureDisabled(reply) };
+  const gated = await evaluateCompanionEbookGate({
+    settingsService: deps.settingsService,
+    bookService: deps.bookService,
+    resolveBookId: async () => id,
+    findObservation: (bookId) => findCompanionEbook(db, bookId),
+    isExposed: isCompanionEbookOwnerReadable,
+  });
 
-  const book = await deps.bookService.getById(id);
-  if (!book) return { reply: notFound(reply) };
-
-  const observation = await findCompanionEbook(db, id);
-  if (!isCompanionEbookOwnerReadable({ enabled, bookStatus: book.status, observationStatus: observation?.status })) {
-    return { reply: notFound(reply) };
+  if ('rejection' in gated) {
+    return { reply: gated.rejection === 'disabled' ? featureDisabled(reply) : notFound(reply) };
   }
-  // Both narrow nullable columns that `ck_companion_ebooks_file_present` already makes non-null
-  // for every status this gate admits — it covers `available`, `invalid`, and `drm_protected`
-  // (`src/db/schema.ts`), so the DRM row #2038 added is as non-null as the `available` one.
-  // Unreachable in practice, expressible in the type.
-  const filename = observation?.filename;
-  if (!filename) return { reply: notFound(reply) };
-  if (!book.path || book.path.trim() === '') return { reply: notFound(reply) };
 
-  const { path: libraryRoot } = await deps.settingsService.get('library');
-  return { context: { bookPath: book.path, filename, libraryRoot } };
+  const { bookPath, filename, libraryRoot } = gated.context;
+  return { context: { bookPath, filename, libraryRoot } };
 }
 
 /**
