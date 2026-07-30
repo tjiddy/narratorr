@@ -152,6 +152,19 @@ export interface EpubOptions {
   store?: boolean | undefined;
 }
 
+/**
+ * The archive member {@link epubEntries} emits for the built book's one chapter —
+ * always beside the package document, so it moves with `packageName`.
+ *
+ * Single-homed because {@link drmProtectedEpub} has to name the same member: two
+ * independent copies of this join would let the DRM reference drift onto an entry
+ * the archive does not contain, which the classifier still calls `drm_protected`
+ * (see that helper's note), so the drift would be silent.
+ */
+function chapterEntryName(packageName: string): string {
+  return path.posix.join(path.posix.dirname(packageName), 'ch1.xhtml');
+}
+
 export function epubEntries(options: EpubOptions = {}): ArchiveEntrySpec[] {
   const packageName = options.packageName ?? DEFAULT_PACKAGE;
   const entries: ArchiveEntrySpec[] = [];
@@ -171,7 +184,7 @@ export function epubEntries(options: EpubOptions = {}): ArchiveEntrySpec[] {
   if (options.package !== false) {
     entries.push({ name: packageName, content: options.package ?? packageXml(options.packageOptions) });
   }
-  entries.push({ name: path.posix.join(path.posix.dirname(packageName), 'ch1.xhtml'), content: XHTML });
+  entries.push({ name: chapterEntryName(packageName), content: XHTML });
   if (options.encryption !== undefined) {
     entries.push({ name: 'META-INF/encryption.xml', content: options.encryption });
   }
@@ -185,6 +198,63 @@ export function epubEntries(options: EpubOptions = {}): ArchiveEntrySpec[] {
 
 export function buildEpub(options: EpubOptions = {}): Promise<Buffer> {
   return buildArchive({ store: options.store ?? false, entries: epubEntries(options) });
+}
+
+/**
+ * A `META-INF/encryption.xml` that encrypts **nothing** — a well-formed document
+ * with no `<EncryptedData>` at all, which the §4 classifier reads and then ignores.
+ *
+ * It exists for the byte-budget fixtures: `encryption.xml` is the fourth and last
+ * of the mandatory reads, so `padTo(EMPTY_ENCRYPTION_XML, n)` is how a suite buys a
+ * mandatory read of a chosen size without changing the verdict.
+ */
+export const EMPTY_ENCRYPTION_XML =
+  '<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"></encryption>';
+
+/** A realistic algorithm for a genuinely encrypted content document. Decorative — see below. */
+const DRM_ALGORITHM = 'http://www.w3.org/2001/04/xmlenc#aes128-cbc';
+
+/**
+ * `options` with `encryption` set to a `META-INF/encryption.xml` that encrypts the
+ * built book's own spine content document — the shape whose §4 verdict is
+ * `drm_protected`.
+ *
+ * **What actually drives the verdict** is the `<CipherReference URI="…">`: an
+ * unprefixed, non-empty `URI` resolving from the archive root to an entry that is
+ * not a manifest-declared, non-spined font. `EncryptionMethod`/`Algorithm` are read
+ * by nobody in the classifier — the hand-rolled copies this replaced disagreed on
+ * that attribute precisely because it does not matter — so the one here is for
+ * readability only.
+ *
+ * **The URI is derived, not hardcoded.** It names {@link chapterEntryName} for the
+ * effective `packageName`, so a caller relocating the package document keeps a
+ * reference that resolves. This matters more than it looks: a URI naming an entry
+ * absent from the archive ALSO reads `drm_protected`, because `isObfuscatedFont`
+ * answers `false` for a name it cannot find — so a stale reference would still
+ * produce the right verdict for the wrong reason.
+ *
+ * **Precedence: the helper wins.** A caller-supplied `encryption` is overwritten,
+ * so `drmProtectedEpub(x)` is `drm_protected` for every `x`. A suite that wants its
+ * own `encryption.xml` should set the option directly instead of calling this.
+ * Every other `EpubOptions` field is passed through untouched.
+ *
+ * **The archive must be valid on every structural axis.** §4 runs the encryption
+ * classifier LAST — after `mimetype`, `container.xml`, package resolution, the
+ * manifest and the linear spine — so composing this with, say,
+ * `packageOptions: { itemrefs: [] }` yields `empty_spine`, not `drm_protected`.
+ */
+export function drmProtectedEpub(options: EpubOptions = {}): EpubOptions {
+  const uri = chapterEntryName(options.packageName ?? DEFAULT_PACKAGE);
+  return {
+    ...options,
+    encryption:
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" ' +
+      'xmlns:enc="http://www.w3.org/2001/04/xmlenc#">' +
+      `<EncryptedData><EncryptionMethod Algorithm="${DRM_ALGORITHM}"/>` +
+      `<CipherData><CipherReference URI="${uri}"/></CipherData></EncryptedData>` +
+      '</encryption>',
+  };
 }
 
 // --- navigation document and NCX shapes -------------------------------------

@@ -149,10 +149,12 @@ function fakeStats(options: { isFile: boolean; size: number }): Stats {
 
 const {
   DEFAULT_PACKAGE,
+  EMPTY_ENCRYPTION_XML,
   EPUB_MEDIA_TYPE,
   XHTML,
   buildEpub,
   containerXml,
+  drmProtectedEpub,
   padTo,
 } = F;
 type EpubOptions = F.EpubOptions;
@@ -1366,6 +1368,84 @@ describe('encryption — mixed-reference precedence', () => {
       status: 'invalid',
       code: 'unsafe_entry_path',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * The shared `drmProtectedEpub()` fixture (#2041).
+ *
+ * Three suites used to hand-roll a `META-INF/encryption.xml` naming a content
+ * document, and none of them could see the verdict it produced: the route and e2e
+ * suites flatten every archive rejection to one 404, so a fixture that trips some
+ * *other* guard is indistinguishable there from one that works
+ * (`vacuous-assertion-observation-points`). This is the one suite that classifies
+ * an `encryption.xml` directly, so the shared fixture's contract is pinned here.
+ */
+describe('the shared drmProtectedEpub fixture', () => {
+  it('classifies drm_protected at the default package location', async () => {
+    expect(await validateBuilt(drmProtectedEpub())).toEqual({ status: 'drm_protected' });
+  });
+
+  it('tracks a non-default package directory rather than a hardcoded OEBPS/', async () => {
+    // AC2. `epubEntries` puts the chapter beside the package document, so a
+    // hardcoded `OEBPS/ch1.xhtml` would name an entry ABSENT from this archive —
+    // and an absent entry still reads `drm_protected` (`isObfuscatedFont` answers
+    // `false` when it cannot find the name). The verdict alone therefore cannot
+    // catch the drift; the reference itself is the observable that can.
+    const options = drmProtectedEpub({ packageName: 'EPUB/package.opf' });
+
+    expect(options.encryption).toContain('URI="EPUB/ch1.xhtml"');
+    expect(await validateBuilt(options)).toEqual({ status: 'drm_protected' });
+  });
+
+  it('composes with caller options, which survive into the built archive', async () => {
+    const options = drmProtectedEpub({
+      packageOptions: {
+        items: [...DEFAULT_ITEMS, { id: 'f1', href: 'Fonts/a.ttf', mediaType: 'font/ttf' }],
+      },
+      files: [{ name: 'OEBPS/Fonts/a.ttf', content: 'font' }],
+    });
+    const names = F.listCentralDirectory(await buildEpub(options)).map((entry) =>
+      entry.rawName.toString('utf8'),
+    );
+
+    expect(names).toContain('OEBPS/Fonts/a.ttf');
+    expect(await validateBuilt(options)).toEqual({ status: 'drm_protected' });
+  });
+
+  it('overrides a caller-supplied encryption — the helper wins', async () => {
+    // The documented precedence, pinned on the discriminating value: an
+    // `encryption.xml` that encrypts nothing classifies `available`, so the first
+    // assertion proves the second one can tell the two orders apart.
+    expect(await validateBuilt({ encryption: EMPTY_ENCRYPTION_XML })).toEqual({ status: 'available' });
+    expect(await validateBuilt(drmProtectedEpub({ encryption: EMPTY_ENCRYPTION_XML }))).toEqual({
+      status: 'drm_protected',
+    });
+  });
+
+  it('changes `encryption` and leaves every other EpubOptions field alone', () => {
+    // Typed `Required<EpubOptions>`, so a field added to the type fails to compile
+    // here rather than quietly escaping the assertion.
+    const everyField: Required<EpubOptions> = {
+      packageName: 'EPUB/package.opf',
+      mimetype: 'application/sentinel',
+      container: containerXml('EPUB/package.opf'),
+      containerFullPath: 'EPUB/sentinel.opf',
+      package: '<?xml version="1.0"?><package/>',
+      packageOptions: { padTo: 4096 },
+      encryption: EMPTY_ENCRYPTION_XML,
+      files: [{ name: 'sentinel.bin', content: 'sentinel' }],
+      mimetypeLast: true,
+      store: true,
+    };
+
+    const { encryption, ...rest } = drmProtectedEpub(everyField);
+    const { encryption: supplied, ...expected } = everyField;
+
+    expect(rest).toEqual(expected);
+    expect(encryption).not.toBe(supplied);
   });
 });
 
