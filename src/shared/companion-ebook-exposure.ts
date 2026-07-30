@@ -11,9 +11,35 @@ export interface CompanionEbookExposureInput {
 }
 
 /**
- * The single shared companion-ebook exposure predicate (#1958, plan §1/§2 frozen
- * contracts). The owner metadata route, both public producers, and the stream all
- * call THIS function — the three terms never appear together anywhere else.
+ * Terms 1–2 of both gates, spelled ONCE (#2038 AC1). The two exported predicates differ in
+ * exactly one thing — which stored observation statuses they admit — so that is the only thing
+ * parameterised here. Not exported: a caller choosing its own status set is precisely the
+ * per-call-site divergence the two named gates exist to prevent.
+ */
+function isCompanionEbookVisible(
+  input: CompanionEbookExposureInput,
+  permittedStatuses: readonly CompanionEbookStatus[],
+): boolean {
+  return (
+    input.enabled &&
+    input.bookStatus === 'imported' &&
+    input.observationStatus != null &&
+    permittedStatuses.includes(input.observationStatus)
+  );
+}
+
+/**
+ * The companion-ebook **advertisement** predicate (#1958, plan §1/§2 frozen contracts). Both
+ * public producers (`toCompanionEbookV1` and the metadata-search `library` annotation) and the
+ * public v1 stream call THIS function — the three terms never appear together anywhere else.
+ *
+ * **Advertisement only, and deliberately narrower than owner-readability since #2038.** The
+ * owner's own file routes ask a different question at a different trust boundary and call
+ * {@link isCompanionEbookOwnerReadable} instead. Nothing under `src/server/routes/v1/**` or
+ * `src/shared/schemas/v1/**` may call the owner gate: a `drm_protected` EPUB genuinely fails
+ * Amazon's Kindle converter, so advertising one to a consumer would promise a conversion that
+ * cannot happen. `companion-ebook-exposure.test.ts` pins the two as a relation — the implication
+ * plus the computed one-element difference set — so neither can drift into the other.
  *
  * **This helper decides advertisement, not readability.** It is terms 1–3 of the frozen
  * four-term predicate; term 4 — the live open (`lstat` regular-file + containment) — is
@@ -42,5 +68,34 @@ export interface CompanionEbookExposureInput {
  * An absent observation (`null`/`undefined`) is `false`, never a throw.
  */
 export function isCompanionEbookExposed(input: CompanionEbookExposureInput): boolean {
-  return input.enabled && input.bookStatus === 'imported' && input.observationStatus === 'available';
+  return isCompanionEbookVisible(input, ['available']);
+}
+
+/**
+ * The companion-ebook **owner-readability** predicate (#2038). The three owner file routes —
+ * download, metadata, and cover — call THIS function, at the single shared call site in
+ * `loadExposedCompanionContext`.
+ *
+ * It differs from {@link isCompanionEbookExposed} in one term and one term only: a stored
+ * `drm_protected` row is owner-readable. The reasoning is not symmetric with advertisement, so
+ * the two gates are not:
+ *
+ * - **Serving the bytes removes no DRM.** The file is already on the owner's disk, and a
+ *   genuinely DRM'd book still opens only in the DRM-holder's own reader. Nothing about the
+ *   owner download turns an encrypted EPUB into a readable one.
+ * - **The classifier can be wrong, and was.** §4's `encryption.xml` and ZIP-bit rules read a
+ *   legitimately obfuscated-font EPUB as DRM'd on the second real book they ever saw. Under one
+ *   shared gate that misclassification denied the owner access to a perfectly good file; under
+ *   this one the download works and the read routes recover on the live inspection.
+ * - **Kindle is the asymmetry.** A DRM'd EPUB genuinely fails Amazon's converter, so the public
+ *   surface that feeds send-to-Kindle keeps advertising `available` only.
+ *
+ * **It is still necessary, not sufficient**, in exactly the way the advertisement gate is: term 4
+ * stays the caller's. For download that is `openCompanionEbook`'s live open; for metadata and
+ * cover it is `inspectEpub`, which returns its own `drm_protected` arm for an encrypted spine or
+ * content document and 404s there. Widening the STORED-status gate therefore cannot expose
+ * encrypted content — a genuinely DRM'd file still fails the live term on both read routes.
+ */
+export function isCompanionEbookOwnerReadable(input: CompanionEbookExposureInput): boolean {
+  return isCompanionEbookVisible(input, ['available', 'drm_protected']);
 }
