@@ -1719,17 +1719,11 @@ describe('public surface and guardrails', () => {
   // scope automatically and with no edit. Re-scanning the folder to prove that
   // would restate the selection decision #2000 gave a single home.
 
-  it('leaves the ebook-only search guard byte-for-byte unchanged', async () => {
-    const { readFile } = await import('node:fs/promises');
-    const source = await readFile(
-      path.join(import.meta.dirname, '../../server/services/search-pipeline.ts'),
-      'utf8',
-    );
-
-    expect(source).toContain(
-      'const EBOOK_FORMAT_RE = /(?<![a-zA-Z\\d])(azw3|epub|pdf|mobi)(?![a-zA-Z\\d])/i;',
-    );
-  });
+  // The `leaves the ebook-only search guard byte-for-byte unchanged` test that sat here was a
+  // character-identical copy of validate.test.ts's (which carries the rationale comment and
+  // survives as the single home). Deleted in #2050 — a duplicated guard adds runtime, not
+  // protection; the invariant (Narratorr observes a companion ebook, never acquires one) is
+  // still pinned by the surviving copy.
 
   it('keeps MAX_INSPECTION_BYTES the aggregate ceiling the budget arithmetic assumes', async () => {
     // The four mandatory reads are each ceilinged at `MAX_XML_BYTES`, and the

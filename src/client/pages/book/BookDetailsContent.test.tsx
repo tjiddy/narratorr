@@ -56,6 +56,28 @@ function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
   return createMockBook({ audioCodec: 'AAC', ...overrides });
 }
 
+// #2043 — the standing no-real-network guard from `vimock-barrel-replace-drops-named-exports`,
+// copied from BookPage.test.tsx. The api mock above spreads `actual.api`, so an unstubbed
+// method a child newly reaches issues a GENUINE jsdom fetch that degrades silently. The render
+// carries a path so the Ebook panel (the newest query-firing child) mounts too.
+describe('BookDetailsContent — no real network', () => {
+  it('issues no real network request while rendering with every section mounted', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      renderWithProviders(
+        <BookDetailsContent
+          libraryBook={makeBook({ status: 'imported', path: '/library/book', seriesName: 'Stormlight' })}
+          merged={{ genres: ['Fantasy'] }}
+        />,
+      );
+      await waitFor(() => expect(screen.getByRole('heading', { name: /^location$/i })).toBeInTheDocument());
+      await waitFor(() => expect(fetchSpy.mock.calls.map((call) => String(call[0]))).toEqual([]));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
 describe('BookDetailsContent — Location section wiring', () => {
   it('renders the Location section when libraryBook.path is a non-empty string', () => {
     renderWithProviders(

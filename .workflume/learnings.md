@@ -1309,3 +1309,22 @@ the next test (`vitest-clearallmocks-once-queue`), and a call-index counter desy
 test sends a second request — which is every concurrency/saturation test. Reference: `setDb()` in
 `src/server/routes/v1/companion-ebook.test.ts`, used by tests issuing up to 5 concurrent requests.
 Applies to any v1 route that resolves a publicId and then reads a second table.
+
+## createtestapp-omits-auth-plugin
+
+**source:** #2034  
+**added:** 2026-07-30  
+**files:** src/server/__tests__/helpers.ts  
+**tags:** fastify, csrf, test-helpers, auth, vitest
+
+---
+
+`createTestApp` (`src/server/__tests__/helpers.ts:40-57`) registers only `errorHandlerPlugin` and `registerRoutes` — NOT `authPlugin`. So through the shared route-test app, `request.user` is never set, the `/api/*` authentication hook never runs, and `enforceCsrf` (`src/server/plugins/auth.ts:34-40`) never runs. A non-safe method missing `X-Requested-With: XMLHttpRequest` returns its normal 2xx, not 403.
+
+**The trap:** a CSRF assertion written against `createTestApp` in the loose form (`expect(res.statusCode).not.toBe(403)`) passes vacuously — the gate it claims to exercise is not installed. Only the strict form (`expect(res.statusCode).toBe(403)`) fails loudly enough to reveal the gap. `enforceCsrf` is reached solely from `auth.ts:254`, gated on `status.mode === 'basic'` AND `request.user` being populated by `handleBasicAuth`, so both the plugin and a credentialed request are required.
+
+**The recipe** for auth/CSRF cases in a route suite — build a dedicated instance: `Fastify({ logger: false })` → `setValidatorCompiler`/`setSerializerCompiler` from `fastify-type-provider-zod` → register `@fastify/cookie` → `errorHandlerPlugin` → `authPlugin` with `{ authService }` whose `getStatus` resolves `{ mode: 'basic', hasUser: true, localBypass: false }` and `verifyCredentials` resolves a user → then the route factory directly. `withTypeProvider` is type-level only and can be dropped when the factory is reached through a cast.
+
+Because `BASE_PUBLIC_ROUTES` (`auth.ts:17-23`) is module-private, "this route is not public" is assertable only as a 401 on an uncredentialed request. Worked references: `src/server/routes/system.test.ts:1066-1098`, `src/server/routes/auth.test.ts:816`, `src/server/routes/companion-ebook.test.ts:1455-1520`. The same absence is why that harness is now hand-rolled in three route suites.
+
+Related: [[vacuous-assertion-observation-points]] — a distinct mechanism (the harness omits the middleware entirely, rather than the observation point being unable to see a wired property), so it may belong as a further section of that entry.

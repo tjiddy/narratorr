@@ -39,6 +39,10 @@ vi.mock('@/lib/api', async (importOriginal) => {
     ...actual,
     api: {
       ...actualApi,
+      // Caught by the #2043 no-real-network guard on its FIRST run: this suite never
+      // stubbed getBookSeries, so SeriesCard issued a genuine jsdom fetch
+      // (/api/books/1/series) in every test — silently, until the guard existed.
+      getBookSeries: vi.fn().mockResolvedValue({ series: null }),
       getBookFiles: vi.fn(),
       updateBook: vi.fn(),
       renameBook: vi.fn(),
@@ -132,6 +136,22 @@ const RETAG_PLAN_FIXTURE = {
 };
 
 describe('BookDetails', () => {
+  // #2043 — the standing no-real-network guard from `vimock-barrel-replace-drops-named-exports`,
+  // copied from BookPage.test.tsx where it caught three escapees. This suite's api mock spreads
+  // `actual.api`, so any method a child newly reaches and nobody stubs issues a GENUINE jsdom
+  // fetch that degrades silently. Mount-time escapees (the only class observed so far) call
+  // fetch during the first render, so asserting after the settled render catches them.
+  it('issues no real network request while rendering the fully-loaded details', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      renderBookDetails();
+      await waitFor(() => expect(screen.getByText('The Way of Kings')).toBeInTheDocument());
+      await waitFor(() => expect(fetchSpy.mock.calls.map((call) => String(call[0]))).toEqual([]));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockNavigate.mockClear();
