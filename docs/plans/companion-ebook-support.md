@@ -187,8 +187,10 @@ A one-to-one `companion_ebooks` table keyed by `book_id`, cascading FK to `books
 The separate table remains right (v1 **D-1**, 11/12 then, unchallenged by all twelve lenses now):
 `books` is written by five paths doing partial-column updates; `book-list.service.ts:151-158` selects
 via `getTableColumns(books)` and `getSlimBookColumns()` exists *because* the team already had to shed
-columns from list projections; and the payload is a four-state observation with provenance and two
-distinct timestamps.
+columns from list projections; and the payload is a five-state observation with provenance and two
+distinct timestamps. *[Corrected 2026-07-29, #1966: this sentence predated the `drm_protected`
+split and said "four-state"; the §2 column table and Decision 7's five-value list were always the
+authority and win over any prose count.]*
 
 | Column | Notes |
 |---|---|
@@ -595,6 +597,20 @@ first row. Verified by injecting the mock into the live app.
 | `invalid` | `Not readable` | the filename, then "This isn't a valid EPUB: it has no reading order. If it's still copying, wait and rescan." |
 | `drm_protected` | `DRM-protected` | size, then "Its chapters are encrypted. Narratorr won't remove DRM, so this can't be downloaded or sent to Kindle." |
 
+*[Shipped divergences from this table, 2026-07-29 — Todd's calls during the first live UAT, made
+interactively (UI work stays out of the pipeline). The shipped panel is the authority; this table
+is kept as the original design record:*
+- *The **filename renders** on `available` and `drm_protected` as the card's identity line
+  (truncated, full name in the tooltip). The original design showed it only on `invalid`; once a
+  selection exists the filename is the only disambiguator for which file won.*
+- ***Download EPUB** is no longer an in-card text link — it is a header ICON in the Series-card
+  idiom. On `drm_protected` it renders DISABLED with tooltip "DRM-protected: download unavailable"
+  rather than absent.*
+- *A **re-check arrow** (#2034, not in this design) sits beside it in every state, wired to
+  `POST /companion-epub/refresh` with a bounded post-202 poll window and a minimum visible spin.*
+- *`size · chapter count` remains size-only — the count is #2022, parked: `/metadata` cannot yet
+  bind its response to the `/state` row rendered beside it.]*
+
 Settings row: section **Ebooks**, toggle **Enable ebook support**, visible description "Show ebooks
 stored alongside your audiobooks, ready to download from the book page.", with the `InfoTip` carrying
 "Ebooks need to already be in the book's folder. Narratorr doesn't search for or download them." plus
@@ -617,8 +633,11 @@ server-issued candidate index — never a filename or path from the client.
 **No `ineligible` state, and no exception.** Of v2's four reason codes, `book_not_imported` and
 `no_path` cannot occur when the panel renders only on imported books, and `outside_library_root` is a
 misconfiguration. The fourth, `file_backed`, was investigated and is **effectively unreachable**:
-`scanDirectory` (`library-scan.service.ts:232-235`) calls `discoverBooks(rootPath)` and iterates
-`folder.folderParts`, so the manual-import scanner only ever offers **folders** as candidates. A
+`scanDirectory` (`library-scan.service.ts:278-328` — `discoverBooks(rootPath)` at `:281`,
+`folder.folderParts` at `:328`; the walk itself is `book-discovery.ts:60-68,89-96,105-139`) only
+ever offers **folders** as candidates. *[Citation refreshed 2026-07-29, #2018: the original
+`:232-235` range now documents path reconciliation; the folder-only claim itself is unchanged and
+was re-verified against the tree.]* A
 file-valued `books.path` would require a hand-crafted API call. The **eligibility guard stays in
 code** — `books.path` is nullable, legacy rows exist, and the resolver must fail closed — but it gets
 no user-facing state. When the feature does not apply, the section is simply absent. [R2-112]
@@ -743,9 +762,17 @@ false and the consumer confirmed it against their own code (decision A, resolved
 Requests polls Narratorr books **only** for `acquiring` requests, at which point the book is not yet
 `imported`, so §3's eligibility rule forces `null` on every poll that happens; the one call where it
 could be non-null is the `acquiring → available` transition, whose payload `applyBook()`
-(`requests:request.service.ts:543-547`) discards apart from `{ status, narratorrBookId }`. Build it —
+(`requests:request.service.ts:525-545`) discards apart from `{ status, narratorrBookId }`. Build it —
 it is additive, contract-stable substrate — but **1.4's ACs must state that its only Phase-1
 consumer is a test.** The live surface is the nested annotation above. [R2-3]
+
+*[Evidence pinned 2026-07-29, #1977: this record originally cited only unversioned coordinates. The
+claim was re-verified against narratorr-requests `main` AFTER its companion-ebook slate shipped
+(PRs #179/#182/#186/#191, all merged 2026-07-29 — the Get-eBook affordances, Send-to-Kindle
+service/sheet, and the cross-app integration suite): `applyBook` still persists only
+`{ status, narratorrBookId }` and nothing under `src/server/` reads `companionEbook` — the readers
+are the client's `EbookSheet`/`BookCard`, i.e. the nested SEARCH annotation exactly as this record
+predicted. The dormancy held through the consumer actually shipping.]*
 
 ### `GET /api/v1/books/:publicId/companion-epub`
 
