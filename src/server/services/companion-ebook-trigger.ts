@@ -9,7 +9,8 @@ import { serializeError } from '../utils/serialize-error.js';
  * `Pick<LibraryScanService, 'rescanLibrary'>` and `Pick<SettingsService, 'get'>`.
  *
  * No seam uses both: import completion, Refresh & Scan, the two per-book rename callers,
- * wrong-release, and the three opener mismatch arms fire {@link CompanionBookReconcileTrigger};
+ * wrong-release, and the read-path arms that could not serve a file fire
+ * {@link CompanionBookReconcileTrigger};
  * the rescan wrapper, bulk rename, and `PUT /api/settings` fire {@link CompanionSweepTrigger}.
  * `CompanionEbookReconciler` satisfies both, so production wiring is unchanged.
  */
@@ -29,8 +30,8 @@ export interface CompanionSweepTrigger {
 /**
  * Fire a companion-ebook reconcile from a trigger seam and return IMMEDIATELY. The ONE home
  * for that shape — every seam #1960 wires (import completion, the rescan wrapper, Refresh &
- * Scan, the three rename callers, wrong-release, `PUT /api/settings`, and each opener's
- * mismatch arm) goes through it.
+ * Scan, the three rename callers, wrong-release, `PUT /api/settings`, and each read path that
+ * could not serve the file) goes through it.
  *
  * **This function never throws.** `fireAndForget` catches a REJECTION but evaluates its
  * argument eagerly, so a reconciler that throws SYNCHRONOUSLY escapes it entirely
@@ -52,9 +53,9 @@ function fire(run: () => Promise<void>, log: FastifyBaseLogger, context: string)
  * `force` (#2034) skips the observer's fingerprint short-circuit, so a stale verdict on an
  * UNCHANGED file gets re-judged. Pass it only where a user pointed at this one book — today that
  * is Refresh & Scan and the companion refresh endpoint, and nothing else. Every other seam
- * (import completion, the three rename callers, wrong-release, and the two opener mismatch arms)
- * omits it: the mismatch arms in particular fire once per REQUEST, so forcing there would put a
- * full `validateEpub` on an unbounded request-rate path.
+ * (import completion, the three rename callers, wrong-release, and the read paths that could not
+ * serve a file) omits it: those read-path arms in particular fire once per REQUEST, so forcing
+ * there would put a full `validateEpub` on an unbounded request-rate path.
  */
 export function triggerCompanionReconcile(
   reconciler: CompanionBookReconcileTrigger | null | undefined,

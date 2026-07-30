@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Db } from '@db/index.js';
 import { idParamSchema } from '@shared/schemas/common.js';
-import { isCompanionEbookExposed } from '@shared/companion-ebook-exposure.js';
+import { isCompanionEbookOwnerReadable } from '@shared/companion-ebook-exposure.js';
 import type { CompanionEbookStatus } from '@shared/schemas/companion-ebook.js';
 // Deep path, never a `core/index.js` barrel — the same rule `companion-ebook-observe.ts` follows.
 import { inspectEpub } from '@core/epub/validate.js';
@@ -75,10 +75,16 @@ function logOutcome(request: FastifyRequest, bookId: number, outcome: string, me
 }
 
 /**
- * Self-healing on a read-path mismatch (#1960 AC26–AC29). The stored row said the file was
- * there and the live filesystem disagreed — in a watcherless design this request IS the only
- * signal that the observation went stale, so it enqueues a reconcile for that book before
- * returning its error.
+ * Self-healing when a read path cannot serve the file (#1960 AC26–AC29). In a watcherless
+ * design this request IS the only signal that the stored observation may be stale, so it
+ * enqueues a reconcile for that book before returning its error.
+ *
+ * **Not strictly a stored/live MISMATCH since #2038**, which is why the name and this docstring
+ * say "read unavailable" instead. A stored `drm_protected` row now passes the owner gate, so a
+ * genuinely DRM'd file reaches the inspection term and re-enqueues here while the stored row and
+ * the live file AGREE. The re-observation is still the right response — it is what confirms the
+ * verdict is current, and it is the only way a stale DRM verdict on a since-replaced file gets
+ * corrected — but nothing here may be read as "the two disagreed".
  *
  * **Sited at the CALLERS, never inside `resolveCompanionEbookPath` / `openCompanionEbook`
  * (AC29).** `CompanionEbookReconciler` calls the resolver itself from inside
@@ -88,17 +94,21 @@ function logOutcome(request: FastifyRequest, bookId: number, outcome: string, me
  * Fire-and-forget and never awaited, so HTTP behaviour is byte-identical: same status, same
  * body, same latency, and a rejecting reconciler cannot turn a 404 into a 500 (AC28).
  *
- * **Accepted characteristic (AC31):** every mismatched request enqueues its OWN book run —
+ * **Accepted characteristic (AC31):** every such request enqueues its OWN book run —
  * `reconcileBook` registers a fresh run per call and `withBookAdmissionLock` only SERIALIZES
  * those runs; nothing merges them. Only `reconcileAll()` coalesces and it is not on this path.
- * Cases that write a non-`available` status self-limit (the exposure gate closes before the
- * next request reaches the opener); the ones that skip-or-retain without a write re-enqueue on
- * every request, bounded by one eligibility probe each — zero filesystem calls when
- * containment rejects lexically, one `stat` when the directory probe rejects, and a bounded
- * `readdir` only for books that are actually eligible.
+ * The taxonomy is two buckets. Cases that write a status this gate does NOT admit self-limit
+ * (the owner gate closes before the next request reaches the opener); the ones that skip, retain,
+ * or write a status the gate DOES admit re-enqueue on every request, bounded by one eligibility
+ * probe each — zero filesystem calls when containment rejects lexically, one `stat` when the
+ * directory probe rejects, and a bounded `readdir` only for books that are actually eligible.
+ *
+ * `drm_protected` moved buckets in #2038: a stored-DRM row over a genuinely DRM'd file used to
+ * self-limit and now sits in the second bucket, re-enqueueing per read-route request under the
+ * same bound. Nothing in the shipped UI drives it — the panel fetches neither read route.
  */
-function enqueueMismatchReconcile(deps: CompanionEbookRouteDeps, bookId: number, request: FastifyRequest): void {
-  triggerCompanionReconcile(deps.reconciler, bookId, request.log, 'Companion ebook reconcile failed after a read-path mismatch');
+function enqueueReadUnavailableReconcile(deps: CompanionEbookRouteDeps, bookId: number, request: FastifyRequest): void {
+  triggerCompanionReconcile(deps.reconciler, bookId, request.log, 'Companion ebook reconcile failed after an unavailable read');
 }
 
 /** Project a stored row (or the absence of one) as the display-only payload — no `readdir`. */
@@ -180,8 +190,16 @@ interface ExposedCompanionContext {
  * **The** owner-readable decision, at one site (PR #2010 F2).
  *
  * `companionEpub.enabled` false → `409` · `bookService.getById` null → `404` ·
- * `isCompanionEbookExposed` false → `404` · `observation.filename` null → `404` ·
+ * `isCompanionEbookOwnerReadable` false → `404` · `observation.filename` null → `404` ·
  * blank `books.path` → `404`. Then the library root, which every opener needs.
+ *
+ * **The owner gate, not the advertisement gate (#2038).** `isCompanionEbookOwnerReadable` admits
+ * a stored `drm_protected` row as well as an `available` one; `isCompanionEbookExposed` — which
+ * this module no longer calls at all — keeps `available` only for the public producers and the
+ * public stream, because a DRM'd EPUB genuinely fails Kindle conversion. Serving the owner their
+ * own bytes removes no DRM, and the classifier has been wrong about a real book, so the block
+ * only ever converted a misclassification into denied access. The live term is unaffected: a
+ * genuinely encrypted file still fails `inspectEpub` on both read routes below.
  *
  * All three companion-file routes run this and only this: download applies
  * `openCompanionEbook` to the result, metadata and cover apply the resolver plus
@@ -192,8 +210,9 @@ interface ExposedCompanionContext {
  *
  * `isCompanionEbookEligible` is deliberately NOT called: its filesystem term is a `stat` of
  * the book DIRECTORY, and the opener's containment check on the FILE is the authority. That is
- * a decision, not an oversight. The exposure predicate is likewise never re-spelled inline —
- * re-deriving `enabled && imported && available` is the exact drift it exists to prevent.
+ * a decision, not an oversight. Neither gate is ever re-spelled inline — re-deriving
+ * `enabled && imported && <status set>` is the exact drift they exist to prevent, and with two
+ * of them an inline copy would also silently pick a status set.
  */
 async function loadExposedCompanionContext(
   deps: CompanionEbookRouteDeps,
@@ -208,11 +227,13 @@ async function loadExposedCompanionContext(
   if (!book) return { reply: notFound(reply) };
 
   const observation = await findCompanionEbook(db, id);
-  if (!isCompanionEbookExposed({ enabled, bookStatus: book.status, observationStatus: observation?.status })) {
+  if (!isCompanionEbookOwnerReadable({ enabled, bookStatus: book.status, observationStatus: observation?.status })) {
     return { reply: notFound(reply) };
   }
-  // Both narrow nullable columns that `ck_companion_ebooks_file_present` already makes
-  // non-null for an `available` row — unreachable in practice, expressible in the type.
+  // Both narrow nullable columns that `ck_companion_ebooks_file_present` already makes non-null
+  // for every status this gate admits — it covers `available`, `invalid`, and `drm_protected`
+  // (`src/db/schema.ts`), so the DRM row #2038 added is as non-null as the `available` one.
+  // Unreachable in practice, expressible in the type.
   const filename = observation?.filename;
   if (!filename) return { reply: notFound(reply) };
   if (!book.path || book.path.trim() === '') return { reply: notFound(reply) };
@@ -257,7 +278,7 @@ async function loadCompanionInspection(
   );
   if (resolved.outcome !== 'ok') {
     logOutcome(request, id, resolved.outcome, 'Companion ebook read unavailable');
-    enqueueMismatchReconcile(deps, id, request);
+    enqueueReadUnavailableReconcile(deps, id, request);
     return { reply: notFound(reply) };
   }
 
@@ -273,7 +294,7 @@ async function loadCompanionInspection(
     // containment, so anything arriving here is transient, and §4's accepted answer for the
     // stale window is a clean 404.
     logOutcome(request, id, 'inspect_failed', 'Companion ebook inspection failed');
-    enqueueMismatchReconcile(deps, id, request);
+    enqueueReadUnavailableReconcile(deps, id, request);
     // Logged ONCE at debug, in the established helper shape, so the failure stays diagnosable
     // under `LOG_LEVEL=debug` while the default-level boundary record stays path-free.
     // `serializeError` is mandatory — `narratorr/no-raw-error-logging` traces catch bindings.
@@ -285,10 +306,17 @@ async function loadCompanionInspection(
   }
 
   if (inspection.status !== 'available') {
-    // The stored row said `available` and the live file disagrees — the §4 stale-window
+    // The live file cannot be served, whatever the stored row says — the §4 stale-window
     // outcome, not an error class of its own.
-    logOutcome(request, id, inspection.status, 'Companion ebook inspection did not agree with the stored row');
-    enqueueMismatchReconcile(deps, id, request);
+    //
+    // Two shapes reach here, and only the first is a disagreement (#2038). A stored `available`
+    // row over a file that has since gone bad is the original case. A stored `drm_protected` row
+    // over a genuinely DRM'd file is the case the owner gate now admits: the row and the live
+    // file AGREE, and the request still 404s — because the read routes serve DECRYPTED content
+    // (parsed metadata, extracted cover bytes) and there is none to serve. The download route
+    // has no such term and streams the file, which is the whole point of the split.
+    logOutcome(request, id, inspection.status, 'Companion ebook inspection did not yield a readable file');
+    enqueueReadUnavailableReconcile(deps, id, request);
     return { reply: notFound(reply) };
   }
 
@@ -410,10 +438,12 @@ const SELECTION_FAILURE_RESPONSES: Record<SelectionFailure, (reply: FastifyReply
  * — not the route — owns the inputs `isCompanionEbookEligible` and the resolver require. The
  * route gate is a cheap early-out, not the authority.
  *
- * **`isCompanionEbookExposed` is deliberately NOT consulted.** An `ambiguous` row is by
- * definition not `available`, so the exposure predicate is false for every row this route
- * exists to act on; a handler copied from the read ladder would make the picker permanently
- * 404. Eligibility is evaluated once, inside the lock, never here.
+ * **Neither exposure gate is deliberately consulted.** An `ambiguous` row is by definition
+ * neither `available` nor `drm_protected`, so both `isCompanionEbookExposed` and
+ * `isCompanionEbookOwnerReadable` are false for every row this route exists to act on; a handler
+ * copied from the read ladder would make the picker permanently 404. Widening the owner gate in
+ * #2038 did not change that — `ambiguous` is outside both status sets. Eligibility is evaluated
+ * once, inside the lock, never here.
  *
  * CSRF is ambient: `enforceCsrf` requires `X-Requested-With: XMLHttpRequest` on every non-safe
  * method and `fetchApi` already sends it, so there is no per-route CSRF wiring.
@@ -466,8 +496,10 @@ async function handleCompanionEpubSelection(
  * `409`, unknown book → `404`. `isCompanionEbookEligible` is deliberately NOT called — the
  * reconciler re-evaluates it inside the admission lock, which is the authority; a second answer
  * here would cost a `stat` and could already have drifted by the time the lock is taken.
- * `isCompanionEbookExposed` is likewise never consulted: the rows this endpoint exists to re-judge
- * are precisely the ones that are NOT `available`.
+ * Neither exposure gate is consulted either, and for a different reason than the selection `PUT`'s:
+ * this endpoint is status-AGNOSTIC. The panel renders its re-check control in every state, so it
+ * must be able to re-judge any current verdict — `available` included, which is the false-DRM
+ * incident in reverse.
  *
  * `202`, not `200`: the reconcile is fire-and-forget and never awaited, so the response says
  * "accepted", not "done". There is deliberately no completion token — a client learns the outcome
@@ -546,7 +578,7 @@ export async function companionEbookRoutes(
       );
       if (opened.outcome !== 'ok') {
         logOutcome(request, id, opened.outcome, 'Companion ebook download unavailable');
-        enqueueMismatchReconcile(deps, id, request);
+        enqueueReadUnavailableReconcile(deps, id, request);
         return notFound(reply);
       }
 
