@@ -1,6 +1,7 @@
 import { useLayoutEffect, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/Badge';
+import { DownloadIcon } from '@/components/icons';
 import { api, ApiError, formatBytes, type CompanionEbookCandidate, type CompanionEbookState } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import {
@@ -9,6 +10,7 @@ import {
   BADGE_VARIANTS,
   DOWNLOAD_LABEL,
   DRM_BODY,
+  DRM_DOWNLOAD_DISABLED_TITLE,
   NONE_BODY_CODE,
   NONE_BODY_PREFIX,
   NONE_BODY_SUFFIX,
@@ -24,27 +26,35 @@ function Row({ children, muted }: { children: ReactNode; muted?: boolean }) {
   return <p className={muted ? 'text-sm text-muted-foreground' : 'text-sm'}>{children}</p>;
 }
 
-function AvailableBody({ bookId, sizeBytes }: { bookId: number; sizeBytes: number | null }) {
+/**
+ * The filename as the card's identity line, truncated with the full name in a tooltip.
+ * `available` and `drm_protected` render it — "which file" is the panel's identity (and the
+ * only disambiguator once a selection has happened). `invalid` keeps its own muted variant
+ * below with its own rationale (actionable, not identity); the two are deliberately not
+ * unified because they answer different questions at different visual weights.
+ */
+function FilenameRow({ filename }: { filename: string | null }) {
+  if (filename === null) return null;
+  return (
+    <Row>
+      <span className="block truncate" title={filename}>{filename}</span>
+    </Row>
+  );
+}
+
+function AvailableBody({ filename, sizeBytes }: { filename: string | null; sizeBytes: number | null }) {
   return (
     <>
+      <FilenameRow filename={filename} />
       {/* `sizeBytes !== null`, never a truthiness test: `0` is a known size and
           `formatBytes(0)` deliberately returns "0 B", which a `?` guard would erase.
           When it IS null the row is omitted entirely rather than formatted — `formatBytes`
           reports "0 B" for a nullish argument, a confident falsehood about a file that exists.
           No chapter count here: §7 specifies `size · chapter count`, but the count needs a
-          server change first, so this row is a single value, not a joined parts array. */}
+          server change first (#2022), so this row is a single value, not a joined parts array.
+          No download link here either: the action moved to the section header's icon row
+          (Series-card idiom) — the card body is purely informational. */}
       {sizeBytes !== null && <Row muted>{formatBytes(sizeBytes)}</Row>}
-      <Row>
-        {/* A real anchor, not a fetch-to-blob, and the href carries `URL_BASE` — a bare
-            `/api/...` href silently breaks every sub-path deployment. */}
-        <a
-          href={api.getCompanionEbookDownloadUrl(bookId)}
-          download
-          className="font-medium text-primary hover:text-primary/80 underline decoration-primary/30 underline-offset-2 hover:decoration-primary/60 transition-colors focus-ring rounded"
-        >
-          {DOWNLOAD_LABEL}
-        </a>
-      </Row>
     </>
   );
 }
@@ -76,9 +86,10 @@ function InvalidBody({ filename, validationCode }: { filename: string | null; va
   );
 }
 
-function DrmBody({ sizeBytes }: { sizeBytes: number | null }) {
+function DrmBody({ filename, sizeBytes }: { filename: string | null; sizeBytes: number | null }) {
   return (
     <>
+      <FilenameRow filename={filename} />
       {sizeBytes !== null && <Row muted>{formatBytes(sizeBytes)}</Row>}
       <Row>{DRM_BODY}</Row>
     </>
@@ -141,7 +152,7 @@ function StateBody({ bookId, state, selection }: {
 }) {
   switch (state.status) {
     case 'available':
-      return <AvailableBody bookId={bookId} sizeBytes={state.sizeBytes} />;
+      return <AvailableBody filename={state.filename} sizeBytes={state.sizeBytes} />;
     case 'none':
       return <NoneBody />;
     case 'ambiguous':
@@ -149,8 +160,54 @@ function StateBody({ bookId, state, selection }: {
     case 'invalid':
       return <InvalidBody filename={state.filename} validationCode={state.validationCode} />;
     case 'drm_protected':
-      return <DrmBody sizeBytes={state.sizeBytes} />;
+      return <DrmBody filename={state.filename} sizeBytes={state.sizeBytes} />;
   }
+}
+
+/**
+ * The header's download affordance (Series-card icon idiom, w-4 h-4 muted). Three shapes:
+ *
+ * - `available` → a real anchor, not a fetch-to-blob, and the href carries `URL_BASE` — a
+ *   bare `/api/...` href silently breaks every sub-path deployment. Accessible name stays
+ *   `DOWNLOAD_LABEL`, so tests and screen readers see the same control that used to live in
+ *   the card body.
+ * - `drm_protected` → DISABLED button, not absent: "there is a download here and it is
+ *   blocked" communicates more than silence, and the tooltip carries the why. It must stay a
+ *   non-anchor while the server's exposure gate is `available`-only — an enabled link here
+ *   would 404.
+ * - everything else → nothing. `none` has no file, `ambiguous` has no chosen file, and
+ *   `invalid`'s file is not servable; absence is accurate there, unlike DRM's "blocked".
+ *
+ * #2034's refresh arrow lands beside this when its endpoint ships.
+ */
+function HeaderDownload({ bookId, status }: { bookId: number; status: CompanionEbookState['status'] }) {
+  if (status === 'available') {
+    return (
+      <a
+        href={api.getCompanionEbookDownloadUrl(bookId)}
+        download
+        aria-label={DOWNLOAD_LABEL}
+        title={DOWNLOAD_LABEL}
+        className="text-muted-foreground hover:text-foreground transition-colors focus-ring rounded"
+      >
+        <DownloadIcon className="w-4 h-4" />
+      </a>
+    );
+  }
+  if (status === 'drm_protected') {
+    return (
+      <button
+        type="button"
+        disabled
+        aria-label={DOWNLOAD_LABEL}
+        title={DRM_DOWNLOAD_DISABLED_TITLE}
+        className="text-muted-foreground opacity-40 cursor-not-allowed"
+      >
+        <DownloadIcon className="w-4 h-4" />
+      </button>
+    );
+  }
+  return null;
 }
 
 /**
@@ -219,9 +276,16 @@ export function CompanionEbookSection({ bookId }: { bookId: number }) {
 
   return (
     <div>
-      <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-        {SECTION_HEADING}
-      </h2>
+      {/* The Series-card header idiom: label left, icon affordances right. `mb-3` moved from
+          the h2 to this wrapper when the header gained the icon row. */}
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          {SECTION_HEADING}
+        </h2>
+        <div className="flex items-center gap-2">
+          <HeaderDownload bookId={bookId} status={data.status} />
+        </div>
+      </div>
       <div className="glass-card rounded-2xl p-4 space-y-2">
         <p className="text-sm flex items-center gap-2">
           <Badge variant={BADGE_VARIANTS[data.status]}>{pillText(data)}</Badge>

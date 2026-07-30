@@ -232,7 +232,9 @@ describe('BookDetailsContent — Ebook section placement', () => {
     expect(headings[ebookIndex + 1]).toBe('Location');
 
     // Same claim through the DOM: the section wrapper's next sibling holds Location.
-    const section = ebookHeading.parentElement!;
+    // The h2 sits inside the header's flex wrapper (label + icon row, the Series idiom),
+    // so the SECTION wrapper is two levels up, not one.
+    const section = ebookHeading.parentElement!.parentElement!;
     expect(section.nextElementSibling?.querySelector('h2')?.textContent).toBe('Location');
     expect(container.querySelectorAll('h2')).not.toHaveLength(0);
   });

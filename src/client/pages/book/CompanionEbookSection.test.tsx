@@ -11,6 +11,7 @@ import {
   AMBIGUOUS_QUESTION,
   AMBIGUOUS_SUBMIT,
   DRM_BODY,
+  DRM_DOWNLOAD_DISABLED_TITLE,
   INVALID_REASONS,
   INVALID_SENTENCE_FALLBACK,
   NONE_BODY,
@@ -368,9 +369,13 @@ describe('CompanionEbookSection — presence and absence', () => {
     const { container } = renderPanel();
     await screen.findByText('Available');
 
-    // Equality, not toHaveClass — a subset check passes on a partial copy.
+    // Equality, not toHaveClass — a subset check passes on a partial copy. The h2 lost
+    // `mb-3` when the header gained the icon row: the margin lives on the flex wrapper now,
+    // exactly like SeriesCard's header.
     expect(container.querySelector('h2')?.getAttribute('class'))
-      .toBe('text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3');
+      .toBe('text-sm font-semibold uppercase tracking-wider text-muted-foreground');
+    expect(container.querySelector('h2')?.parentElement?.getAttribute('class'))
+      .toBe('flex items-center justify-between mb-3');
     expect(card(container).getAttribute('class')).toBe('glass-card rounded-2xl p-4 space-y-2');
 
     const badge = screen.getByTestId('badge');
@@ -392,24 +397,31 @@ describe('CompanionEbookSection — presence and absence', () => {
 // ---------------------------------------------------------------------------
 
 describe('CompanionEbookSection — per-state copy', () => {
-  it('available: an Available pill, a detail row of the size alone, and a Download EPUB action', async () => {
+  it('available: an Available pill, the filename, the size, and a Download EPUB action in the header', async () => {
     mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
     const { container } = renderPanel();
 
     expect(await screen.findByText('Available')).toBeInTheDocument();
-    expect(card(container).children[1]?.textContent).toBe(formatBytes(SIZE));
+    // Row order is identity-first: filename, then size.
+    expect(card(container).children[1]?.textContent).toBe('book.epub');
+    expect(card(container).children[2]?.textContent).toBe(formatBytes(SIZE));
     expect(screen.getByRole('link', { name: 'Download EPUB' })).toBeInTheDocument();
   });
 
-  it('available hides the filename entirely', async () => {
+  // REVERSED (Todd, 2026-07-29): this used to assert `available hides the filename
+  // entirely`. The filename is the card's identity line — and once a selection has
+  // happened it is the only disambiguator for WHICH file won — so it renders, truncated,
+  // with the full name as the tooltip.
+  it('available renders the filename truncated with the full name as its tooltip', async () => {
     mockApi.getCompanionEbookState.mockResolvedValue(
       makeState({ status: 'available', filename: 'ZZ-DISTINCTIVE-FILENAME.epub', sizeBytes: SIZE }),
     );
-    const { container } = renderPanel();
+    renderPanel();
     await screen.findByText('Available');
 
-    expect(container.textContent).not.toContain('ZZ-DISTINCTIVE-FILENAME');
-    expect(attributeText(container)).not.toContain('ZZ-DISTINCTIVE-FILENAME');
+    const el = screen.getByText('ZZ-DISTINCTIVE-FILENAME.epub');
+    expect(el).toHaveClass('truncate');
+    expect(el).toHaveAttribute('title', 'ZZ-DISTINCTIVE-FILENAME.epub');
   });
 
   it('none: a None pill and the drop-a-file sentence verbatim', async () => {
@@ -563,7 +575,7 @@ describe('CompanionEbookSection — nullable wire fields', () => {
     await screen.findByText('Available');
 
     expect(container.textContent).not.toContain('0 B');
-    expect(card(container).children).toHaveLength(2); // pill row + download row
+    expect(card(container).children).toHaveLength(2); // pill row + filename row (download moved to the header)
     expect(screen.getByRole('link', { name: 'Download EPUB' })).toBeInTheDocument();
   });
 
@@ -575,7 +587,7 @@ describe('CompanionEbookSection — nullable wire fields', () => {
     await screen.findByText('DRM-protected');
 
     expect(container.textContent).not.toContain('0 B');
-    expect(card(container).children).toHaveLength(2); // pill row + DRM sentence
+    expect(card(container).children).toHaveLength(3); // pill row + filename row + DRM sentence
     expect(screen.getByText(DRM_BODY)).toBeInTheDocument();
   });
 
@@ -603,7 +615,8 @@ describe('CompanionEbookSection — nullable wire fields', () => {
     const { container } = renderPanel();
     await screen.findByText('Available');
 
-    expect(card(container).children[1]?.textContent).toBe('0 B');
+    // children[1] is the filename row; the size row follows it.
+    expect(card(container).children[2]?.textContent).toBe('0 B');
   });
 
   it('drm_protected with a zero size renders exactly "0 B"', async () => {
@@ -613,7 +626,7 @@ describe('CompanionEbookSection — nullable wire fields', () => {
     const { container } = renderPanel();
     await screen.findByText('DRM-protected');
 
-    expect(card(container).children[1]?.textContent).toBe('0 B');
+    expect(card(container).children[2]?.textContent).toBe('0 B');
   });
 });
 
@@ -665,11 +678,14 @@ describe('CompanionEbookSection — download', () => {
     expect(link).toHaveAttribute('download');
   });
 
+  // REVERSED for drm_protected (Todd, 2026-07-29): DRM now renders a DISABLED download
+  // button rather than nothing — "there is a download here and it is blocked" communicates
+  // more than silence. The remaining three stay absence: `none` has no file, `ambiguous` has
+  // no chosen file, `invalid`'s file is not servable.
   const noDownloadStates: Array<[string, CompanionEbookState]> = [
     ['none', NONE],
     ['ambiguous', ambiguous(candidateList('a.epub', 'b.epub'))],
     ['invalid', INVALID],
-    ['drm_protected', DRM],
   ];
 
   for (const [label, state] of noDownloadStates) {
@@ -682,6 +698,29 @@ describe('CompanionEbookSection — download', () => {
       expect(screen.queryByRole('button', { name: /download/i })).toBeNull();
     });
   }
+
+  it('drm_protected renders a DISABLED download button with the DRM tooltip, and never a link', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(DRM);
+    renderPanel();
+    await screen.findByText('DRM-protected');
+
+    // Never an anchor: the server's exposure gate is `available`-only, so a live link here
+    // would 404. The disabled button must flip to a link only when the exposure split lands.
+    expect(screen.queryByRole('link', { name: /download/i })).toBeNull();
+    const button = screen.getByRole('button', { name: 'Download EPUB' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', DRM_DOWNLOAD_DISABLED_TITLE);
+  });
+
+  it('drm_protected renders the filename truncated with the full name as its tooltip', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(DRM);
+    renderPanel();
+    await screen.findByText('DRM-protected');
+
+    const el = screen.getByText('locked.epub');
+    expect(el).toHaveClass('truncate');
+    expect(el).toHaveAttribute('title', 'locked.epub');
+  });
 });
 
 // ---------------------------------------------------------------------------

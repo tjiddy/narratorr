@@ -64,6 +64,16 @@ export const SELECTION_SUCCESS_TOAST = 'Ebook selection saved';
 export const DRM_BODY =
   "Its chapters are encrypted. Narratorr won't remove DRM, so this can't be downloaded or sent to Kindle.";
 
+/**
+ * Tooltip on the header download affordance when DRM blocks it. The button renders
+ * DISABLED rather than absent: "there is a download here and it is blocked" reads
+ * better than silence, and the accessible NAME stays `DOWNLOAD_LABEL` so the control
+ * keeps one identity across states; this title carries the why. If the exposure
+ * split ever allows owner download of DRM'd files, this constant and the disabled
+ * state go together.
+ */
+export const DRM_DOWNLOAD_DISABLED_TITLE = 'DRM-protected: download unavailable';
+
 // --- `invalid` -------------------------------------------------------------
 
 /**
