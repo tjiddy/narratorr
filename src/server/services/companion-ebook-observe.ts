@@ -44,6 +44,23 @@ export interface CompanionObserveInput {
   libraryRoot: string;
   /** The stored observation, read inside the same lock — the short-circuit's only input. */
   prior: CompanionEbookRow | null;
+  /**
+   * Skip the fingerprint short-circuit and revalidate unconditionally (#2034).
+   *
+   * Set only by an explicit, user-initiated refresh of ONE book. The bulk sweep always passes
+   * `false`: the optimisation exists so a library-wide run does not re-parse every unchanged
+   * archive, and that reasoning is untouched here.
+   *
+   * The fingerprint proves the BYTES are unchanged; it says nothing about the VERDICT being
+   * current. So every validator fix strands the books its predecessor misjudged — a stale
+   * `drm_protected` row survives forever, because nothing about the file will ever change. This
+   * flag is the one escape hatch, and it is deliberately request-scoped: nothing about it is
+   * persisted, and no field on `CompanionEbookReconciler` carries it (AC4).
+   *
+   * REQUIRED, not optional-defaulting-to-false: this input has exactly one production caller,
+   * and a silent default is how a second one would inherit the short-circuit by accident.
+   */
+  force: boolean;
 }
 
 export type CompanionObserveResult =
@@ -252,9 +269,14 @@ export async function revalidateCompanionFile(
  * The last two steps moved WHOLE into `revalidateCompanionFile` (#1976 AC23) and the
  * pre-taken `before` is passed down rather than re-derived. No syscall was added and none
  * reordered, which is the extraction's whole correctness claim.
+ *
+ * `input.force` (#2034) changes exactly ONE line of that order — whether the short-circuit is
+ * consulted. Every arm ahead of it behaves identically forced or not, and no syscall is added
+ * or reordered either way, which is what `companion-ebook-observe.test.ts` pins by comparing the
+ * two `lstat` sequences directly.
  */
 async function runObserve(input: CompanionObserveInput, log: FastifyBaseLogger): Promise<CompanionObserveResult> {
-  const { bookId, bookPath, prior } = input;
+  const { bookId, bookPath, prior, force } = input;
 
   const discovery = await findCompanionEbookCandidates({ bookId, bookPath }, log);
   // `gone` is RETAIN, not `none`. Exposure is already gated on `books.status === 'imported'`,
@@ -274,7 +296,11 @@ async function runObserve(input: CompanionObserveInput, log: FastifyBaseLogger):
   const before = await statRegularFile(bookId, path, log);
   if (before === null) return { outcome: 'retain' };
 
-  if (isUnchanged(prior, resolution, before, candidates.length)) return { outcome: 'unchanged' };
+  // The #2034 bypass, sited at the CALL SITE and nowhere else. `isUnchanged` keeps its full
+  // conjunction, its `SHORT_CIRCUITABLE` gate, and its `ctime` argument intact, so a future
+  // reader of the predicate still sees the complete correctness argument for the sweep — the
+  // force decision belongs to the caller that knows a HUMAN asked, not to the predicate.
+  if (!force && isUnchanged(prior, resolution, before, candidates.length)) return { outcome: 'unchanged' };
 
   return revalidateCompanionFile(
     {

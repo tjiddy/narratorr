@@ -451,6 +451,61 @@ async function handleCompanionEpubSelection(
   return reply.status(200).send(projectStoredState(result.row));
 }
 
+// ---------------------------------------------------------------------------
+// The forced-refresh POST (#2034 AC9-AC14)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /api/books/:id/companion-epub/refresh` — re-judge this book's companion ebook NOW.
+ *
+ * **Why a panel-local endpoint rather than only Refresh & Scan.** Both force, but the full
+ * refresh ffprobes every audio file in the book (58 of them, for the case that prompted this) to
+ * re-check a 1 MB epub. This one touches nothing but the companion observation.
+ *
+ * The gate is exactly the TWO terms `handleCompanionEpubSelection` opens with: feature disabled →
+ * `409`, unknown book → `404`. `isCompanionEbookEligible` is deliberately NOT called — the
+ * reconciler re-evaluates it inside the admission lock, which is the authority; a second answer
+ * here would cost a `stat` and could already have drifted by the time the lock is taken.
+ * `isCompanionEbookExposed` is likewise never consulted: the rows this endpoint exists to re-judge
+ * are precisely the ones that are NOT `available`.
+ *
+ * `202`, not `200`: the reconcile is fire-and-forget and never awaited, so the response says
+ * "accepted", not "done". There is deliberately no completion token — a client learns the outcome
+ * by re-reading `GET /api/books/:id/companion-epub/state`. The repo's other 202s hand back a
+ * `{ jobId }`; this one has no job identity to give, so `{ status: 'queued' }` keeps the body
+ * non-empty without inventing a token the client cannot spend.
+ *
+ * CSRF is ambient: `enforceCsrf` requires `X-Requested-With: XMLHttpRequest` on every non-safe
+ * method and `fetchApi` already sends it, so there is no per-route CSRF wiring — and this route is
+ * not added to `BASE_PUBLIC_ROUTES`, so the `/api/*` `onRequest` hook authenticates it.
+ */
+async function handleCompanionEpubRefresh(
+  deps: CompanionEbookRouteDeps,
+  request: FastifyRequest<{ Params: IdParam }>,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const { id } = request.params;
+
+  const { enabled } = await deps.settingsService.get('companionEpub');
+  if (!enabled) return featureDisabled(reply);
+
+  const book = await deps.bookService.getById(id);
+  if (!book) return notFound(reply);
+
+  // FORCED — the reason this route exists. Never awaited, and `triggerCompanionReconcile` absorbs
+  // both a rejection and a synchronous throw, so the status, the body, and the latency below are
+  // all independent of the reconcile (fire-and-forget-preflight).
+  triggerCompanionReconcile(
+    deps.reconciler,
+    id,
+    request.log,
+    'Companion ebook forced reconcile failed after an owner refresh',
+    true,
+  );
+
+  return reply.status(202).send({ status: 'queued' });
+}
+
 /**
  * Owner-facing companion-ebook routes (#1974, plan §5 and §7) — the download and the one
  * owner observation read.
@@ -567,5 +622,18 @@ export async function companionEbookRoutes(
     '/api/books/:id/companion-epub/selection',
     { schema: { params: idParamSchema, body: selectionBodySchema } },
     async (request, reply) => handleCompanionEpubSelection(deps, request, reply),
+  );
+
+  /**
+   * #2034 — the forced refresh. `params` only: it takes no body, and no `response` map for the
+   * same reason the three #1976 routes declare none (zod-type-provider-send-union-narrowing).
+   *
+   * No `routeRegistry` entry, no `src/server/routes/index.ts` change, and no v1 OpenAPI surface —
+   * this is an owner route and it uses the `reconciler` dep this module already receives.
+   */
+  app.post<{ Params: IdParam }>(
+    '/api/books/:id/companion-epub/refresh',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => handleCompanionEpubRefresh(deps, request, reply),
   );
 }

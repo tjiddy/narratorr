@@ -1524,6 +1524,245 @@ describe('CompanionEbookReconciler (#1959)', () => {
   });
 
   // =========================================================================
+  // G2. Forced revalidation (#2034)
+  // =========================================================================
+
+  describe('forced revalidation (#2034)', () => {
+    /** Every `force` value `observeCompanionEbook` was called with, in call order. */
+    function forceFlags(): boolean[] {
+      return observeMock.mock.calls.map((call) => call[0].force);
+    }
+
+    it('threads force: true from reconcileBook(id, true) into observeCompanionEbook (AC1)', async () => {
+      const bookId = await insertBook();
+
+      await reconciler.reconcileBook(bookId, true);
+
+      expect(observeMock).toHaveBeenCalledTimes(1);
+      expect(observeMock.mock.calls[0]![0]).toMatchObject({ bookId, force: true });
+    });
+
+    /**
+     * The default matters as much as the explicit value: AC1 requires every one of the seven
+     * untouched trigger sites to keep today's behaviour WITHOUT being edited, and they all call
+     * `reconcileBook(id)` with one argument.
+     */
+    it.each([
+      { label: 'omitted entirely — the seven untouched call sites', call: (id: number) => reconciler.reconcileBook(id) },
+      { label: 'passed explicitly as false', call: (id: number) => reconciler.reconcileBook(id, false) },
+    ])('threads force: false when the argument is $label (AC1)', async ({ call }) => {
+      const bookId = await insertBook();
+
+      await call(bookId);
+
+      expect(observeMock).toHaveBeenCalledTimes(1);
+      expect(observeMock.mock.calls[0]![0]).toMatchObject({ bookId, force: false });
+    });
+
+    it('reaches observe with force: false for every book in a sweep (AC5)', async () => {
+      const ids = [await insertBook(), await insertBook(), await insertBook()];
+      for (const id of ids) await seedRow(id);
+      for (const id of ids) outcomes.set(id, { outcome: 'unchanged' });
+
+      await reconciler.reconcileAll();
+
+      expect(observeMock).toHaveBeenCalledTimes(ids.length);
+      expect(forceFlags()).toEqual([false, false, false]);
+      // The sweep's short-circuit is intact, so its summary still reports `unchanged`.
+      expect(summaries(spies)[0]).toMatchObject({ books: 3, unchanged: 3, observed: 0 });
+    });
+
+    /**
+     * AC4, and the reason this issue may not stash force on the instance.
+     *
+     * `observeCompanionEbook` is doubled as a FINGERPRINT SIMULATOR here — force decides the
+     * outcome, exactly as it does in the real observer for a matching row. So a concurrent sweep
+     * that could see the direct call's force would not merely read a wrong flag, it would write
+     * where it must write nothing, and that is what the assertions watch.
+     *
+     * Mutate `CompanionEbookReconciler` to hold force in a field (`this.force = force` in
+     * `reconcileBook`, read in `reconcileLocked`) and this goes red: the two sweep-only books
+     * observe with force set while the direct run is still parked, so `forceFlags()` carries
+     * three `true`s instead of one and both seeded rows get overwritten.
+     */
+    it('never lets a concurrent sweep observe a direct call’s force (AC4)', async () => {
+      const forcedId = await insertBook();
+      const sweepOnly = [await insertBook(), await insertBook()];
+      for (const id of [forcedId, ...sweepOnly]) await seedRow(id);
+      const before = new Map(await Promise.all(
+        sweepOnly.map(async (id) => [id, await readRow(id)] as const),
+      ));
+
+      const gate = deferred();
+      observeMock.mockImplementation(async (input) => {
+        hoisted.events.push(`observe:${input.bookId}`);
+        // Park ONLY the forced direct pass, so the sweep runs entirely inside its window.
+        if (input.force) await gate.promise;
+        // The fingerprint matches on every book: only a forced pass may revalidate.
+        return input.force ? OBSERVED : { outcome: 'unchanged' };
+      });
+
+      const direct = reconciler.reconcileBook(forcedId, true);
+      await waitUntil(() => observedCount() === 1, 'the forced direct pass to park inside observe');
+
+      const sweep = reconciler.reconcileAll();
+      await waitUntil(
+        () => sweepOnly.every((id) => hoisted.events.includes(`observe:${id}`)),
+        'the sweep to observe both sweep-only books',
+      );
+
+      gate.resolve();
+      await Promise.all([direct, sweep]);
+
+      // Exactly ONE forced observation across every pass in this run — the direct one.
+      expect(forceFlags().filter(Boolean)).toHaveLength(1);
+      expect(observeMock.mock.calls.find((call) => call[0].force)![0].bookId).toBe(forcedId);
+      // The sweep-only books wrote nothing at all: not a verdict, not an `updated_at` touch.
+      for (const id of sweepOnly) expect(await readRow(id)).toEqual(before.get(id));
+      // The forced book DID revalidate — the control that keeps the above from passing vacuously.
+      expect(await readRow(forcedId)).toMatchObject({ status: 'available', filename: 'book.epub' });
+    });
+
+    it('leaves the sweep’s pass over the SAME book non-forcing while a forced run holds its lock (AC4/AC5)', async () => {
+      const bookId = await insertBook();
+      await seedRow(bookId);
+
+      const gate = deferred();
+      observeMock.mockImplementation(async (input) => {
+        hoisted.events.push(`observe:${input.bookId}`);
+        if (input.force) await gate.promise;
+        return input.force ? OBSERVED : { outcome: 'unchanged' };
+      });
+
+      const direct = reconciler.reconcileBook(bookId, true);
+      await waitUntil(() => observedCount() === 1, 'the forced direct pass to park inside observe');
+      const sweep = reconciler.reconcileAll();
+
+      gate.resolve();
+      await Promise.all([direct, sweep]);
+
+      // Two passes over one book — the direct forced one, then the sweep's, serialized behind the
+      // admission lock and still short-circuiting.
+      expect(forceFlags()).toEqual([true, false]);
+    });
+
+    /**
+     * AC6 — force weakens no guard.
+     *
+     * Following `vacuous-assertion-observation-points` §4, the run is parked on its PRE-LOCK
+     * setup. A gate on a collaborator inside the lock would be vacuous: `reconcileLocked`
+     * re-checks `this.stopping` as its first statement, so the gate would never fire, `stop()`
+     * would resolve promptly, and the test would fail against correct code. Parking on
+     * `settings.get('companionEpub')` leaves the run observable only through its synchronous
+     * `activeBookRuns` registration — precisely the property under test.
+     */
+    it('registers a forced run synchronously, so a same-turn stop() still drains it (AC6)', async () => {
+      const bookId = await insertBook();
+      const settingsGate = deferred();
+      settingsGet.mockImplementation(async (key: string) => {
+        if (key === 'companionEpub') { await settingsGate.promise; return { enabled: true }; }
+        return { path: libraryRoot };
+      });
+
+      // Same synchronous turn, no yield in between.
+      const direct = reconciler.reconcileBook(bookId, true);
+      const stopping = reconciler.stop();
+      const stopState = track(stopping);
+      await flush();
+      expect(stopState.settled).toBe(false);
+
+      settingsGate.resolve();
+      await Promise.all([direct, stopping]);
+      expect(stopState.settled).toBe(true);
+    });
+
+    it('refuses a forced run once the drain has resolved (AC6)', async () => {
+      const bookId = await insertBook();
+      await reconciler.stop();
+
+      await expect(reconciler.reconcileBook(bookId, true)).resolves.toBeUndefined();
+      expect(settingsGet).not.toHaveBeenCalled();
+      expect(observeMock).not.toHaveBeenCalled();
+    });
+
+    it('returns `stopped` from a forced run that reaches the lock after stopping (AC6)', async () => {
+      const bookId = await insertBook();
+      const lockGate = deferred();
+      const actual = await vi.importActual<typeof import('./book-admission.js')>('./book-admission.js');
+      const holding = actual.withBookAdmissionLock(bookId, async () => { await lockGate.promise; });
+
+      const direct = reconciler.reconcileBook(bookId, true);
+      await waitUntil(
+        () => hoisted.events.includes(`lock.acquire:${bookId}`),
+        'the forced run to queue on the held lock',
+      );
+
+      const stopping = reconciler.stop();
+      lockGate.resolve();
+      await Promise.all([holding, direct, stopping]);
+
+      // The post-lock re-check still fires: zero filesystem and zero DB work after it.
+      expect(hoisted.events).toContain(`lock.held:${bookId}`);
+      expect(observeMock).not.toHaveBeenCalled();
+      expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      {
+        name: 'the book-changed term',
+        reason: 'book-changed',
+        mutate: async (bookId: number) => {
+          await db.update(books).set({ path: join(libraryRoot, 'moved') }).where(eq(books.id, bookId));
+        },
+      },
+      {
+        name: 'the observation-changed term',
+        reason: 'observation-changed',
+        mutate: async (bookId: number) => {
+          await db.update(companionEbooks).set({ status: 'drm_protected' }).where(eq(companionEbooks.bookId, bookId));
+        },
+      },
+    ])('still aborts to `conflicted` on $name under force (AC6)', async ({ reason, mutate }) => {
+      const bookId = await insertBook();
+      await seedRow(bookId);
+      outcomes.set(bookId, async () => { await mutate(bookId); return OBSERVED; });
+
+      await reconciler.reconcileBook(bookId, true);
+
+      expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
+      expect(abortReasons()).toEqual([reason]);
+    });
+
+    it('acquires the admission lock exactly once and takes no sweep semaphore slot (AC6)', async () => {
+      const bookId = await insertBook();
+
+      await reconciler.reconcileBook(bookId, true);
+
+      expect(hoisted.events.filter((event) => event === `lock.acquire:${bookId}`)).toHaveLength(1);
+      expect(hoisted.events.filter((event) => event === `lock.held:${bookId}`)).toHaveLength(1);
+      // A forced refresh is user-triggered and must not queue behind a background sweep.
+      expect(hoisted.events).not.toContain('semaphore.wait');
+    });
+
+    it('still honours the feature gate and the eligibility gate under force (AC6)', async () => {
+      enabled = false;
+      const disabledId = await insertBook();
+      await reconciler.reconcileBook(disabledId, true);
+      expect(observeMock).not.toHaveBeenCalled();
+
+      enabled = true;
+      const ineligibleId = await insertBook({ status: 'missing' });
+      await seedRow(ineligibleId);
+      const before = await readRow(ineligibleId);
+
+      await reconciler.reconcileBook(ineligibleId, true);
+
+      expect(observeMock).not.toHaveBeenCalled();
+      expect(await readRow(ineligibleId)).toEqual(before);
+    });
+  });
+
+  // =========================================================================
   // H. selectCompanionEbook — the owner's `ambiguous` pick (#1976 AC24-AC30)
   // =========================================================================
 

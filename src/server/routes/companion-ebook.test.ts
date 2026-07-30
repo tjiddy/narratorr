@@ -1313,6 +1313,227 @@ describe('companion ebook owner routes', () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // POST /api/books/:id/companion-epub/refresh (#2034 AC9-AC14)
+  // -------------------------------------------------------------------------
+  describe('POST /api/books/:id/companion-epub/refresh', () => {
+    let reconcileMock: Mock;
+    let mockLog: ReturnType<typeof installMockAppLog>;
+
+    beforeEach(() => {
+      reconcileMock = services.companionEbook.reconcileBook as unknown as Mock;
+      // `shared-test-double-defaults-ripple`: re-established AFTER the suite-level
+      // `mockResolvedValue`, because these cases reconfigure the same mock. Leaving it rejecting
+      // would make `fireAndForget` log a `warn` and break this block's own record assertions.
+      reconcileMock.mockReset();
+      reconcileMock.mockResolvedValue(undefined);
+      mockLog = installMockAppLog(app);
+    });
+
+    afterEach(() => {
+      mockLog.restore();
+    });
+
+    const refresh = () =>
+      app.inject({ method: 'POST', url: `/api/books/${BOOK_ID}/companion-epub/refresh` });
+
+    it('AC11: returns 202 with { status: "queued" } and fires exactly one FORCED reconcile', async () => {
+      const res = await refresh();
+
+      expect(res.statusCode).toBe(202);
+      expect(res.json()).toEqual({ status: 'queued' });
+      expect(reconcileMock).toHaveBeenCalledTimes(1);
+      // The whole point of the endpoint: a forced pass, so a stale verdict on an unchanged file
+      // is re-judged. Drop the `true` and the route becomes an expensive no-op.
+      expect(reconcileMock).toHaveBeenCalledWith(BOOK_ID, true);
+    });
+
+    // --- AC10: the gate is exactly the selection PUT's two terms -------------
+
+    it('AC10: returns 409 with the module’s disabled body when the feature is off, without reconciling', async () => {
+      setSettings({ enabled: false });
+
+      const res = await refresh();
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({ error: 'Companion ebooks are disabled' });
+      expect(reconcileMock).not.toHaveBeenCalled();
+    });
+
+    it('AC10: returns 404 with the module’s notFound body for an unknown book, without reconciling', async () => {
+      setBook(null);
+
+      const res = await refresh();
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: 'Companion ebook not found' });
+      expect(reconcileMock).not.toHaveBeenCalled();
+    });
+
+    /**
+     * AC10's deliberate omission, and the `handleCompanionEpubSelection` precedent: the route
+     * gate is a cheap early-out, not the authority. `isCompanionEbookEligible` costs a `stat` of
+     * the book directory and the reconciler re-evaluates it inside the lock anyway, so calling it
+     * here would buy a second answer that can already have drifted by the time the lock is taken.
+     *
+     * `isCompanionEbookExposed` is likewise never consulted: the whole point is to re-judge rows
+     * that are NOT currently `available`, for which the exposure predicate is false.
+     */
+    it('AC10: consults neither the eligibility guard nor the exposure predicate', async () => {
+      const res = await refresh();
+
+      expect(res.statusCode).toBe(202);
+      expect(vi.mocked(isCompanionEbookEligible)).not.toHaveBeenCalled();
+      expect(vi.mocked(isCompanionEbookExposed)).not.toHaveBeenCalled();
+      // And no candidate listing either — the route does no filesystem work of its own.
+      expect(vi.mocked(findCompanionEbookCandidates)).not.toHaveBeenCalled();
+    });
+
+    it('AC11: is independent of the reconcile — a promise that NEVER settles still returns 202', async () => {
+      // If the handler awaited the trigger, `inject` would hang and this case would time out.
+      reconcileMock.mockReturnValue(new Promise<void>(() => {}));
+
+      const res = await refresh();
+
+      expect(res.statusCode).toBe(202);
+      expect(res.json()).toEqual({ status: 'queued' });
+    });
+
+    // --- AC12: the fire-and-forget-preflight pair, as AC28 pins it upstream ---
+
+    it('AC12: a REJECTING reconciler changes neither the status nor the body', async () => {
+      reconcileMock.mockRejectedValue(new Error('reconcile rejected'));
+
+      const res = await refresh();
+
+      expect(res.statusCode).toBe(202);
+      expect(res.json()).toEqual({ status: 'queued' });
+    });
+
+    it('AC12: a SYNCHRONOUSLY THROWING reconciler changes neither the status nor the body', async () => {
+      // `fireAndForget` catches a rejection but evaluates its argument EAGERLY, so only
+      // `triggerCompanionReconcile`'s own `try` contains this one (fire-and-forget-preflight).
+      // Without it, a 202 would become a 500.
+      reconcileMock.mockImplementation(() => { throw new Error('reconcile threw synchronously'); });
+
+      const res = await refresh();
+
+      expect(res.statusCode).toBe(202);
+      expect(res.json()).toEqual({ status: 'queued' });
+    });
+
+    // --- AC13/AC14: ambient auth + CSRF, and the leak-free boundary ---------
+
+    it('AC14: no error body carries a path, a filename, or the library root', async () => {
+      setSettings({ enabled: false });
+      const disabled = await refresh();
+      setSettings({ enabled: true });
+      setBook(null);
+      const unknown = await refresh();
+
+      for (const body of [disabled.json(), unknown.json()]) {
+        const leaves = stringLeaves(body).join('\n');
+        for (const secret of [bookPath, libraryRoot, EPUB]) {
+          expect(leaves).not.toContain(secret);
+        }
+      }
+    });
+
+    it('AC14: the happy path emits no boundary warn record at all', async () => {
+      await refresh();
+
+      // Matching every shipped route in this module: a success logs nothing, and the 202 is not
+      // an outcome worth a default-level record.
+      expect(mockLog.spies.warn).not.toHaveBeenCalled();
+    });
+
+    /**
+     * AC13 — auth and CSRF are AMBIENT, so they need their own app: `createTestApp` deliberately
+     * registers no `authPlugin`, which is why every other case in this file reaches the handler
+     * unauthenticated. Built the way `system.test.ts`'s CSRF block builds its own.
+     *
+     * The route wires nothing itself. What these two cases prove is that it inherits the
+     * protection: `POST` is a non-safe method, so `enforceCsrf` covers it, and the path is not in
+     * `BASE_PUBLIC_ROUTES` (which is module-private — the 401 without credentials IS the
+     * observable for that).
+     */
+    describe('AC13: ambient auth and CSRF, in basic-auth mode', () => {
+      let csrfApp: Awaited<ReturnType<typeof createTestApp>>;
+      const basicAuthHeader = `Basic ${Buffer.from('admin:password123').toString('base64')}`;
+      const url = `/api/books/${BOOK_ID}/companion-epub/refresh`;
+
+      beforeEach(async () => {
+        const { default: cookie } = await import('@fastify/cookie');
+        const { default: authPlugin } = await import('../plugins/auth.js');
+        const { default: Fastify } = await import('fastify');
+        const { validatorCompiler, serializerCompiler } = await import('fastify-type-provider-zod');
+        const { companionEbookRoutes } = await import('./companion-ebook.js');
+
+        const csrfServices = createMockServices();
+        const authSvc = csrfServices.auth as unknown as Record<string, Mock>;
+        authSvc.getStatus = vi.fn().mockResolvedValue({ mode: 'basic', hasUser: true, localBypass: false });
+        authSvc.verifyCredentials = vi.fn().mockResolvedValue({ username: 'admin' });
+        authSvc.validateApiKey = vi.fn().mockResolvedValue(false);
+        (csrfServices.companionEbook.reconcileBook as unknown as Mock).mockResolvedValue(undefined);
+        const settings = createMockSettings({
+          companionEpub: { enabled: true },
+          library: { path: libraryRoot },
+        });
+        (csrfServices.settings.get as Mock).mockImplementation((category: keyof typeof settings) =>
+          Promise.resolve(settings[category]));
+        (csrfServices.book.getById as Mock).mockResolvedValue({
+          id: BOOK_ID, status: 'imported', path: bookPath, title: 'Title',
+        });
+
+        // No `withTypeProvider` — it is a type-level operation only, and the handler is reached
+        // through a `never` cast below. The two COMPILERS are what matter at runtime.
+        const built = Fastify({ logger: false });
+        built.setValidatorCompiler(validatorCompiler);
+        built.setSerializerCompiler(serializerCompiler);
+        await built.register(cookie);
+        const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+        await built.register(errorHandlerPlugin);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await built.register(authPlugin, { authService: csrfServices.auth as any });
+        await companionEbookRoutes(
+          built as never,
+          {
+            bookService: csrfServices.book,
+            settingsService: csrfServices.settings,
+            reconciler: csrfServices.companionEbook as never,
+          },
+          inject<Db>(createMockDb()),
+        );
+        await built.ready();
+        csrfApp = built as never;
+      });
+
+      afterEach(async () => {
+        await csrfApp.close();
+      });
+
+      it('rejects the POST with 403 when X-Requested-With is absent', async () => {
+        const res = await csrfApp.inject({ method: 'POST', url, headers: { authorization: basicAuthHeader } });
+
+        expect(res.statusCode).toBe(403);
+        expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
+      });
+
+      it('lets the POST through with X-Requested-With, and 401s it with no credentials at all', async () => {
+        const allowed = await csrfApp.inject({
+          method: 'POST',
+          url,
+          headers: { authorization: basicAuthHeader, 'x-requested-with': 'XMLHttpRequest' },
+        });
+        expect(allowed.statusCode).toBe(202);
+
+        // Not in `BASE_PUBLIC_ROUTES`: with no credentials the ambient hook challenges first.
+        const unauthenticated = await csrfApp.inject({ method: 'POST', url });
+        expect(unauthenticated.statusCode).toBe(401);
+      });
+    });
+  });
+
   // ==========================================================================
   // #1960 AC26–AC31 — read-path mismatch enqueues a reconcile, self-healing
   // ==========================================================================
