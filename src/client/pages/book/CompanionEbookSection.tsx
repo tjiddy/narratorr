@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Badge } from '@/components/Badge';
@@ -260,9 +260,35 @@ function HeaderDownload({ bookId, status }: { bookId: number; status: CompanionE
 const REFRESH_POLL_INTERVAL_MS = 700;
 const REFRESH_POLL_WINDOW_MS = 5_000;
 
+/**
+ * The minimum time the re-check arrow renders as a spinner after a click. The POST answers
+ * 202 in tens of milliseconds, and `isPending` alone left the icon visually inert — the click
+ * looked like it did nothing. The spinner therefore runs for at least this long (longer only
+ * if the request itself is slower), which is enough to read as "it did something" without
+ * pretending the whole 5s poll window is active work — that window cannot know when the
+ * reconcile actually finished (an identical row is indistinguishable from "not done yet"),
+ * so spinning through it would read as slow on every click.
+ */
+const REFRESH_MIN_SPIN_MS = 800;
+
 export function CompanionEbookSection({ bookId }: { bookId: number }) {
   const queryClient = useQueryClient();
   const [pollUntil, setPollUntil] = useState<number | null>(null);
+
+  // The min-spin latch. `spinUntilRef` carries the CURRENT deadline so a rapid second click
+  // extends the spin rather than letting the first click's timer cut it short; the timer
+  // callback re-checks the ref and only clears when the latest deadline has passed. A timer
+  // firing after unmount hits a React-18 no-op setState — no cleanup needed.
+  const [minSpinning, setMinSpinning] = useState(false);
+  const spinUntilRef = useRef(0);
+  const startMinSpin = () => {
+    const deadline = Date.now() + REFRESH_MIN_SPIN_MS;
+    spinUntilRef.current = deadline;
+    setMinSpinning(true);
+    window.setTimeout(() => {
+      if (Date.now() >= spinUntilRef.current) setMinSpinning(false);
+    }, REFRESH_MIN_SPIN_MS);
+  };
 
   const { data, error } = useQuery({
     queryKey: queryKeys.companionEbook(bookId),
@@ -326,13 +352,15 @@ export function CompanionEbookSection({ bookId }: { bookId: number }) {
               and DRM/invalid are where a stale verdict needs re-judging (#2034). */}
           <button
             type="button"
-            onClick={() => refresh.mutate()}
-            disabled={refresh.isPending}
+            onClick={() => { startMinSpin(); refresh.mutate(); }}
+            disabled={refresh.isPending || minSpinning}
             aria-label={REFRESH_LABEL}
             title={REFRESH_LABEL}
             className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 focus-ring rounded"
           >
-            {refresh.isPending ? <LoadingSpinner className="w-4 h-4" /> : <RefreshIcon className="w-4 h-4" />}
+            {refresh.isPending || minSpinning
+              ? <LoadingSpinner className="w-4 h-4" />
+              : <RefreshIcon className="w-4 h-4" />}
           </button>
         </div>
       </div>

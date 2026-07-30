@@ -1167,6 +1167,23 @@ describe('CompanionEbookSection — the re-check button', () => {
     // is the load-bearing observable; the window only shortens the stale tail.
   });
 
+  it('an instantly-settled POST still shows the spinner for the minimum window', async () => {
+    // The bug this pins: the POST answers 202 in tens of milliseconds, so a spinner keyed on
+    // `isPending` alone never visibly rendered and the click looked like a no-op. By the time
+    // `user.click` resolves, the mutation has settled — so this disabled state is attributable
+    // ONLY to the min-spin latch, which is what makes the assertion fail if the latch goes.
+    mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
+    mockApi.refreshCompanionEbook.mockResolvedValue(undefined);
+    renderPanel();
+    const user = userEvent.setup();
+
+    const button = await screen.findByRole('button', { name: REFRESH_LABEL });
+    await user.click(button);
+
+    expect(button).toBeDisabled();
+    await waitFor(() => expect(button).toBeEnabled(), { timeout: 2_000 });
+  });
+
   it('a failed refresh POST toasts and re-enables', async () => {
     mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
     mockApi.refreshCompanionEbook.mockRejectedValue(new ApiError(503, 'busy'));
@@ -1177,7 +1194,9 @@ describe('CompanionEbookSection — the re-check button', () => {
     await user.click(button);
 
     await waitFor(() => expect(mockToast.error).toHaveBeenCalledExactlyOnceWith(REFRESH_ERROR_TOAST));
-    expect(button).toBeEnabled();
+    // Re-enables only after the minimum spin elapses — failure holds the latch too, so a
+    // instant rejection still reads as "it tried" rather than a dead click.
+    await waitFor(() => expect(button).toBeEnabled(), { timeout: 2_000 });
     // The failure is the POST itself; nothing was accepted, so nothing re-reads /state
     // beyond the initial load.
     expect(mockApi.getCompanionEbookState.mock.calls.length).toBe(1);
