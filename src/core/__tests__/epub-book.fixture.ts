@@ -49,9 +49,20 @@ export interface SpineItemref {
   linear?: string | undefined;
 }
 
-const DEFAULT_ITEMS: ManifestItem[] = [
-  { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' },
-];
+/**
+ * The manifest item pairing with the `ch1.xhtml` entry `epubEntries` always emits.
+ * `packageOptions.items` replaces the manifest wholesale, so suites adding a nav,
+ * cover, or font beside the default chapter should extend from this instead of
+ * re-declaring the pairing (#2052).
+ */
+export const CHAPTER_ITEM: ManifestItem = {
+  id: 'ch1',
+  href: 'ch1.xhtml',
+  mediaType: 'application/xhtml+xml',
+};
+
+/** The manifest `packageXml` emits when `items` is not overridden. */
+export const DEFAULT_ITEMS: readonly ManifestItem[] = [CHAPTER_ITEM];
 const DEFAULT_ITEMREFS: SpineItemref[] = [{ idref: 'ch1' }];
 
 export function containerXml(fullPath: string | null): string {

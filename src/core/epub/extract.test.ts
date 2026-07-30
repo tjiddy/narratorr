@@ -207,11 +207,7 @@ const WEBP = Buffer.concat([
 ]);
 const SVG = Buffer.from('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>', 'utf8');
 
-const CHAPTER: F.ManifestItem = {
-  id: 'ch1',
-  href: 'ch1.xhtml',
-  mediaType: 'application/xhtml+xml',
-};
+const CHAPTER = F.CHAPTER_ITEM;
 const NAV_ITEM: F.ManifestItem = {
   id: 'nav',
   href: 'nav.xhtml',

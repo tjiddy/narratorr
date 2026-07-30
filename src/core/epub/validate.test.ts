@@ -148,6 +148,8 @@ function fakeStats(options: { isFile: boolean; size: number }): Stats {
  */
 
 const {
+  CHAPTER_ITEM,
+  DEFAULT_ITEMS,
   DEFAULT_PACKAGE,
   EMPTY_ENCRYPTION_XML,
   EPUB_MEDIA_TYPE,
@@ -159,10 +161,6 @@ const {
 } = F;
 type EpubOptions = F.EpubOptions;
 type ManifestItem = F.ManifestItem;
-
-const DEFAULT_ITEMS: ManifestItem[] = [
-  { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' },
-];
 
 // --- encryption.xml shapes --------------------------------------------------
 
@@ -262,7 +260,7 @@ describe('happy paths', () => {
     const result = await validateBuilt({
       packageOptions: {
         items: [
-          { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' },
+          CHAPTER_ITEM,
           { id: 'nav', href: 'nav.xhtml', mediaType: 'application/xhtml+xml', properties: 'nav' },
           { id: 'cover', href: 'cover.png', mediaType: 'image/png', properties: 'cover-image' },
         ],
@@ -280,7 +278,7 @@ describe('happy paths', () => {
     const result = await validateBuilt({
       packageOptions: {
         items: [
-          { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' },
+          CHAPTER_ITEM,
           { id: 'ncx', href: 'book.ncx', mediaType: 'application/x-dtbncx+xml' },
         ],
         manifest:
@@ -623,7 +621,7 @@ describe('empty_spine', () => {
       await validateBuilt({
         packageOptions: {
           items: [
-            { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' },
+            CHAPTER_ITEM,
             { id: 'broken', href: 'absent.xhtml', mediaType: 'application/xhtml+xml' },
           ],
           itemrefs: [{ idref: 'broken' }, { idref: 'ch1' }],
@@ -1033,7 +1031,7 @@ describe('the encryption.xml classifier', () => {
     return {
       packageOptions: {
         items: [
-          { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' },
+          CHAPTER_ITEM,
           { id: 'ch2', href: 'ch2.xhtml', mediaType: 'application/xhtml+xml' },
           ...fonts,
         ],
@@ -1069,10 +1067,7 @@ describe('the encryption.xml classifier', () => {
     }));
     const result = await validateBuilt({
       packageOptions: {
-        items: [
-          { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' },
-          ...fonts,
-        ],
+        items: [CHAPTER_ITEM, ...fonts],
         itemrefs: [{ idref: 'ch1' }],
       },
       files: fonts.map((font) => ({ name: `OEBPS/${font.href}`, content: 'font-bytes' })),
@@ -1269,10 +1264,7 @@ describe('the encryption.xml classifier', () => {
   it('reports drm_protected when every content document is encrypted', async () => {
     const result = await validateBuilt({
       packageOptions: {
-        items: [
-          { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' },
-          { id: 'ch2', href: 'ch2.xhtml', mediaType: 'application/xhtml+xml' },
-        ],
+        items: [CHAPTER_ITEM, { id: 'ch2', href: 'ch2.xhtml', mediaType: 'application/xhtml+xml' }],
         itemrefs: [{ idref: 'ch1' }, { idref: 'ch2' }],
       },
       files: [{ name: 'OEBPS/ch2.xhtml', content: XHTML }],

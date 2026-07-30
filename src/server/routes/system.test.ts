@@ -1167,16 +1167,10 @@ describe('POST /api/system/restore', () => {
       expect(res.headers['www-authenticate']).toBe('Basic realm="Narratorr"');
     });
 
-    it('valid X-Api-Key + POST without X-Requested-With → not blocked by CSRF', async () => {
-      (csrfServices.auth.validateApiKey as Mock).mockResolvedValue(true);
-      const res = await csrfApp.inject({
-        method: 'POST',
-        url: '/api/system/tasks/search',
-        headers: { 'x-api-key': 'valid-key' },
-      });
-      // Should NOT be 403 (CSRF) — api-key clients are exempt
-      expect(res.statusCode).not.toBe(403);
-      (csrfServices.auth.validateApiKey as Mock).mockResolvedValue(false);
-    });
+    // The api-key CSRF exemption is NOT testable on this suite's routes: system routes
+    // live outside `/api/v*`, so a presented key is rejected out-of-scope (#1453) before
+    // `validateApiKey` or the CSRF gate ever runs. The contract is pinned where it is
+    // observable — auth.plugin.test.ts covers the in-scope key CSRF bypass and the
+    // non-v* out-of-scope 401 (#2054).
   });
 });

@@ -587,7 +587,7 @@ describe('row 3 — a traversal href on a root-level package', () => {
       packageName: ROOT_PACKAGE,
       packageOptions: {
         items: [
-          { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' },
+          F.CHAPTER_ITEM,
           { id: 'nav', href: 'nav.xhtml', mediaType: 'application/xhtml+xml', properties: 'nav' },
           { id: 'cover', href: HOSTILE_HREF, mediaType: 'image/png', properties: 'cover-image' },
         ],
@@ -773,7 +773,7 @@ describe('row 6 — a nav and a cover that are individually legal and jointly ar
       packageOptions: {
         padTo: MAX_XML_BYTES,
         items: [
-          { id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' },
+          F.CHAPTER_ITEM,
           { id: 'nav', href: 'nav.xhtml', mediaType: 'application/xhtml+xml', properties: 'nav' },
           { id: 'cover', href: 'cover.png', mediaType: 'image/png', properties: 'cover-image' },
         ],
@@ -1177,7 +1177,7 @@ describe('#2022 — the metadata response declares the stored basename it read',
     const seeded = await seedCompanion({
       filename: AWKWARD_BASENAME,
       bytes: await F.buildEpub({
-        packageOptions: { items: [{ id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' }] },
+        packageOptions: { items: [F.CHAPTER_ITEM] },
       }),
     });
 
