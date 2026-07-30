@@ -105,7 +105,10 @@ function logOutcome(request: FastifyRequest, bookId: number, outcome: string, me
  *
  * `drm_protected` moved buckets in #2038: a stored-DRM row over a genuinely DRM'd file used to
  * self-limit and now sits in the second bucket, re-enqueueing per read-route request under the
- * same bound. Nothing in the shipped UI drives it — the panel fetches neither read route.
+ * same bound. The shipped panel drives this since #2022 — it fetches `/metadata` while the
+ * `/state` value it renders is `available`, so a request it started can reach the gate after a
+ * commit to `drm_protected` and take that branch. Reachable, transient, and accepted: the
+ * request enqueues one reconcile and the panel stops initiating once `/state` catches up.
  */
 function enqueueReadUnavailableReconcile(deps: CompanionEbookRouteDeps, bookId: number, request: FastifyRequest): void {
   triggerCompanionReconcile(deps.reconciler, bookId, request.log, 'Companion ebook reconcile failed after an unavailable read');
@@ -246,20 +249,27 @@ async function loadExposedCompanionContext(
  * The shared prefix both read routes run: the owner-readable gate above, then the §5 resolver,
  * then one `inspectEpub`.
  *
- * Returns the available inspection, or the `reply` it already sent. Every negative is a `404`
- * except the feature gate's `409`, and every one of them is logged through `logOutcome` — so
- * the boundary record stays `{ bookId, outcome }` and nothing else, whatever the cause.
+ * Returns the available inspection **and the stored basename that gated it**, or the `reply` it
+ * already sent. Every negative is a `404` except the feature gate's `409`, and every one of them
+ * is logged through `logOutcome` — so the boundary record stays `{ bookId, outcome }` and nothing
+ * else, whatever the cause.
+ *
+ * The `filename` comes straight back out of `loadExposedCompanionContext`, so exactly ONE
+ * filename value exists per request (#2022 AC3). `/metadata` emits it; `/cover` ignores it. It
+ * is never re-derived from `resolved.path` and never `basename()`d — a second derivation site is
+ * what would let the emitted name drift from the row the gate actually read.
  *
  * **`resolveCompanionEbookPath`, not `openCompanionEbook`**: `inspectEpub` opens the archive by
  * pathname itself, so taking a descriptor solely to close it before that re-open buys nothing
  * (AC3). The route never builds `join(bookPath, filename)` — a second path-construction site
  * is exactly what can drift from the verified one.
  *
- * **Two full inspections per panel load is accepted.** `inspectEpub` is documented as *"one
- * call is one open is one budget"*, so a book page that fetches metadata and cover separately
- * opens the archive twice. That is the design's stated cost model, bounded by
- * `MAX_ARCHIVE_BYTES` and `MAX_INSPECTION_BYTES`; there is no response cache and no combined
- * route in this issue.
+ * **One full inspection per HTTP attempt is accepted.** `inspectEpub` is documented as *"one
+ * call is one open is one budget"*, so every request that reaches here opens the archive again.
+ * That is the design's stated cost model, bounded by `MAX_ARCHIVE_BYTES` and
+ * `MAX_INSPECTION_BYTES`; there is no response cache and no combined route. The shipped panel
+ * fetches `/metadata` only — it never requests `/cover` — so a book page pays for one inspection
+ * per metadata attempt, not two.
  */
 async function loadCompanionInspection(
   deps: CompanionEbookRouteDeps,
@@ -267,7 +277,7 @@ async function loadCompanionInspection(
   request: FastifyRequest,
   reply: FastifyReply,
   id: number,
-): Promise<{ inspection: EpubInspectionAvailable } | { reply: FastifyReply }> {
+): Promise<{ inspection: EpubInspectionAvailable; filename: string } | { reply: FastifyReply }> {
   const gated = await loadExposedCompanionContext(deps, db, reply, id);
   if ('reply' in gated) return gated;
   const { bookPath, filename, libraryRoot } = gated.context;
@@ -320,15 +330,25 @@ async function loadCompanionInspection(
     return { reply: notFound(reply) };
   }
 
-  return { inspection };
+  return { inspection, filename };
 }
 
 /**
- * `GET /api/books/:id/companion-epub/metadata` — OPF title/author/language plus a plain-text
- * table of contents. Feeds the `available` panel's chapter count.
+ * `GET /api/books/:id/companion-epub/metadata` — the stored basename this request read, plus
+ * OPF title/author/language and a plain-text table of contents. Feeds the `available` panel's
+ * chapter count.
  *
  * The three metadata fields and the two TOC fields are surfaced exactly as `EpubMetadata` and
  * `EpubTocEntry` declare them — nothing renamed, defaulted, or coalesced.
+ *
+ * **`filename` is the STORED basename the gate resolved** (#2022) — the value
+ * `loadExposedCompanionContext` read off the `companion_ebooks` row, handed through
+ * `loadCompanionInspection`, never re-derived from the resolved path. It is what lets the panel
+ * discard a response that does not describe the `/state` row rendered beside it: the two routes
+ * read that row independently and a reconcile can commit between them, so without the route
+ * declaring what it read, one file's size renders beside another file's chapter count with both
+ * requests succeeding. It is the same value `/state` already ships to the same authenticated
+ * owner, so no new information class reaches the wire.
  *
  * **No `chapterCount` field**, deliberately: the panel derives the count from `toc.length`. A
  * second field computed from the array beside it in the same payload is a drift seam for no
@@ -348,7 +368,10 @@ async function handleCompanionEpubMetadata(
   if ('reply' in loaded) return loaded.reply;
 
   const { metadata, toc } = loaded.inspection;
-  return reply.status(200).header('Cache-Control', 'private, no-store').send({ metadata, toc });
+  return reply
+    .status(200)
+    .header('Cache-Control', 'private, no-store')
+    .send({ filename: loaded.filename, metadata, toc });
 }
 
 /**
