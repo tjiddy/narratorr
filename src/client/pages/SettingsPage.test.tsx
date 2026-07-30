@@ -88,6 +88,11 @@ function renderSettingsPage(route = '/settings/indexers') {
  * "form still on defaults" — which made the pre-hydration window invisible to every
  * anchor these tests could use, and un-waitable. Query state is the observable the DOM
  * cannot provide (the react-query-error-after-retry-ladder idiom, success-side).
+ *
+ * PRECISION: this observes CACHE success, which precedes the hydrate effect's form flush by
+ * one act cycle. A caller asserting anything about hydration's EFFECT must follow this with
+ * its own waitFor over the DOM (see the #2033 regression pin) — success alone is necessary,
+ * not sufficient.
  */
 async function settingsHydrated(queryClient: QueryClient): Promise<void> {
   await waitFor(() => {
@@ -578,10 +583,11 @@ describe('SettingsPage - {edition} auto-behavior preview (#1774, real @core/util
   });
 
   it('in-place branch: {edition} renders at its position with no double suffix; baseline row stays edition-free', async () => {
-    renderSettingsPage('/settings');
+    const { queryClient } = renderSettingsPage('/settings');
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
+    await settingsHydrated(queryClient); // #2033 — same exposure class as the edition tests
     const folderInput = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
     fireEvent.change(folderInput, { target: { value: '{author}/{title}/{edition}' } });
 
@@ -598,10 +604,11 @@ describe('SettingsPage - {edition} auto-behavior preview (#1774, real @core/util
   });
 
   it('baseline file rows stay edition-free even when the file format places {edition}', async () => {
-    renderSettingsPage('/settings');
+    const { queryClient } = renderSettingsPage('/settings');
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
+    await settingsHydrated(queryClient); // #2033 — same exposure class as the edition tests
     const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
     fireEvent.change(fileInput, { target: { value: '{author} - {title} ({edition})' } });
 
@@ -661,7 +668,7 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
     vi.mocked(api.getSettings).mockImplementation(
       () => new Promise((resolve) => { resolveSettings = resolve; }),
     );
-    renderSettingsPage('/settings');
+    const { queryClient } = renderSettingsPage('/settings');
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
@@ -673,10 +680,23 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
     fireEvent.change(fileInput, { target: { value: '{title}{ (?edition?)}' } });
     // NOW let the settings query resolve, with the form dirty.
     resolveSettings(mockSettings);
+    // THE LOAD-BEARING SEQUENCING (found by the pre-push assessment's own mutation run): the
+    // clobber, when the guard is absent, flushes to the DOM one act cycle AFTER the query
+    // reaches success. Asserting immediately after resolve() lands in that gap and passes
+    // even with the guard deleted — the vacuous-observation-point class, again. So: wait for
+    // cache success, let the hydrate effect flush, and only THEN assert survival. Verified
+    // red-under-mutation: making useSettingsForm's hydrate reset unconditional fails BOTH
+    // assertions below with the preview reverted to the hint.
+    await settingsHydrated(queryClient);
     await waitFor(() => {
       expect(screen.getByTestId('preview-file-edition').textContent).toBe('The Way of Kings (Full Cast).m4b');
+      expect(fileInput.value).toBe('{title}{ (?edition?)}');
     });
-    expect(fileInput.value).toBe('{title}{ (?edition?)}');
+    // One more settled pass so a one-cycle-late reset cannot slip behind the first green read.
+    await waitFor(() => {
+      expect(fileInput.value).toBe('{title}{ (?edition?)}');
+      expect(screen.getByTestId('preview-file-edition').textContent).toBe('The Way of Kings (Full Cast).m4b');
+    });
   });
 
   it('row live-updates as the file format is edited (real renderer)', async () => {
