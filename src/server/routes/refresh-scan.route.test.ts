@@ -330,15 +330,19 @@ describe('POST /api/books/:id/refresh-scan', () => {
      * TWO forcing calls, and only two — Refresh & Scan (AC7) and the companion refresh endpoint
      * (AC11), the two places a user points at one book. The other SEVEN are AC8's inventory and
      * must stay four-argument: import completion, the two rename callers in `books.ts`, the Fix
-     * Match rename, wrong-release, and the two opener mismatch arms. The mismatch arms matter
-     * most — they fire once per REQUEST, so forcing there would put a full `validateEpub` on an
-     * unbounded request-rate path.
+     * Match rename, wrong-release, and the two opener read-unavailable arms. Those read arms
+     * matter most — they fire once per REQUEST, so forcing there would put a full `validateEpub`
+     * on an unbounded request-rate path.
+     *
+     * Only the v1 arm is strictly a stored/live MISMATCH. Since #2038 the owner gate admits a
+     * stored `drm_protected` row, so a genuinely DRM'd file reaches the owner arm while the row
+     * and the live file agree — which is exactly why forcing there would be worse, not better.
      */
     const INVENTORY = [
       // Two renames (non-forcing), then Refresh & Scan (forcing).
       { file: 'src/server/routes/books.ts', counts: [4, 4, 5] },
       { file: 'src/server/routes/books-fix-match.ts', counts: [4] },
-      // The owner mismatch arm (non-forcing), then the refresh endpoint (forcing).
+      // The owner read-unavailable arm (non-forcing), then the refresh endpoint (forcing).
       { file: 'src/server/routes/companion-ebook.ts', counts: [4, 5] },
       { file: 'src/server/routes/v1/companion-ebook.ts', counts: [4] },
       { file: 'src/server/services/book-rejection.service.ts', counts: [4] },

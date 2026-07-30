@@ -156,10 +156,11 @@ describe('companion ebook owner routes', () => {
 
     services = createMockServices();
     db = createMockDb();
-    // #1960 AC26 — every mismatch arm now enqueues a reconcile. The unconfigured Proxy stub
-    // REJECTS, and `fireAndForget` logs that at warn, which would add a second warn to every
-    // boundary-record assertion in this suite. Resolve it by default; the mismatch tests below
-    // assert the call count, and the isolation test opts back into the rejection explicitly.
+    // #1960 AC26 — every read that cannot serve its file now enqueues a reconcile. The
+    // unconfigured Proxy stub REJECTS, and `fireAndForget` logs that at warn, which would add a
+    // second warn to every boundary-record assertion in this suite. Resolve it by default; the
+    // reconcile tests below assert the call count, and the isolation tests (plus #2040's
+    // trigger-context case) opt back into the rejection explicitly.
     (services.companionEbook.reconcileBook as unknown as Mock).mockResolvedValue(undefined);
     app = await createTestApp(services, inject<Db>(db));
 
@@ -989,8 +990,53 @@ describe('companion ebook owner routes', () => {
         // …and the record names the INSPECTION verdict, not a gate outcome.
         expect(mockLog.spies.warn).toHaveBeenCalledTimes(1);
         assertBoundaryRecord(mockLog.spies.warn.mock.calls[0]![0], 'drm_protected');
-        // Unchanged from every other read-path mismatch: one reconcile enqueued, fire-and-forget.
+        // One reconcile enqueued, fire-and-forget — unchanged from every other read that could
+        // not serve its file.
         expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+      });
+
+      /**
+       * The MESSAGE, not just the record (#2040 F1/F2). This is the one path where the stored
+       * row and the live file AGREE and the request still 404s, so the old
+       * "did not agree with the stored row" wording was actively false here. `assertBoundaryRecord`
+       * reads argument 0 only; without this assertion reverting the message to its mismatch-only
+       * text leaves the whole suite green.
+       */
+      it.each(READ_ROUTES)('names the read unavailable rather than a disagreement, on the %s route', async (_label, request) => {
+        await placeEpub(encryptedContentBook());
+        setObservation(row({ status: 'drm_protected' }));
+
+        expect((await request()).statusCode).toBe(404);
+
+        expect(mockLog.spies.warn.mock.calls[0]![1]).toBe(
+          'Companion ebook inspection did not yield a readable file',
+        );
+        // The claim the split falsified, pinned negatively as well: stored DRM over live DRM is
+        // an agreement, so no diagnostic on this path may say the two disagreed.
+        expect(String(mockLog.spies.warn.mock.calls[0]![1])).not.toMatch(/agree|mismatch/i);
+      });
+
+      /**
+       * The second changed string: the fire-and-forget trigger context, which only surfaces when
+       * the reconcile itself REJECTS (`fireAndForget` logs `{ error }` against it at warn). The
+       * suite resolves `reconcileBook` by default precisely so this second warn stays out of
+       * every other boundary-record assertion, so this case opts back into the rejection the way
+       * the AC28 isolation tests do.
+       */
+      it('names the failing reconcile by the read, not by a mismatch, when the reconciler rejects', async () => {
+        await placeEpub(encryptedContentBook());
+        setObservation(row({ status: 'drm_protected' }));
+        (services.companionEbook.reconcileBook as unknown as Mock).mockRejectedValue(
+          new Error('reconcile rejected'),
+        );
+
+        expect((await metadataReq()).statusCode).toBe(404);
+        // `fireAndForget`'s `.catch` settles on a microtask, after the response is already out.
+        await new Promise((resolve) => setImmediate(resolve));
+
+        const contexts = mockLog.spies.warn.mock.calls.map((call) => call[1]);
+        expect(contexts).toContain('Companion ebook reconcile failed after an unavailable read');
+        expect(contexts.join('\n')).not.toMatch(/mismatch/i);
       });
     });
   });
@@ -1720,10 +1766,16 @@ describe('companion ebook owner routes', () => {
   });
 
   // ==========================================================================
-  // #1960 AC26–AC31 — read-path mismatch enqueues a reconcile, self-healing
+  // #1960 AC26–AC31 — an unavailable read enqueues a reconcile, self-healing
+  //
+  // Every case in here seeds the default stored `available` row, so each one IS a genuine
+  // stored/live disagreement and the per-test wording below stays accurate. The describe is
+  // named for the trigger (the read could not serve its file) rather than for the cause,
+  // because since #2038 the owner arm also fires on an AGREEING stored-DRM/live-DRM read —
+  // covered separately in `a genuinely encrypted file still 404s at the live inspection`.
   // ==========================================================================
 
-  describe('#1960 read-path mismatch enqueues a reconcile', () => {
+  describe('#1960 an unavailable owner read enqueues a reconcile', () => {
     const NEGATIVE_OUTCOMES = ['invalid_filename', 'not_regular_file', 'outside_library', 'missing', 'unreadable'] as const;
 
     const reconcileMock = () => services.companionEbook.reconcileBook as unknown as Mock;
