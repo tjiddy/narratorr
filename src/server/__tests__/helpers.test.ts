@@ -1,5 +1,18 @@
-import { describe, it, expect, vi } from 'vitest';
-import { mockDbChain, createMockServices, resetMockServices } from './helpers.js';
+import { describe, it, expect, vi, type Mock } from 'vitest';
+import type { Db } from '@db/index.js';
+import {
+  mockDbChain,
+  createMockServices,
+  resetMockServices,
+  createTestApp,
+  createAuthTestApp,
+  stubAuthService,
+  inject,
+  BASIC_AUTH_HEADER,
+  FORMS_SESSION_COOKIE,
+  type ZodTestApp,
+  type CreateAuthTestAppOptions,
+} from './helpers.js';
 
 describe('mockDbChain', () => {
   describe('core chain behavior', () => {
@@ -258,5 +271,496 @@ describe('createMockServices / resetMockServices — canonical default contract'
     expect(caught).toHaveLength(1);
     expect(caught[0]).toBeInstanceOf(Error);
     expect((caught[0] as Error).message).toMatch(/mock not configured: notifier\.notify/);
+  });
+});
+
+describe('createAuthTestApp', () => {
+  /**
+   * One multi-method probe plus a dynamic-param probe, so both verbs exist on the
+   * same path (the CSRF gate short-circuits on GET but not on POST) and the
+   * `maxParamLength` case has a route to match.
+   */
+  const probeRoutes = (app: ZodTestApp) => {
+    app.route({ method: ['GET', 'POST'], url: '/api/__probe', handler: async () => ({ ok: true }) });
+    app.get('/api/__probe/:token', async () => ({ ok: true }));
+  };
+
+  const SESSION = (value: string) => ({ cookie: `narratorr_session=${value}` });
+
+  it('installs authPlugin where createTestApp does not — the trap, pinned structurally', async () => {
+    // `authPlugin` calls `app.decorateRequest('user', null)`; nothing else does. So the
+    // decorator's presence observes the plugin's INSTALLATION, not some status code that an
+    // unrelated 403/404 could also produce.
+    const plain = await createTestApp(createMockServices());
+    try {
+      expect(plain.hasRequestDecorator('user')).toBe(false);
+    } finally {
+      await plain.close();
+    }
+
+    const { app } = await createAuthTestApp(createMockServices(), { routes: probeRoutes });
+    try {
+      expect(app.hasRequestDecorator('user')).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  describe('basic mode (default)', () => {
+    it('403s a credentialed POST with no X-Requested-With', async () => {
+      const { app, authHeader } = await createAuthTestApp(createMockServices(), { routes: probeRoutes });
+      try {
+        const res = await app.inject({ method: 'POST', url: '/api/__probe', headers: { authorization: authHeader } });
+        expect(res.statusCode).toBe(403);
+        expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('lets a credentialed POST through with X-Requested-With', async () => {
+      const { app, authHeader } = await createAuthTestApp(createMockServices(), { routes: probeRoutes });
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/__probe',
+          headers: { authorization: authHeader, 'x-requested-with': 'XMLHttpRequest' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload)).toEqual({ ok: true });
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('401s an uncredentialed POST with a Basic challenge', async () => {
+      const { app } = await createAuthTestApp(createMockServices(), { routes: probeRoutes });
+      try {
+        const res = await app.inject({ method: 'POST', url: '/api/__probe' });
+        expect(res.statusCode).toBe(401);
+        expect(res.headers['www-authenticate']).toBe('Basic realm="Narratorr"');
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('lets a credentialed GET through without X-Requested-With — SAFE_METHODS short-circuits CSRF', async () => {
+      const { app, authHeader } = await createAuthTestApp(createMockServices(), { routes: probeRoutes });
+      try {
+        const res = await app.inject({ method: 'GET', url: '/api/__probe', headers: { authorization: authHeader } });
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('matches a >100-char path param — the helper raises maxParamLength off Fastify\'s 100 default', async () => {
+      const { app, authHeader } = await createAuthTestApp(createMockServices(), { routes: probeRoutes });
+      try {
+        // Credentialed on purpose: without it the auth hook 401s even on a matched route,
+        // so the assertion could not distinguish route matching from auth rejection.
+        const res = await app.inject({
+          method: 'GET',
+          url: `/api/__probe/${'t'.repeat(180)}`,
+          headers: { authorization: authHeader },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload)).toEqual({ ok: true });
+      } finally {
+        await app.close();
+      }
+    });
+  });
+
+  describe('forms mode', () => {
+    const build = () => createAuthTestApp(createMockServices(), { mode: 'forms', routes: probeRoutes });
+
+    it('authenticates the sentinel session cookie', async () => {
+      const { app } = await build();
+      try {
+        const res = await app.inject({ method: 'GET', url: '/api/__probe', headers: SESSION(FORMS_SESSION_COOKIE) });
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('401s "Authentication required" with no cookie at all', async () => {
+      const { app } = await build();
+      try {
+        const res = await app.inject({ method: 'GET', url: '/api/__probe' });
+        expect(res.statusCode).toBe(401);
+        expect(JSON.parse(res.payload)).toEqual({ error: 'Authentication required' });
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('401s "Invalid or expired session" on a cookie that does not verify', async () => {
+      const { app } = await build();
+      try {
+        const res = await app.inject({ method: 'GET', url: '/api/__probe', headers: SESSION('not-the-sentinel') });
+        expect(res.statusCode).toBe(401);
+        expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid or expired session' });
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('does NOT apply CSRF — a cookie-authenticated POST without X-Requested-With reaches the handler', async () => {
+      const { app } = await build();
+      try {
+        const res = await app.inject({ method: 'POST', url: '/api/__probe', headers: SESSION(FORMS_SESSION_COOKIE) });
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await app.close();
+      }
+    });
+  });
+
+  it('stubAuthService can re-arm the stubs that resetMockServices tears down', async () => {
+    const services = createMockServices();
+    const { app, authHeader } = await createAuthTestApp(services, { routes: probeRoutes });
+    try {
+      const post = () => app.inject({ method: 'POST', url: '/api/__probe', headers: { authorization: authHeader } });
+
+      expect((await post()).statusCode).toBe(403);
+
+      // resetMockServices re-applies the rejecting canonical default to getStatus, so the
+      // onRequest hook throws and the global error handler masks it as a 500.
+      resetMockServices(services);
+      expect((await post()).statusCode).toBe(500);
+
+      stubAuthService(services);
+      expect((await post()).statusCode).toBe(403);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('honours an auth-stub override applied AFTER the app is built', async () => {
+    const services = createMockServices();
+    const { app, authHeader } = await createAuthTestApp(services, { routes: probeRoutes });
+    try {
+      expect((await app.inject({ method: 'GET', url: '/api/__probe', headers: { authorization: authHeader } })).statusCode).toBe(200);
+
+      // The onRequest hook resolves authService methods per request, so this takes effect.
+      (services.auth.verifyCredentials as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({ method: 'GET', url: '/api/__probe', headers: { authorization: authHeader } });
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid credentials' });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('returns the caller\'s own services object, by identity', async () => {
+    // `services` is part of the documented return contract, so a suite can destructure it
+    // instead of threading its own variable. Returning a copy — or dropping the field —
+    // would leave every other case in this file green.
+    const services = createMockServices();
+    const built = await createAuthTestApp(services, { routes: probeRoutes });
+    try {
+      expect(built.services).toBe(services);
+    } finally {
+      await built.app.close();
+    }
+  });
+
+  it('runs opts.register BEFORE opts.routes', async () => {
+    let decoratorVisibleToRoutes: boolean | undefined;
+    const { app } = await createAuthTestApp(createMockServices(), {
+      register: (instance) => { instance.decorate('probeMarker', 'from-register'); },
+      routes: (instance) => {
+        // Read at REGISTRATION time — if `register` ran second this would be false.
+        decoratorVisibleToRoutes = instance.hasDecorator('probeMarker');
+        probeRoutes(instance);
+      },
+    });
+    try {
+      expect(decoratorVisibleToRoutes).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  /**
+   * The request-level cases above observe the profiles only where `authPlugin` happens to
+   * read them, which leaves several cells free to drift: the plugin never calls
+   * `validateApiKey` on a non-`/api/v*` probe, never re-checks that basic mode accepts an
+   * arbitrary password, and never inspects the session payload it is handed. Each cell is
+   * asserted directly here so deleting or changing one line of `stubAuthService` goes red.
+   */
+  describe('stubAuthService — the exact profiles', () => {
+    const call = <T>(fn: unknown, ...args: unknown[]): T =>
+      (fn as (...a: unknown[]) => T)(...args);
+
+    it('basic: status, hasUser, a rejected API key, and any-password credentials', async () => {
+      const services = createMockServices();
+      stubAuthService(services);
+
+      await expect(call<Promise<unknown>>(services.auth.getStatus)).resolves.toEqual({
+        mode: 'basic', hasUser: true, localBypass: false,
+      });
+      await expect(call<Promise<unknown>>(services.auth.hasUser)).resolves.toBe(true);
+      await expect(call<Promise<unknown>>(services.auth.validateApiKey, 'any-key')).resolves.toBe(false);
+      // Deliberately NOT the password baked into BASIC_AUTH_HEADER — the profile's contract
+      // is that it accepts anything and always resolves the `admin` user.
+      await expect(
+        call<Promise<unknown>>(services.auth.verifyCredentials, 'admin', 'a-totally-different-password'),
+      ).resolves.toEqual({ username: 'admin' });
+    });
+
+    it('forms: status, hasUser, a rejected API key, and the exact session-cookie triple', async () => {
+      // Freeze only Date — the payload's issuedAt/expiresAt are clock-derived, and full fake
+      // timers are unnecessary here (and stall unrelated machinery elsewhere in this repo).
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const now = new Date('2026-07-30T12:00:00.000Z').getTime();
+      vi.setSystemTime(now);
+      try {
+        const services = createMockServices();
+        stubAuthService(services, 'forms');
+
+        await expect(call<Promise<unknown>>(services.auth.getStatus)).resolves.toEqual({
+          mode: 'forms', hasUser: true, localBypass: false,
+        });
+        await expect(call<Promise<unknown>>(services.auth.hasUser)).resolves.toBe(true);
+        await expect(call<Promise<unknown>>(services.auth.validateApiKey, 'any-key')).resolves.toBe(false);
+
+        await expect(call<Promise<unknown>>(services.auth.getSessionSecret)).resolves.toBe('test-secret');
+        expect(call<string>(services.auth.createSessionCookie, 'admin', 'test-secret')).toBe(FORMS_SESSION_COOKIE);
+
+        expect(call<unknown>(services.auth.verifySessionCookie, FORMS_SESSION_COOKIE, 'test-secret')).toEqual({
+          payload: { username: 'admin', kind: 'session', issuedAt: now, expiresAt: now + 3_600_000 },
+          shouldRenew: false,
+        });
+        expect(call<unknown>(services.auth.verifySessionCookie, 'some-other-cookie', 'test-secret')).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('basic leaves the session methods unstubbed, and forms leaves verifyCredentials unstubbed', async () => {
+      // The two profiles are disjoint on purpose (AC4's "—" cells). An unstubbed method keeps
+      // createMockServices' rejecting canonical default, which is the loud failure a suite
+      // wants if it reaches for the wrong mode.
+      const basic = createMockServices();
+      stubAuthService(basic);
+      await expect(call<Promise<unknown>>(basic.auth.getSessionSecret)).rejects.toThrow(
+        /mock not configured: auth\.getSessionSecret/,
+      );
+
+      const forms = createMockServices();
+      stubAuthService(forms, 'forms');
+      await expect(call<Promise<unknown>>(forms.auth.verifyCredentials, 'admin', 'pw')).rejects.toThrow(
+        /mock not configured: auth\.verifyCredentials/,
+      );
+    });
+  });
+
+  /**
+   * Both callbacks are typed `void | Promise<void>` and the helper awaits each one. The
+   * synchronous ordering case above cannot see either await: a sync callback has already
+   * finished by the time the helper would resume. Parking each callback on a deferred
+   * promise is what pins the awaits themselves.
+   */
+  describe('Promise-valued callbacks', () => {
+    /** Let pending microtasks and the current macrotask turn drain. */
+    const settle = () => new Promise((resolve) => { setImmediate(resolve); });
+
+    it('awaits a Promise-returning opts.register before invoking opts.routes', async () => {
+      const order: string[] = [];
+      let releaseRegister!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseRegister = resolve; });
+
+      const building = createAuthTestApp(createMockServices(), {
+        register: async () => { order.push('register:enter'); await gate; order.push('register:exit'); },
+        routes: (instance) => { order.push('routes'); probeRoutes(instance); },
+      });
+
+      await settle();
+      // Drop the await on opts.register and `routes` lands here while register is parked.
+      expect(order).toEqual(['register:enter']);
+
+      releaseRegister();
+      const { app } = await building;
+      try {
+        expect(order).toEqual(['register:enter', 'register:exit', 'routes']);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('does not resolve — or call ready() — until a Promise-returning opts.routes completes', async () => {
+      let releaseRoutes!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseRoutes = resolve; });
+      let resolved = false;
+
+      const building = createAuthTestApp(createMockServices(), {
+        routes: async (instance) => { await gate; probeRoutes(instance); },
+      }).then((built) => { resolved = true; return built; });
+
+      await settle();
+      expect(resolved).toBe(false);
+
+      releaseRoutes();
+      const { app, authHeader } = await building;
+      try {
+        expect(resolved).toBe(true);
+        // The second observable: routes registered after the suspension are actually live.
+        // Without the await, ready() would have run first and this probe would 404.
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/__probe',
+          headers: { authorization: authHeader },
+        });
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await app.close();
+      }
+    });
+  });
+
+  describe('opts.db', () => {
+    it('passes the caller-supplied db through to opts.routes by identity', async () => {
+      const sentinelDb = inject<Db>({ marker: 'sentinel' });
+      let received: Db | undefined;
+      const { app } = await createAuthTestApp(createMockServices(), {
+        db: sentinelDb,
+        routes: (instance, _services, db) => { received = db; probeRoutes(instance); },
+      });
+      try {
+        expect(received).toBe(sentinelDb);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('defaults to a db stub whose run() resolves', async () => {
+      let received: Db | undefined;
+      const { app } = await createAuthTestApp(createMockServices(), {
+        routes: (instance, _services, db) => { received = db; probeRoutes(instance); },
+      });
+      try {
+        expect(received).toBeDefined();
+        await expect((received as unknown as { run: () => Promise<unknown> }).run()).resolves.toBeUndefined();
+      } finally {
+        await app.close();
+      }
+    });
+  });
+
+  it('refuses to build while AUTH_BYPASS is enabled', async () => {
+    // Drive the config MODULE rather than the ambient environment: `config.ts` parses
+    // AUTH_BYPASS at boot and only the literal 'true' enables it, and suites hoist their own
+    // `../config.js` mocks. Precedent: src/server/routes/import-preview.test.ts.
+    vi.resetModules();
+    vi.doMock('../config.js', () => ({ config: { authBypass: true, isDev: true } }));
+    try {
+      const freshHelpers = await import('./helpers.js');
+      await expect(
+        freshHelpers.createAuthTestApp(freshHelpers.createMockServices(), { routes: () => {} }),
+      ).rejects.toThrow(/AUTH_BYPASS/);
+    } finally {
+      vi.doUnmock('../config.js');
+      vi.resetModules();
+    }
+  });
+
+  it('exposes the first-user setup exemption through a post-build hasUser override', async () => {
+    const services = createMockServices();
+    const { app } = await createAuthTestApp(services, {
+      routes: (instance) => {
+        instance.post('/api/auth/setup', async () => ({ ok: true }));
+        probeRoutes(instance);
+      },
+    });
+    try {
+      const setup = () => app.inject({ method: 'POST', url: '/api/auth/setup' });
+
+      // Profile default hasUser=true: /api/auth/setup is deliberately absent from
+      // BASE_PUBLIC_ROUTES, so it is protected once a user exists.
+      expect((await setup()).statusCode).toBe(401);
+
+      // The exemption is read per request, ahead of both the AUTH_BYPASS check and the
+      // mode dispatch — so flipping it post-build reaches the handler.
+      (services.auth.hasUser as Mock).mockResolvedValue(false);
+      const exempt = await setup();
+      expect(exempt.statusCode).toBe(200);
+      expect(JSON.parse(exempt.payload)).toEqual({ ok: true });
+    } finally {
+      await app.close();
+    }
+  });
+
+  /**
+   * The options surface is deliberately closed: `mode` is the single source of truth for the
+   * auth profile, and the service-controlled variants (`mode: 'none'`, `localBypass`,
+   * `hasUser`) plus registration-time `urlBase` must never become a second configuration
+   * channel. A runtime test cannot observe a NEW optional field appearing, so these are
+   * typecheck-backed — `pnpm typecheck` is the assertion, and each `@ts-expect-error` goes
+   * unused (TS2578) the moment the shape opens up.
+   *
+   * Every negative case carries exactly ONE defect, and the requiredness case OMITS `routes`
+   * rather than mis-typing it: a wrong VALUE would satisfy the directive while leaving
+   * requiredness unpinned.
+   */
+  describe('CreateAuthTestAppOptions — the closed surface (typecheck-backed)', () => {
+    it('accepts the full four-field shape and the routes-only minimum', () => {
+      const full: CreateAuthTestAppOptions = {
+        mode: 'forms',
+        routes: () => {},
+        register: () => {},
+        db: inject<Db>({ run: vi.fn() }),
+      };
+      const minimal: CreateAuthTestAppOptions = { routes: () => {} };
+
+      expect(full.mode).toBe('forms');
+      expect(minimal.mode).toBeUndefined();
+    });
+
+    it('requires routes', () => {
+      // @ts-expect-error — `routes` is required; omission (not a bad value) is what pins that
+      const noRoutes: CreateAuthTestAppOptions = { mode: 'basic' };
+      expect(noRoutes.mode).toBe('basic');
+    });
+
+    it('closes mode to basic | forms', () => {
+      // @ts-expect-error — `mode: 'none'` is an auth.plugin.test.ts matrix, not a helper option
+      const modeNone: CreateAuthTestAppOptions = { mode: 'none', routes: () => {} };
+      expect(modeNone.mode).toBe('none');
+    });
+
+    it('refuses a second, service-controlled auth channel', () => {
+      // Each of these is a fact `mode` already fixes or a per-request stub the caller
+      // overrides after the build — never a construction option.
+      // @ts-expect-error — `authStatus` would be a second source of truth over `mode`
+      const authStatus: CreateAuthTestAppOptions = { routes: () => {}, authStatus: { mode: 'none' } };
+      // @ts-expect-error — `localBypass` is a request-time AuthService fact; override the stub
+      const localBypass: CreateAuthTestAppOptions = { routes: () => {}, localBypass: true };
+      // @ts-expect-error — `hasUser` is a request-time AuthService fact; override the stub
+      const hasUser: CreateAuthTestAppOptions = { routes: () => {}, hasUser: false };
+
+      expect(typeof authStatus.routes).toBe('function');
+      expect(typeof localBypass.routes).toBe('function');
+      expect(typeof hasUser.routes).toBe('function');
+    });
+
+    it('refuses registration-time urlBase, which no stub override can reach', () => {
+      // @ts-expect-error — `urlBase` is captured when authPlugin registers; see the JSDoc
+      const urlBase: CreateAuthTestAppOptions = { routes: () => {}, urlBase: '/narratorr' };
+      expect(typeof urlBase.routes).toBe('function');
+    });
+  });
+
+  it('exports exactly one basic-auth credential and returns it as authHeader', async () => {
+    const { app, authHeader } = await createAuthTestApp(createMockServices(), { routes: probeRoutes });
+    try {
+      expect(authHeader).toBe(BASIC_AUTH_HEADER);
+      expect(Buffer.from(authHeader.slice(6), 'base64').toString()).toBe('admin:password123');
+    } finally {
+      await app.close();
+    }
   });
 });
