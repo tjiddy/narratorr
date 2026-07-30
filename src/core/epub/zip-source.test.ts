@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { FileHandle } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
 import * as F from '../__tests__/epub-archive.fixture.js';
+import { scanProductionSources, scanSources } from '../__tests__/source-scan.js';
 import { classifyEpubReadError } from './errors.js';
 import { MAX_ARCHIVE_ENTRIES, MAX_CENTRAL_DIRECTORY_BYTES } from './limits.js';
 import type { ZipArchiveResult, ZipSourceSession } from './zip-source.js';
@@ -1346,20 +1347,10 @@ describe('bounded reads', () => {
   });
 
   it('never calls File.buffer() anywhere in src/core/epub/', async () => {
-    const { readdir, readFile } = await import('node:fs/promises');
-    const files = (await readdir(import.meta.dirname, { recursive: true })).filter(
-      (entry) => entry.endsWith('.ts') && !entry.endsWith('.test.ts'),
-    );
-    const sources = await Promise.all(
-      files.map(async (file) => ({
-        file,
-        // Comments are stripped first: this very module documents *why*
-        // `File.buffer()` is never called, and the prose must not trip the scan.
-        code: (await readFile(path.join(import.meta.dirname, file), 'utf8'))
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/\/\/.*$/gm, ''),
-      })),
-    );
+    // Comments are stripped: this very module documents *why* `File.buffer()`
+    // is never called, and the prose must not trip the scan.
+    const sources = await scanProductionSources(import.meta.dirname, { stripComments: true });
+
     expect(sources.filter(({ code }) => /\.buffer\s*\(/.test(code)).map(({ file }) => file)).toEqual(
       [],
     );
@@ -1606,18 +1597,18 @@ describe('the internal-only surface', () => {
   // full-suite run reveals which one. When documenting a relationship to this module from
   // outside the folder, name the folder ("the `src/core/epub/` suites"), not the module.
   it('is imported by no module outside src/core/epub/', async () => {
-    const { readdir, readFile } = await import('node:fs/promises');
     const root = path.resolve(import.meta.dirname, '../..');
-    const epubDir = path.join(root, 'core', 'epub');
-    const entries = await readdir(root, { recursive: true });
-    const candidates = entries
-      .map((entry) => path.join(root, entry))
-      .filter((file) => /\.tsx?$/.test(file) && !file.startsWith(epubDir));
+    // The whole of `src/` — test files included, comments included, this folder
+    // pruned. The exclusion is segment-aware, so a future `src/core/epubx/`
+    // sibling would be scanned rather than silently skipped (#2000).
+    const sources = await scanSources({
+      root,
+      extensions: ['.ts', '.tsx'],
+      includeTests: true,
+      excludeDirs: [path.join(root, 'core', 'epub')],
+    });
 
-    const offenders: string[] = [];
-    for (const file of candidates) {
-      if (/zip-source/.test(await readFile(file, 'utf8'))) offenders.push(path.relative(root, file));
-    }
+    const offenders = sources.filter(({ code }) => /zip-source/.test(code)).map(({ file }) => file);
     expect(offenders).toEqual([]);
   });
 });
