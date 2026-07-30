@@ -11,7 +11,6 @@ import {
   AMBIGUOUS_QUESTION,
   AMBIGUOUS_SUBMIT,
   DRM_BODY,
-  DRM_DOWNLOAD_DISABLED_TITLE,
   REFRESH_ERROR_TOAST,
   REFRESH_LABEL,
   INVALID_REASONS,
@@ -481,8 +480,10 @@ describe('CompanionEbookSection — per-state copy', () => {
     expect(await screen.findByText('DRM-protected')).toBeInTheDocument();
     expect(screen.getByText(formatBytes(SIZE))).toBeInTheDocument();
     expect(screen.getByText(DRM_BODY)).toBeInTheDocument();
+    // "downloaded or" dropped (#2038): the owner CAN download a DRM'd file now, and only the
+    // Kindle half of the old sentence was ever reasoned.
     expect(DRM_BODY).toBe(
-      "Its chapters are encrypted. Narratorr won't remove DRM, so this can't be downloaded or sent to Kindle.",
+      "Its chapters are encrypted. Narratorr won't remove DRM, so this can't be sent to Kindle.",
     );
   });
 
@@ -689,10 +690,9 @@ describe('CompanionEbookSection — download', () => {
     expect(link).toHaveAttribute('download');
   });
 
-  // REVERSED for drm_protected (Todd, 2026-07-29): DRM now renders a DISABLED download
-  // button rather than nothing — "there is a download here and it is blocked" communicates
-  // more than silence. The remaining three stay absence: `none` has no file, `ambiguous` has
-  // no chosen file, `invalid`'s file is not servable.
+  // `drm_protected` is not here (#2038): it renders a real, live link, asserted below. The
+  // remaining three stay absence — `none` has no file, `ambiguous` has no chosen file, and
+  // `invalid`'s file is not servable — and absence is accurate for all three.
   const noDownloadStates: Array<[string, CompanionEbookState]> = [
     ['none', NONE],
     ['ambiguous', ambiguous(candidateList('a.epub', 'b.epub'))],
@@ -710,17 +710,26 @@ describe('CompanionEbookSection — download', () => {
     });
   }
 
-  it('drm_protected renders a DISABLED download button with the DRM tooltip, and never a link', async () => {
+  /**
+   * INVERTED by #2038, which is the client half of the exposure split. The server's owner gate
+   * now admits a stored `drm_protected` row, so the anchor here resolves rather than 404ing, and
+   * the disabled button that stood in for it is gone.
+   *
+   * Both halves are asserted: a live link with the same href helper and `download` attribute the
+   * `available` state uses, AND no download BUTTON anywhere — a component that renders both
+   * would satisfy either assertion alone.
+   */
+  it('drm_protected renders the same real download link as available, and no disabled button', async () => {
     mockApi.getCompanionEbookState.mockResolvedValue(DRM);
     renderPanel();
     await screen.findByText('DRM-protected');
 
-    // Never an anchor: the server's exposure gate is `available`-only, so a live link here
-    // would 404. The disabled button must flip to a link only when the exposure split lands.
-    expect(screen.queryByRole('link', { name: /download/i })).toBeNull();
-    const button = screen.getByRole('button', { name: 'Download EPUB' });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute('title', DRM_DOWNLOAD_DISABLED_TITLE);
+    const link = screen.getByRole('link', { name: 'Download EPUB' });
+    // The helper, not a bare `/api/...` string: it carries `URL_BASE`, and a hand-built href
+    // silently breaks every sub-path deployment.
+    expect(link).toHaveAttribute('href', api.getCompanionEbookDownloadUrl(BOOK_ID));
+    expect(link).toHaveAttribute('download');
+    expect(screen.queryByRole('button', { name: /download/i })).toBeNull();
   });
 
   it('drm_protected renders the filename truncated with the full name as its tooltip', async () => {

@@ -69,18 +69,15 @@ export const AMBIGUOUS_SUBMIT = 'Use this one';
 export const SELECTION_SUCCESS_TOAST = 'Ebook selection saved';
 
 // --- `drm_protected` -------------------------------------------------------
-export const DRM_BODY =
-  "Its chapters are encrypted. Narratorr won't remove DRM, so this can't be downloaded or sent to Kindle.";
 
 /**
- * Tooltip on the header download affordance when DRM blocks it. The button renders
- * DISABLED rather than absent: "there is a download here and it is blocked" reads
- * better than silence, and the accessible NAME stays `DOWNLOAD_LABEL` so the control
- * keeps one identity across states; this title carries the why. If the exposure
- * split ever allows owner download of DRM'd files, this constant and the disabled
- * state go together.
+ * "downloaded or" was dropped in #2038, when the exposure split landed. Only the Kindle half of
+ * the original sentence was ever reasoned — a DRM'd EPUB genuinely fails Amazon's converter —
+ * while the download half fell out of one shared gate that answered both questions at once. The
+ * owner downloads their own file now, so the sentence may not claim otherwise.
  */
-export const DRM_DOWNLOAD_DISABLED_TITLE = 'DRM-protected: download unavailable';
+export const DRM_BODY =
+  "Its chapters are encrypted. Narratorr won't remove DRM, so this can't be sent to Kindle.";
 
 // --- `invalid` -------------------------------------------------------------
 
