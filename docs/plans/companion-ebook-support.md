@@ -595,7 +595,7 @@ first row. Verified by injecting the mock into the live app.
 | `unavailable` | `None` | "Drop a single `.epub` into this book's folder, shown under Location below, then rescan." |
 | `ambiguous` | `N found` | "Which one belongs to this book?" + radio list of basenames + **Use this one** |
 | `invalid` | `Not readable` | the filename, then "This isn't a valid EPUB: it has no reading order. If it's still copying, wait and rescan." |
-| `drm_protected` | `DRM-protected` | size, then "Its chapters are encrypted. Narratorr won't remove DRM, so this can't be downloaded or sent to Kindle." |
+| `drm_protected` | `DRM-protected` | size, then "Its chapters are encrypted. Narratorr won't remove DRM, so this can't be sent to Kindle." |
 
 *[Shipped divergences from this table, 2026-07-29 — Todd's calls during the first live UAT, made
 interactively (UI work stays out of the pipeline). The shipped panel is the authority; this table
@@ -604,8 +604,10 @@ is kept as the original design record:*
   (truncated, full name in the tooltip). The original design showed it only on `invalid`; once a
   selection exists the filename is the only disambiguator for which file won.*
 - ***Download EPUB** is no longer an in-card text link — it is a header ICON in the Series-card
-  idiom. On `drm_protected` it renders DISABLED with tooltip "DRM-protected: download unavailable"
-  rather than absent.*
+  idiom. It renders as a real link on `available` and, since #2038, on `drm_protected` too; the
+  other three states render no download control at all. (It briefly rendered DISABLED on
+  `drm_protected` with tooltip "DRM-protected: download unavailable", which was correct only
+  while the server ran one `available`-only gate for advertisement and owner readability.)*
 - *A **re-check arrow** (#2034, not in this design) sits beside it in every state, wired to
   `POST /companion-epub/refresh` with a bounded post-202 poll window and a minimum visible spin.*
 - *`size · chapter count` remains size-only — the count is #2022, parked: `/metadata` cannot yet
@@ -704,11 +706,16 @@ companionEbook: { format: "epub", sizeBytes: number } | null
 (`result.library = match`, batch-loaded via `findLibraryStatusByAsins` at `:37`). This is the
 load-bearing surface: it feeds the consumer's search cards.
 
-**The batch-load as v2 described it is impossible.** `book.service.ts:179-194` selects only
-`{ bookId: books.publicId, status, asin }` — no numeric `books.id` (the companion FK) and no
-`books.path` (needed by the exposure predicate). So `findLibraryStatusByAsins` must additionally
-select `books.id` and `books.path`, or LEFT JOIN `companion_ebooks`, with the predicate applied in the
-mapper. Assert no-N+1 on **both** producers. [R2-17]
+**The batch-load as v2 described it is impossible.** `book.service.ts:179-194` selected only
+`{ bookId: books.publicId, status, asin }` — no numeric `books.id`, which is the companion FK. So
+`findLibraryStatusByAsins` had to additionally select `books.id`, or LEFT JOIN `companion_ebooks`,
+with the predicate applied in the mapper. Assert no-N+1 on **both** producers. [R2-17]
+
+*[Corrected: this passage previously also required `books.path` "(needed by the exposure
+predicate)". That has been false since #1961 shipped — NEITHER predicate takes a path term. Both
+take exactly `{ enabled, bookStatus, observationStatus }`, and the producer deliberately projects
+the numeric `books.id` only (`src/server/services/book.service.ts` says so at its select). A future
+implementer following the old text would add the very path term the predicates forbid.]*
 
 Reach limit worth stating: the annotation is **ASIN-keyed** and `book.service.ts:191` skips null-ASIN
 rows, while `idx_books_asin_unique` is UNIQUE on `upper(asin)` where non-null — so the keep-both
@@ -779,7 +786,8 @@ predicted. The dormancy held through the consumer actually shipping.]*
 
 ### `GET /api/v1/books/:publicId/companion-epub`
 
-API-key hook; never accepts or returns a path; requires the frozen exposure predicate; resolves
+API-key hook; never accepts or returns a path; requires the frozen ADVERTISEMENT predicate
+(`isCompanionEbookExposed` — never the owner-readable one, see Frozen contracts); resolves
 through the §5 resolver; `Content-Type: application/epub+zip`, sanitized attachment filename,
 `private, no-store`; `409 companion_epub_disabled` when disabled, `404 companion_epub_unavailable`
 otherwise; abort propagation and backpressure.
@@ -831,18 +839,41 @@ post-import hook could ever have written one. It was weakest exactly where it wa
 
 ## Frozen contracts
 
-**The exposure predicate — one literal, evaluated by the owner panel, both public producers, and the
-stream.** [R2-8, R2-41]
+**The exposure predicates — TWO named literals sharing terms 1-2, differing only in the status-set
+term.** [R2-8, R2-41] Split in #2038: advertisement and owner-readability are different questions
+asked at different trust boundaries, and one gate answering both is what silently blocked the owner
+from downloading their own `drm_protected` file.
 
 ```
-exposed(book, obs) :=
+exposed(book, obs) :=                        # ADVERTISEMENT — isCompanionEbookExposed
       settings.companionEpub.enabled
   AND book.status === 'imported'
   AND obs.status === 'available'
-  AND the live open succeeds (lstat regular-file + containment)
+  AND the live term succeeds (caller-owned)
+
+ownerReadable(book, obs) :=                  # OWNER FILE ROUTES — isCompanionEbookOwnerReadable
+      settings.companionEpub.enabled
+  AND book.status === 'imported'
+  AND obs.status IN ('available', 'drm_protected')
+  AND the live term succeeds (caller-owned)
 ```
 
-`books.status === 'imported'` is required and is doing more work than it looks.
+**Callers, and why the sets differ.** `exposed` is evaluated by both public producers (the
+metadata-search `library` annotation and the top-level book DTO) and the public v1 stream: a
+`drm_protected` EPUB genuinely fails Amazon's Kindle converter, so advertising one promises a
+conversion that cannot happen. `ownerReadable` is evaluated by the three owner file routes —
+download, metadata, and cover — at one shared call site: the file is already on the owner's disk,
+serving its bytes removes no DRM, and the classifier has been wrong about a real book, so the block
+only ever converted a misclassification into denied access. The owner panel reads neither: it
+issues `GET /companion-epub/state`, which gates on eligibility.
+
+**Term 4 is caller-owned for both**, and is the authority in both cases: the live open (`lstat`
+regular-file + containment) for the download and the stream, the live `inspectEpub` for metadata
+and cover. That is what makes the widened status set safe — a genuinely encrypted file still fails
+the live term on the two read routes, so widening the STORED-status gate cannot expose encrypted
+content.
+
+`books.status === 'imported'` is required in both and is doing more work than it looks.
 `library-scan.service.ts:210-216` flips `imported` to `missing` without touching `books.path`, so
 without this term a book on an unreachable mount keeps advertising `companionEbook: { sizeBytes }`
 while every family click 404s. With it, the mount-down case is covered here rather than needing a
@@ -993,7 +1024,7 @@ section or `$review-spec` soft-warns. [R2-38]
 | 1.2b | **Setting + repository + projections** | Registry category rendered as a peer section in General settings, the two test-file updates, repository, the exposure predicate as one shared function. No reconciler, no UI, no routes. [R2-38, R2-112] |
 | 1.2c | **Reconciler** | `withBookAdmissionLock` per book, coalescing `reconcileAll()`, fingerprint short-circuit incl. `ctime`. Conditional writes keyed on `(bookId, path, status, fingerprint)`. [R2-13, R2-27] |
 | 1.3 | **Trigger wiring** | The `processJob` success-tail extraction **first** (lint budget + failure isolation), the scan-lock wrapper, the three rename callers, wrong release, `finally`-shaping. Foreign-file regressions. [R2-4, R2-7, R2-10, R2-11, R2-20, R2-34] |
-| 1.4 | **Public v1 contract** | `/api/v1/capabilities`; `companionEbook` on both producers; `findLibraryStatusByAsins` gains `books.id` + `books.path`; all four `toBookV1` touchpoints; batch-load; OpenAPI fixtures. **AC:** the nested annotation is the live surface; the top-level field is pinned but dormant. [R2-3, R2-5, R2-17, R2-37] |
+| 1.4 | **Public v1 contract** | `/api/v1/capabilities`; `companionEbook` on both producers; `findLibraryStatusByAsins` gains the numeric `books.id` only (NOT `books.path` — neither exposure predicate takes a path term); all four `toBookV1` touchpoints; batch-load; OpenAPI fixtures. **AC:** the nested annotation is the live surface; the top-level field is pinned but dormant. [R2-3, R2-5, R2-17, R2-37] |
 | 1.5 | **Companion read routes** — split three ways, own route module | **#1974**: the shared open-and-verify helper (`lstat` + regular-file + containment, `Content-Length` from `fstat`), the shared candidate-discovery function, the owner download, and the owner `/state` read. **#1975**: the public stream, its `headersSent` guard in `routes/v1/_helpers.ts`, and the stream semaphore. **#1976**: owner metadata, owner cover, and the `ambiguous` selection `PUT` — route *and* the revalidate-and-persist write behind it, which needs the validator's verdict because `ck_companion_ebooks_selection` refuses a `selected_filename` on an `ambiguous` row. [R2-18*, R2-21, R2-23, R2-24] |
 | 1.6 | **Owner panel** (presentational only) | Five states plus the `ambiguous` picker. No `ineligible` surface, no stale/degraded states. Depends on 1.4 and 1.5. [R2-26, R2-112] |
 

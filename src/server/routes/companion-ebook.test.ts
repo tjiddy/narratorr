@@ -1836,12 +1836,12 @@ describe('companion ebook owner routes', () => {
 
     // --- AC31: the accepted persistent re-enqueue, and its cost bound --------
 
-    it('AC31 (accepted characteristic): two consecutive outside-root requests enqueue TWICE, the row is unchanged, exposure stays true, and NO readdir happens', async () => {
+    it('AC31 (accepted characteristic): two consecutive outside-root requests enqueue TWICE, the row is unchanged, the owner gate stays open, and NO readdir happens', async () => {
       // This is the documented, bilaterally-agreed stale window after a library-root change —
       // NOT a bug. `reconcileBook` registers a fresh run per call and `withBookAdmissionLock`
       // only serializes them; nothing coalesces on this path. The run stops at the LEXICAL
       // containment check, which performs zero filesystem calls, so the cost per request is
-      // one eligibility probe and the exposure gate never closes.
+      // one eligibility probe and the owner gate never closes.
       const reconcilerDb = createMockDb();
       let snapshotReads = 0;
       reconcilerDb.select.mockImplementation(() => ({
@@ -1893,7 +1893,7 @@ describe('companion ebook owner routes', () => {
         expect(second.statusCode).toBe(404);
         // Two enqueues, not one: serialization is not coalescing.
         expect(runs).toHaveLength(2);
-        // No write at all, so the exposure gate never closes and the next request repeats this.
+        // No write at all, so the owner gate never closes and the next request repeats this.
         expect(reconcilerDb.update).not.toHaveBeenCalled();
         expect(reconcilerDb.insert).not.toHaveBeenCalled();
         expect(reconcilerDb.transaction).not.toHaveBeenCalled();
