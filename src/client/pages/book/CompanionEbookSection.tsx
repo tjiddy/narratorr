@@ -1,7 +1,8 @@
-import { useLayoutEffect, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useLayoutEffect, useState, type ReactNode } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { Badge } from '@/components/Badge';
-import { DownloadIcon } from '@/components/icons';
+import { DownloadIcon, LoadingSpinner, RefreshIcon } from '@/components/icons';
 import { api, ApiError, formatBytes, type CompanionEbookCandidate, type CompanionEbookState } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import {
@@ -15,6 +16,8 @@ import {
   NONE_BODY_PREFIX,
   NONE_BODY_SUFFIX,
   PILLS,
+  REFRESH_ERROR_TOAST,
+  REFRESH_LABEL,
   SECTION_HEADING,
   ambiguousPill,
   invalidSentence,
@@ -245,13 +248,33 @@ function HeaderDownload({ bookId, status }: { bookId: number; status: CompanionE
  * outage — every remount after the first is served from cache. Do not "fix" this with
  * client-side retry or by caching `/state` outside the query cache.
  */
+/**
+ * How the panel observes a forced re-check (#2034). The server answers `202` BEFORE the
+ * reconcile runs, so invalidating on the 202 alone races it — the refetch can read the OLD
+ * row and the panel then sits stale until the next mount. After a refresh is accepted, the
+ * state query polls briefly; the reconcile is sub-second for one book, so the second or
+ * third tick lands the new verdict. The window is bounded — this must never become a
+ * standing poll — and it is not cleared early on "data changed" because a forced re-check
+ * can legitimately produce an IDENTICAL row, which is indistinguishable from "not done yet".
+ */
+const REFRESH_POLL_INTERVAL_MS = 700;
+const REFRESH_POLL_WINDOW_MS = 5_000;
+
 export function CompanionEbookSection({ bookId }: { bookId: number }) {
+  const queryClient = useQueryClient();
+  const [pollUntil, setPollUntil] = useState<number | null>(null);
+
   const { data, error } = useQuery({
     queryKey: queryKeys.companionEbook(bookId),
     queryFn: () => api.getCompanionEbookState(bookId),
     // The app default is 60s (`main.tsx`); every mount must re-check rather than serve a
     // minute-old answer, which is what makes a remount after a disable actually re-request.
     staleTime: 0,
+    // Function form, not a computed value: react-query re-evaluates it after every fetch, so
+    // the window shuts off on the first tick past the deadline without needing a re-render —
+    // and the clock read happens inside react-query's callback, never during render.
+    refetchInterval: () =>
+      pollUntil !== null && Date.now() < pollUntil ? REFRESH_POLL_INTERVAL_MS : false,
     // Production leaves `retry` unset, so without this predicate a `409` would sit in
     // `failureReason` through the default backoff ladder and only reach `error` after the last
     // attempt — keeping a cached `Available` pill and a live download link on screen for
@@ -259,6 +282,21 @@ export function CompanionEbookSection({ bookId }: { bookId: number }) {
     // cannot change between backoff attempts. Everything else keeps the client's three retries.
     retry: (failureCount, queryError) =>
       !(queryError instanceof ApiError && queryError.status === 409) && failureCount < 3,
+  });
+
+  // No post-unmount generation guard here, deliberately (contrast useReplaceGrab): the error
+  // toast is global UI rather than tree-local, still correct after a navigation; the
+  // `setPollUntil` on an unmounted tree is a React-18 no-op; and the invalidation is exactly
+  // the kind of unconditional cache work the guard pattern leaves unguarded on purpose.
+  const refresh = useMutation({
+    mutationFn: () => api.refreshCompanionEbook(bookId),
+    onSuccess: () => {
+      setPollUntil(Date.now() + REFRESH_POLL_WINDOW_MS);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.companionEbook(bookId) });
+    },
+    onError: () => {
+      toast.error(REFRESH_ERROR_TOAST);
+    },
   });
 
   const selection = useCompanionEbookSelection(bookId, data?.candidates ?? []);
@@ -284,6 +322,18 @@ export function CompanionEbookSection({ bookId }: { bookId: number }) {
         </h2>
         <div className="flex items-center gap-2">
           <HeaderDownload bookId={bookId} status={data.status} />
+          {/* Present in EVERY state — `none` is the flagship flow (drop a file, look again),
+              and DRM/invalid are where a stale verdict needs re-judging (#2034). */}
+          <button
+            type="button"
+            onClick={() => refresh.mutate()}
+            disabled={refresh.isPending}
+            aria-label={REFRESH_LABEL}
+            title={REFRESH_LABEL}
+            className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 focus-ring rounded"
+          >
+            {refresh.isPending ? <LoadingSpinner className="w-4 h-4" /> : <RefreshIcon className="w-4 h-4" />}
+          </button>
         </div>
       </div>
       <div className="glass-card rounded-2xl p-4 space-y-2">

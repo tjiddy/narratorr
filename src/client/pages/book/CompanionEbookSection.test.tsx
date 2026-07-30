@@ -12,6 +12,8 @@ import {
   AMBIGUOUS_SUBMIT,
   DRM_BODY,
   DRM_DOWNLOAD_DISABLED_TITLE,
+  REFRESH_ERROR_TOAST,
+  REFRESH_LABEL,
   INVALID_REASONS,
   INVALID_SENTENCE_FALLBACK,
   NONE_BODY,
@@ -69,6 +71,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       ...actual.api,
       getCompanionEbookState: vi.fn(),
       putCompanionEbookSelection: vi.fn(),
+      refreshCompanionEbook: vi.fn(),
     },
   };
 });
@@ -79,6 +82,7 @@ import { toast } from 'sonner';
 const mockApi = api as unknown as {
   getCompanionEbookState: ReturnType<typeof vi.fn>;
   putCompanionEbookSelection: ReturnType<typeof vi.fn>;
+  refreshCompanionEbook: ReturnType<typeof vi.fn>;
 };
 const mockToast = toast as unknown as {
   success: ReturnType<typeof vi.fn>;
@@ -1102,5 +1106,80 @@ describe('companion-ebook query key', () => {
 
     const entry = client.getQueryCache().find({ queryKey: queryKeys.companionEbook(BOOK_ID) });
     expect(entry?.state.isInvalidated).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The header re-check button (#2034 — client half)
+// ---------------------------------------------------------------------------
+
+describe('CompanionEbookSection — the re-check button', () => {
+  for (const [label, state] of ALL_STATES) {
+    it(`${label} renders the re-check button`, async () => {
+      mockApi.getCompanionEbookState.mockResolvedValue(state);
+      renderPanel();
+      await screen.findByRole('heading', { name: 'Ebook' });
+
+      expect(screen.getByRole('button', { name: REFRESH_LABEL })).toBeInTheDocument();
+    });
+  }
+
+  it('click posts the refresh for THIS book and disables the button while pending', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
+    let settle!: () => void;
+    mockApi.refreshCompanionEbook.mockImplementation(
+      () => new Promise<void>((resolve) => { settle = resolve; }),
+    );
+    renderPanel();
+    const user = userEvent.setup();
+
+    const button = await screen.findByRole('button', { name: REFRESH_LABEL });
+    await user.click(button);
+
+    expect(mockApi.refreshCompanionEbook).toHaveBeenCalledExactlyOnceWith(BOOK_ID);
+    expect(button).toBeDisabled();
+
+    settle();
+    await waitFor(() => expect(button).toBeEnabled());
+  });
+
+  it('a 202 re-reads /state — the accepted refresh must be observable, not fire-and-forget', async () => {
+    // The server answers 202 BEFORE the reconcile runs; the onSuccess invalidation is what
+    // makes the panel re-read. The observation point is the /state CALL COUNT growing after
+    // the mutation settles — asserting on the mutation alone would prove queuing, not effect.
+    mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
+    mockApi.refreshCompanionEbook.mockResolvedValue(undefined);
+    renderPanel();
+    const user = userEvent.setup();
+
+    await screen.findByText('Available');
+    const callsBefore = mockApi.getCompanionEbookState.mock.calls.length;
+
+    await user.click(screen.getByRole('button', { name: REFRESH_LABEL }));
+
+    await waitFor(() =>
+      expect(mockApi.getCompanionEbookState.mock.calls.length).toBeGreaterThan(callsBefore),
+    );
+    // The polling window beyond this first invalidation refetch is deliberately untested:
+    // driving react-query's interval needs fake timers, and full fake timers deadlock
+    // TanStack (vitest-faketimers-react-query) while partial fakes have produced the
+    // full-suite flake class this repo already documents (#2033). The invalidation refetch
+    // is the load-bearing observable; the window only shortens the stale tail.
+  });
+
+  it('a failed refresh POST toasts and re-enables', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
+    mockApi.refreshCompanionEbook.mockRejectedValue(new ApiError(503, 'busy'));
+    renderPanel();
+    const user = userEvent.setup();
+
+    const button = await screen.findByRole('button', { name: REFRESH_LABEL });
+    await user.click(button);
+
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledExactlyOnceWith(REFRESH_ERROR_TOAST));
+    expect(button).toBeEnabled();
+    // The failure is the POST itself; nothing was accepted, so nothing re-reads /state
+    // beyond the initial load.
+    expect(mockApi.getCompanionEbookState.mock.calls.length).toBe(1);
   });
 });

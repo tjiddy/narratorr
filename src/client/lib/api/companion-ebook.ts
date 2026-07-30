@@ -52,4 +52,13 @@ export const companionEbookApi = {
    */
   getCompanionEbookDownloadUrl: (bookId: number) =>
     `${URL_BASE}/api/books/${bookId}/companion-epub`,
+
+  /**
+   * #2034 — force a re-judgement of this book's companion ebook. The server answers `202`
+   * BEFORE the reconcile runs (fire-and-forget), so a success here means "queued", never
+   * "done": the caller must re-read `/state` to observe the new verdict, and immediately
+   * refetching on the 202 races the reconcile. No body, no response payload.
+   */
+  refreshCompanionEbook: (bookId: number) =>
+    fetchApi<void>(`/books/${bookId}/companion-epub/refresh`, { method: 'POST' }),
 };

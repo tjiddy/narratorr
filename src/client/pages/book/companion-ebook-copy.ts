@@ -47,6 +47,14 @@ export const BADGE_VARIANTS: Record<CompanionEbookStatus, BadgeVariant> = {
 
 export const DOWNLOAD_LABEL = 'Download EPUB';
 
+/** The header refresh affordance (#2034). "Re-check", never "rescan": Refresh & Scan is the
+ *  whole-book action and re-probes the audio; this one re-judges only the ebook. */
+export const REFRESH_LABEL = 'Re-check ebook';
+
+/** Toast when the refresh POST itself fails. The reconcile's own failures are server-side
+ *  and surface as an unchanged panel, which the sentence covers with "try again". */
+export const REFRESH_ERROR_TOAST = "Couldn't re-check the ebook. Try again in a moment.";
+
 // --- `none` ----------------------------------------------------------------
 // Split into three parts only so `.epub` can render inside a <code>; the whole
 // sentence is `NONE_BODY`, and the element's accessible text must equal it.
