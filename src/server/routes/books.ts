@@ -446,10 +446,16 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       // `PATH_MISSING`, `NO_AUDIO_FILES`, all thrown BEFORE the audio probe — still refreshes
       // the companion observation. The thrown error propagates to the existing handler
       // untouched; the trigger never awaits and never throws.
+      //
+      // #2034 AC7 — and it FORCES. This is a user pointing at one book, so the fingerprint
+      // short-circuit is bypassed and a stale verdict on an unchanged file is re-judged. Without
+      // the final argument the reported bug stands: after a validator fix, no action reachable
+      // from the UI could make the book re-validate. The `finally` shape, the context string, and
+      // the fact that this is never awaited are all unchanged.
       try {
         return await refreshScanBook(id, deps.bookService, deps.settingsService, request.log);
       } finally {
-        triggerCompanionReconcile(deps.companionEbook, id, request.log, 'Companion ebook reconcile failed after refresh scan');
+        triggerCompanionReconcile(deps.companionEbook, id, request.log, 'Companion ebook reconcile failed after refresh scan', true);
       }
     },
   );

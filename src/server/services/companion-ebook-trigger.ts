@@ -14,7 +14,12 @@ import { serializeError } from '../utils/serialize-error.js';
  * `CompanionEbookReconciler` satisfies both, so production wiring is unchanged.
  */
 export interface CompanionBookReconcileTrigger {
-  reconcileBook(bookId: number): Promise<void>;
+  /**
+   * `force` (#2034) is OPTIONAL, which is what keeps `CompanionEbookReconciler` assignable to
+   * this interface and every existing `{ reconcileBook: vi.fn() }` stub valid — a stub that wants
+   * to assert force just declares the second parameter.
+   */
+  reconcileBook(bookId: number, force?: boolean): Promise<void>;
 }
 
 export interface CompanionSweepTrigger {
@@ -41,15 +46,33 @@ function fire(run: () => Promise<void>, log: FastifyBaseLogger, context: string)
   }
 }
 
-/** Refresh the companion observation for ONE book. No-op when no reconciler is wired. */
+/**
+ * Refresh the companion observation for ONE book. No-op when no reconciler is wired.
+ *
+ * `force` (#2034) skips the observer's fingerprint short-circuit, so a stale verdict on an
+ * UNCHANGED file gets re-judged. Pass it only where a user pointed at this one book — today that
+ * is Refresh & Scan and the companion refresh endpoint, and nothing else. Every other seam
+ * (import completion, the three rename callers, wrong-release, and the two opener mismatch arms)
+ * omits it: the mismatch arms in particular fire once per REQUEST, so forcing there would put a
+ * full `validateEpub` on an unbounded request-rate path.
+ */
 export function triggerCompanionReconcile(
   reconciler: CompanionBookReconcileTrigger | null | undefined,
   bookId: number,
   log: FastifyBaseLogger,
   context: string,
+  force = false,
 ): void {
   if (!reconciler) return;
-  fire(() => reconciler.reconcileBook(bookId), log, context);
+  // AC8 — a non-forcing trigger stays a TRUE single-argument call. `reconcileBook(bookId, force)`
+  // would read identically at runtime but forwards an explicit `false`/`undefined`, and vitest's
+  // `toHaveBeenCalledWith(id)` compares argument ARRAYS — so that one-character convenience would
+  // break exact-call assertions in seven suites this issue does not otherwise touch.
+  fire(
+    () => (force ? reconciler.reconcileBook(bookId, true) : reconciler.reconcileBook(bookId)),
+    log,
+    context,
+  );
 }
 
 /**

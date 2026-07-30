@@ -269,6 +269,126 @@ describe('CompanionEbookReconciler end-to-end (#1959)', () => {
   });
 
   // =========================================================================
+  // Forced revalidation end to end (#2034) — the reported regression
+  // =========================================================================
+
+  /**
+   * The live UAT bug, reproduced against the whole stack.
+   *
+   * A validator fix (`287ee627`, the `x-font-truetype` media type) corrected a false
+   * `drm_protected` verdict — and no user action could make the affected book re-validate,
+   * because the file's bytes never changed and `isUnchanged` matched forever. The row was
+   * stranded until someone touched the mtime from a shell.
+   *
+   * Per `vacuous-assertion-observation-points` §3, the PERSISTED VERDICT is the observable. A
+   * route status could not attribute the change to the bypass: the companion read routes collapse
+   * every rejection into one 404 on purpose, so a status assertion stays green after the guard is
+   * removed. The unforced control below is the other half — without it, this case would also pass
+   * against a build that had simply deleted the short-circuit.
+   */
+  describe('forced revalidation (#2034)', () => {
+    /**
+     * Seed a stale `drm_protected` verdict whose fingerprint matches the file on disk EXACTLY.
+     * Written through the real repository, so all eight CHECK constraints apply — a fixture the
+     * schema would reject cannot silently become the premise.
+     */
+    async function seedStaleVerdict(path: string): Promise<void> {
+      const stats = await stat(path);
+      await upsertCompanionEbook(db, bookId, {
+        status: 'drm_protected',
+        filename: 'book.epub',
+        sizeBytes: stats.size,
+        mtimeMs: Math.trunc(stats.mtimeMs),
+        ctimeMs: Math.trunc(stats.ctimeMs),
+        candidateCount: 1,
+        selected: false,
+      });
+      // The premise: every term of AC9's conjunction matches, so a sweep short-circuits.
+      expect(await readRow()).toMatchObject({
+        status: 'drm_protected',
+        sizeBytes: stats.size,
+        mtimeMs: Math.trunc(stats.mtimeMs),
+        ctimeMs: Math.trunc(stats.ctimeMs),
+      });
+    }
+
+    it('re-judges a stale drm_protected verdict on a byte-identical file, and writes `available`', async () => {
+      const path = await writeEpub('book.epub');
+      await seedStaleVerdict(path);
+      validateEpubMock.mockClear();
+
+      // Touch NOTHING on disk. The file is a valid EPUB; only the stored verdict is wrong.
+      await reconciler.reconcileBook(bookId, true);
+
+      expect(validateEpubMock).toHaveBeenCalledTimes(1);
+      expect(await readRow()).toMatchObject({
+        status: 'available',
+        validationCode: null,
+        filename: 'book.epub',
+        candidateCount: 1,
+      });
+    });
+
+    it('leaves the same stale verdict at drm_protected WITHOUT force — the control', async () => {
+      const path = await writeEpub('book.epub');
+      await seedStaleVerdict(path);
+      const before = await readRow();
+      validateEpubMock.mockClear();
+
+      await reconciler.reconcileBook(bookId);
+
+      // The short-circuit fired: no validation, no transaction, not even an `updated_at` touch.
+      expect(validateEpubMock).not.toHaveBeenCalled();
+      expect(await readRow()).toEqual(before);
+    });
+
+    it('leaves the stale verdict standing through a full SWEEP too (AC5)', async () => {
+      const path = await writeEpub('book.epub');
+      await seedStaleVerdict(path);
+      const before = await readRow();
+      validateEpubMock.mockClear();
+
+      await reconciler.reconcileAll();
+
+      expect(validateEpubMock).not.toHaveBeenCalled();
+      expect(await readRow()).toEqual(before);
+    });
+
+    it('still writes a real validation code when the forced re-judgement finds a broken file', async () => {
+      // Force does not mean "write available" — it means "judge again". A genuinely invalid file
+      // must land its real code, not inherit the stale verdict and not be laundered into success.
+      const path = await writeEpub('book.epub', { packageOptions: { spine: '<spine></spine>' } });
+      await seedStaleVerdict(path);
+
+      await reconciler.reconcileBook(bookId, true);
+
+      expect(await readRow()).toMatchObject({ status: 'invalid', validationCode: 'empty_spine' });
+    });
+
+    /**
+     * `libsql-transactions-serialized-at-the-connection`: one @libsql/client connection permits
+     * one transaction at a time, and `createDb` routes `db.transaction` through
+     * `runSerializedTransaction` — so two concurrent forced passes SERIALIZE rather than raising
+     * `SQLITE_BUSY`. Both must resolve, and the row must end in a consistent state.
+     *
+     * The second pass is also the interesting one on its own terms: the first pass changed the
+     * row, so the second's `commitObservation` precondition reads the value the first wrote. It
+     * either commits an identical observation or aborts to `conflicted` — never a partial write.
+     */
+    it('serializes two concurrent forced passes instead of raising SQLITE_BUSY', async () => {
+      const path = await writeEpub('book.epub');
+      await seedStaleVerdict(path);
+
+      await expect(Promise.all([
+        reconciler.reconcileBook(bookId, true),
+        reconciler.reconcileBook(bookId, true),
+      ])).resolves.toEqual([undefined, undefined]);
+
+      expect(await readRow()).toMatchObject({ status: 'available', validationCode: null });
+    });
+  });
+
+  // =========================================================================
   // selectCompanionEbook end to end (#1976) — real CHECK constraints
   // =========================================================================
 

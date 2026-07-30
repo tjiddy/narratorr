@@ -114,8 +114,16 @@ function priorRow(overrides: Partial<CompanionEbookRow> = {}): CompanionEbookRow
   } as CompanionEbookRow;
 }
 
-function observe(prior: CompanionEbookRow | null, log: FastifyBaseLogger) {
-  return observeCompanionEbook({ bookId: BOOK_ID, bookPath: BOOK_PATH, libraryRoot: LIBRARY_ROOT, prior }, log);
+function observe(prior: CompanionEbookRow | null, log: FastifyBaseLogger, force = false) {
+  return observeCompanionEbook(
+    { bookId: BOOK_ID, bookPath: BOOK_PATH, libraryRoot: LIBRARY_ROOT, prior, force },
+    log,
+  );
+}
+
+/** Every path `lstat` was called with, in call order — the AC3 syscall-order observable. */
+function lstatPaths(): string[] {
+  return lstatMock.mock.calls.map((call) => String(call[0]));
 }
 
 describe('observeCompanionEbook (#1959)', () => {
@@ -303,6 +311,205 @@ describe('observeCompanionEbook (#1959)', () => {
       await observe(priorRow({ status: 'none', filename: null, candidateCount: 0 }), log);
 
       expect(validateEpubMock).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * #2034 AC2 — the bypass is at the CALL SITE, so `isUnchanged` keeps its full conjunction
+     * and the sweep keeps the optimisation. Every case in this block pairs a forced run with the
+     * unforced run of the SAME fixture, because the whole claim is a difference between the two:
+     * a forced-only assertion would also pass against an `isUnchanged` that had simply been
+     * deleted.
+     */
+    describe('the forced bypass (#2034 AC2/AC3)', () => {
+      /**
+       * The live UAT case at unit scale: a stale `drm_protected` verdict on a file whose bytes
+       * never moved. Every term of AC9's conjunction matches, so the sweep would short-circuit
+       * forever and the corrected validator would never be consulted.
+       */
+      it('revalidates a fully-matching `drm_protected` row when forced', async () => {
+        const { log } = createMockLogger();
+        readdirMock.mockResolvedValue(['book.epub'] as never);
+        queueLstat(fileStats(), fileStats(), fileStats());
+
+        const result = await observe(priorRow({ status: 'drm_protected' }), log, true);
+
+        expect(validateEpubMock).toHaveBeenCalledExactlyOnceWith(join(BOOK_PATH, 'book.epub'));
+        expect(result).toEqual({
+          outcome: 'observed',
+          observation: {
+            status: 'available',
+            filename: 'book.epub',
+            sizeBytes: DEFAULT_FINGERPRINT.size,
+            mtimeMs: DEFAULT_FINGERPRINT.mtimeMs,
+            ctimeMs: DEFAULT_FINGERPRINT.ctimeMs,
+            candidateCount: 1,
+            selected: false,
+          },
+        });
+      });
+
+      it('still short-circuits the SAME fixture when not forced (AC5)', async () => {
+        const { log } = createMockLogger();
+        readdirMock.mockResolvedValue(['book.epub'] as never);
+        queueLstat(fileStats(), fileStats());
+
+        await expect(observe(priorRow({ status: 'drm_protected' }), log)).resolves.toEqual({
+          outcome: 'unchanged',
+        });
+        expect(validateEpubMock).not.toHaveBeenCalled();
+      });
+
+      it.each(['available', 'invalid', 'drm_protected'] as const)(
+        'bypasses the short-circuit for a matching `%s` row — every SHORT_CIRCUITABLE status',
+        async (status) => {
+          const { log } = createMockLogger();
+          readdirMock.mockResolvedValue(['book.epub'] as never);
+          queueLstat(fileStats(), fileStats(), fileStats());
+
+          const result = await observe(
+            priorRow({ status, validationCode: status === 'invalid' ? 'malformed_container' : null }),
+            log,
+            true,
+          );
+
+          expect(validateEpubMock).toHaveBeenCalledTimes(1);
+          expect(result).toMatchObject({ outcome: 'observed' });
+        },
+      );
+
+      /**
+       * AC3 — force is inert on every arm that runs BEFORE the short-circuit. Each row asserts
+       * the forced result equals the documented unforced one, so a bypass that had been sited
+       * one step too early (skipping the discovery guard or the pre-validation stat) fails here
+       * rather than silently writing a verdict derived from a file that moved.
+       */
+      it.each([
+        {
+          arm: 'discovery `gone`',
+          arrange: () => { readdirMock.mockRejectedValue(errno('ENOENT')); },
+          expected: { outcome: 'retain' },
+        },
+        {
+          arm: 'discovery `undetermined`',
+          arrange: () => { readdirMock.mockRejectedValue(errno('EACCES')); },
+          expected: { outcome: 'retain' },
+        },
+        {
+          arm: 'zero candidates',
+          arrange: () => { readdirMock.mockResolvedValue(['cover.jpg'] as never); },
+          expected: { outcome: 'observed', observation: { status: 'none' } },
+        },
+        {
+          arm: 'the `ambiguous` resolution',
+          arrange: () => {
+            readdirMock.mockResolvedValue(['a.epub', 'b.epub'] as never);
+            queueLstat(fileStats(), fileStats());
+          },
+          expected: { outcome: 'observed', observation: { status: 'ambiguous', candidateCount: 2 } },
+        },
+        {
+          arm: 'the pre-validation `statRegularFile` failure',
+          arrange: () => {
+            readdirMock.mockResolvedValue(['book.epub'] as never);
+            queueLstat(fileStats(), errno('EACCES'));
+          },
+          expected: { outcome: 'retain' },
+        },
+        {
+          arm: 'the pre-validation non-regular-file check',
+          arrange: () => {
+            readdirMock.mockResolvedValue(['book.epub'] as never);
+            queueLstat(fileStats(), fileStats({ regular: false }));
+          },
+          expected: { outcome: 'retain' },
+        },
+      ])('is inert on $arm, forced or not', async ({ arrange, expected }) => {
+        for (const force of [false, true]) {
+          vi.resetAllMocks();
+          validateEpubMock.mockResolvedValue({ status: 'available' });
+          arrange();
+          const { log } = createMockLogger();
+
+          await expect(observe(priorRow(), log, force)).resolves.toEqual(expected);
+          // None of these arms reaches validation, so force cannot have moved the bypass up.
+          expect(validateEpubMock).not.toHaveBeenCalled();
+        }
+      });
+
+      it.each([
+        { prior: null, label: '`null`' },
+        { prior: priorRow({ status: 'none', filename: null, candidateCount: 0 }), label: '`none`' },
+        { prior: priorRow({ status: 'ambiguous', filename: null, candidateCount: 2 }), label: '`ambiguous`' },
+      ])('is a no-op for a $label prior — `isUnchanged` already returned false', async ({ prior }) => {
+        const results = [];
+        for (const force of [false, true]) {
+          vi.resetAllMocks();
+          validateEpubMock.mockResolvedValue({ status: 'available' });
+          readdirMock.mockResolvedValue(['book.epub'] as never);
+          queueLstat(fileStats(), fileStats(), fileStats());
+          const { log } = createMockLogger();
+
+          results.push({ result: await observe(prior, log, force), paths: lstatPaths() });
+        }
+
+        expect(results[1]).toEqual(results[0]);
+        expect(results[1]!.result).toMatchObject({ outcome: 'observed' });
+      });
+
+      /**
+       * AC3's syscall claim, in the only two forms that are actually falsifiable.
+       *
+       * Where `isUnchanged` returns false anyway, forced and unforced must issue the IDENTICAL
+       * `lstat` sequence — no call added, none reordered. Where it returns true, the forced
+       * sequence must be the unforced one plus exactly the post-validation re-check appended:
+       * that pins the bypass to the one step between the pre-validation stat and
+       * `revalidateCompanionFile`, and it is the assertion that goes red if a syscall is added
+       * ahead of the short-circuit to decide whether to take it.
+       */
+      it('issues an identical lstat sequence when the fingerprint mismatches anyway', async () => {
+        const sequences: string[][] = [];
+        for (const force of [false, true]) {
+          vi.resetAllMocks();
+          validateEpubMock.mockResolvedValue({ status: 'available' });
+          readdirMock.mockResolvedValue(['book.epub'] as never);
+          queueLstat(fileStats(), fileStats(), fileStats());
+          const { log } = createMockLogger();
+
+          // `sizeBytes` differs, so both runs revalidate and take the same steps.
+          await observe(priorRow({ sizeBytes: DEFAULT_FINGERPRINT.size - 1 }), log, force);
+          sequences.push(lstatPaths());
+        }
+
+        expect(sequences[1]).toEqual(sequences[0]);
+        // Discovery's per-candidate probe, the pre-validation stat, the post-validation re-check.
+        expect(sequences[0]).toEqual([
+          join(BOOK_PATH, 'book.epub'),
+          join(BOOK_PATH, 'book.epub'),
+          join(BOOK_PATH, 'book.epub'),
+        ]);
+      });
+
+      it('appends only the post-validation re-check when it bypasses the short-circuit', async () => {
+        const sequences: string[][] = [];
+        for (const force of [false, true]) {
+          vi.resetAllMocks();
+          validateEpubMock.mockResolvedValue({ status: 'available' });
+          readdirMock.mockResolvedValue(['book.epub'] as never);
+          queueLstat(fileStats(), fileStats(), fileStats());
+          const { log } = createMockLogger();
+
+          await observe(priorRow(), log, force);
+          sequences.push(lstatPaths());
+        }
+
+        const [unforced, forced] = sequences as [string[], string[]];
+        expect(unforced).toEqual([join(BOOK_PATH, 'book.epub'), join(BOOK_PATH, 'book.epub')]);
+        // The unforced sequence is a strict PREFIX of the forced one: nothing was added before
+        // the bypass point, and the only extra call is the re-check `revalidateCompanionFile` owns.
+        expect(forced.slice(0, unforced.length)).toEqual(unforced);
+        expect(forced).toHaveLength(unforced.length + 1);
+        expect(forced.at(-1)).toBe(join(BOOK_PATH, 'book.epub'));
+      });
     });
   });
 
@@ -646,9 +853,18 @@ describe('revalidateCompanionFile (#1976 AC22)', () => {
    * and added a fourth precedence rule inside `resolveCandidate`. AC26 withdraws it. These are
    * compile-level assertions: `CompanionObserveInput`'s key set is exact, so an added
    * `selection` field fails typecheck here rather than in review.
+   *
+   * #2034 added `force` as the fifth field, and the distinction from the withdrawn `selection`
+   * is the whole reason this guard keeps its value: `force` carries no candidate identity and
+   * `resolveCandidate` still cannot see it, so the precedence rules are untouched and the
+   * observer still cannot be told WHICH file to pick — only whether to re-judge the one it
+   * resolves on its own.
    */
-  it('pins CompanionObserveInput to its four fields — no selection field survived (AC26)', () => {
-    type Extra = Exclude<keyof CompanionObserveInput, 'bookId' | 'bookPath' | 'libraryRoot' | 'prior'>;
+  it('pins CompanionObserveInput to its five fields — no selection field survived (AC26)', () => {
+    type Extra = Exclude<
+      keyof CompanionObserveInput,
+      'bookId' | 'bookPath' | 'libraryRoot' | 'prior' | 'force'
+    >;
     const noExtraKeys: Extra extends never ? true : false = true;
     expect(noExtraKeys).toBe(true);
 

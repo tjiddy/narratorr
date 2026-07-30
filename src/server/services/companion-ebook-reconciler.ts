@@ -112,6 +112,25 @@ interface BookSnapshot {
 }
 
 /**
+ * One book run's whole request-scoped input (#2034 AC4).
+ *
+ * An OBJECT rather than the four positional arguments `runBook`/`reconcileLocked` would otherwise
+ * need: `(bookId, enabled, libraryRoot, force)` puts two unlabelled booleans next to each other
+ * at every call site, and a caller that transposed them would still typecheck.
+ *
+ * Being a per-run value is the load-bearing part. `force` is deliberately NOT an instance field:
+ * a sweep and a direct call can be in flight at the same time over different books, and a field
+ * would let the sweep's passes read the direct call's force and revalidate the whole library.
+ * Nothing about it is persisted either — a force request leaves no trace once the run ends.
+ */
+interface BookRunInput {
+  bookId: number;
+  enabled: boolean;
+  libraryRoot: string;
+  force: boolean;
+}
+
+/**
  * The EIGHT `companion_ebooks` columns the precondition compares. `validation_code` is not
  * optional: it is a material verdict field the repository writes for every `invalid`
  * observation, and it is the one column that can differ while the other seven agree — so a
@@ -176,10 +195,18 @@ export class CompanionEbookReconciler {
    *
    * The book run is registered SYNCHRONOUSLY, before the first settings read, so a `stop()`
    * landing in the same turn cannot miss a run parked on its first `await`.
+   *
+   * `force` (#2034) skips the observer's fingerprint short-circuit, so an UNCHANGED file whose
+   * stored verdict is stale gets re-judged. Pass it only for an explicit, user-initiated refresh
+   * of this one book — the bulk sweep must keep the short-circuit. It is optional and defaults to
+   * non-forcing precisely so the seven other trigger seams need no edit, and it weakens nothing
+   * else: the `stopping` checks, the admission lock, the synchronous `activeBookRuns`
+   * registration, and `commitObservation`'s two-term precondition all still apply (AC6).
    */
-  reconcileBook(bookId: number): Promise<void> {
+  reconcileBook(bookId: number, force = false): Promise<void> {
     if (this.stopping) return Promise.resolve();
-    const run: Promise<void> = this.runDirectBook(bookId).finally(() => { this.activeBookRuns.delete(run); });
+    const run: Promise<void> = this.runDirectBook(bookId, force)
+      .finally(() => { this.activeBookRuns.delete(run); });
     this.activeBookRuns.add(run);
     return run;
   }
@@ -364,23 +391,25 @@ export class CompanionEbookReconciler {
     if (this.stopping) return 'stopped';
     const release = await sweepSemaphore.acquire();
     try {
-      return await this.acceptBookRun(bookId, true, libraryRoot);
+      // `force: false`, always. A library-wide run is exactly the case the short-circuit exists
+      // for, and #2034 changes nothing about it (AC5).
+      return await this.acceptBookRun({ bookId, enabled: true, libraryRoot, force: false });
     } finally {
       release();
     }
   }
 
   /** Check 1 for a book run: accept, then register synchronously before the first `await`. */
-  private acceptBookRun(bookId: number, enabled: boolean, libraryRoot: string): Promise<BookDisposition> {
+  private acceptBookRun(input: BookRunInput): Promise<BookDisposition> {
     if (this.stopping) return Promise.resolve('stopped');
-    const run: Promise<BookDisposition> = this.runBook(bookId, enabled, libraryRoot)
+    const run: Promise<BookDisposition> = this.runBook(input)
       .finally(() => { this.activeBookRuns.delete(run); });
     this.activeBookRuns.add(run);
     return run;
   }
 
   /** The direct path. Only it reads settings per call; the sweep hoists both reads to its run. */
-  private async runDirectBook(bookId: number): Promise<void> {
+  private async runDirectBook(bookId: number, force: boolean): Promise<void> {
     let libraryRoot: string;
     try {
       const { enabled } = await this.settings.get('companionEpub');
@@ -391,7 +420,7 @@ export class CompanionEbookReconciler {
       return;
     }
     // The disposition is discarded here; only the sweep sums it.
-    await this.runBook(bookId, true, libraryRoot);
+    await this.runBook({ bookId, enabled: true, libraryRoot, force });
   }
 
   /**
@@ -402,9 +431,10 @@ export class CompanionEbookReconciler {
    * The lock is acquired EXACTLY ONCE and nothing on this path re-acquires it —
    * `withBookAdmissionLock` is non-reentrant and a second acquisition self-deadlocks.
    */
-  private async runBook(bookId: number, enabled: boolean, libraryRoot: string): Promise<BookDisposition> {
+  private async runBook(input: BookRunInput): Promise<BookDisposition> {
+    const { bookId } = input;
     try {
-      return await withBookAdmissionLock(bookId, () => this.reconcileLocked(bookId, enabled, libraryRoot));
+      return await withBookAdmissionLock(bookId, () => this.reconcileLocked(input));
     } catch (error: unknown) {
       // `debug`, not `warn`: a per-book failure is already `info`-visible through the summary's
       // `failed` counter, so the operator has the signal without the per-book noise.
@@ -427,7 +457,9 @@ export class CompanionEbookReconciler {
    * passes duplicate the filesystem work and would reopen that same race, while per-book
    * isolation already bounds the blast radius of a slow parse.
    */
-  private async reconcileLocked(bookId: number, enabled: boolean, libraryRoot: string): Promise<BookDisposition> {
+  private async reconcileLocked(input: BookRunInput): Promise<BookDisposition> {
+    const { bookId, enabled, libraryRoot, force } = input;
+
     // Check 3 — starting a book run's work, immediately after acquiring the lock. Zero
     // filesystem and zero DB work happens after this point when the drain has begun.
     if (this.stopping) return 'stopped';
@@ -446,7 +478,7 @@ export class CompanionEbookReconciler {
     if (!eligible) return 'skipped';
 
     const result = await observeCompanionEbook(
-      { bookId, bookPath: snapshot.path!, libraryRoot, prior },
+      { bookId, bookPath: snapshot.path!, libraryRoot, prior, force },
       this.log,
     );
     // A no-op pass is a TRUE no-op: no transaction, and not even an `updated_at` touch. Nothing
