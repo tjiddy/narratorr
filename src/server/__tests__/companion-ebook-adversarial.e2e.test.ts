@@ -142,10 +142,6 @@ const EPUB_MEDIA_TYPE = 'application/epub+zip';
 /** A ten-byte PNG: a full signature plus two bytes, so the sniffer matches in full. */
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]);
 
-/** An `encryption.xml` that encrypts nothing — pure padding for the budget rows. */
-const EMPTY_ENCRYPTION =
-  '<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"></encryption>';
-
 let e2e: E2EApp;
 /**
  * One library root PER SCENARIO — that is where the no-cross-test-leakage property lives: no
@@ -355,7 +351,16 @@ async function pollState(
 // file header, because the reader consults both, and every caller asserts its precondition on
 // the resulting bytes before invoking the route.
 
-/** ZIP general-purpose bit 0 — "this member is encrypted". */
+/**
+ * ZIP general-purpose bit 0 — "this member is encrypted".
+ *
+ * **Deliberately not folded into `F.drmProtectedEpub()`** (#2041), which reaches the same verdict
+ * through a `META-INF/encryption.xml`. These two prove different properties on different axes:
+ * the bit scan sits BEFORE the `mimetype` read in the pipeline, which is why row 7 builds an
+ * archive with a deliberately wrong `mimetype` and still reads `drm_protected` rather than
+ * `bad_mimetype`. A structurally valid shared fixture cannot express that. The helpers also
+ * belong with the other byte-level archive surgery above, which shares the both-headers preamble.
+ */
 const ZIP_ENCRYPTED_BIT = 0x1;
 
 /** Read one central-directory record's 2-byte general-purpose flags field. */
@@ -741,7 +746,7 @@ describe('row 6 — a nav and a cover that are individually legal and jointly ar
   it('reads the TOC first and denies the cover the remaining allowance', async () => {
     const mimetype = F.padTo(F.EPUB_MEDIA_TYPE, MAX_XML_BYTES);
     const container = F.padTo(F.containerXml(F.DEFAULT_PACKAGE), MAX_XML_BYTES);
-    const encryption = F.padTo(EMPTY_ENCRYPTION, MAX_XML_BYTES - REMAINDER);
+    const encryption = F.padTo(F.EMPTY_ENCRYPTION_XML, MAX_XML_BYTES - REMAINDER);
     const nav = F.padTo(F.navDocumentXml(F.navXml([{ label: 'One' }])), NAV_BYTES);
     const coverBytes = Buffer.concat([PNG, Buffer.alloc(COVER_BYTES - PNG.length)]);
 

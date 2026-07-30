@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books, companionEbooks } from '@db/schema.js';
-import { buildEpub } from '@core/__tests__/epub-archive.fixture.js';
+import { buildEpub, drmProtectedEpub } from '@core/__tests__/epub-archive.fixture.js';
 import { validateEpub } from '@core/epub/validate.js';
 import { upsertCompanionEbook } from './companion-ebook.repository.js';
 import { generatePublicId } from '../utils/public-id.js';
@@ -393,15 +393,6 @@ describe('CompanionEbookReconciler end-to-end (#1959)', () => {
   // =========================================================================
 
   describe('selectCompanionEbook (#1976)', () => {
-    /** An `encryption.xml` naming a content document — the Adobe DRM shape. */
-    const ADOBE_DRM =
-      '<?xml version="1.0" encoding="UTF-8"?>' +
-      '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" ' +
-      'xmlns:enc="http://www.w3.org/2001/04/xmlenc#">' +
-      '<EncryptedData><EncryptionMethod Algorithm="http://ns.adobe.com/pdf/enc#RC"/>' +
-      '<CipherData><CipherReference URI="OEBPS/ch1.xhtml"/></CipherData></EncryptedData>' +
-      '</encryption>';
-
     it('writes filename and selected_filename together for the picked candidate (case 53)', async () => {
       await writeEpub('a.epub');
       await writeEpub('b.epub');
@@ -460,7 +451,7 @@ describe('CompanionEbookReconciler end-to-end (#1959)', () => {
 
     it("persists a picked DRM'd candidate as drm_protected, with the selection kept (case 56)", async () => {
       await writeEpub('a.epub');
-      await writeEpub('b.epub', { encryption: ADOBE_DRM });
+      await writeEpub('b.epub', drmProtectedEpub());
       await reconciler.reconcileAll();
 
       await expect(reconciler.selectCompanionEbook(bookId, 1)).resolves.toMatchObject({ outcome: 'selected' });
