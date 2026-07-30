@@ -338,8 +338,10 @@ async function loadCompanionInspection(
  * OPF title/author/language and a plain-text table of contents. Feeds the `available` panel's
  * chapter count.
  *
- * The three metadata fields and the two TOC fields are surfaced exactly as `EpubMetadata` and
- * `EpubTocEntry` declare them — nothing renamed, defaulted, or coalesced.
+ * The payload is THREE parts — `filename`, `metadata`, `toc`. The three metadata fields and the
+ * two TOC fields are surfaced exactly as `EpubMetadata` and `EpubTocEntry` declare them —
+ * nothing renamed, defaulted, or coalesced — and `filename` is the stored basename the gate
+ * resolved, described below.
  *
  * **`filename` is the STORED basename the gate resolved** (#2022) — the value
  * `loadExposedCompanionContext` read off the `companion_ebooks` row, handed through
