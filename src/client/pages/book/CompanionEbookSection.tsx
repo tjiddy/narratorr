@@ -11,7 +11,6 @@ import {
   BADGE_VARIANTS,
   DOWNLOAD_LABEL,
   DRM_BODY,
-  DRM_DOWNLOAD_DISABLED_TITLE,
   NONE_BODY_CODE,
   NONE_BODY_PREFIX,
   NONE_BODY_SUFFIX,
@@ -168,49 +167,36 @@ function StateBody({ bookId, state, selection }: {
 }
 
 /**
- * The header's download affordance (Series-card icon idiom, w-4 h-4 muted). Three shapes:
+ * The header's download affordance (Series-card icon idiom, w-4 h-4 muted). TWO shapes:
  *
- * - `available` → a real anchor, not a fetch-to-blob, and the href carries `URL_BASE` — a
- *   bare `/api/...` href silently breaks every sub-path deployment. Accessible name stays
- *   `DOWNLOAD_LABEL`, so tests and screen readers see the same control that used to live in
- *   the card body.
- * - `drm_protected` → DISABLED button, not absent: "there is a download here and it is
- *   blocked" communicates more than silence, and the tooltip carries the why. It must stay a
- *   non-anchor while the server's exposure gate is `available`-only — an enabled link here
- *   would 404.
+ * - `available` and `drm_protected` → a real anchor, not a fetch-to-blob, and the href carries
+ *   `URL_BASE` — a bare `/api/...` href silently breaks every sub-path deployment. Accessible
+ *   name stays `DOWNLOAD_LABEL`, so tests and screen readers see the same control that used to
+ *   live in the card body.
  * - everything else → nothing. `none` has no file, `ambiguous` has no chosen file, and
- *   `invalid`'s file is not servable; absence is accurate there, unlike DRM's "blocked".
+ *   `invalid`'s file is not servable; absence is accurate for all three.
  *
- * #2034's refresh arrow lands beside this when its endpoint ships.
+ * **`drm_protected` joined the anchor in #2038**, when the server split its one exposure gate
+ * into advertisement and owner-readability. It previously rendered a DISABLED button with a
+ * "download unavailable" tooltip, because a live link would have 404ed against an
+ * `available`-only gate. `isCompanionEbookOwnerReadable` now admits the stored DRM row, so the
+ * link resolves — and the disabled shape is gone rather than kept, since nothing is blocked to
+ * explain. The card body still says why the file can't go to Kindle, which is the half of the
+ * old sentence that was always true.
  */
 function HeaderDownload({ bookId, status }: { bookId: number; status: CompanionEbookState['status'] }) {
-  if (status === 'available') {
-    return (
-      <a
-        href={api.getCompanionEbookDownloadUrl(bookId)}
-        download
-        aria-label={DOWNLOAD_LABEL}
-        title={DOWNLOAD_LABEL}
-        className="text-muted-foreground hover:text-foreground transition-colors focus-ring rounded"
-      >
-        <DownloadIcon className="w-4 h-4" />
-      </a>
-    );
-  }
-  if (status === 'drm_protected') {
-    return (
-      <button
-        type="button"
-        disabled
-        aria-label={DOWNLOAD_LABEL}
-        title={DRM_DOWNLOAD_DISABLED_TITLE}
-        className="text-muted-foreground opacity-40 cursor-not-allowed"
-      >
-        <DownloadIcon className="w-4 h-4" />
-      </button>
-    );
-  }
-  return null;
+  if (status !== 'available' && status !== 'drm_protected') return null;
+  return (
+    <a
+      href={api.getCompanionEbookDownloadUrl(bookId)}
+      download
+      aria-label={DOWNLOAD_LABEL}
+      title={DOWNLOAD_LABEL}
+      className="text-muted-foreground hover:text-foreground transition-colors focus-ring rounded"
+    >
+      <DownloadIcon className="w-4 h-4" />
+    </a>
+  );
 }
 
 /**

@@ -125,7 +125,11 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const referenceRead = new ReferenceReadService(db);
   // Triggered from every seam that creates, moves, rescans, or reads a book (#1960): the
   // import worker, the rescan wrapper (route + 6h cron), Refresh & Scan, the three rename
-  // callers, wrong-release, `PUT /api/settings`, and each companion opener's mismatch arm.
+  // callers, wrong-release, `PUT /api/settings`, and each companion opener's read-unavailable
+  // arm. Those read arms are only PARTLY stored/live disagreements since #2038: the owner gate
+  // admits a stored `drm_protected` row, so a genuinely DRM'd file reaches the owner arm while
+  // the row and the file AGREE. The v1 stream's arm stays a true mismatch — its gate is still
+  // `available`-only, so any live failure there IS a disagreement.
   const companionEbook = new CompanionEbookReconciler(db, settings, log);
   const eventHistory = new EventHistoryService(db, log, blacklistService, book);
 

@@ -212,6 +212,16 @@ interface SeedOptions {
    * Every other row seeds the true `stat`.
    */
   staleBy?: number;
+  /**
+   * The STORED `companion_ebooks.status` (#2038). Defaults to `available`, so every row seeded
+   * before the owner gate widened behaves exactly as it did.
+   *
+   * Only the two file-bearing statuses are seedable here: `ck_companion_ebooks_file_present`
+   * requires `filename`/`sizeBytes`/`mtimeMs`/`ctimeMs` non-null, and this helper always writes
+   * all four. `invalid` is the third such status but wants a `validationCode` this helper does
+   * not seed, and `none`/`ambiguous` fail the CHECK outright.
+   */
+  storedStatus?: 'available' | 'drm_protected';
 }
 
 interface Seeded {
@@ -230,23 +240,26 @@ interface Seeded {
 /**
  * The shared preconditions every hostile-archive row needs, in one place.
  *
- * `loadExposedCompanionContext` gates on `isCompanionEbookExposed`, so a request only reaches
- * the resolver when ALL of these hold — and each one of them is a silent 404 or a failed INSERT
- * when it does not:
+ * `loadExposedCompanionContext` gates on `isCompanionEbookOwnerReadable`, so a request only
+ * reaches the resolver when ALL of these hold — and each one of them is a silent 404 or a failed
+ * INSERT when it does not:
  *
  * - `companionEpub.enabled === true`; it defaults to **false**.
  * - `library.path` set to this scenario's temp root, `realpath`ed so the resolver's
  *   containment check (which canonicalises) agrees with it on a symlinked `/tmp`.
  * - `books.status === 'imported'` and `books.path` a real directory inside that root.
- * - All four file-presence columns non-null (`ck_companion_ebooks_file_present`).
+ * - A stored status the owner gate admits — `available` (the default) or `drm_protected`
+ *   (#2038), which is `storedStatus`'s only other legal value here.
+ * - All four file-presence columns non-null (`ck_companion_ebooks_file_present`, which covers
+ *   both of those statuses).
  * - **`candidateCount: 1`.** The column defaults to `0` and
- *   `ck_companion_ebooks_candidate_count` requires `>= 1` for `available` — seeded literally
- *   without it, the INSERT fails before any route runs.
+ *   `ck_companion_ebooks_candidate_count` requires `>= 1` for both file-bearing statuses —
+ *   seeded literally without it, the INSERT fails before any route runs.
  * - **`selectedFilename: null`.** A non-null selection is only well-formed when it equals
  *   `filename`; leaving it null satisfies the selection CHECK and keeps `isUnchanged`'s
  *   selection-present comparison stable.
  */
-async function seedAvailableCompanion(options: SeedOptions): Promise<Seeded> {
+async function seedCompanion(options: SeedOptions): Promise<Seeded> {
   const libraryRoot = await realpath(await mkdtemp(join(tmpdir(), 'narratorr-2026-')));
   libraryRoots.push(libraryRoot);
   const bookPath = join(libraryRoot, 'Author', 'Title');
@@ -281,7 +294,7 @@ async function seedAvailableCompanion(options: SeedOptions): Promise<Seeded> {
     .insert(companionEbooks)
     .values({
       bookId: book!.id,
-      status: 'available',
+      status: options.storedStatus ?? 'available',
       filename: options.filename,
       sizeBytes: onDisk.sizeBytes,
       mtimeMs: onDisk.mtimeMs - stale,
@@ -486,7 +499,7 @@ describe('row 1 — a 213-byte archive declaring half a billion members', () => 
     expect(bytes.readBigUInt64LE(record + 24)).toBe(DECLARED_RECORDS);
     expect(bytes.readBigUInt64LE(record + 32)).toBe(DECLARED_RECORDS);
 
-    const seeded = await seedAvailableCompanion({ filename: 'forged.epub', bytes });
+    const seeded = await seedCompanion({ filename: 'forged.epub', bytes });
 
     // The inspecting surface refuses it pre-open. `limit_exceeded` is a validationCode, not a
     // status, and `loadCompanionInspection` flattens every archive-shaped rejection to a 404.
@@ -546,7 +559,7 @@ describe('row 3 — a traversal href on a root-level package', () => {
         itemrefs: [{ idref: 'ch1' }],
       },
     });
-    const seeded = await seedAvailableCompanion({ filename: 'spine.epub', bytes });
+    const seeded = await seedCompanion({ filename: 'spine.epub', bytes });
 
     // The manifest is non-empty, so `empty_manifest` is not what fires: the spine item's href
     // fails to resolve, no linear itemref completes its chain, and the archive is
@@ -577,7 +590,7 @@ describe('row 3 — a traversal href on a root-level package', () => {
       },
       files: [{ name: 'nav.xhtml', content: F.navDocumentXml(F.navXml([{ label: 'One' }])) }],
     });
-    const seeded = await seedAvailableCompanion({ filename: 'cover-href.epub', bytes });
+    const seeded = await seedCompanion({ filename: 'cover-href.epub', bytes });
 
     const metadataRes = await metadata(seeded.bookId);
     expect(metadataRes.statusCode).toBe(200);
@@ -628,7 +641,7 @@ describe('row 4 — SYSTEM file entities in the parsed documents', () => {
           '<spine><itemref idref="ch1"/></spine></package>',
       },
     });
-    const seeded = await seedAvailableCompanion({ filename: 'xxe-title.epub', bytes });
+    const seeded = await seedCompanion({ filename: 'xxe-title.epub', bytes });
 
     h.watched.add(TARGET);
     const res = await metadata(seeded.bookId);
@@ -659,7 +672,7 @@ describe('row 4 — SYSTEM file entities in the parsed documents', () => {
         '<rootfile full-path="&xxe;" media-type="application/oebps-package+xml"/>' +
         '</rootfiles></container>',
     });
-    const seeded = await seedAvailableCompanion({ filename: 'xxe-rootfile.epub', bytes });
+    const seeded = await seedCompanion({ filename: 'xxe-rootfile.epub', bytes });
 
     // Precondition: the archive really does hold a `content.opf` the expanded form would find.
     expect(F.listCentralDirectory(bytes).map((entry) => entry.rawName.toString('utf8')))
@@ -695,7 +708,7 @@ describe('row 5 — a package document whose declared size understates its bytes
     expect(readDeclaredSize(bytes, PACKAGE_INDEX)).toBe(512);
     expect(bytes.length).toBeLessThan(inflated);
 
-    const seeded = await seedAvailableCompanion({ filename: 'understated.epub', bytes });
+    const seeded = await seedCompanion({ filename: 'understated.epub', bytes });
 
     // The declared size is advisory and is never an enforcement point for a mandatory read:
     // the counting transform aborts the stream at the ceiling and the read reports
@@ -765,7 +778,7 @@ describe('row 6 — a nav and a cover that are individually legal and jointly ar
         { name: COVER_ENTRY, content: coverBytes },
       ],
     });
-    const seeded = await seedAvailableCompanion({ filename: 'remainder.epub', bytes });
+    const seeded = await seedCompanion({ filename: 'remainder.epub', bytes });
 
     const metadataRes = await metadata(seeded.bookId);
     expect(metadataRes.statusCode).toBe(200);
@@ -804,7 +817,7 @@ describe('row 7 — general-purpose bit 0 on a content entry', () => {
     // Precondition: the bytes on disk really do declare the member encrypted.
     expect(readFlags(bytes, CONTENT_INDEX) & ZIP_ENCRYPTED_BIT).toBe(ZIP_ENCRYPTED_BIT);
 
-    const seeded = await seedAvailableCompanion({
+    const seeded = await seedCompanion({
       filename: 'encrypted.epub',
       bytes,
       staleBy: STALE_BY,
@@ -826,6 +839,38 @@ describe('row 7 — general-purpose bit 0 on a content entry', () => {
     expect(settled.status).toBe('drm_protected');
     expect(settled.validationCode).toBeNull();
     expect(settled.filename).toBe('encrypted.epub');
+  });
+
+  /**
+   * The composed positive #2038 adds, and the mirror of the case above. Same route, same stored
+   * `drm_protected` status — but a REAL file on disk, and the owner gets its bytes.
+   *
+   * This is the misclassification-recovery case stated end to end: the classifier was wrong
+   * about a real book (`287ee627`, The Shining), and under the old single gate that verdict
+   * denied the owner access to a perfectly good file forever. Serving it removes no DRM; the
+   * bytes were already on the owner's disk.
+   *
+   * Read together with the case above, the pair is the whole security argument: widening the
+   * STORED-status gate widened the download and nothing else — row 7's `404` on the two read
+   * routes still comes from the live archive reader, which this issue did not touch.
+   */
+  it('serves the owner download for a stored drm_protected row over a real file', async () => {
+    const bytes = await F.buildEpub();
+    const seeded = await seedCompanion({
+      filename: 'misclassified.epub',
+      bytes,
+      storedStatus: 'drm_protected',
+    });
+
+    // Precondition: the row really is stored as DRM, so the 200 below is the widened gate's
+    // doing and not a fixture that quietly seeded `available`.
+    expect(seeded.row.status).toBe('drm_protected');
+
+    const res = await ownerDownload(seeded.bookId);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.rawPayload.equals(bytes)).toBe(true);
+    expect(res.headers['content-disposition']).toBe('attachment; filename="misclassified.epub"');
   });
 });
 
@@ -867,7 +912,7 @@ describe('row 8 — the public stream against a file that moved under it', () =>
     filename: string,
     arrange: (filePath: string) => Promise<void>,
   ): Promise<StreamResponse> {
-    const seeded = await seedAvailableCompanion({ filename, bytes: ORIGINAL });
+    const seeded = await seedCompanion({ filename, bytes: ORIGINAL });
     await arrange(seeded.filePath);
     return publicStream(seeded.publicId);
   }
@@ -890,7 +935,7 @@ describe('row 8 — the public stream against a file that moved under it', () =>
   });
 
   it('8b — a replacement regular file streams coherently at its own length', async () => {
-    const seeded = await seedAvailableCompanion({ filename: 'swapped.epub', bytes: ORIGINAL });
+    const seeded = await seedCompanion({ filename: 'swapped.epub', bytes: ORIGINAL });
     const replacement = Buffer.from('a completely different, longer companion payload');
     expect(replacement.length).not.toBe(ORIGINAL.length);
     await writeFile(seeded.filePath, replacement);
@@ -945,7 +990,7 @@ describe('row 9 — a file larger than the pre-open size ceiling', () => {
      * a sparse file it behaves the same on a filesystem that has no sparse support.
      */
     const bytes = await F.buildEpub();
-    const seeded = await seedAvailableCompanion({ filename: 'oversize.epub', bytes });
+    const seeded = await seedCompanion({ filename: 'oversize.epub', bytes });
     h.sizeOverrides.set(seeded.filePath, MAX_ARCHIVE_BYTES + 1);
 
     // Precondition: the seam really is reporting an over-ceiling size for this exact path.
@@ -986,7 +1031,7 @@ describe('row 10 — an archive declaring more members than the entry ceiling', 
     expect(readRecordCount(built)).toBeLessThan(MAX_ARCHIVE_ENTRIES);
     expect(readRecordCount(bytes)).toBe(OVER_CEILING);
 
-    const seeded = await seedAvailableCompanion({
+    const seeded = await seedCompanion({
       filename: 'too-many.epub',
       bytes,
       staleBy: STALE_BY,
@@ -1046,7 +1091,7 @@ describe('row 11 — a central directory larger than any entry budget', () => {
     expect(F.centralDirectorySpan(bytes)).toBe(MAX_CENTRAL_DIRECTORY_BYTES + 1);
     expect(bytes.length).toBeLessThan(MAX_ARCHIVE_BYTES);
 
-    const seeded = await seedAvailableCompanion({ filename: 'wide-directory.epub', bytes });
+    const seeded = await seedCompanion({ filename: 'wide-directory.epub', bytes });
 
     expect((await metadata(seeded.bookId)).statusCode).toBe(404);
   });
@@ -1071,7 +1116,7 @@ describe('row 13 — a stored basename that byte-differs from the one on disk', 
      * resolution.filename` is already false and `isUnchanged` short-circuits on filename before
      * any fingerprint comparison. That inequality is *why* the repair is reachable at all.
      */
-    const seeded = await seedAvailableCompanion({
+    const seeded = await seedCompanion({
       filename: 'companion.epub',
       diskFilename: 'companion-1.epub',
       bytes: await F.buildEpub(),
