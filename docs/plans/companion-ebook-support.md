@@ -609,7 +609,10 @@ is kept as the original design record:*
 - *A **re-check arrow** (#2034, not in this design) sits beside it in every state, wired to
   `POST /companion-epub/refresh` with a bounded post-202 poll window and a minimum visible spin.*
 - *`size · chapter count` remains size-only — the count is #2022, parked: `/metadata` cannot yet
-  bind its response to the `/state` row rendered beside it.]*
+  bind its response to the `/state` row rendered beside it.*
+- *The `Available` pill is CUT (badge only when something needs saying): once the filename, size,
+  and live download icon are visible, the pill was a fourth voice repeating three others. `None`,
+  `N found`, `Not readable`, and `DRM-protected` keep theirs — those carry signal.]*
 
 Settings row: section **Ebooks**, toggle **Enable ebook support**, visible description "Show ebooks
 stored alongside your audiobooks, ready to download from the book page.", with the `InfoTip` carrying

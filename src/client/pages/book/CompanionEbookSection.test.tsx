@@ -286,7 +286,7 @@ describe('CompanionEbookSection — presence and absence', () => {
     it(`keeps the rendered panel when a refetch fails with ${label}`, async () => {
       mockApi.getCompanionEbookState.mockResolvedValueOnce(AVAILABLE);
       const { client } = renderPanel();
-      expect(await screen.findByText('Available')).toBeInTheDocument();
+      expect(await screen.findByText('book.epub')).toBeInTheDocument();
 
       mockApi.getCompanionEbookState.mockRejectedValue(failure);
       await triggerRefetch(client);
@@ -297,7 +297,7 @@ describe('CompanionEbookSection — presence and absence', () => {
       await waitFor(() =>
         expect(client.getQueryState(queryKeys.companionEbook(BOOK_ID))?.status).toBe('error'));
 
-      expect(screen.getByText('Available')).toBeInTheDocument();
+      expect(screen.getByText('book.epub')).toBeInTheDocument();
       expect(screen.getByText(formatBytes(SIZE))).toBeInTheDocument();
     });
   }
@@ -308,7 +308,7 @@ describe('CompanionEbookSection — presence and absence', () => {
   it('never retries a 409 refetch — exactly one request, and the panel hides', async () => {
     mockApi.getCompanionEbookState.mockResolvedValueOnce(AVAILABLE);
     const { client } = renderPanel();
-    expect(await screen.findByText('Available')).toBeInTheDocument();
+    expect(await screen.findByText('book.epub')).toBeInTheDocument();
 
     mockApi.getCompanionEbookState.mockClear();
     mockApi.getCompanionEbookState.mockRejectedValue(new ApiError(409, { error: 'Companion ebooks are disabled' }));
@@ -321,7 +321,7 @@ describe('CompanionEbookSection — presence and absence', () => {
   it('keeps the client default of three retries for a 503 refetch — four requests, panel visible throughout', async () => {
     mockApi.getCompanionEbookState.mockResolvedValueOnce(AVAILABLE);
     const { client } = renderPanel();
-    expect(await screen.findByText('Available')).toBeInTheDocument();
+    expect(await screen.findByText('book.epub')).toBeInTheDocument();
 
     mockApi.getCompanionEbookState.mockClear();
     mockApi.getCompanionEbookState.mockRejectedValue(new ApiError(503, { error: 'unavailable' }));
@@ -330,14 +330,14 @@ describe('CompanionEbookSection — presence and absence', () => {
     // failureCount starts at 0 and the client default is three retries, so `failureCount < 3`
     // yields four total failed requests.
     await waitFor(() => expect(mockApi.getCompanionEbookState).toHaveBeenCalledTimes(4));
-    expect(screen.getByText('Available')).toBeInTheDocument();
+    expect(screen.getByText('book.epub')).toBeInTheDocument();
   });
 
   // AC2's durable-disable rule.
   it('hides a cached panel once /state answers 409, and stays hidden across a remount on the same client', async () => {
     mockApi.getCompanionEbookState.mockResolvedValueOnce(AVAILABLE);
     const panel = renderPanel();
-    expect(await screen.findByText('Available')).toBeInTheDocument();
+    expect(await screen.findByText('book.epub')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Download EPUB' })).toBeInTheDocument();
 
     mockApi.getCompanionEbookState.mockRejectedValue(new ApiError(409, { error: 'Companion ebooks are disabled' }));
@@ -369,9 +369,12 @@ describe('CompanionEbookSection — presence and absence', () => {
 
   // AC5/AC6 — the only structural test; the per-state tests stay behavior-focused.
   it('matches the AudioInfo shell exactly: heading classes, card classes, a first row containing the badge, and text-sm on every row', async () => {
-    mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
+    // DRM fixture, not AVAILABLE: `available` renders no pill since the badge cut
+    // (quiet means healthy), so the first-row-contains-badge half of the shell contract
+    // is exercised on a state that still has one.
+    mockApi.getCompanionEbookState.mockResolvedValue(DRM);
     const { container } = renderPanel();
-    await screen.findByText('Available');
+    await screen.findByText('DRM-protected');
 
     // Equality, not toHaveClass — a subset check passes on a partial copy. The h2 lost
     // `mb-3` when the header gained the icon row: the margin lives on the flex wrapper now,
@@ -401,14 +404,19 @@ describe('CompanionEbookSection — presence and absence', () => {
 // ---------------------------------------------------------------------------
 
 describe('CompanionEbookSection — per-state copy', () => {
-  it('available: an Available pill, the filename, the size, and a Download EPUB action in the header', async () => {
+  // REVERSED (Todd, 2026-07-29, badge cut): `available` renders NO pill. The filename,
+  // size, and live download icon are the existence proof; a badge appears only when
+  // something needs saying (None / N found / Not readable / DRM-protected).
+  it('available: NO pill — the filename leads, then the size, download in the header', async () => {
     mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
     const { container } = renderPanel();
 
-    expect(await screen.findByText('Available')).toBeInTheDocument();
+    expect(await screen.findByText('book.epub')).toBeInTheDocument();
+    expect(screen.queryByText('Available')).toBeNull();
+    expect(screen.queryByTestId('badge')).toBeNull();
     // Row order is identity-first: filename, then size.
-    expect(card(container).children[1]?.textContent).toBe('book.epub');
-    expect(card(container).children[2]?.textContent).toBe(formatBytes(SIZE));
+    expect(card(container).children[0]?.textContent).toBe('book.epub');
+    expect(card(container).children[1]?.textContent).toBe(formatBytes(SIZE));
     expect(screen.getByRole('link', { name: 'Download EPUB' })).toBeInTheDocument();
   });
 
@@ -421,9 +429,8 @@ describe('CompanionEbookSection — per-state copy', () => {
       makeState({ status: 'available', filename: 'ZZ-DISTINCTIVE-FILENAME.epub', sizeBytes: SIZE }),
     );
     renderPanel();
-    await screen.findByText('Available');
 
-    const el = screen.getByText('ZZ-DISTINCTIVE-FILENAME.epub');
+    const el = await screen.findByText('ZZ-DISTINCTIVE-FILENAME.epub');
     expect(el).toHaveClass('truncate');
     expect(el).toHaveAttribute('title', 'ZZ-DISTINCTIVE-FILENAME.epub');
   });
@@ -576,10 +583,10 @@ describe('CompanionEbookSection — nullable wire fields', () => {
       makeState({ status: 'available', filename: 'book.epub', sizeBytes: null }),
     );
     const { container } = renderPanel();
-    await screen.findByText('Available');
+    await screen.findByText('book.epub');
 
     expect(container.textContent).not.toContain('0 B');
-    expect(card(container).children).toHaveLength(2); // pill row + filename row (download moved to the header)
+    expect(card(container).children).toHaveLength(1); // filename row alone (no pill on available, download in the header)
     expect(screen.getByRole('link', { name: 'Download EPUB' })).toBeInTheDocument();
   });
 
@@ -617,10 +624,10 @@ describe('CompanionEbookSection — nullable wire fields', () => {
       makeState({ status: 'available', filename: 'empty.epub', sizeBytes: 0 }),
     );
     const { container } = renderPanel();
-    await screen.findByText('Available');
+    await screen.findByText('empty.epub');
 
-    // children[1] is the filename row; the size row follows it.
-    expect(card(container).children[2]?.textContent).toBe('0 B');
+    // children[0] is the filename row (no pill on available); the size row follows it.
+    expect(card(container).children[1]?.textContent).toBe('0 B');
   });
 
   it('drm_protected with a zero size renders exactly "0 B"', async () => {
@@ -791,7 +798,7 @@ describe('CompanionEbookSection — the ambiguous picker', () => {
     expect(screen.getAllByRole('radio')).toHaveLength(2);
     expect(screen.getByRole('radio', { name: 'B.epub' })).toBeChecked();
     expect(screen.getByText('2 found')).toBeInTheDocument();
-    expect(screen.queryByText('Available')).toBeNull();
+    expect(screen.queryByText('book.epub')).toBeNull(); // AVAILABLE's filename: the post-write card must not exist yet
     expect(screen.queryByRole('link', { name: /download/i })).toBeNull();
 
     // And the cache is byte-for-byte the pre-write payload.
@@ -800,7 +807,7 @@ describe('CompanionEbookSection — the ambiguous picker', () => {
 
     // Only after the server confirms does the panel move.
     await act(async () => { held.resolve(AVAILABLE); await held.promise; });
-    expect(await screen.findByText('Available')).toBeInTheDocument();
+    expect(await screen.findByText('book.epub')).toBeInTheDocument();
   });
 
   // AC22/AC23 — an index-backed implementation fails both assertions.
@@ -865,7 +872,7 @@ describe('CompanionEbookSection — the ambiguous picker', () => {
 
     await waitFor(() => expect(mockToast.success).toHaveBeenCalledWith(SELECTION_SUCCESS_TOAST));
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', BOOK_ID, 'companion-epub'] });
-    expect(await screen.findByText('Available')).toBeInTheDocument();
+    expect(await screen.findByText('book.epub')).toBeInTheDocument();
   });
 
   // AC26/AC28 — without the setQueryData handoff the panel keeps rendering the stale
@@ -878,7 +885,7 @@ describe('CompanionEbookSection — the ambiguous picker', () => {
     mockApi.getCompanionEbookState.mockRejectedValue(new ApiError(503, { error: 'unavailable' }));
     await userEvent.click(screen.getByRole('button', { name: AMBIGUOUS_SUBMIT }));
 
-    expect(await screen.findByText('Available')).toBeInTheDocument();
+    expect(await screen.findByText('book.epub')).toBeInTheDocument();
     expect(screen.getByText(formatBytes(SIZE))).toBeInTheDocument();
     expect(screen.queryByText(AMBIGUOUS_QUESTION)).toBeNull();
     expect(screen.queryAllByRole('radio')).toHaveLength(0);
@@ -919,7 +926,7 @@ describe('CompanionEbookSection — the ambiguous picker', () => {
     // The stale GET resolves LAST, with pre-write state.
     await act(async () => { inFlight.resolve(ambiguous(TWO)); await inFlight.promise; });
 
-    expect(screen.getByText('Available')).toBeInTheDocument();
+    expect(screen.getByText('book.epub')).toBeInTheDocument();
     expect(screen.queryByText(AMBIGUOUS_QUESTION)).toBeNull();
   });
 
@@ -1152,7 +1159,7 @@ describe('CompanionEbookSection — the re-check button', () => {
     renderPanel();
     const user = userEvent.setup();
 
-    await screen.findByText('Available');
+    await screen.findByText('book.epub');
     const callsBefore = mockApi.getCompanionEbookState.mock.calls.length;
 
     await user.click(screen.getByRole('button', { name: REFRESH_LABEL }));

@@ -365,9 +365,16 @@ export function CompanionEbookSection({ bookId }: { bookId: number }) {
         </div>
       </div>
       <div className="glass-card rounded-2xl p-4 space-y-2">
-        <p className="text-sm flex items-center gap-2">
-          <Badge variant={BADGE_VARIANTS[data.status]}>{pillText(data)}</Badge>
-        </p>
+        {/* No pill on `available` (Todd, 2026-07-29): once the filename, size, and live
+            download icon are visible, "Available" is a fourth voice repeating three others —
+            the card's contents ARE the existence proof. A badge appears only when something
+            needs SAYING: `None` (empty state reads as intentional), `N found` (demands a
+            choice), `Not readable` / `DRM-protected` (explain a problem). Quiet means healthy. */}
+        {data.status !== 'available' && (
+          <p className="text-sm flex items-center gap-2">
+            <Badge variant={BADGE_VARIANTS[data.status]}>{pillText(data)}</Badge>
+          </p>
+        )}
         <StateBody bookId={bookId} state={data} selection={selection} />
       </div>
     </div>
