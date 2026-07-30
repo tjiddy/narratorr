@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Badge } from '@/components/Badge';
@@ -275,19 +275,19 @@ export function CompanionEbookSection({ bookId }: { bookId: number }) {
   const queryClient = useQueryClient();
   const [pollUntil, setPollUntil] = useState<number | null>(null);
 
-  // The min-spin latch. `spinUntilRef` carries the CURRENT deadline so a rapid second click
-  // extends the spin rather than letting the first click's timer cut it short; the timer
-  // callback re-checks the ref and only clears when the latest deadline has passed. A timer
-  // firing after unmount hits a React-18 no-op setState — no cleanup needed.
+  // The min-spin latch. The timer clears UNCONDITIONALLY — no deadline re-check, no clock
+  // read. That is safe because overlapping spins are impossible by construction: the button
+  // is disabled while `minSpinning || isPending`, so a second click cannot arrive until the
+  // first timer has already cleared the latch. (An earlier version re-checked a Date.now()
+  // deadline ref "so a second click extends the spin" — dead code under that invariant, and
+  // its only live behavior was a stuck latch when the wall clock stepped BACKWARD inside the
+  // window: the timer fired early by wall-clock terms, the no-op branch ran, and nothing ever
+  // re-armed. Caught by post-delivery assessment. If the `disabled` expression ever changes,
+  // re-examine this.) A timer firing after unmount hits a React-18 no-op setState.
   const [minSpinning, setMinSpinning] = useState(false);
-  const spinUntilRef = useRef(0);
   const startMinSpin = () => {
-    const deadline = Date.now() + REFRESH_MIN_SPIN_MS;
-    spinUntilRef.current = deadline;
     setMinSpinning(true);
-    window.setTimeout(() => {
-      if (Date.now() >= spinUntilRef.current) setMinSpinning(false);
-    }, REFRESH_MIN_SPIN_MS);
+    window.setTimeout(() => setMinSpinning(false), REFRESH_MIN_SPIN_MS);
   };
 
   const { data, error } = useQuery({
