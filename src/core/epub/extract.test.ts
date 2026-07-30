@@ -386,13 +386,13 @@ describe('non-available outcomes short-circuit every optional read', () => {
 
   it('returns drm_protected without attempting an optional read', async () => {
     const result = await inspectBuilt(
-      navRowsBook(ONE_ROW, {
-        packageOptions: { items: [CHAPTER, NAV_ITEM, COVER_ITEM] },
-        files: [{ name: COVER_ENTRY, content: PNG }],
-        encryption:
-          `<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">` +
-          `<EncryptedData><CipherData><CipherReference URI="OEBPS/ch1.xhtml"/></CipherData></EncryptedData></encryption>`,
-      }),
+      navRowsBook(
+        ONE_ROW,
+        F.drmProtectedEpub({
+          packageOptions: { items: [CHAPTER, NAV_ITEM, COVER_ITEM] },
+          files: [{ name: COVER_ENTRY, content: PNG }],
+        }),
+      ),
     );
 
     expect(result).toEqual({ status: 'drm_protected' });
@@ -467,16 +467,13 @@ describe('the shared budget: order, pre-reject, and streamed exhaustion', () => 
    * to `MAX_XML_BYTES - remainder` leaves exactly `remainder` bytes for the
    * optional reads.
    */
-  const EMPTY_ENCRYPTION =
-    '<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"></encryption>';
-
   function withRemainder(remainder: number, options: F.EpubOptions): F.EpubOptions {
     return {
       ...options,
       mimetype: F.padTo(F.EPUB_MEDIA_TYPE, MAX_XML_BYTES),
       container: F.padTo(F.containerXml(F.DEFAULT_PACKAGE), MAX_XML_BYTES),
       packageOptions: { ...options.packageOptions, padTo: MAX_XML_BYTES },
-      encryption: F.padTo(EMPTY_ENCRYPTION, MAX_XML_BYTES - remainder),
+      encryption: F.padTo(F.EMPTY_ENCRYPTION_XML, MAX_XML_BYTES - remainder),
     };
   }
 
@@ -772,10 +769,7 @@ describe('metadata', () => {
         metadata: { title: 'Still Here' },
         padTo: MAX_XML_BYTES,
       },
-      encryption: F.padTo(
-        '<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"></encryption>',
-        MAX_XML_BYTES,
-      ),
+      encryption: F.padTo(F.EMPTY_ENCRYPTION_XML, MAX_XML_BYTES),
       files: [{ name: COVER_ENTRY, content: PNG }],
     });
 

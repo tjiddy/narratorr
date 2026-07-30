@@ -620,8 +620,9 @@ describe('companion ebook owner routes', () => {
   // =========================================================================
 
   // --- EPUB fixture shapes, composed from `buildEpub` options -----------------
-  // Composed HERE rather than added to `epub-archive.fixture.ts`, which is at 364 of its 400
-  // `max-lines` cap with this slate still landing (#2003).
+  // Composed HERE because each shape is this suite's own route fixture, not a shared one. The
+  // cap argument that used to sit here is gone: #2003 split the fixture module in two and #2041
+  // moved the DRM shape into it, so headroom is no longer the reason anything stays local.
 
   const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]);
   const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
@@ -670,26 +671,6 @@ describe('companion ebook owner routes', () => {
     return {
       packageOptions: { items: [CHAPTER, coverItem(declaredMediaType)] },
       files: [{ name: COVER_ENTRY, content: bytes }],
-    };
-  }
-
-  /**
-   * A genuinely DRM'd book: a `META-INF/encryption.xml` declaring the spine's own content
-   * document encrypted. §4's classifier answers `drm_protected` for an encrypted CONTENT
-   * document — a font-only encryption is the obfuscated-font case it deliberately does NOT call
-   * DRM — so this is the fixture whose LIVE inspection is `drm_protected` however the stored row
-   * reads. The `encryption.xml` route rather than the ZIP encryption bit: it needs no
-   * byte-patching of the built archive, and both reach the same verdict.
-   */
-  function encryptedContentBook(): F.EpubOptions {
-    return {
-      encryption:
-        '<?xml version="1.0" encoding="UTF-8"?>' +
-        '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" ' +
-        'xmlns:enc="http://www.w3.org/2001/04/xmlenc#">' +
-        '<EncryptedData><EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes128-cbc"/>' +
-        '<CipherData><CipherReference URI="OEBPS/ch1.xhtml"/></CipherData></EncryptedData>' +
-        '</encryption>',
     };
   }
 
@@ -968,6 +949,15 @@ describe('companion ebook owner routes', () => {
       expect(res.rawPayload.equals(PNG)).toBe(true);
     });
 
+    /**
+     * `F.drmProtectedEpub()` is the shared fixture (#2041): a `META-INF/encryption.xml`
+     * declaring the spine's own content document encrypted, which is the shape §4 calls
+     * `drm_protected` (a font-only encryption is the obfuscated-font case it deliberately does
+     * NOT). The `encryption.xml` route rather than the ZIP encryption bit — it needs no
+     * byte-patching of the built archive, and both reach the same verdict. The verdict itself is
+     * pinned in `validate.test.ts`, which is the only suite that can observe it: everything here
+     * flattens to one 404.
+     */
     describe('a genuinely encrypted file still 404s at the live inspection', () => {
       let mockLog: ReturnType<typeof installMockAppLog>;
 
@@ -980,7 +970,7 @@ describe('companion ebook owner routes', () => {
       });
 
       it.each(READ_ROUTES)('on the %s route', async (_label, request) => {
-        await placeEpub(encryptedContentBook());
+        await placeEpub(F.drmProtectedEpub());
         setObservation(row({ status: 'drm_protected' }));
 
         const res = await request();
@@ -1006,7 +996,7 @@ describe('companion ebook owner routes', () => {
        * text leaves the whole suite green.
        */
       it.each(READ_ROUTES)('names the read unavailable rather than a disagreement, on the %s route', async (_label, request) => {
-        await placeEpub(encryptedContentBook());
+        await placeEpub(F.drmProtectedEpub());
         setObservation(row({ status: 'drm_protected' }));
 
         expect((await request()).statusCode).toBe(404);
@@ -1027,7 +1017,7 @@ describe('companion ebook owner routes', () => {
        * the AC28 isolation tests do.
        */
       it('names the failing reconcile by the read, not by a mismatch, when the reconciler rejects', async () => {
-        await placeEpub(encryptedContentBook());
+        await placeEpub(F.drmProtectedEpub());
         setObservation(row({ status: 'drm_protected' }));
         (services.companionEbook.reconcileBook as unknown as Mock).mockRejectedValue(
           new Error('reconcile rejected'),
