@@ -29,6 +29,11 @@ vi.mock('@/lib/api', async (importOriginal) => {
       getBookById: vi.fn(),
       getBook: vi.fn(),
       getCompanionEbookState: vi.fn(),
+      // Spread-`actual.api` factories leave every UNSTUBBED method real, and a real method
+      // issues a genuine relative-URL fetch (`vimock-barrel-replace-drops-named-exports`).
+      // The Ebook panel reads `/metadata` on `available` since #2022, so it is stubbed here
+      // rather than left to the fixture never producing that status.
+      getCompanionEbookMetadata: vi.fn(),
       getBookSeries: vi.fn(),
       getFfmpegStatus: vi.fn(),
       mintStreamToken: vi.fn(),

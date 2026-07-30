@@ -9,6 +9,7 @@ import {
   AMBIGUOUS_QUESTION,
   AMBIGUOUS_SUBMIT,
   BADGE_VARIANTS,
+  DETAIL_SEPARATOR,
   DOWNLOAD_LABEL,
   DRM_BODY,
   NONE_BODY_CODE,
@@ -19,8 +20,10 @@ import {
   REFRESH_LABEL,
   SECTION_HEADING,
   ambiguousPill,
+  chapterCountText,
   invalidSentence,
 } from './companion-ebook-copy.js';
+import { useCompanionChapterCount, retryUnlessDisabled } from './useCompanionChapterCount.js';
 import { useCompanionEbookSelection, type CompanionEbookSelection } from './useCompanionEbookSelection.js';
 
 /** One `text-sm` card row — the `AudioInfo.tsx` idiom this shell follows exactly. */
@@ -44,19 +47,34 @@ function FilenameRow({ filename }: { filename: string | null }) {
   );
 }
 
-function AvailableBody({ filename, sizeBytes }: { filename: string | null; sizeBytes: number | null }) {
+/**
+ * Purely presentational (#2022): `chapterCount` arrives already resolved to a number or `null`,
+ * where `null` means "not renderable" for ANY reason — the metadata query is disabled, has no
+ * successful response yet, returned `toc: null`, or returned a response describing a different
+ * file. The coherence decision lives in the section, not here.
+ */
+function AvailableBody({ filename, sizeBytes, chapterCount }: {
+  filename: string | null;
+  sizeBytes: number | null;
+  chapterCount: number | null;
+}) {
+  // `sizeBytes !== null`, never a truthiness test: `0` is a known size and `formatBytes(0)`
+  // deliberately returns "0 B", which a `?` guard would erase. When it IS null the term is
+  // omitted rather than formatted — `formatBytes` reports "0 B" for a nullish argument, a
+  // confident falsehood about a file that exists.
+  //
+  // §7's `size · chapter count`, built from the parts actually present so a missing size leaves
+  // no leading separator and a missing count no trailing one. Both absent omits the row
+  // entirely, as it always has. No download link here: the action lives in the section header's
+  // icon row (Series-card idiom) — the card body is purely informational.
+  const parts: string[] = [];
+  if (sizeBytes !== null) parts.push(formatBytes(sizeBytes));
+  if (chapterCount !== null) parts.push(chapterCountText(chapterCount));
+
   return (
     <>
       <FilenameRow filename={filename} />
-      {/* `sizeBytes !== null`, never a truthiness test: `0` is a known size and
-          `formatBytes(0)` deliberately returns "0 B", which a `?` guard would erase.
-          When it IS null the row is omitted entirely rather than formatted — `formatBytes`
-          reports "0 B" for a nullish argument, a confident falsehood about a file that exists.
-          No chapter count here: §7 specifies `size · chapter count`, but the count needs a
-          server change first (#2022), so this row is a single value, not a joined parts array.
-          No download link here either: the action moved to the section header's icon row
-          (Series-card idiom) — the card body is purely informational. */}
-      {sizeBytes !== null && <Row muted>{formatBytes(sizeBytes)}</Row>}
+      {parts.length > 0 && <Row muted>{parts.join(DETAIL_SEPARATOR)}</Row>}
     </>
   );
 }
@@ -147,14 +165,15 @@ function pillText(state: CompanionEbookState): string {
   return state.status === 'ambiguous' ? ambiguousPill(state.candidates.length) : PILLS[state.status];
 }
 
-function StateBody({ bookId, state, selection }: {
+function StateBody({ bookId, state, selection, chapterCount }: {
   bookId: number;
   state: CompanionEbookState;
   selection: CompanionEbookSelection;
+  chapterCount: number | null;
 }) {
   switch (state.status) {
     case 'available':
-      return <AvailableBody filename={state.filename} sizeBytes={state.sizeBytes} />;
+      return <AvailableBody filename={state.filename} sizeBytes={state.sizeBytes} chapterCount={chapterCount} />;
     case 'none':
       return <NoneBody />;
     case 'ambiguous':
@@ -200,8 +219,10 @@ function HeaderDownload({ bookId, status }: { bookId: number; status: CompanionE
 }
 
 /**
- * The **Ebook** section on book details (#1963, plan §7). Purely presentational: every route
- * it calls already exists, and it issues exactly one read — `GET /companion-epub/state`.
+ * The **Ebook** section on book details (#1963, plan §7). Purely presentational: every route it
+ * calls already exists. It reads `GET /companion-epub/state` always, and `GET
+ * /companion-epub/metadata` only while the state it renders is `available` (#2022) — never
+ * `/cover`.
  *
  * Five states, mapped from the FIVE wire statuses. The plan's §7 table names the empty state
  * `unavailable`; no such literal exists on the wire, so API `none` renders it and no
@@ -287,14 +308,14 @@ export function CompanionEbookSection({ bookId }: { bookId: number }) {
     // and the clock read happens inside react-query's callback, never during render.
     refetchInterval: () =>
       pollUntil !== null && Date.now() < pollUntil ? REFRESH_POLL_INTERVAL_MS : false,
-    // Production leaves `retry` unset, so without this predicate a `409` would sit in
-    // `failureReason` through the default backoff ladder and only reach `error` after the last
-    // attempt — keeping a cached `Available` pill and a live download link on screen for
-    // seconds. Retrying a `409` is pointless on its own terms: it reports a SETTING, which
-    // cannot change between backoff attempts. Everything else keeps the client's three retries.
-    retry: (failureCount, queryError) =>
-      !(queryError instanceof ApiError && queryError.status === 409) && failureCount < 3,
+    // A `409` never retries — otherwise a cached `Available` pill and a live download link stay
+    // on screen for seconds after the owner turned the feature off.
+    retry: retryUnlessDisabled,
   });
+
+  // The chapter count (#2022) — the `enabled` gate, the filename coherence rule, and the
+  // mismatch-recovery revalidation, all in one hook so this component stays a renderer.
+  const chapterCount = useCompanionChapterCount(bookId, data);
 
   // No post-unmount generation guard here, deliberately (contrast useReplaceGrab): the error
   // toast is global UI rather than tree-local, still correct after a navigation; the
@@ -361,7 +382,7 @@ export function CompanionEbookSection({ bookId }: { bookId: number }) {
             <Badge variant={BADGE_VARIANTS[data.status]}>{pillText(data)}</Badge>
           </p>
         )}
-        <StateBody bookId={bookId} state={data} selection={selection} />
+        <StateBody bookId={bookId} state={data} selection={selection} chapterCount={chapterCount} />
       </div>
     </div>
   );

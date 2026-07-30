@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useLayoutEffect } from 'react';
+import { StrictMode, useLayoutEffect } from 'react';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
-import type { CompanionEbookCandidate, CompanionEbookState } from '@/lib/api';
-import type { EpubValidationCode } from '@core/epub/result.js';
+import type { CompanionEbookCandidate, CompanionEbookMetadata, CompanionEbookState } from '@/lib/api';
+import type { EpubTocEntry, EpubValidationCode } from '@core/epub/result.js';
 import { CompanionEbookSection } from './CompanionEbookSection';
 import {
   AMBIGUOUS_QUESTION,
@@ -69,6 +69,10 @@ vi.mock('@/lib/api', async (importOriginal) => {
     api: {
       ...actual.api,
       getCompanionEbookState: vi.fn(),
+      // #2022. MANDATORY here, not optional: this factory SPREADS `actual.api`, so any method
+      // it does not name stays REAL and issues a genuine relative-URL fetch from jsdom
+      // (`vimock-barrel-replace-drops-named-exports`).
+      getCompanionEbookMetadata: vi.fn(),
       putCompanionEbookSelection: vi.fn(),
       refreshCompanionEbook: vi.fn(),
     },
@@ -80,6 +84,7 @@ import { toast } from 'sonner';
 
 const mockApi = api as unknown as {
   getCompanionEbookState: ReturnType<typeof vi.fn>;
+  getCompanionEbookMetadata: ReturnType<typeof vi.fn>;
   putCompanionEbookSelection: ReturnType<typeof vi.fn>;
   refreshCompanionEbook: ReturnType<typeof vi.fn>;
 };
@@ -90,6 +95,30 @@ const mockToast = toast as unknown as {
 
 const BOOK_ID = 7;
 const SIZE = 2_400_000;
+/** A second, visibly different size, so a converged render cannot be confused with the first. */
+const SIZE2 = 9_900_000;
+
+/** `toc` is never `[]` — `src/core/epub/extract.ts` yields `null` for a zero-row traversal. */
+function toc(rows: number): EpubTocEntry[] {
+  return Array.from({ length: rows }, (_, index) => ({ title: `Chapter ${index + 1}`, depth: 0 }));
+}
+
+/**
+ * A `/metadata` response. `filename` is what the SERVER declares it read — the only thing the
+ * panel ever compares. `rows` of `null` is `toc: null`: "we could not read one", not zero.
+ */
+function metadataFor(filename: string, rows: number | null): CompanionEbookMetadata {
+  return {
+    filename,
+    metadata: { title: 'A Title', author: null, language: null },
+    toc: rows === null ? null : toc(rows),
+  };
+}
+
+const META_KEY = (filename: string) => queryKeys.companionEbookMetadata(BOOK_ID, filename);
+
+/** The panel's cold-metadata default, so `available` fixtures render exactly as they did pre-#2022. */
+const NO_METADATA = () => new ApiError(404, { error: 'Companion ebook not found' });
 
 function makeState(overrides: Partial<CompanionEbookState> = {}): CompanionEbookState {
   return {
@@ -213,6 +242,21 @@ function makeDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+/**
+ * Let every already-scheduled effect, query settlement, and timer-0 continuation run.
+ *
+ * Used for the NEGATIVE assertions (#2022): "no request was issued", "no revalidation fired",
+ * "the call count stopped climbing". Those cannot be `waitFor`ed — there is nothing to wait for
+ * — so the honest shape is to give the work a real chance to happen and then assert it did not.
+ */
+async function flush(): Promise<void> {
+  await act(async () => {
+    for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+  });
+}
+
 /** Kick a refetch without awaiting its (possibly retrying) settlement. */
 function triggerRefetch(client: QueryClient, bookId = BOOK_ID) {
   return act(async () => {
@@ -224,6 +268,11 @@ function triggerRefetch(client: QueryClient, bookId = BOOK_ID) {
 beforeEach(() => {
   vi.resetAllMocks();
   orderMarks.length = 0;
+  // Cold-fail `/metadata` by default (#2022 AC17, first arm): no count renders, so every case
+  // written before this issue keeps asserting exactly what it asserted. A MISMATCHED resolved
+  // value would be wrong here — it would fire AC13's recovery and inflate `/state` call counts
+  // across the whole suite.
+  mockApi.getCompanionEbookMetadata.mockRejectedValue(NO_METADATA());
 });
 
 afterEach(() => {
@@ -546,8 +595,12 @@ describe('CompanionEbookSection — per-state copy', () => {
   for (const [label, state] of ALL_STATES) {
     it(`${label} renders no em-dash and never the word "companion"`, async () => {
       mockApi.getCompanionEbookState.mockResolvedValue(state);
+      // `available` is the one state carrying #2022's count, so the mechanical invariants below
+      // run with that string PRESENT rather than against a cold metadata failure.
+      mockApi.getCompanionEbookMetadata.mockResolvedValue(metadataFor('book.epub', 3));
       const { container } = renderPanel();
       await screen.findByRole('heading', { name: 'Ebook' });
+      if (state.status === 'available') await screen.findByText(/3 chapters/);
 
       const visible = container.textContent ?? '';
       expect(visible).not.toContain('—');
@@ -643,15 +696,20 @@ describe('CompanionEbookSection — nullable wire fields', () => {
 });
 
 // ---------------------------------------------------------------------------
-// No chapter count, no metadata query (AC15, AC16)
+// The metadata read is gated on `available` (#2022 AC14)
 // ---------------------------------------------------------------------------
 
-describe('CompanionEbookSection — no metadata read, no chapter count', () => {
-  it('exposes no getCompanionEbookMetadata on the client API barrel', () => {
-    expect(Object.hasOwn(api, 'getCompanionEbookMetadata')).toBe(false);
+/** Every state the metadata query must never fire for — AC14's proof set. */
+const NON_AVAILABLE_STATES = ALL_STATES.filter(([, state]) => state.status !== 'available');
+
+describe('CompanionEbookSection — the metadata read is gated on `available`', () => {
+  // REVERSED (#2022): this used to assert the barrel exposed NO metadata reader. It does now —
+  // the count is bound to the file by the server's own declaration of what it read.
+  it('exposes getCompanionEbookMetadata on the client API barrel', () => {
+    expect(Object.hasOwn(api, 'getCompanionEbookMetadata')).toBe(true);
   });
 
-  for (const [label, state] of ALL_STATES) {
+  for (const [label, state] of NON_AVAILABLE_STATES) {
     it(`${label} issues no request beyond /state`, async () => {
       const fetchSpy = vi.spyOn(globalThis, 'fetch');
       mockApi.getCompanionEbookState.mockResolvedValue(state);
@@ -659,6 +717,7 @@ describe('CompanionEbookSection — no metadata read, no chapter count', () => {
       await screen.findByRole('heading', { name: 'Ebook' });
 
       expect(mockApi.getCompanionEbookState).toHaveBeenCalledTimes(1);
+      expect(mockApi.getCompanionEbookMetadata).not.toHaveBeenCalled();
       // Every other API read would go through the real client; none is issued.
       expect(fetchSpy).not.toHaveBeenCalled();
     });
@@ -674,6 +733,448 @@ describe('CompanionEbookSection — no metadata read, no chapter count', () => {
       expect(attributeText(container)).not.toMatch(/\d+\s+chapters?\b/i);
     });
   }
+
+  // The wire type permits it even though the DB CHECK does not.
+  it('does not fire for `available` with a null filename', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(
+      makeState({ status: 'available', filename: null, sizeBytes: SIZE }),
+    );
+    const { container } = renderPanel();
+    await screen.findByRole('heading', { name: 'Ebook' });
+    await flush();
+
+    expect(mockApi.getCompanionEbookMetadata).not.toHaveBeenCalled();
+    expect(container.textContent ?? '').not.toMatch(/\d+\s+chapters?\b/i);
+  });
+
+  /**
+   * The gate against a WARM cache. The loop above starts cold, so it cannot see the defect it
+   * looks like it covers: `enabled: false` stops FETCHING but does not empty the entry, and
+   * TanStack hands a disabled observer whatever that key already holds. Seeded here is exactly
+   * what an earlier race leaves behind — a MISMATCHED response under the current filename's key.
+   *
+   * This is the case that fails when the implementation gates only the query and not the
+   * filename AC13 reads: the effect would fire a `/state` invalidation off cached data while the
+   * panel renders `drm_protected`.
+   */
+  it('reads nothing and recovers nothing from a cached response while the panel renders drm_protected', async () => {
+    const client = makeClient();
+    client.setQueryData(META_KEY('locked.epub'), metadataFor('other.epub', 3));
+    mockApi.getCompanionEbookState.mockResolvedValue(DRM); // filename: 'locked.epub'
+
+    const { container } = renderPanel(BOOK_ID, client);
+    await screen.findByText('DRM-protected');
+    await flush();
+
+    expect(mockApi.getCompanionEbookMetadata).not.toHaveBeenCalled();
+    expect(mockApi.getCompanionEbookState).toHaveBeenCalledTimes(1);
+    expect(container.textContent ?? '').not.toMatch(/\d+\s+chapters?\b/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The chapter count, bound to the file on screen (#2022)
+// ---------------------------------------------------------------------------
+
+const A_STATE = makeState({ status: 'available', filename: 'A.epub', sizeBytes: SIZE });
+const B_STATE = makeState({ status: 'available', filename: 'B.epub', sizeBytes: SIZE2 });
+
+/** The `available` card's detail row — filename row is children[0], detail row children[1]. */
+function detailRow(container: HTMLElement): string {
+  return card(container).children[1]?.textContent ?? '';
+}
+
+describe('CompanionEbookSection — the chapter count', () => {
+  it('joins the size and the count when the metadata response names the file on screen', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
+    mockApi.getCompanionEbookMetadata.mockResolvedValue(metadataFor('book.epub', 3));
+
+    const { container } = renderPanel();
+
+    await screen.findByText(`${formatBytes(SIZE)} · 3 chapters`);
+    expect(detailRow(container)).toBe(`${formatBytes(SIZE)} · 3 chapters`);
+    expect(mockApi.getCompanionEbookMetadata).toHaveBeenCalledWith(BOOK_ID);
+  });
+
+  it('pluralizes on 1', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
+    mockApi.getCompanionEbookMetadata.mockResolvedValue(metadataFor('book.epub', 1));
+
+    const { container } = renderPanel();
+
+    await screen.findByText(`${formatBytes(SIZE)} · 1 chapter`);
+    expect(detailRow(container)).toBe(`${formatBytes(SIZE)} · 1 chapter`);
+    expect(container.textContent).not.toContain('1 chapters');
+  });
+
+  it('says "2 chapters" for a two-entry toc', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
+    mockApi.getCompanionEbookMetadata.mockResolvedValue(metadataFor('book.epub', 2));
+
+    const { container } = renderPanel();
+
+    await screen.findByText(`${formatBytes(SIZE)} · 2 chapters`);
+    expect(detailRow(container)).toBe(`${formatBytes(SIZE)} · 2 chapters`);
+  });
+
+  // AC15's four combinations. The `sizeBytes: null` row is the one that fails a naive
+  // `${size} · ${count}` template: it would render a leading separator over an absent size.
+  it('renders the count alone, with no leading separator, when the size is null', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(
+      makeState({ status: 'available', filename: 'book.epub', sizeBytes: null }),
+    );
+    mockApi.getCompanionEbookMetadata.mockResolvedValue(metadataFor('book.epub', 3));
+
+    const { container } = renderPanel();
+
+    await screen.findByText('3 chapters');
+    expect(detailRow(container)).toBe('3 chapters');
+    expect(detailRow(container).startsWith('·')).toBe(false);
+    expect(detailRow(container).startsWith(' ')).toBe(false);
+    expect(container.textContent).not.toContain('0 B');
+  });
+
+  it('renders the size alone when the toc is null', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
+    mockApi.getCompanionEbookMetadata.mockResolvedValue(metadataFor('book.epub', null));
+
+    const { container } = renderPanel();
+
+    await screen.findByText('book.epub');
+    await flush();
+
+    expect(detailRow(container)).toBe(formatBytes(SIZE));
+    // The `toc?.length ?? 0` bug, pinned: `toc: null` is "we could not read one", never zero.
+    expect(container.textContent).not.toContain('0 chapters');
+    expect(container.textContent ?? '').not.toMatch(/\d+\s+chapters?\b/i);
+    // The filenames MATCH, so this is AC12's second term, not a mismatch — nothing to recover.
+    expect(mockApi.getCompanionEbookState).toHaveBeenCalledTimes(1);
+  });
+
+  it('omits the detail row entirely when neither the size nor the count is renderable', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(
+      makeState({ status: 'available', filename: 'book.epub', sizeBytes: null }),
+    );
+    mockApi.getCompanionEbookMetadata.mockResolvedValue(metadataFor('book.epub', null));
+
+    const { container } = renderPanel();
+    await screen.findByText('book.epub');
+    await flush();
+
+    expect(card(container).children).toHaveLength(1); // the filename row alone
+  });
+
+  // Extends the shipped `0 B` case: `sizeBytes !== null`, never a truthiness test.
+  it('renders "0 B · 5 chapters" for a zero-byte file with a five-entry toc', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(
+      makeState({ status: 'available', filename: 'empty.epub', sizeBytes: 0 }),
+    );
+    mockApi.getCompanionEbookMetadata.mockResolvedValue(metadataFor('empty.epub', 5));
+
+    const { container } = renderPanel();
+
+    await screen.findByText('0 B · 5 chapters');
+    expect(detailRow(container)).toBe('0 B · 5 chapters');
+  });
+
+  // -------------------------------------------------------------------------
+  // AC12 — detection
+  // -------------------------------------------------------------------------
+
+  it('renders no count when the metadata response names a different file', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE); // filename: 'book.epub'
+    mockApi.getCompanionEbookMetadata.mockResolvedValue(metadataFor('other.epub', 3));
+
+    const { container } = renderPanel();
+    await screen.findByText('book.epub');
+    await flush();
+
+    // The exact row text, not a `not.toMatch` alone: a regression that renders the count
+    // somewhere else in the card must fail here.
+    expect(detailRow(container)).toBe(formatBytes(SIZE));
+    expect(container.textContent ?? '').not.toMatch(/\d+\s+chapters?\b/i);
+    expect(screen.getByText('book.epub')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Download EPUB' })).toBeInTheDocument();
+    expect(mockToast.error).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // AC13 — recovery
+  // -------------------------------------------------------------------------
+
+  /**
+   * The regression for the motivating Refresh & Scan race, driven end to end.
+   *
+   * `useBookActions`'s `onSettled` performs ONE book-prefix invalidation against a
+   * fire-and-forget server reconcile, and #2034's poll window is armed only by the panel's own
+   * re-check button. So `/state` can refetch BEFORE the reconcile commits — call 2 is
+   * deliberately the pre-commit row — while `/metadata` reads the row AFTER it. Nothing but
+   * AC13's effect ever re-reads `/state` again, which is exactly what the final assertion pins.
+   *
+   * The mocks are scripted by CALL INDEX rather than re-pointed mid-test: re-pointing races
+   * AC13's own revalidation, which fires as soon as the mismatched pair renders. Call 3 is HELD
+   * (`makeDeferred`) for the same reason — an immediately-resolved recovery can settle inside the
+   * same `act` cycle, erasing the intermediate size-without-count state before it is observable.
+   */
+  it('recovers from a mismatch by revalidating /state, and converges in one round trip', async () => {
+    const held = makeDeferred<CompanionEbookState>();
+    mockApi.getCompanionEbookState
+      .mockResolvedValueOnce(A_STATE)   // 1: the mount
+      .mockResolvedValueOnce(A_STATE)   // 2: the book-prefix refetch, still pre-commit — the race
+      .mockReturnValue(held.promise);   // 3: AC13's recovery, held
+    mockApi.getCompanionEbookMetadata
+      .mockResolvedValueOnce(metadataFor('A.epub', 3))
+      .mockResolvedValue(metadataFor('B.epub', 7));
+
+    const { container, client } = renderPanel();
+    await screen.findByText(`${formatBytes(SIZE)} · 3 chapters`);
+
+    // Exactly what `invalidateBookQueries()` does. No pollUntil armed, re-check never clicked.
+    await act(async () => {
+      void client.invalidateQueries({ queryKey: queryKeys.book(BOOK_ID) });
+      await Promise.resolve();
+    });
+
+    // While the recovery request is still in flight: A's size, no count.
+    await waitFor(() => expect(detailRow(container)).toBe(formatBytes(SIZE)));
+    expect(container.textContent ?? '').not.toMatch(/\d+\s+chapters?\b/i);
+    await waitFor(() => expect(mockApi.getCompanionEbookState.mock.calls.length).toBe(3));
+
+    // …and nothing else invalidates anything from here on.
+    await act(async () => { held.resolve(B_STATE); await Promise.resolve(); });
+
+    await screen.findByText(`${formatBytes(SIZE2)} · 7 chapters`);
+    expect(screen.getByText('B.epub')).toBeInTheDocument();
+  });
+
+  it('converges the same way under StrictMode', async () => {
+    const held = makeDeferred<CompanionEbookState>();
+    mockApi.getCompanionEbookState
+      .mockResolvedValueOnce(A_STATE)
+      .mockResolvedValueOnce(A_STATE)
+      .mockReturnValue(held.promise);
+    mockApi.getCompanionEbookMetadata
+      .mockResolvedValueOnce(metadataFor('A.epub', 3))
+      .mockResolvedValue(metadataFor('B.epub', 7));
+
+    const client = makeClient();
+    render(
+      <StrictMode>
+        <QueryClientProvider client={client}>
+          <CompanionEbookSection bookId={BOOK_ID} />
+        </QueryClientProvider>
+      </StrictMode>,
+    );
+
+    await screen.findByText(`${formatBytes(SIZE)} · 3 chapters`);
+    await act(async () => {
+      void client.invalidateQueries({ queryKey: queryKeys.book(BOOK_ID) });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockApi.getCompanionEbookState.mock.calls.length).toBeGreaterThan(2));
+    await act(async () => { held.resolve(B_STATE); await Promise.resolve(); });
+
+    // No exact `/state` call count is asserted: AC13 permits StrictMode's development-only
+    // double setup, and pinning a number here would encode a guarantee the spec declines to make.
+    await screen.findByText(`${formatBytes(SIZE2)} · 7 chapters`);
+  });
+
+  /**
+   * The no-loop property — NOT an exactly-once count. `/state` keeps answering `A.epub` and
+   * `/metadata` keeps answering `B.epub`, so the pair never changes; the effect's dependencies
+   * are primitive strings, so a revalidation that returns the same row leaves them
+   * `Object.is`-equal and nothing re-fires. Sampled twice around a flush rather than compared to
+   * a literal, which StrictMode would make unstable.
+   */
+  it('stops revalidating once the mismatched pair stops changing', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(A_STATE);
+    mockApi.getCompanionEbookMetadata.mockResolvedValue(metadataFor('B.epub', 7));
+
+    renderPanel();
+    await screen.findByText('A.epub');
+    await waitFor(() => expect(mockApi.getCompanionEbookState.mock.calls.length).toBeGreaterThan(1));
+    await flush();
+
+    const settled = mockApi.getCompanionEbookState.mock.calls.length;
+    await flush();
+    await flush();
+
+    expect(mockApi.getCompanionEbookState.mock.calls.length).toBe(settled);
+  });
+
+  /**
+   * A NON-consecutive return to the same pair re-fires, and that is correct: React compares
+   * dependencies only against the previous render, so `A/B → A/C → A/B` is three distinct
+   * observations of the world and re-attempting recovery on the third is right.
+   *
+   * The observation point is the recovery SIDE EFFECT at the third transition, not the absence
+   * of a count. Asserting only "no count, no spin" is vacuous — both stay true for an
+   * implementation that wrongly remembers `A/B` and suppresses the third revalidation, which is
+   * exactly the handled-pair registry AC13 forbids (`vacuous-assertion-observation-points`).
+   */
+  it('re-fires when the same mismatched pair returns non-consecutively', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(A_STATE);
+    mockApi.getCompanionEbookMetadata
+      .mockResolvedValueOnce(metadataFor('B.epub', 7))
+      .mockResolvedValueOnce(metadataFor('C.epub', 5))
+      .mockResolvedValue(metadataFor('B.epub', 7));
+
+    const { client } = renderPanel();
+    await screen.findByText('A.epub');
+    // A/B observed at mount → one recovery.
+    await waitFor(() => expect(mockApi.getCompanionEbookState.mock.calls.length).toBe(2));
+
+    const refetchMetadata = () =>
+      act(async () => {
+        void client.invalidateQueries({ queryKey: META_KEY('A.epub'), exact: true });
+        await Promise.resolve();
+      });
+
+    await refetchMetadata(); // → C.epub, a new pair
+    await waitFor(() => expect(mockApi.getCompanionEbookState.mock.calls.length).toBe(3));
+    await flush();
+    const afterAC = mockApi.getCompanionEbookState.mock.calls.length;
+
+    await refetchMetadata(); // → B.epub again, a pair already seen once
+
+    await waitFor(() => expect(mockApi.getCompanionEbookState.mock.calls.length).toBe(afterAC + 1));
+    await flush();
+    expect(mockApi.getCompanionEbookState.mock.calls.length).toBe(afterAC + 1);
+  });
+
+  /**
+   * A retained entry for a RETURNING filename is used, not discarded (AC11/AC17).
+   *
+   * Phase one's load-bearing assertion is the UNCHANGED metadata call count: asserting only that
+   * the count eventually appears would also pass for an implementation that reads a key change
+   * as "discard and refetch". Phase two needs an EXPLICIT refetch trigger, because
+   * `setQueryData` timestamps the entry fresh and the query inherits the 60s `staleTime`, so the
+   * A→B switch serves it synchronously and starts nothing on its own.
+   */
+  it('serves a retained entry for a returning filename, and keeps the count when its refetch fails', async () => {
+    const client = makeClient();
+    client.setQueryData(META_KEY('B.epub'), metadataFor('B.epub', 7));
+    mockApi.getCompanionEbookState.mockResolvedValueOnce(A_STATE).mockResolvedValue(B_STATE);
+    mockApi.getCompanionEbookMetadata.mockResolvedValue(metadataFor('A.epub', 3));
+
+    renderPanel(BOOK_ID, client);
+    await screen.findByText(`${formatBytes(SIZE)} · 3 chapters`);
+    const afterMount = mockApi.getCompanionEbookMetadata.mock.calls.length;
+
+    // Phase one — move `/state` A→B. B's own entry already holds a coherent response.
+    await act(async () => {
+      void client.invalidateQueries({ queryKey: queryKeys.companionEbook(BOOK_ID), exact: true });
+      await Promise.resolve();
+    });
+    await screen.findByText(`${formatBytes(SIZE2)} · 7 chapters`);
+    expect(mockApi.getCompanionEbookMetadata.mock.calls.length).toBe(afterMount);
+
+    // Phase two — force B's entry to refetch, and fail it. The retained response still governs.
+    mockApi.getCompanionEbookMetadata.mockClear();
+    mockApi.getCompanionEbookMetadata.mockRejectedValue(NO_METADATA());
+    await act(async () => {
+      void client.invalidateQueries({ queryKey: META_KEY('B.epub'), exact: true });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const entry = client.getQueryState(META_KEY('B.epub'));
+      expect(entry?.status).toBe('error');
+      expect(entry?.fetchStatus).toBe('idle');
+    });
+    expect(mockApi.getCompanionEbookMetadata).toHaveBeenCalledTimes(4);
+    expect(screen.getByText(`${formatBytes(SIZE2)} · 7 chapters`)).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // AC17 — the failure policy, split on whether a successful response is retained
+  // -------------------------------------------------------------------------
+
+  const coldFailures: Array<[string, unknown]> = [
+    ['404', new ApiError(404, { error: 'Companion ebook not found' })],
+    ['503', new ApiError(503, { error: 'Companion ebook candidates could not be listed' })],
+    ['a plain network rejection', new Error('network')],
+  ];
+
+  for (const [label, failure] of coldFailures) {
+    it(`leaves the panel exactly as it is when a cold metadata read fails with ${label}`, async () => {
+      mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
+      mockApi.getCompanionEbookMetadata.mockRejectedValue(failure);
+
+      const { container, client } = renderPanel();
+      await screen.findByText('book.epub');
+      await waitFor(() =>
+        expect(client.getQueryState(META_KEY('book.epub'))?.status).toBe('error'));
+
+      expect(heading()).toBeInTheDocument();
+      expect(screen.getByText('book.epub')).toBeInTheDocument();
+      expect(detailRow(container)).toBe(formatBytes(SIZE));
+      expect(screen.getByRole('link', { name: 'Download EPUB' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: REFRESH_LABEL })).toBeInTheDocument();
+      expect(container.textContent ?? '').not.toMatch(/\d+\s+chapters?\b/i);
+      expect(mockToast.error).not.toHaveBeenCalled();
+      // Nothing to compare, so nothing to recover from.
+      expect(mockApi.getCompanionEbookState).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  /**
+   * The retained arm, and the test that fails if AC17's first arm is read as "hide the count on
+   * any metadata error". Real timers, driven through the real query.
+   *
+   * The terminal-state wait is mandatory: immediately after the invalidation the count is still
+   * rendered, no banner exists, and `/state` has not refetched — all three are already true
+   * while the refetch is merely PENDING, so without it this passes without ever reaching the
+   * retained-error state (`vacuous-assertion-observation-points`).
+   */
+  it('keeps the count when a metadata REFETCH fails after a successful response', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
+    mockApi.getCompanionEbookMetadata.mockResolvedValue(metadataFor('book.epub', 3));
+
+    const { container, client } = renderPanel();
+    await screen.findByText(`${formatBytes(SIZE)} · 3 chapters`);
+    const stateCalls = mockApi.getCompanionEbookState.mock.calls.length;
+
+    mockApi.getCompanionEbookMetadata.mockClear();
+    mockApi.getCompanionEbookMetadata.mockRejectedValue(NO_METADATA());
+    await act(async () => {
+      void client.invalidateQueries({ queryKey: META_KEY('book.epub'), exact: true });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const entry = client.getQueryState(META_KEY('book.epub'));
+      expect(entry?.status).toBe('error');
+      expect(entry?.fetchStatus).toBe('idle');
+    });
+    // `failureCount` starts at 0 and the predicate permits three retries, so the ladder runs to
+    // four attempts. The number is what proves it ran to exhaustion rather than the test landing
+    // after attempt one.
+    expect(mockApi.getCompanionEbookMetadata).toHaveBeenCalledTimes(4);
+
+    expect(detailRow(container)).toBe(`${formatBytes(SIZE)} · 3 chapters`);
+    expect(screen.getByText('book.epub')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Download EPUB' })).toBeInTheDocument();
+    expect(mockToast.error).not.toHaveBeenCalled();
+    // The retained filename still matches, so AC13 must not fire.
+    expect(mockApi.getCompanionEbookState.mock.calls.length).toBe(stateCalls);
+  });
+
+  // AC18 — the same 409-aware predicate the state query uses, proved against a client that does
+  // NOT supply one.
+  it('never retries a 409 metadata read', async () => {
+    mockApi.getCompanionEbookState.mockResolvedValue(AVAILABLE);
+    mockApi.getCompanionEbookMetadata.mockRejectedValue(
+      new ApiError(409, { error: 'Companion ebooks are disabled' }),
+    );
+
+    const { client } = renderPanel();
+    await screen.findByText('book.epub');
+    await waitFor(() =>
+      expect(client.getQueryState(META_KEY('book.epub'))?.status).toBe('error'));
+
+    expect(mockApi.getCompanionEbookMetadata).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1122,6 +1623,37 @@ describe('companion-ebook query key', () => {
 
     const entry = client.getQueryCache().find({ queryKey: queryKeys.companionEbook(BOOK_ID) });
     expect(entry?.state.isInvalidated).toBe(true);
+  });
+
+  // #2022 AC10 — the metadata key is a prefix-child of BOTH, so `invalidateBookQueries()` and
+  // #2034's forced-refresh invalidation each cascade to it with no new invalidateQueries call.
+  it.each<[string, (id: number) => readonly unknown[]]>([
+    ['queryKeys.book(id)', queryKeys.book],
+    ['queryKeys.companionEbook(id)', queryKeys.companionEbook],
+  ])('companionEbookMetadata is a prefix-child of %s', async (_label, prefix) => {
+    const client = new QueryClient();
+    client.setQueryData(META_KEY('book.epub'), metadataFor('book.epub', 3));
+
+    await client.invalidateQueries({ queryKey: prefix(BOOK_ID) });
+
+    expect(client.getQueryCache().find({ queryKey: META_KEY('book.epub') })?.state.isInvalidated)
+      .toBe(true);
+  });
+
+  /**
+   * AC13's `exact: true`, in the direction that actually pins it. Without `exact` the recovery
+   * invalidation would also refetch `/metadata` under the still-stale filename — re-reading the
+   * same newer row, returning the same mismatched answer, and burning a second `inspectEpub`.
+   * This is the assertion that fails if `exact` is dropped.
+   */
+  it('an exact invalidation of the state key leaves the metadata entry untouched', async () => {
+    const client = new QueryClient();
+    client.setQueryData(META_KEY('book.epub'), metadataFor('book.epub', 3));
+
+    await client.invalidateQueries({ queryKey: queryKeys.companionEbook(BOOK_ID), exact: true });
+
+    expect(client.getQueryCache().find({ queryKey: META_KEY('book.epub') })?.state.isInvalidated)
+      .toBe(false);
   });
 });
 

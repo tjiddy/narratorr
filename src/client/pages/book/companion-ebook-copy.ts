@@ -47,6 +47,21 @@ export const BADGE_VARIANTS: Record<CompanionEbookStatus, BadgeVariant> = {
 
 export const DOWNLOAD_LABEL = 'Download EPUB';
 
+/**
+ * The `available` detail row's chapter term (#2022), pluralized on 1.
+ *
+ * N is `toc.length` and nothing else. It is never reached with `0`: `src/core/epub/extract.ts`
+ * yields `null` rather than an empty array when a traversal emits no rows, and the panel renders
+ * no count at all for `toc: null` — so "0 chapters" is unreachable by construction and no
+ * fallback copy is authored for it.
+ */
+export function chapterCountText(count: number): string {
+  return `${count} chapter${count === 1 ? '' : 's'}`;
+}
+
+/** The separator joining the `available` detail row's present parts. Never an em-dash. */
+export const DETAIL_SEPARATOR = ' · ';
+
 /** The header refresh affordance (#2034). "Re-check", never "rescan": Refresh & Scan is the
  *  whole-book action and re-probes the audio; this one re-judges only the ebook. */
 export const REFRESH_LABEL = 'Re-check ebook';
