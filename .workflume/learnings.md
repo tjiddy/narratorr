@@ -762,7 +762,7 @@ scoped to the four directories where one batch's failures happened to land, whic
 missed the very next one written. Scope this by where the trap *applies*, not where it last bit.
 Client tests are excluded on purpose: jsdom touches no filesystem.
 
-Four filesystem primitives behave differently on Windows and will fail a suite that passes on the
+Five filesystem primitives behave differently on Windows and will fail a suite that passes on the
 Linux pipeline. **The pipeline cannot observe any of them**, so they land green in CI and only surface
 when Todd runs `pnpm verify` on his machine — which is his gate before every push, so a suite carrying
 these blocks *all* local verification, not just its own file. One companion-ebook slate landed 38 such
@@ -810,6 +810,15 @@ afterAll(() => {
   try { rmSync(dir, { recursive: true, force: true }); } catch { /* Windows keeps libSQL handles open; see windows-hostile-test-primitives */ }
 });
 ```
+
+**5. Nine characters are ILLEGAL in Windows filenames: `< > : " / \ | ? *`** (plus trailing dots
+and spaces). A fixture whose *name* contains one — a real temptation for "awkward basename"
+round-trip fixtures, where `"` is exactly the kind of awkwardness you want — fails at
+file-CREATION with `ENOENT`/`EINVAL`, taking the whole suite down. Discovered by recurrence:
+#2022's adversarial fixture `'A Book (50%) "done" ✓.epub'` shipped green from the Linux pipeline
+and failed Todd's `pnpm verify` at creation, in THIS entry's own `files` scope, after the entry
+already existed. Substitute a legal same-hazard character (apostrophe for double quote); spaces,
+`%`, parens, and non-ASCII glyphs are all fine.
 
 **Separately and already known:** `path.join()` yields backslashes on Windows. Never assert a
 hardcoded-separator path — normalize the actual with `.split('\\').join('/')`, or use

@@ -1158,8 +1158,14 @@ describe('row 13 — a stored basename that byte-differs from the one on disk', 
  * this one's is byte-fidelity through the composed response. Spaces, a percent sign, quotation
  * marks, and a non-ASCII glyph — the four shapes that get mangled by a stray `encodeURI`, a
  * header round-trip, or a latin1 decode somewhere between the row read and the JSON body.
+ *
+ * APOSTROPHES, not double quotes: this fixture is written to a REAL file, and `"` is one of
+ * NTFS's nine illegal filename characters (`< > : " / \ | ? *`), so the original spelling
+ * failed the whole suite on Windows at file-creation — the Linux pipeline cannot see it
+ * (windows-hostile-test-primitives, primitive 5). The apostrophe exercises the same
+ * quoting/JSON-escape hazards and is legal on every filesystem the suite runs on.
  */
-const AWKWARD_BASENAME = 'A Book (50%) "done" ✓.epub';
+const AWKWARD_BASENAME = "A Book (50%) 'done' ✓.epub";
 
 describe('#2022 — the metadata response declares the stored basename it read', () => {
   it('round-trips an awkward basename byte-identically, and emits none on the 404 arms', async () => {
