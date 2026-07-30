@@ -875,6 +875,11 @@ describe('companionEbookApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/books/7/companion-epub/state');
   });
 
+  it('getCompanionEbookMetadata → GET /books/7/companion-epub/metadata', async () => {
+    await companionEbookApi.getCompanionEbookMetadata(7);
+    expect(mockFetchApi).toHaveBeenCalledWith('/books/7/companion-epub/metadata');
+  });
+
   // The route's body schema is `.strict()`, so an extra key is a 400 before the handler runs.
   it('putCompanionEbookSelection → PUT /books/7/companion-epub/selection with only {index}', async () => {
     await companionEbookApi.putCompanionEbookSelection(7, 2);

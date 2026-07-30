@@ -610,8 +610,15 @@ is kept as the original design record:*
   while the server ran one `available`-only gate for advertisement and owner readability.)*
 - *A **re-check arrow** (#2034, not in this design) sits beside it in every state, wired to
   `POST /companion-epub/refresh` with a bounded post-202 poll window and a minimum visible spin.*
-- *`size · chapter count` remains size-only — the count is #2022, parked: `/metadata` cannot yet
-  bind its response to the `/state` row rendered beside it.*
+- *`size · chapter count` **shipped** (#2022). The count is `toc.length` from `/metadata`, and it
+  renders only when the metadata response's own `filename` equals the `/state` filename on the
+  card — the guarantee is that the two terms always describe the SAME file. `/metadata` declares
+  the stored basename its gate resolved, which is what makes that comparison possible: the two
+  routes read `companion_ebooks` independently and a reconcile can commit between them, so
+  without it one file's size could render beside another file's count with both requests
+  succeeding. On a mismatch the count is simply absent and the panel revalidates `/state`, which
+  converges in one round trip. The row is a ` · ` join of the parts present, so a null size
+  leaves no leading separator and a null TOC no trailing one.*
 - *The `Available` pill is CUT (badge only when something needs saying): once the filename, size,
   and live download icon are visible, the pill was a fourth voice repeating three others. `None`,
   `N found`, `Not readable`, and `DRM-protected` keep theirs — those carry signal.]*

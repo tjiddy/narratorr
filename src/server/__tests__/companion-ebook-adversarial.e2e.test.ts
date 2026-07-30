@@ -1147,3 +1147,44 @@ describe('row 13 — a stored basename that byte-differs from the one on disk', 
     expect(repaired.status).toBe('available');
   });
 });
+
+// ---------------------------------------------------------------------------
+// #2022 — `/metadata` declares the basename it read
+// ---------------------------------------------------------------------------
+
+/**
+ * A LOCAL literal, deliberately not borrowed from `CompanionEbookSection.test.tsx`'s row-15
+ * fixture: escaping is that suite's concern (it can render React; `app.inject()` cannot), and
+ * this one's is byte-fidelity through the composed response. Spaces, a percent sign, quotation
+ * marks, and a non-ASCII glyph — the four shapes that get mangled by a stray `encodeURI`, a
+ * header round-trip, or a latin1 decode somewhere between the row read and the JSON body.
+ */
+const AWKWARD_BASENAME = 'A Book (50%) "done" ✓.epub';
+
+describe('#2022 — the metadata response declares the stored basename it read', () => {
+  it('round-trips an awkward basename byte-identically, and emits none on the 404 arms', async () => {
+    const seeded = await seedCompanion({
+      filename: AWKWARD_BASENAME,
+      bytes: await F.buildEpub({
+        packageOptions: { items: [{ id: 'ch1', href: 'ch1.xhtml', mediaType: 'application/xhtml+xml' }] },
+      }),
+    });
+
+    const res = await metadata(seeded.bookId);
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { filename: string; metadata: unknown; toc: unknown };
+    expect(body.filename).toBe(AWKWARD_BASENAME);
+    // …and it is the same value `/state` projects, which is the property the panel's coherence
+    // rule is built on: the two routes read the row independently.
+    expect(((await state(seeded.bookId)).json() as CompanionStatePayload).filename).toBe(AWKWARD_BASENAME);
+
+    // The 404 arms carry no filename at all. Removing the file drives the resolver negative,
+    // which is the boundary a leak would most plausibly cross.
+    await unlink(seeded.filePath);
+    const gone = await metadata(seeded.bookId);
+    expect(gone.statusCode).toBe(404);
+    expect(gone.json()).not.toHaveProperty('filename');
+    expect(gone.rawPayload.toString('utf8')).not.toContain('A Book');
+  });
+});

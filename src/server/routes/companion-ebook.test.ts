@@ -938,8 +938,11 @@ describe('companion ebook owner routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.headers['cache-control']).toBe('private, no-store');
-      // Byte-for-byte the `available` payload — no field added, renamed, or defaulted for DRM.
+      // The same payload the `available` row produces — nothing added, renamed, or defaulted
+      // *for DRM*. `filename` (#2022) is on every metadata 200 regardless of stored status, and
+      // for this fixture it is the DRM row's own basename.
       expect(res.json()).toEqual({
+        filename: EPUB,
         metadata: { title: 'A Companion', author: 'Ada Lovelace', language: 'en-GB' },
         toc: [
           { title: 'Part One', depth: 0 },
@@ -1058,6 +1061,7 @@ describe('companion ebook owner routes', () => {
       expect(res.statusCode).toBe(200);
       expect(res.headers['cache-control']).toBe('private, no-store');
       expect(res.json()).toEqual({
+        filename: EPUB,
         metadata: { title: 'A Companion', author: 'Ada Lovelace', language: 'en-GB' },
         toc: [
           { title: 'Part One', depth: 0 },
@@ -1092,10 +1096,11 @@ describe('companion ebook owner routes', () => {
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(body).toEqual({
+        filename: EPUB,
         metadata: { title: 'Fixture', author: null, language: null },
         toc: null,
       });
-      expect(Object.keys(body).sort()).toEqual(['metadata', 'toc']);
+      expect(Object.keys(body).sort()).toEqual(['filename', 'metadata', 'toc']);
       expect(body).not.toHaveProperty('chapterCount');
     });
 
@@ -1117,6 +1122,107 @@ describe('companion ebook owner routes', () => {
     it('returns a null title when the OPF omits dc:title', async () => {
       await placeEpub(navRowsBook([{ label: 'One' }], { title: null }));
       expect((await metadataReq()).json().metadata.title).toBeNull();
+    });
+
+    // -----------------------------------------------------------------------
+    // #2022 — the response declares WHICH file it read
+    // -----------------------------------------------------------------------
+
+    /**
+     * A basename the fixture does not otherwise use. The observation-point rule
+     * (`vacuous-assertion-observation-points`): asserting `body.filename` against `EPUB` — the
+     * value `row()` defaults to and `placeEpub` writes — passes for a field wired to any
+     * constant the suite already has lying around. This one is only ever reachable through the
+     * stored row.
+     */
+    const DISTINCT = 'ZZ-Distinctive-Stored-Basename.epub';
+
+    async function placeDistinctEpub(options: F.EpubOptions = {}): Promise<void> {
+      await writeFile(join(bookPath, DISTINCT), await F.buildEpub(options));
+      setObservation(row({ filename: DISTINCT }));
+    }
+
+    it('emits the STORED basename the gate resolved, with no directory component', async () => {
+      await placeDistinctEpub(navRowsBook([{ label: 'One' }]));
+
+      const res = await metadataReq();
+
+      expect(res.statusCode).toBe(200);
+      const { filename } = res.json();
+      expect(filename).toBe(DISTINCT);
+      // A path can never regress in: the route emits the row's value, never a re-derivation
+      // from the resolved absolute path.
+      expect(filename).not.toContain('/');
+      expect(filename).not.toContain('\\');
+    });
+
+    /**
+     * The property the CLIENT's coherence rule depends on (#2022 AC2): the panel compares
+     * `/metadata`'s `filename` against the `/state` row it renders beside, so the two routes
+     * must project the same value for the same book. Asserting each is merely non-empty would
+     * pass for two independently-derived strings.
+     */
+    it('emits exactly what GET /state projects as filename for the same book', async () => {
+      await placeDistinctEpub(navRowsBook([{ label: 'One' }]));
+
+      const metadataBody = (await metadataReq()).json();
+      const stateBody = (await state()).json();
+
+      expect(stateBody.filename).toBe(DISTINCT);
+      expect(metadataBody.filename).toBe(stateBody.filename);
+    });
+
+    /**
+     * AC3's one-filename-per-request invariant (spec review F2). The distinctive row is stable
+     * across a whole request in every other case here, so none of them can tell "the handler
+     * reused the gate's value" from "the handler re-read the row". This one swaps the
+     * observation AFTER the gate has captured it — from inside the resolver, which runs between
+     * the gate and the response — and asserts the emitted name is still the captured one.
+     *
+     * The row read is counted as well: a second `findCompanionEbook` would be a second
+     * observation even when it happened to agree.
+     */
+    it('emits the filename the gate captured even when the row changes mid-request, and reads the row once', async () => {
+      await placeDistinctEpub(navRowsBook([{ label: 'One' }]));
+      const realResolve = vi.mocked(resolveCompanionEbookPath).getMockImplementation()!;
+      vi.mocked(resolveCompanionEbookPath).mockImplementationOnce(async (...args) => {
+        setObservation(row({ filename: 'SWAPPED-AFTER-THE-GATE.epub' }));
+        return realResolve(...args);
+      });
+
+      const res = await metadataReq();
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().filename).toBe(DISTINCT);
+      expect(db.select).toHaveBeenCalledTimes(1);
+    });
+
+    it('emits no filename on any gate, resolver, or inspection negative', async () => {
+      // One case per boundary: the feature gate (409, before the row read), the stored-status
+      // gate (404), the resolver (404, the file is simply absent), and the live inspection
+      // (404, the bytes are not an archive).
+      const negatives: Array<[string, () => Promise<void>]> = [
+        ['the feature is disabled', async () => { await placeDistinctEpub(); setSettings({ enabled: false }); }],
+        ['the stored status is not owner-readable', async () => {
+          await placeDistinctEpub();
+          setObservation(row({ status: 'ambiguous', filename: DISTINCT }));
+        }],
+        ['the file is gone', async () => { setObservation(row({ filename: DISTINCT })); }],
+        ['the file is not an archive', async () => {
+          await writeFile(join(bookPath, DISTINCT), 'not a zip archive at all');
+          setObservation(row({ filename: DISTINCT }));
+        }],
+      ];
+
+      for (const [label, arrange] of negatives) {
+        await arrange();
+        const res = await metadataReq();
+        expect([404, 409], label).toContain(res.statusCode);
+        expect(res.json(), label).not.toHaveProperty('filename');
+        expect(JSON.stringify(res.json()), label).not.toContain(DISTINCT);
+        await rm(join(bookPath, DISTINCT), { force: true });
+        setSettings({ enabled: true });
+      }
     });
   });
 
@@ -1142,6 +1248,29 @@ describe('companion ebook owner routes', () => {
       // change whenever the file does. The asymmetry with `/api/books/:id/cover` is deliberate.
       expect(res.headers['cache-control']).toBe('private, no-store');
       expect(res.rawPayload.equals(bytes)).toBe(true);
+    });
+
+    /**
+     * #2022 AC4 — `/cover` shares `loadCompanionInspection` with `/metadata` and must NOT gain
+     * the filename the shared helper now returns. Its body is raw image bytes, so the assertion
+     * is over the payload rather than a parsed key: a spread of the helper's result into a JSON
+     * response here would be a contract change on a route this issue does not touch.
+     */
+    it('is byte-identical and carries no filename anywhere in its response', async () => {
+      const distinct = 'ZZ-Cover-Route-Basename.epub';
+      await writeFile(join(bookPath, distinct), await F.buildEpub(coverBook(PNG)));
+      setObservation(row({ filename: distinct }));
+
+      const res = await coverReq();
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toBe('image/png');
+      expect(res.headers['content-length']).toBe(String(PNG.length));
+      expect(res.headers['content-disposition']).toBe('inline');
+      expect(res.headers['cache-control']).toBe('private, no-store');
+      expect(res.rawPayload.equals(PNG)).toBe(true);
+      expect(res.rawPayload.toString('binary')).not.toContain('filename');
+      expect(res.rawPayload.toString('binary')).not.toContain(distinct);
     });
 
     // AC15, both directions — the media type the BYTES say, never the one the manifest claims.

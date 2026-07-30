@@ -18,9 +18,10 @@ vi.mock('@/hooks/useLibrary', async (importOriginal) => {
 });
 
 // vi.hoisted() so the mock fn exists before vi.mock's factory runs at the top of the module.
-const { getBookSeriesMock, getCompanionEbookStateMock } = vi.hoisted(() => ({
+const { getBookSeriesMock, getCompanionEbookStateMock, getCompanionEbookMetadataMock } = vi.hoisted(() => ({
   getBookSeriesMock: vi.fn(),
   getCompanionEbookStateMock: vi.fn(),
+  getCompanionEbookMetadataMock: vi.fn(),
 }));
 
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -32,6 +33,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       getBookSeries: getBookSeriesMock,
       refreshBookSeries: vi.fn(),
       getCompanionEbookState: getCompanionEbookStateMock,
+      getCompanionEbookMetadata: getCompanionEbookMetadataMock,
     },
   };
 });
@@ -43,6 +45,11 @@ beforeEach(() => {
   // for the cases that don't care: #1963 AC3 makes an initial-load failure silently absent.
   getCompanionEbookStateMock.mockReset();
   getCompanionEbookStateMock.mockRejectedValue(new Error('no companion state in this fixture'));
+  // #2022 — the panel reads /metadata on `available`. Stubbed rather than left real, because a
+  // spread-`actual.api` factory leaves an unstubbed method issuing a genuine fetch
+  // (`vimock-barrel-replace-drops-named-exports`).
+  getCompanionEbookMetadataMock.mockReset();
+  getCompanionEbookMetadataMock.mockRejectedValue(new Error('no companion metadata in this fixture'));
 });
 
 function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
