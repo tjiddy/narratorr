@@ -2,7 +2,7 @@ import { fetchApi } from './client.js';
 import type { BookMetadata } from './books.js';
 
 export type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem, DurationCorroborationResult } from '@shared/schemas/library-scan.js';
-import type { DurationCorroborationBody as DurationCorroborationRequest, DurationCorroborationResult } from '@shared/schemas/library-scan.js';
+import type { DurationCorroborationBody, DurationCorroborationResult } from '@shared/schemas/library-scan.js';
 import type { DiscoveredBook, DuplicateReason } from '@shared/schemas/library-scan.js';
 import type { RecordingVerdict } from '@shared/schemas/recording-verdict.js';
 import type { MatchReasonKind } from '@shared/match-reason-kind.js';
@@ -122,7 +122,7 @@ export const libraryScanApi = {
    * the caller owns ASIN normalization (`needsChapterCorroboration` trims; the server
    * re-trims) and `scannedSeconds` is the raw unrounded scanner runtime in SECONDS.
    */
-  corroborateImportDuration: (body: DurationCorroborationRequest) =>
+  corroborateImportDuration: (body: DurationCorroborationBody) =>
     fetchApi<DurationCorroborationResult>('/library/import/duration-corroboration', {
       method: 'POST',
       body: JSON.stringify(body),

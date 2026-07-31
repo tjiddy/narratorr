@@ -20,6 +20,23 @@ const mismatchRow: MatchResult = {
   scannedSeconds: SCANNED,
 };
 
+/**
+ * A row the match job flagged `missing-duration` — the SCAN side has a positive runtime, the
+ * best match has none (`MatchReasonKind`: "duration evidence is incomplete on ONE side").
+ * Re-picking an edition that DOES carry a runtime re-evaluates this row, and when that
+ * runtime is out of band it lands on the very same outcome (4) a `duration-mismatch` row
+ * does — so it is equally entitled to the chapter-table second opinion.
+ */
+const missingDurationRow: MatchResult = {
+  path: PATH,
+  confidence: 'medium',
+  bestMatch: { title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], asin: ASIN },
+  alternatives: [],
+  reason: 'Best match missing duration — cannot verify',
+  reasonKind: 'missing-duration',
+  scannedSeconds: SCANNED,
+};
+
 /** The picked edition: the provider scalar (539 min = 32340s) is out of band vs SCANNED. */
 const picked = (over: Partial<BookMetadata> = {}): BookMetadata => ({
   title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], duration: 539, asin: ASIN, ...over,
@@ -28,6 +45,15 @@ const picked = (over: Partial<BookMetadata> = {}): BookMetadata => ({
 describe('needsChapterCorroboration (#2055)', () => {
   it('requests corroboration for an out-of-band re-pick with a scanned runtime and an ASIN', () => {
     expect(needsChapterCorroboration(mismatchRow, picked(), undefined))
+      .toEqual({ asin: ASIN, scannedSeconds: SCANNED });
+  });
+
+  // The predicate keys on the outcome of the re-evaluation, NOT on the row's ORIGINAL
+  // reason kind. A `missing-duration` row whose re-pick supplies the runtime that was
+  // missing lands on outcome (4) too, and it must dispatch — gating on the incoming
+  // `reasonKind` instead would leave every other case in this file green.
+  it('requests corroboration when an original missing-duration row re-evaluates out of band', () => {
+    expect(needsChapterCorroboration(missingDurationRow, picked(), undefined))
       .toEqual({ asin: ASIN, scannedSeconds: SCANNED });
   });
 

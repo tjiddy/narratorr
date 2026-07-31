@@ -1,6 +1,7 @@
 import { useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
 import { api, type MatchResult, type BookMetadata } from '@/lib/api';
 import type { ImportRow } from '@/components/manual-import/types.js';
+import type { DurationCorroborationBody } from '@shared/schemas/library-scan.js';
 import { upgradeMatchConfidence, promoteMatchToHigh } from './upgrade-match-confidence.js';
 
 /**
@@ -21,12 +22,16 @@ import { upgradeMatchConfidence, promoteMatchToHigh } from './upgrade-match-conf
  * Suppress-only — the response can promote medium → high and nothing else.
  */
 
-/** The request body for one qualifying re-pick. `asin` is already TRIMMED — see
- *  {@link needsChapterCorroboration}'s canonical-value rule. */
-export interface CorroborationRequest {
-  asin: string;
-  scannedSeconds: number;
-}
+/**
+ * The request body for one qualifying re-pick, as a domain-named alias of the canonical
+ * Zod-inferred route contract — NOT a parallel declaration. The shared schema stays the one
+ * source of truth, so a change to the route body is a compile error here rather than a
+ * request the server rejects at runtime.
+ *
+ * `asin` is already TRIMMED by the time it lands in one of these — see
+ * {@link needsChapterCorroboration}'s canonical-value rule.
+ */
+export type CorroborationRequest = DurationCorroborationBody;
 
 /** A dispatched request plus everything the staleness guard re-checks on arrival. */
 export interface CorroborationTarget {
