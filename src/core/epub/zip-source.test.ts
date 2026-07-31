@@ -1266,6 +1266,100 @@ describe('entry-name handling', () => {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * The fixture builder's own preconditions (#2057), asserted on **raw archive
+ * bytes** rather than on whether the suites above stay green.
+ *
+ * Those suites are built against specific archiver behaviours — which hostile
+ * names survive `append` verbatim, and what a central-directory record costs. A
+ * dependency bump that quietly started sanitising `a/../../b.txt` would leave
+ * every one of them passing while they attacked the reader with a *harmless*
+ * name, and `patchEntryName`'s precondition assertions would become vacuous
+ * rather than failing. So the coupling is pinned here, in the consumers, where
+ * a drift reports which specific mode moved.
+ *
+ * It lives here and not in the fixture because `epub-zip.fixture.ts` is a
+ * `.fixture.ts` with no suite, and it sits outside `src/core/epub/` because
+ * `layer-guard.test.ts` scans every non-test file in this folder as production.
+ */
+describe('archiver 8 fixture-construction contract', () => {
+  /**
+   * `sanitizePath` (`archiver@8.0.0/lib/utils.js:58`, called from
+   * `lib/core.js:276` for every named append) rewrites leading traversal,
+   * absolute, drive-letter, and backslash names, and leaves everything else —
+   * including mid-path traversal and mid-path `.` — verbatim.
+   *
+   * Both halves are load-bearing. The *preserved* rows are how the hostile-name
+   * fixtures are hostile at all; the *rewritten* rows are why
+   * {@link F.patchEntryName} has to exist.
+   *
+   * Platform-independent by construction: these are strings handed to `append`,
+   * never paths touched on disk, so the `C:` and backslash rows carry no
+   * Windows hazard. Keep them that way.
+   */
+  it.each([
+    { name: 'a/../../b.txt', raw: 'a/../../b.txt', mode: 'mid-path traversal preserved' },
+    { name: 'OEBPS/./a.xhtml', raw: 'OEBPS/./a.xhtml', mode: 'mid-path dot preserved' },
+    { name: '../../etc/passwd', raw: 'etc/passwd', mode: 'leading traversal stripped' },
+    { name: '/abs/x.txt', raw: 'abs/x.txt', mode: 'leading slash stripped' },
+    { name: 'C:/x.txt', raw: 'x.txt', mode: 'drive letter stripped' },
+    { name: 'dir\\win.txt', raw: 'dir/win.txt', mode: 'backslash normalised' },
+  ])('writes $name as $raw — $mode', async ({ name, raw }) => {
+    const bytes = await F.buildArchive({ store: true, entries: [{ name, content: 'hi' }] });
+
+    expect(F.listCentralDirectory(bytes)[0]?.rawName.toString('utf8')).toBe(raw);
+  });
+
+  it('costs exactly 46 + nameLength per central-directory record', async () => {
+    // `buildArchiveWithCentralDirectorySpan` computes its filler names from this
+    // arithmetic; if the writer ever emits an extra field or a per-entry
+    // comment, that builder's span `throw` fires with no indication why.
+    const names = ['a.txt', 'OEBPS/content.opf', 'x'.repeat(200), 'META-INF/container.xml'];
+    const bytes = await F.buildArchive({
+      store: true,
+      entries: names.map((name) => ({ name, content: 'hi' })),
+    });
+
+    const entries = F.listCentralDirectory(bytes);
+    expect(entries).toHaveLength(names.length);
+    for (const [index, entry] of entries.entries()) {
+      expect(entry.extraLength).toBe(0);
+      expect(entry.commentLength).toBe(0);
+      expect(entry.nameLength).toBe(Buffer.byteLength(names[index]!));
+      // The cursor advance the walk performs, stated independently: consecutive
+      // records sit exactly `46 + nameLength` apart.
+      const next = entries[index + 1];
+      if (next) expect(next.headerOffset - entry.headerOffset).toBe(46 + entry.nameLength);
+    }
+    // And the last record ends where the directory does.
+    const last = entries.at(-1)!;
+    expect(F.eocdOffset(bytes) - last.headerOffset).toBe(46 + last.nameLength);
+  });
+
+  it('writes the archive comment verbatim into the EOCD', async () => {
+    const bytes = await F.buildArchive({
+      store: true,
+      comment: 'HELLO-WORLD',
+      entries: [{ name: 'a.txt', content: 'hi' }],
+    });
+
+    expect(bytes.readUInt16LE(F.eocdOffset(bytes) + 20)).toBe(11);
+  });
+
+  it('emits the ZIP64 sentinel and a real ZIP64 record under forceZip64', async () => {
+    const bytes = await F.buildArchive({
+      store: true,
+      forceZip64: true,
+      entries: [{ name: 'a.txt', content: 'hi' }],
+    });
+
+    expect(bytes.readUInt32LE(F.eocdOffset(bytes) + 16)).toBe(0xffffffff);
+    expect(bytes.readUInt32LE(F.zip64RecordOffset(bytes))).toBe(F.ZIP64_RECORD_SIGNATURE);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
 describe('bounded reads', () => {
   it('enforces the cap on the inflated stream, not on the declared size', async () => {
     // Highly compressible filler so the fixture stays small while genuinely

@@ -254,6 +254,16 @@ export interface CentralDirectoryEntry {
   localHeaderOffset: number;
   /** The raw filename bytes, as written. */
   rawName: Buffer;
+  /**
+   * The record's extra-field width. The pinned writer emits none, which is the
+   * arithmetic {@link buildArchiveWithCentralDirectorySpan} depends on — the
+   * `archiver 8 fixture-construction contract` suite pins it at zero so a
+   * writer that starts emitting one fails there rather than inside that
+   * builder's opaque span `throw`.
+   */
+  extraLength: number;
+  /** The record's per-entry comment width. Zero from the pinned writer. */
+  commentLength: number;
 }
 
 /**
@@ -280,6 +290,8 @@ export function listCentralDirectory(archive: Buffer): CentralDirectoryEntry[] {
       nameLength,
       localHeaderOffset: archive.readUInt32LE(cursor + 42),
       rawName: Buffer.from(archive.subarray(cursor + 46, cursor + 46 + nameLength)),
+      extraLength,
+      commentLength,
     });
     cursor += 46 + nameLength + extraLength + commentLength;
   }
