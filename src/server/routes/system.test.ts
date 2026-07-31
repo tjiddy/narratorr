@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, type Mock } 
 import fsp from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import multipart from '@fastify/multipart';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -806,7 +806,7 @@ describe('system routes', () => {
 /** Create a zip Buffer using archiver. Resolves when the archive is finalized. */
 function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const archive = archiver('zip', { zlib: { level: 0 } });
+    const archive = new ZipArchive({ zlib: { level: 0 } });
     const chunks: Buffer[] = [];
     archive.on('data', (chunk: Buffer) => chunks.push(chunk));
     archive.on('end', () => resolve(Buffer.concat(chunks)));
