@@ -112,7 +112,7 @@ Fastify 5 defaults `routerOptions.maxParamLength` to 100 chars per dynamic path 
 
 **The deprecated form:** `Fastify({ maxParamLength: 2048 })` at the top level still works in Fastify 5 but emits FSTDEP022 and is removed in Fastify 6. Always use `routerOptions.maxParamLength`.
 
-**Where to keep this in mind:** any feature that encodes data into the URL path — signed tokens, hashes, encoded ids, capability strings. Reference: `src/server/fastify-options.ts` (executable-proven by `fastify-options.test.ts`'s default-cap 404 repro) and `src/server/__tests__/helpers.ts` after #1017.
+**Where to keep this in mind:** any feature that encodes data into the URL path — signed tokens, hashes, encoded ids, capability strings. Reference: `src/server/fastify-options.ts` (executable-proven by `fastify-options.test.ts`'s default-cap 414 repro) and `src/server/__tests__/helpers.ts` after #1017.
 
 ## drizzle-migration-prompt-hang
 
