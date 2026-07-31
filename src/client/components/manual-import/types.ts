@@ -23,4 +23,17 @@ export interface ImportRow {
    */
   userEdited: boolean;
   matchResult?: MatchResult | undefined;
+  /**
+   * Transient, client-only logical generation of this row's match evidence (#2055).
+   * Stamped by every write that installs, replaces, or clears `matchResult`, from a
+   * per-hook counter that only ever increments — so a re-scan or a Restart that rebuilds a
+   * row for the same folder path can never reproduce a value an in-flight chapter-
+   * corroboration request already captured. The async corroboration patch is the one write
+   * that does NOT stamp: it is the terminal write for the generation it answers.
+   *
+   * Optional so existing inline row fixtures need no change; an undefined stamp on either
+   * side makes the staleness guard reject, which is the safe direction (the row simply
+   * keeps its synchronous verdict).
+   */
+  matchGeneration?: number;
 }

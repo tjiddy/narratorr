@@ -533,6 +533,16 @@ describe('libraryScanApi', () => {
     await libraryScanApi.cancelMatchJob('abc123');
     expect(mockFetchApi).toHaveBeenCalledWith('/library/import/match/abc123', expect.objectContaining({ method: 'DELETE' }));
   });
+
+  // #2055 — dumb transport: the ASIN goes out verbatim (normalizing is the re-pick
+  // predicate's job; the server re-trims), and the scanner value is never rounded.
+  it('corroborateImportDuration → POST /library/import/duration-corroboration with asin + scannedSeconds', async () => {
+    await libraryScanApi.corroborateImportDuration({ asin: 'B00CXXEX8W', scannedSeconds: 33219.47 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/library/import/duration-corroboration', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ asin: 'B00CXXEX8W', scannedSeconds: 33219.47 }),
+    }));
+  });
 });
 
 describe('notifiersApi', () => {
