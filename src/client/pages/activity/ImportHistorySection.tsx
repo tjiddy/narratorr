@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { submissionResponseSchema } from '@core/import-staging/schemas.js';
 import { api, ApiError, type SubmissionResponse } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';

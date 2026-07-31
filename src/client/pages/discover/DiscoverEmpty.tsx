@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { LibraryIcon, CompassIcon, ArrowRightIcon, SearchIcon } from '@/components/icons';
 import { EmptyState } from '@/components/EmptyState.js';
 

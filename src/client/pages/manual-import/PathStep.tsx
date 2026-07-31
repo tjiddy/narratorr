@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { formatDate } from '@/lib/format';
 import { PathInput } from '@/components/PathInput';
 import {

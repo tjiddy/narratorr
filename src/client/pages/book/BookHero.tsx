@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { resolveCoverUrl } from '@/lib/url-utils';
 import { SUPPORTED_COVER_ACCEPT } from '@shared/mime.js';
 import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon, XCircleIcon, MoreVerticalIcon, UploadIcon, CheckIcon, XIcon, AlertTriangleIcon } from '@/components/icons';

@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { formatBytes } from '@/lib/api';
 import { formatDate } from '@/lib/format';
 import { ArrowUpDownIcon } from '@/components/icons';

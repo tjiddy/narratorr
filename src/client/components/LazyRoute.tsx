@@ -1,5 +1,5 @@
 import { Suspense } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { LoadingSpinner } from './icons';
 import { RouteErrorBoundary } from './RouteErrorBoundary';
 

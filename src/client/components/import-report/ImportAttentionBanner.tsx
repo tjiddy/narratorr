@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type AttentionResponse, type AttentionSubmission } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';

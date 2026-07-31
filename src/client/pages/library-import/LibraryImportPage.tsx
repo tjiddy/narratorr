@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { ImportCard, ImportSummaryBar, BookEditModal, MatchPausedBanner } from '@/components/manual-import';
 import { HeldReviewPanel } from '@/components/held-review';
 import { ArrowLeftIcon, CheckIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';

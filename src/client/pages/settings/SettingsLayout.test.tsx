@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route } from 'react-router';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { SettingsLayout } from './SettingsLayout';
 

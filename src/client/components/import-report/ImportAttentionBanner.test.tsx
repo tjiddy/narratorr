@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { FAST_POLL_MS, BASELINE_POLL_MS } from '@/lib/import-report/polling';
 import { ImportAttentionBanner } from './ImportAttentionBanner';

@@ -10,8 +10,8 @@ describe('manualChunks', () => {
     expect(manualChunks('/project/node_modules/react-dom/client.js')).toBe('vendor-react');
   });
 
-  it('assigns react-router-dom to vendor-react chunk', () => {
-    expect(manualChunks('/project/node_modules/react-router-dom/dist/index.js')).toBe('vendor-react');
+  it('assigns react-router subpath packages to vendor-react chunk', () => {
+    expect(manualChunks('/project/node_modules/react-router/dist/dom-export.js')).toBe('vendor-react');
   });
 
   it('assigns react-router to vendor-react chunk', () => {

@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import { useAuth } from '@/hooks/useAuth';
 import { LoadingSpinner } from '@/components/icons';
 import { AuthContext } from './AuthContext.js';

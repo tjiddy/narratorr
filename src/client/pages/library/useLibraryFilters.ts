@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import type { LibraryBookListParams, LibraryBookListItem } from '@/lib/api';
 import { type StatusFilter, type SortField, type SortDirection, type DisplayBook, filterTabs } from './helpers.js';
 import { DEFAULT_LIMITS } from '@shared/schemas/common.js';

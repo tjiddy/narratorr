@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { useBook } from '@/hooks/useMetadata';
 import { useLibraryBook } from '@/hooks/useLibrary';
 import { BookSkeleton } from './BookSkeleton.js';

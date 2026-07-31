@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useMutation } from '@tanstack/react-query';
 import { api, type ImportMode, type ImportConfirmItem, type MatchResult } from '@/lib/api';
 import { useMatchJob } from '@/hooks/useMatchJob';

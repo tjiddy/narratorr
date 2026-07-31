@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react';
 import { z } from 'zod';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { ZapIcon, AlertTriangleIcon, TerminalIcon } from '@/components/icons';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';

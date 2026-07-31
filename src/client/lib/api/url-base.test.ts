@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { createElement } from 'react';
-import { MemoryRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, Link, useLocation } from 'react-router';
 
 /**
  * Tests the BrowserRouter basename contract used in main.tsx:
