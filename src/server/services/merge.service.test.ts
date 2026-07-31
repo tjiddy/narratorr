@@ -97,7 +97,7 @@ const SCAN_RESULT = {
   hasCoverArt: false,
 };
 
-function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService; connector?: { notifyRefresh: ReturnType<typeof vi.fn> }; processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; mergeBehavior: 'always' | 'multi-file-only' | 'never'; bitrate: number; keepOriginalBitrate: boolean; maxConcurrentProcessing: number }> }) {
+function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService; connector?: { notifyRefresh: ReturnType<typeof vi.fn> }; processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; bitrate: number; keepOriginalBitrate: boolean; maxConcurrentProcessing: number }> }) {
   const db = createMockDb();
   const bookService = {
     getById: vi.fn().mockResolvedValue(mockBook),
