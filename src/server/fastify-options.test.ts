@@ -42,9 +42,11 @@ describe('buildFastifyOptions (production Fastify constructor options)', () => {
     }
   });
 
-  // Negative regression — the default cap (100) WOULD 404 the same long token,
-  // proving the production option is what makes the feature work.
-  it('default-cap Fastify (no maxParamLength override) 404s the same long token', async () => {
+  // Negative regression — the default cap (100) rejects the same long token before
+  // the handler runs, proving the production option is what makes the feature work.
+  // fastify 5.11 / find-my-way 9.7 changed the rejection from a generic 404 to an
+  // explicit 414 URI Too Long; either way the request never reaches the handler.
+  it('default-cap Fastify (no maxParamLength override) rejects the same long token with 414', async () => {
     const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
@@ -60,7 +62,7 @@ describe('buildFastifyOptions (production Fastify constructor options)', () => {
     try {
       const longToken = 'a'.repeat(300);
       const res = await app.inject({ method: 'GET', url: `/api/import/preview/${longToken}` });
-      expect(res.statusCode).toBe(404);
+      expect(res.statusCode).toBe(414);
     } finally {
       await app.close();
     }

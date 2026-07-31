@@ -104,7 +104,7 @@ Custom `LookupFunction` implementations (e.g. `validatingLookup` in `src/core/ut
 
 ---
 
-Fastify 5 defaults `routerOptions.maxParamLength` to 100 chars per dynamic path parameter. Anything longer (signed capability tokens, base64url payloads, content hashes, JWT-shaped strings) silently fails to match the route — Fastify returns a generic 404 'Route not found' from its not-found handler, with no warning, no log, and no validation error. The handler is never invoked; throws and console.logs inside it do not fire.
+Fastify 5 defaults `routerOptions.maxParamLength` to 100 chars per dynamic path parameter. Anything longer (signed capability tokens, base64url payloads, content hashes, JWT-shaped strings) is rejected before the route matches. On fastify < 5.11 that rejection is a generic 404 'Route not found' with no warning, no log, and no validation error; fastify 5.11+ (find-my-way 9.7+) returns an explicit 414 URI Too Long instead, which is diagnosable — but either way the handler is never invoked; throws and console.logs inside it do not fire, and the cap still needs bumping for long-token routes.
 
 **Pattern:** When introducing a route that takes variable-length encoded data in a path parameter, bump the cap on the Fastify constructor: `Fastify({ routerOptions: { maxParamLength: 2048 } })` (or whatever the real upper bound is). The production options live in `buildFastifyOptions()` (`src/server/fastify-options.ts`), consumed by `src/server/index.ts`. Mirror the change in any test-app constructor (`src/server/__tests__/helpers.ts:createTestApp` and per-test ad-hoc instances) — the cap is per-instance, not a runtime config.
 
