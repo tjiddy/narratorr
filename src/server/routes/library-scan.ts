@@ -16,9 +16,13 @@ import {
   matchStartBodySchema,
   jobIdParamSchema,
   scanDebugBodySchema,
+  durationCorroborationBodySchema,
   type ScanDebugBody,
   type ScanDebugTrace,
+  type DurationCorroborationBody,
+  type DurationCorroborationResult,
 } from '@shared/schemas.js';
+import { withinDurationTolerance } from '@shared/duration-tolerance.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { mintPreviewToken } from '../services/preview-token.js';
 
@@ -155,6 +159,56 @@ export async function libraryScanRoutes(
     { schema: { body: scanDebugBodySchema } },
     (request, reply) => handleScanDebug(request, reply, metadataService, bookService),
   );
+
+  // Duration corroboration (#2055) — the import editor's re-pick asks for the same
+  // chapter-runtime second opinion the match job already gets (#1942).
+  app.post<{ Body: DurationCorroborationBody }>(
+    '/api/library/import/duration-corroboration',
+    { schema: { body: durationCorroborationBodySchema } },
+    (request) => handleDurationCorroboration(request, metadataService),
+  );
+}
+
+// ─── Duration Corroboration (#2055) ─────────────────────────────────
+
+/**
+ * Answer "does this edition's CHAPTER TABLE corroborate the scanned runtime?".
+ *
+ * The re-pick path in the import editor judges a Review row against the provider's
+ * `runtimeLengthMin` SCALAR, which for a small slice of the catalog (Fablehaven Book 1 /
+ * `B00CXXEX8W`) understates the edition's own chapter table by minutes — so doing the
+ * right thing (re-picking the CORRECT edition) still reads as a duration mismatch. The
+ * match job already corroborates against the chapter table; this route is the same
+ * evidence, reachable from the client.
+ *
+ * Both operands are SECONDS end to end — this handler never sees or produces a minutes
+ * value (`book-duration-minutes-vs-quality-seconds`), and the band decision is the shared
+ * `withinDurationTolerance`, not a re-implemented comparison.
+ *
+ * A lookup failure degrades to `{ corroborated: false }` at 200, mirroring
+ * `corroborateDurationVerdict`'s "a corroboration failure must never escape" contract:
+ * a 5xx here would turn a missing second opinion into a broken re-pick.
+ */
+async function handleDurationCorroboration(
+  request: { body: DurationCorroborationBody; log: FastifyBaseLogger },
+  metadataService: MetadataService,
+): Promise<DurationCorroborationResult> {
+  const { asin, scannedSeconds } = request.body;
+
+  let chapterSeconds: number | undefined;
+  try {
+    chapterSeconds = await metadataService.getChapterRuntimeSeconds(asin);
+  } catch (error: unknown) {
+    request.log.debug({ error: serializeError(error), asin }, 'Chapter corroboration failed — no second opinion available');
+    return { corroborated: false };
+  }
+
+  // No usable runtime (not_found, trust-gate fail, invalid record, transient failure, or
+  // a closed provider gate): a truthful "no second opinion", NOT a mismatch claim — so
+  // `chapterSeconds` is absent from the response rather than present-and-undefined.
+  if (chapterSeconds === undefined) return { corroborated: false };
+
+  return { corroborated: withinDurationTolerance(chapterSeconds, scannedSeconds), chapterSeconds };
 }
 
 // ─── Scan Debug Helpers ─────────────────────────────────────────────

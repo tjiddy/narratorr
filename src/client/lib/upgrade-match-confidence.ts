@@ -33,6 +33,15 @@ import { formatDurationSeconds } from '@shared/format-duration.js';
  *
  * `scannedSeconds` is a file property, never stripped on any outcome. `high` rows are out of
  * scope: an explicit re-pick on an already-Matched row stays `high`, unchanged (#1929).
+ *
+ * This function stays SYNCHRONOUS and its outcomes are unchanged — but outcome (4) is now
+ * PROVISIONAL (#2055). It is judged against the provider's `runtimeLengthMin` scalar, which
+ * for a small slice of the catalog understates the edition's own chapter table by minutes,
+ * so a correct re-pick can land here falsely. `needsChapterCorroboration`
+ * (`repick-corroboration.ts`) recognises exactly that outcome and asks the server for the
+ * chapter-table second opinion the match job already gets (#1942); a corroborated answer
+ * later patches the row to high through {@link promoteMatchToHigh}. Outcomes (1)–(3) and the
+ * legacy branch are terminal and issue no request.
  */
 export function upgradeMatchConfidence(
   matchResult: MatchResult | undefined,
@@ -48,14 +57,21 @@ export function upgradeMatchConfidence(
       return reevaluateDurationRepick(matchResult, newMetadata);
     }
     // `no-duration-data` / undefined legacy: explicit re-pick clears the ambiguity.
-    return clearToHigh(matchResult);
+    return promoteMatchToHigh(matchResult);
   }
   return matchResult;
 }
 
-/** Clear a medium Review row to high, dropping BOTH `reason` and `reasonKind` (#1929 F4 —
- *  no stale discriminator survives onto a high result) while preserving `scannedSeconds`. */
-function clearToHigh(matchResult: MatchResult): MatchResult {
+/**
+ * Clear a medium Review row to high, dropping BOTH `reason` and `reasonKind` (#1929 F4 —
+ * no stale discriminator survives onto a high result) while preserving `scannedSeconds`.
+ *
+ * Exported because the ASYNC chapter-corroboration patch (#2055,
+ * `src/client/lib/repick-corroboration.ts`) must produce the EXACT same outcome as the
+ * synchronous in-band clear. One home, so the two paths cannot drift into two different
+ * notions of "promoted to Matched".
+ */
+export function promoteMatchToHigh(matchResult: MatchResult): MatchResult {
   const { reason: _reason, reasonKind: _reasonKind, ...rest } = matchResult;
   return { ...rest, confidence: 'high' };
 }
@@ -81,7 +97,7 @@ function reevaluateDurationRepick(matchResult: MatchResult, picked: BookMetadata
   }
   // (3) Within the shared band → clear to high (legitimate, incl. a different edition that fits).
   if (withinDurationTolerance(pickedMinutes * 60, scanned)) {
-    return clearToHigh(matchResult);
+    return promoteMatchToHigh(matchResult);
   }
   // (4) Out of band → stay Review, reason re-rendered against the PICKED edition's numbers.
   return {
