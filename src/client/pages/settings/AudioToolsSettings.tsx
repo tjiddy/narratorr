@@ -99,7 +99,7 @@ export function AudioToolsSettings() {
     <SettingsSection
       icon={<HeadphonesIcon className="w-5 h-5 text-primary" />}
       title={CARD_LABEL}
-      description="Applies wherever audio is merged or converted — the Merge and Bulk Convert buttons, and auto-merge downloads."
+      description="Applies wherever audio is merged or converted — the Merge button and auto-merge downloads."
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <FfmpegStatusRow />
@@ -155,8 +155,7 @@ export function AudioToolsSettings() {
         </SettingsTable>
 
         <p className="text-sm text-muted-foreground">
-          Used by the <span className="font-medium text-foreground">Merge</span> button,{' '}
-          <span className="font-medium text-foreground">Bulk Convert</span>, and{' '}
+          Used by the <span className="font-medium text-foreground">Merge</span> button and{' '}
           <span className="font-medium text-foreground">auto-merge downloads</span>.
         </p>
 
