@@ -30,7 +30,7 @@
     "@fastify/cors": "^11.3.0",
     "@fastify/helmet": "^13.1.0",
     "@fastify/multipart": "^10.1.0",
-    "@fastify/rate-limit": "^10.3.0",
+    "@fastify/rate-limit": "^11.2.0",
     "@fastify/static": "^10.1.2",
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.1",
@@ -43,8 +43,8 @@
     "dompurify": "^3.4.12",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.11.0",
-    "fastify-plugin": "^5.1.0",
-    "fastify-type-provider-zod": "^6.1.0",
+    "fastify-plugin": "^6.0.0",
+    "fastify-type-provider-zod": "^7.0.0",
     "music-metadata": "^11.14.0",
     "nodemailer": "^9.0.3",
     "react": "^19.2.8",
@@ -61,7 +61,7 @@
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
-    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/archiver": "^7.0.0",
@@ -79,7 +79,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.8.0",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.1",
     "msw": "^2.15.0",
     "tailwindcss": "^4.3.3",
     "tsup": "^8.5.1",
@@ -114,8 +114,8 @@
       "ip-address@<10.1.1": ">=10.1.1",
       "ws@<8.20.1": ">=8.20.1",
       "brace-expansion@>=1.0.0 <1.1.13": "1.1.13",
-      "brace-expansion@>=2.0.0 <2.0.3": "2.0.3",
-      "brace-expansion@>=5.0.0 <5.0.6": "5.0.6"
+      "brace-expansion@>=2.0.0 <5.0.8": "5.0.9",
+      "brace-expansion@>=5.0.0 <5.0.8": "5.0.8"
     }
   }
 }
