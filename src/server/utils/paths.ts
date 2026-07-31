@@ -178,10 +178,10 @@ export interface BookNamingContext {
 }
 
 /**
- * Assemble the naming half of the convert/merge `ProcessingContext` from a book row + library
- * naming settings. Centralizes the "omit empty `fileFormat`" fallback rule (so audio-processor
- * keeps its basename / `${author} - ${title}` fallback) and the null-book guard in ONE place,
- * keeping both call sites (`convertBook`, `MergeService.runStaging`) below the complexity cap.
+ * Assemble the naming half of the `ProcessingContext` from a book row + library naming settings.
+ * Centralizes the "omit empty `fileFormat`" fallback rule (so audio-processor keeps its basename /
+ * `${author} - ${title}` fallback) and the null-book guard in ONE place, keeping the call site
+ * (`MergeService.runStaging`) below the complexity cap.
  */
 export function buildNamingContext(
   book: RenameableBook | null | undefined,
@@ -201,9 +201,9 @@ export function buildNamingContext(
  * Build the book-LEVEL naming token map from a book row and its resolved author.
  *
  * The single shared source of the `{author}`/`{title}`/`{series}`/`{narrator}`/`{year}`/
- * `{edition}` (+ sort variants) tokens consumed at rename time (`planFileRenames`),
- * merge time (`MergeService.runStaging`), and convert time (`convertBook`). Keeping the
- * book→tokens decision in ONE place stops the three paths from drifting on how a book row
+ * `{edition}` (+ sort variants) tokens consumed at rename time (`planFileRenames`) and at merge
+ * time (`MergeService.runStaging`, which reaches audio-processor's merge/convert stem builders).
+ * Keeping the book→tokens decision in ONE place stops those paths from drifting on how a book row
  * maps to filename tokens (the anti-drift consistency-test target). Per-FILE tokens
  * (`trackNumber`/`trackTotal`/`partName`) are computed per file by each caller and are
  * intentionally NOT built here.

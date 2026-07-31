@@ -426,9 +426,9 @@ export class MergeService {
       outputFormat,
       ...(targetBitrateKbps !== undefined && { bitrate: targetBitrateKbps }),
       ...(sourceBitrateKbps !== undefined && { sourceBitrateKbps }),
-      // Manual Merge always merges by design (decision (a)): the user explicitly clicked
-      // "Merge", so honoring mergeBehavior 'never'/'multi-file-only' here would make the
-      // button silently do nothing. mergeBehavior is consulted only on the bulk Convert path.
+      // Manual Merge and auto-merge always merge by design (decision (a)): merging is the whole
+      // point of this path, so anything short of 'always' would make it silently do nothing. This
+      // is the only production caller of the core `mergeBehavior` parameter (#2056).
       mergeBehavior: 'always',
     }, {
       author: authorName,

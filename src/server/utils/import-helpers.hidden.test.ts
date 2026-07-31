@@ -150,7 +150,7 @@ describe('#1852 identity-root policy — hidden ROOT still yields its visible ch
   });
 
   it('getVisiblePathSize on a hidden dir root totals its visible children', async () => {
-    const staging = join(root, '.convert-tmp');
+    const staging = join(root, '.import-staging');
     await mkdir(staging, { recursive: true });
     await writeBytes(join(staging, 'a.m4b'), 10);
     await writeBytes(join(staging, 'b.jpg'), 5);

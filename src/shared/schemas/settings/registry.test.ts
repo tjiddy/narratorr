@@ -221,7 +221,6 @@ describe('settingsRegistry', () => {
         outputFormat: 'm4b',
         keepOriginalBitrate: true,
         bitrate: 128,
-        mergeBehavior: 'multi-file-only',
         maxConcurrentProcessing: 1,
         autoMergeDownloads: false,
         postProcessingScript: '',

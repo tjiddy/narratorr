@@ -28,7 +28,6 @@ describe('createMockSettings', () => {
       expect(settings.processing.outputFormat).toBe(DEFAULT_SETTINGS.processing.outputFormat);
       expect(settings.processing.bitrate).toBe(DEFAULT_SETTINGS.processing.bitrate);
       expect(settings.processing.keepOriginalBitrate).toBe(DEFAULT_SETTINGS.processing.keepOriginalBitrate);
-      expect(settings.processing.mergeBehavior).toBe(DEFAULT_SETTINGS.processing.mergeBehavior);
       expect(settings.processing.maxConcurrentProcessing).toBe(DEFAULT_SETTINGS.processing.maxConcurrentProcessing);
       expect(settings.processing.postProcessingScriptTimeout).toBe(DEFAULT_SETTINGS.processing.postProcessingScriptTimeout);
     });
@@ -97,7 +96,6 @@ describe('createMockSettings', () => {
         outputFormat: 'mp3' as const,
         keepOriginalBitrate: true,
         bitrate: 64,
-        mergeBehavior: 'always' as const,
         maxConcurrentProcessing: 4,
         autoMergeDownloads: true,
         postProcessingScript: '/run.sh',

@@ -20,6 +20,17 @@ interface UseBulkOperationReturn {
 
 const IDLE_PROGRESS: BulkProgress = Object.freeze({ completed: 0, total: 0, failures: 0 });
 
+/**
+ * Job type → its start endpoint. Keyed on the union (not a ternary chain with a default arm), so
+ * every type routes BY NAME and a newly-added `BulkOpType` is a compile error here rather than
+ * silently inheriting whichever call the old chain fell through to (#2056).
+ */
+const START_FNS: Record<BulkOpType, () => Promise<{ jobId: string }>> = {
+  rename: () => api.startBulkRename(),
+  retag: () => api.startBulkRetag(),
+  write_metadata_sidecars: () => api.startBulkWriteMetadataSidecars(),
+};
+
 export function useBulkOperation(): UseBulkOperationReturn {
   const [isRunning, setIsRunning] = useState(false);
   const [jobType, setJobType] = useState<BulkOpType | null>(null);
@@ -93,13 +104,7 @@ export function useBulkOperation(): UseBulkOperationReturn {
   }, [stopPolling]);
 
   const startJob = useCallback(async (type: BulkOpType) => {
-    const startFn =
-      type === 'rename' ? api.startBulkRename :
-      type === 'retag' ? api.startBulkRetag :
-      type === 'write_metadata_sidecars' ? api.startBulkWriteMetadataSidecars :
-      api.startBulkConvert;
-
-    const { jobId } = await startFn();
+    const { jobId } = await START_FNS[type]();
     jobIdRef.current = jobId;
     setIsRunning(true);
     setJobType(type);

@@ -24,7 +24,6 @@ const settings = createMockSettings({
     outputFormat: 'm4b',
     keepOriginalBitrate: false,
     bitrate: 128,
-    mergeBehavior: 'multi-file-only',
     maxConcurrentProcessing: 1,
     autoMergeDownloads: true,
     postProcessingScript: '/x.sh',
@@ -46,8 +45,26 @@ describe('AudioToolsSettings', () => {
     expect(screen.getByLabelText('Output format')).toBeInTheDocument();
     expect(screen.getByLabelText('Keep original bitrate')).toBeInTheDocument();
     expect(screen.getByLabelText('Target bitrate')).toBeInTheDocument();
-    expect(screen.getByLabelText('Merge behavior')).toBeInTheDocument();
     expect(screen.getByLabelText('Max concurrent jobs')).toBeInTheDocument();
+  });
+
+  // #2056 — the knob is gone, but the copy describing the format conversion the MERGE path performs
+  // is not: the card is still named for it, and the ffmpeg-missing notice still has to warn that
+  // conversion stops without the binary. Guards both directions of the removal (the row's absence
+  // and the surviving copy) so a blanket rename can't pass as a cleanup.
+  it('drops the Merge behavior row while keeping the format-conversion copy', async () => {
+    renderWithProviders(<AudioToolsSettings />);
+    await waitFor(() => expect(screen.getByText('Merge & Convert')).toBeInTheDocument());
+    expect(screen.queryByLabelText('Merge behavior')).not.toBeInTheDocument();
+    expect(screen.queryByText('Only when multiple files')).not.toBeInTheDocument();
+    expect(screen.getByText(/Applies wherever audio is merged or converted/)).toBeInTheDocument();
+  });
+
+  it('keeps the Convert wording in the ffmpeg-missing notice — it describes the merge path’s encode', async () => {
+    mockApi.getFfmpegStatus.mockResolvedValue({ detected: false });
+    renderWithProviders(<AudioToolsSettings />);
+    await waitFor(() => expect(screen.getByText(/ffmpeg not found/)).toBeInTheDocument());
+    expect(screen.getByText(/Merge, Convert and Tag Embedding stay off until it resolves/)).toBeInTheDocument();
   });
 
   it('shows the detected ffmpeg status (version + path) with no setup copy on the happy path', async () => {
@@ -91,15 +108,16 @@ describe('AudioToolsSettings', () => {
     await waitFor(() => expect(mockApi.updateSettings).toHaveBeenCalled());
     const payload = mockApi.updateSettings.mock.calls[0]![0] as { processing: Record<string, unknown> };
     expect(payload).not.toHaveProperty('tagging');
-    expect(payload.processing).toEqual(expect.objectContaining({
+    // EXACT shape, not objectContaining: this is the page's whole outgoing contract, so it has to
+    // fail on any key the form should not be sending. That covers both directions at once — the
+    // automation fields belonging to Post Processing (partial patch), and a retired engine field
+    // sneaking back through audioToolsSchema/toFormData without its visible row (#2056). Per-key
+    // `not.toHaveProperty` negatives would be subsumed by this and could never fail on their own.
+    expect(payload.processing).toEqual({
       outputFormat: 'm4b',
       keepOriginalBitrate: true,
       bitrate: 128,
-      mergeBehavior: 'multi-file-only',
       maxConcurrentProcessing: 1,
-    }));
-    // Automation fields belong to Post Processing — this page must not touch them (partial patch).
-    expect(payload.processing).not.toHaveProperty('autoMergeDownloads');
-    expect(payload.processing).not.toHaveProperty('postProcessingScript');
+    });
   });
 });

@@ -5,8 +5,8 @@ import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { NumberField } from '@/components/settings/NumberField';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { FORMAT_LABELS, MERGE_LABELS } from '@/lib/constants';
-import { outputFormatSchema, mergeBehaviorSchema, bitrateField, maxConcurrentProcessingField, DEFAULT_SETTINGS, type AppSettings } from '@shared/schemas.js';
+import { FORMAT_LABELS } from '@/lib/constants';
+import { outputFormatSchema, bitrateField, maxConcurrentProcessingField, DEFAULT_SETTINGS, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 
@@ -20,7 +20,6 @@ const audioToolsSchema = z.object({
   outputFormat: outputFormatSchema,
   keepOriginalBitrate: z.boolean(),
   bitrate: bitrateField,
-  mergeBehavior: mergeBehaviorSchema,
   maxConcurrentProcessing: maxConcurrentProcessingField,
 });
 type AudioToolsFormData = z.infer<typeof audioToolsSchema>;
@@ -30,7 +29,6 @@ function toFormData(s: AppSettings): AudioToolsFormData {
     outputFormat: s.processing.outputFormat,
     keepOriginalBitrate: s.processing.keepOriginalBitrate,
     bitrate: s.processing.bitrate,
-    mergeBehavior: s.processing.mergeBehavior,
     maxConcurrentProcessing: s.processing.maxConcurrentProcessing,
   };
 }
@@ -130,16 +128,6 @@ export function AudioToolsSettings() {
               suffix="kbps"
               error={keepOriginalBitrate ? undefined : errors.bitrate?.message}
             />
-          </SettingsRow>
-
-          <SettingsRow htmlFor="mergeBehavior" label="Merge behavior" description="When multiple audio files get combined into one chaptered file.">
-            <div className="w-56">
-              <SelectWithChevron id="mergeBehavior" {...register('mergeBehavior')}>
-                {mergeBehaviorSchema.options.map((b) => (
-                  <option key={b} value={b}>{MERGE_LABELS[b] ?? b}</option>
-                ))}
-              </SelectWithChevron>
-            </div>
           </SettingsRow>
 
           <SettingsRow htmlFor="maxConcurrentProcessing" label="Max concurrent jobs" description="Manual and auto-merge share this cap. Higher uses more CPU and disk I/O.">

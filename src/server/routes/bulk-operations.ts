@@ -67,20 +67,6 @@ export async function bulkOperationsRoutes(
     }
   });
 
-  app.post('/api/books/bulk/convert', async (request, reply) => {
-    try {
-      const jobId = await bulkOperationService.startConvertJob();
-      return await reply.status(202).send({ jobId });
-    } catch (error: unknown) {
-      if (error instanceof BulkOpError) {
-        if (error.code === 'FFMPEG_NOT_CONFIGURED') return reply.status(503).send({ error: error.message });
-        if (error.code === 'BULK_OP_IN_PROGRESS') return reply.status(409).send({ error: error.message });
-      }
-      request.log.error({ error: serializeError(error) }, 'Failed to start bulk convert job');
-      return reply.status(500).send({ error: 'Internal server error' });
-    }
-  });
-
   // Poll job status
   app.get<{ Params: JobIdParams }>(
     '/api/books/bulk/:jobId',

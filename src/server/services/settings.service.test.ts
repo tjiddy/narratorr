@@ -77,6 +77,33 @@ describe('SettingsService', () => {
       expect(result.logLevel).toBe('debug');
       expect(result).toEqual({ logLevel: 'debug', housekeepingRetentionDays: 90, welcomeSeen: false });
     });
+
+    // #2056: the same fossil-key shape for the removed `processing.mergeBehavior` knob. The
+    // load-bearing assertions are the SURVIVING non-default values, not the removed key's absence
+    // — a parse failure would fall back to DEFAULT_SETTINGS.processing, which is also missing the
+    // key but would silently reset bitrate/outputFormat/maxConcurrentProcessing too. Making
+    // processingSettingsSchema `.strict()` flips this test red on those three, not on the absence.
+    it('strips a stored mergeBehavior key while preserving non-default siblings', async () => {
+      const log = createMockLogger();
+      const svc = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+      const fossilProcessing = {
+        outputFormat: 'mp3', keepOriginalBitrate: false, bitrate: 256, mergeBehavior: 'never',
+        maxConcurrentProcessing: 4, autoMergeDownloads: true, postProcessingScript: '/x.sh', postProcessingScriptTimeout: 600,
+      };
+      db.select.mockReturnValue(mockDbChain([{ key: 'processing', value: fossilProcessing }]));
+
+      const result = await svc.get('processing');
+
+      expect(result).not.toHaveProperty('mergeBehavior');
+      expect(result).toEqual({
+        outputFormat: 'mp3', keepOriginalBitrate: false, bitrate: 256, maxConcurrentProcessing: 4,
+        autoMergeDownloads: true, postProcessingScript: '/x.sh', postProcessingScriptTimeout: 600,
+      });
+      expect(log.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('Settings parse failed'),
+      );
+    });
   });
 
   describe('getAll', () => {
@@ -392,7 +419,7 @@ describe('SettingsService', () => {
     it('no-migration: stored keepOriginalBitrate: false survives a patch of an unrelated field', async () => {
       // Existing user opted out of keep-original before the 1.0 default flip to true.
       // Patching an unrelated field must NOT overwrite their stored false with the new default.
-      const existingProcessing = { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 256, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 };
+      const existingProcessing = { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 256, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 };
       db.select
         .mockReturnValueOnce(mockDbChain([{ key: 'processing', value: existingProcessing }]))  // get('processing')
         .mockReturnValueOnce(mockDbChain([]));  // sentinel lookup in set()

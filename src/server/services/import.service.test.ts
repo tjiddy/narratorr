@@ -1627,7 +1627,6 @@ describe('ImportService', () => {
           outputFormat: 'm4b',
           keepOriginalBitrate: false,
           bitrate: 128,
-          mergeBehavior: 'multi-file-only',
         });
         return Promise.resolve({});
       });

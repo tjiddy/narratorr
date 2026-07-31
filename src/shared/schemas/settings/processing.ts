@@ -3,9 +3,6 @@ import { z } from 'zod';
 export const outputFormatSchema = z.enum(['m4b', 'mp3']);
 export type OutputFormat = z.infer<typeof outputFormatSchema>;
 
-export const mergeBehaviorSchema = z.enum(['always', 'multi-file-only', 'never']);
-export type MergeBehavior = z.infer<typeof mergeBehaviorSchema>;
-
 // Canonical field validators — the numeric bounds live here ONCE. `processingSettingsSchema`
 // wraps them with `.default(...)`; the client Audio Tools / Post Processing page schemas consume
 // the bare validators, so a bound change can't drift the UI from the backend. Kept as shared base
@@ -20,7 +17,6 @@ export const processingSettingsSchema = z.object({
   outputFormat: outputFormatSchema.default('m4b'),
   keepOriginalBitrate: z.boolean().default(true),
   bitrate: bitrateField.default(128),
-  mergeBehavior: mergeBehaviorSchema.default('multi-file-only'),
   maxConcurrentProcessing: maxConcurrentProcessingField.default(1),
   // Opt-in auto-merge (#1836): when a completed DOWNLOAD lands as a multi-file set, enqueue a
   // merge into the existing bounded merge queue. Downloads only — never Library/Manual Import.
@@ -38,7 +34,6 @@ export const processingFormSchema = z.object({
   outputFormat: outputFormatSchema,
   keepOriginalBitrate: z.boolean(),
   bitrate: bitrateField,
-  mergeBehavior: mergeBehaviorSchema,
   maxConcurrentProcessing: maxConcurrentProcessingField,
   autoMergeDownloads: z.boolean(),
   postProcessingScript: z.string(),

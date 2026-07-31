@@ -18,15 +18,15 @@ describe('enqueueBookRefresh', () => {
 
   it('fires notifyRefresh with the given reason and item', () => {
     const connector = makeConnector();
-    enqueueBookRefresh(connector, makeLog(), 'convert', { bookId: 7, title: 'T', authorName: 'A', libraryPath: '/lib/A/T' });
-    expect(connector.notifyRefresh).toHaveBeenCalledWith('convert', [
+    enqueueBookRefresh(connector, makeLog(), 'merge', { bookId: 7, title: 'T', authorName: 'A', libraryPath: '/lib/A/T' });
+    expect(connector.notifyRefresh).toHaveBeenCalledWith('merge', [
       { bookId: 7, title: 'T', authorName: 'A', libraryPath: '/lib/A/T' },
     ]);
   });
 
   it('is a no-op when no connector is configured', () => {
     // No connector → no throw, nothing to assert beyond not crashing.
-    expect(() => enqueueBookRefresh(undefined, makeLog(), 'convert', { bookId: 1, title: 'T', libraryPath: '/x' })).not.toThrow();
+    expect(() => enqueueBookRefresh(undefined, makeLog(), 'merge', { bookId: 1, title: 'T', libraryPath: '/x' })).not.toThrow();
   });
 });
 

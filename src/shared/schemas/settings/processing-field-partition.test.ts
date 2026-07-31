@@ -6,7 +6,7 @@ import { processingSettingsSchema } from './processing.js';
 // This guard asserts the partition is DISJOINT and TOTAL against the canonical schema, so a
 // newly-added processing field can't silently belong to neither page (or both) — it forces a
 // conscious assignment. Keep these lists in sync with AudioToolsSettings / ProcessingSettingsSection.
-const ENGINE_KEYS = ['outputFormat', 'keepOriginalBitrate', 'bitrate', 'mergeBehavior', 'maxConcurrentProcessing'];
+const ENGINE_KEYS = ['outputFormat', 'keepOriginalBitrate', 'bitrate', 'maxConcurrentProcessing'];
 const AUTOMATION_KEYS = ['autoMergeDownloads', 'postProcessingScript', 'postProcessingScriptTimeout'];
 
 describe('processing settings field partition (Audio Tools vs Post Processing)', () => {

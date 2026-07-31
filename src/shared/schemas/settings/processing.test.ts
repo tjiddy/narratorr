@@ -9,7 +9,6 @@ describe('processingSettingsSchema — autoMergeDownloads (#1836)', () => {
       outputFormat: 'm4b',
       keepOriginalBitrate: true,
       bitrate: 128,
-      mergeBehavior: 'multi-file-only',
       maxConcurrentProcessing: 1,
       postProcessingScript: '',
       postProcessingScriptTimeout: 300,
