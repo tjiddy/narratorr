@@ -2166,7 +2166,9 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     expect(toast.warning).not.toHaveBeenCalled();
   });
 
-  // F4 — resolving one row's corroboration must not touch any other row.
+  // F4 — resolving one row's corroboration must not touch any other row. At the hook level
+  // the sibling row is rejected by its own (older) generation stamp; the `row.book.path`
+  // half of the guard is pinned directly in `repick-corroboration.test.ts`.
   it('patches only the row whose corroboration resolved', async () => {
     mockCorroborateImportDuration.mockResolvedValue({ corroborated: true, chapterSeconds: FABLEHAVEN.chapterSeconds });
     const { result } = await seed(scanTwo, [fablehavenMismatch(PATH), fablehavenMismatch(PATH2)]);

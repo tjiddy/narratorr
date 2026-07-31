@@ -35,5 +35,5 @@ export interface ImportRow {
    * side makes the staleness guard reject, which is the safe direction (the row simply
    * keeps its synchronous verdict).
    */
-  matchGeneration?: number;
+  matchGeneration?: number | undefined;
 }
