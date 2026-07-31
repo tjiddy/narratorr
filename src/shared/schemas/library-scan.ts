@@ -121,6 +121,33 @@ export const scanDebugBodySchema = z.object({
 });
 export type ScanDebugBody = z.infer<typeof scanDebugBodySchema>;
 
+// ============================================================================
+// Duration corroboration (#2055)
+// ============================================================================
+
+/**
+ * Body of the import editor's re-pick second-opinion request (#2055): the picked
+ * edition's ASIN plus the RAW unrounded scanner runtime in SECONDS.
+ *
+ * `z.number().positive()` already rejects BOTH `NaN` and `Infinity` on this repo's zod
+ * 4.4.3 (verified empirically), so no redundant `.finite()` and no bespoke NaN guard
+ * belong here — the blanket Zod-NaN sweep was proposed as #1940 and closed not-planned
+ * (see the scope note on `rate-limit-gate-fails-open-on-nan-window`).
+ */
+export const durationCorroborationBodySchema = z.object({
+  asin: z.string().trim().min(1, 'asin is required'),
+  scannedSeconds: z.number().positive('scannedSeconds must be a positive number of seconds'),
+});
+export type DurationCorroborationBody = z.infer<typeof durationCorroborationBodySchema>;
+
+/** Response of the duration-corroboration route. `chapterSeconds` is ABSENT — never
+ *  `undefined` — when there is no usable chapter runtime (a truthful "no second
+ *  opinion available", not a mismatch claim). */
+export interface DurationCorroborationResult {
+  corroborated: boolean;
+  chapterSeconds?: number;
+}
+
 const cleanNameStepSchema = z.object({
   name: z.string(),
   output: z.string(),
