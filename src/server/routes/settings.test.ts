@@ -481,21 +481,21 @@ describe('settings routes', () => {
     it('saves the processing engine subset and forwards the exact payload to the service', async () => {
       const updated = {
         ...mockSettings,
-        processing: { ...mockSettings.processing, outputFormat: 'mp3', bitrate: 256, mergeBehavior: 'always' },
+        processing: { ...mockSettings.processing, outputFormat: 'mp3', bitrate: 256, maxConcurrentProcessing: 4 },
       };
       (services.settings.update as Mock).mockResolvedValue(updated);
 
       const res = await app.inject({
         method: 'PUT',
         url: '/api/settings',
-        payload: { processing: { outputFormat: 'mp3', bitrate: 256, mergeBehavior: 'always' } },
+        payload: { processing: { outputFormat: 'mp3', bitrate: 256, maxConcurrentProcessing: 4 } },
       });
 
       expect(res.statusCode).toBe(200);
       // The removed editable ffmpegPath field is gone — assert the service receives exactly the
       // engine fields sent, and nothing more, so a silently-dropped or injected field is caught.
       expect(services.settings.update).toHaveBeenCalledWith({
-        processing: { outputFormat: 'mp3', bitrate: 256, mergeBehavior: 'always' },
+        processing: { outputFormat: 'mp3', bitrate: 256, maxConcurrentProcessing: 4 },
       });
       expect(JSON.parse(res.payload).processing.bitrate).toBe(256);
     });
@@ -513,6 +513,22 @@ describe('settings routes', () => {
       const payload = (services.settings.update as Mock).mock.calls[0]![0];
       expect(payload.processing).not.toHaveProperty('ffmpegPath');
       expect(payload.processing.bitrate).toBe(192);
+    });
+
+    // #2056 — same shape for the removed mergeBehavior knob: an old client (or a stale bookmarked
+    // form post) can still send it, and the registry's default-strip schema must drop it at the
+    // route rather than 400 or forward it into the persisted blob.
+    it('strips the removed mergeBehavior field before it reaches the service', async () => {
+      (services.settings.update as Mock).mockResolvedValue(mockSettings);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { processing: { outputFormat: 'mp3', mergeBehavior: 'always' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.settings.update).toHaveBeenCalledWith({ processing: { outputFormat: 'mp3' } });
     });
   });
 

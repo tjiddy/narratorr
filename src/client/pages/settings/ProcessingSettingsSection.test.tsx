@@ -19,7 +19,7 @@ const mockApi = api as unknown as {
 
 // Engine fields set so the save-subset test can prove they are NOT sent from this page.
 const settings = createMockSettings({
-  processing: { autoMergeDownloads: false, postProcessingScript: '', postProcessingScriptTimeout: 300, outputFormat: 'm4b', mergeBehavior: 'multi-file-only', bitrate: 128 },
+  processing: { autoMergeDownloads: false, postProcessingScript: '', postProcessingScriptTimeout: 300, outputFormat: 'm4b', bitrate: 128 },
   tagging: { enabled: false, mode: 'populate_missing', embedCover: false, writeOpf: false },
 });
 
@@ -116,7 +116,6 @@ describe('ProcessingSettingsSection', () => {
     expect(payload.processing).toEqual(expect.objectContaining({ autoMergeDownloads: false }));
     // Engine fields belong to Audio Tools — this page must not touch them (partial patch).
     expect(payload.processing).not.toHaveProperty('outputFormat');
-    expect(payload.processing).not.toHaveProperty('mergeBehavior');
     expect(payload.processing).not.toHaveProperty('bitrate');
     expect(payload.processing).not.toHaveProperty('maxConcurrentProcessing');
     // Script fields belong to the Custom Script card's OWN form (per-card Save split).

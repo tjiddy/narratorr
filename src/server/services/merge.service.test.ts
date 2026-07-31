@@ -78,7 +78,6 @@ const processingOverrides = {
     outputFormat: 'm4b' as const,
     bitrate: 128,
     keepOriginalBitrate: false,
-    mergeBehavior: 'multi-file-only' as const,
     maxConcurrentProcessing: 1,
     postProcessingScript: '',
     postProcessingScriptTimeout: 300,
@@ -378,23 +377,6 @@ describe('MergeService', () => {
       expect(rename).toHaveBeenCalledWith(
         join(STAGING_DIR, 'The Way of Kings.mp3'),
         join(BOOK_PATH, 'The Way of Kings.mp3'),
-      );
-    });
-
-    it('always merges (mergeBehavior: always) even when the settings fixture says never', async () => {
-      setupHappyPath();
-      const { service } = createService({ processing: { mergeBehavior: 'never' } });
-
-      await service.enqueueMerge(42);
-      await settle();
-
-      // Manual Merge ignores the mergeBehavior setting by design (decision (a)).
-      expect(processAudioFiles).toHaveBeenCalledWith(
-        STAGING_DIR,
-        expect.objectContaining({ mergeBehavior: 'always' }),
-        expect.any(Object),
-        expect.any(Object),
-        expect.any(AbortSignal),
       );
     });
 
