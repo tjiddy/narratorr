@@ -1,4 +1,4 @@
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -73,7 +73,7 @@ const LOCAL_HEADER_SIGNATURE = 0x04034b50;
 
 /** Build an archive in memory. */
 export async function buildArchive(options: BuildArchiveOptions): Promise<Buffer> {
-  const archive = archiver('zip', {
+  const archive = new ZipArchive({
     comment: options.comment ?? '',
     forceZip64: options.forceZip64 ?? false,
     store: options.store ?? false,

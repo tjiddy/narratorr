@@ -8,9 +8,13 @@ import { EventEmitter } from 'events';
 import { BackupService, RestoreUploadError, applyPendingRestore } from './backup.service.js';
 import { createMockSettingsService } from '../__tests__/helpers.js';
 
-// Mock archiver — finalize() triggers 'close' on the piped output stream
+// Mock archiver — finalize() triggers 'close' on the piped output stream.
+// The implementation is a `function` expression, not an arrow: production calls
+// `new ZipArchive(...)`, and vi.fn passes the implementation through to
+// Reflect.construct rather than wrapping it, so an arrow throws "is not a
+// constructor". Returning an object from a constructor call yields that object.
 vi.mock('archiver', () => ({
-  default: vi.fn(() => {
+  ZipArchive: vi.fn(function () {
     let _output: EventEmitter | undefined;
     const archive = {
       pipe: vi.fn((o: EventEmitter) => { _output = o; }),
@@ -584,11 +588,9 @@ describe('processRestoreUpload', () => {
 
   // Get the real archiver (unmocked) for creating test zip data
   async function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const archiverModule = await vi.importActual<any>('archiver');
-    const archiver = archiverModule.default;
+    const { ZipArchive } = await vi.importActual<typeof import('archiver')>('archiver');
     return new Promise((resolve, reject) => {
-      const archive = archiver('zip', { zlib: { level: 0 } });
+      const archive = new ZipArchive({ zlib: { level: 0 } });
       const chunks: Buffer[] = [];
       archive.on('data', (chunk: Buffer) => chunks.push(chunk));
       archive.on('end', () => resolve(Buffer.concat(chunks)));
@@ -775,11 +777,9 @@ describe('restoreServerBackup', () => {
 
   // Get the real archiver (unmocked) for creating test zip data
   async function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const archiverModule = await vi.importActual<any>('archiver');
-    const archiver = archiverModule.default;
+    const { ZipArchive } = await vi.importActual<typeof import('archiver')>('archiver');
     return new Promise((resolve, reject) => {
-      const archive = archiver('zip', { zlib: { level: 0 } });
+      const archive = new ZipArchive({ zlib: { level: 0 } });
       const chunks: Buffer[] = [];
       archive.on('data', (chunk: Buffer) => chunks.push(chunk));
       archive.on('end', () => resolve(Buffer.concat(chunks)));
@@ -1056,11 +1056,9 @@ describe('#324 — restore contract change', () => {
   let dbPath: string;
 
   async function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const archiverModule = await vi.importActual<any>('archiver');
-    const archiver = archiverModule.default;
+    const { ZipArchive } = await vi.importActual<typeof import('archiver')>('archiver');
     return new Promise((resolve, reject) => {
-      const archive = archiver('zip', { zlib: { level: 0 } });
+      const archive = new ZipArchive({ zlib: { level: 0 } });
       const chunks: Buffer[] = [];
       archive.on('data', (chunk: Buffer) => chunks.push(chunk));
       archive.on('end', () => resolve(Buffer.concat(chunks)));
