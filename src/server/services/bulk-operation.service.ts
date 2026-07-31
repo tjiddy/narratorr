@@ -343,7 +343,7 @@ export class BulkOperationService {
   /**
    * Library reconcile: (re)write the `metadata.opf` + folder cover sidecar for every imported book
    * with a path, backfilling existing libraries and backstopping any drift. The per-book body and
-   * row loop live in `bulk-sidecar-reconcile.ts` (this file is at the line cap). No cancel — the
+   * row loop live in `bulk-sidecar-reconcile.ts` (one reason to change per file). No cancel — the
    * bulk infra is start+poll only. Writes regardless of `tagging.writeOpf` (the button is the opt-in).
    */
   startWriteMetadataSidecarsJob(): string {
