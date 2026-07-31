@@ -10,6 +10,7 @@ import { createMockSettings } from '@/__tests__/factories';
 import { toast } from 'sonner';
 import { wireStagedComplete, acceptedRow, heldRow, skippedRow, failedRow, type StagedMockFns } from '@/lib/staged-import/__tests__/staged-fixtures';
 import { __resetOutboxCache } from '@/lib/staged-import/outbox';
+import { FABLEHAVEN, FABLEHAVEN_BEST, FABLEHAVEN_ALTERNATIVES, fablehavenMismatch, fablehavenEdit, deferred } from '@/lib/__tests__/repick-fixtures';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router', async () => {
@@ -23,6 +24,7 @@ const mockGetMatchJob = vi.fn();
 const mockCancelMatchJob = vi.fn();
 const mockGetSettings = vi.fn();
 const mockGetBookIdentifiers = vi.fn();
+const mockCorroborateImportDuration = vi.fn();
 // Staged submit + poll pipeline (#1902) replaces the direct confirm.
 const mockCreateSubmission = vi.fn();
 const mockPutSubmissionItems = vi.fn();
@@ -48,6 +50,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
     cancelMatchJob: (...args: unknown[]) => mockCancelMatchJob(...args),
     getSettings: (...args: unknown[]) => mockGetSettings(...args),
     getBookIdentifiers: (...args: unknown[]) => mockGetBookIdentifiers(...args),
+    corroborateImportDuration: (...args: unknown[]) => mockCorroborateImportDuration(...args),
     createImportSubmission: (...args: unknown[]) => mockCreateSubmission(...args),
     putImportSubmissionItems: (...args: unknown[]) => mockPutSubmissionItems(...args),
     finalizeImportSubmission: (...args: unknown[]) => mockFinalizeSubmission(...args),
@@ -1906,5 +1909,273 @@ describe('empty result edge case', () => {
       expect(match?.reasonKind).toBeUndefined();
       expect(match?.scannedSeconds).toBe(53580);
     });
+  });
+});
+
+// #2055 — the re-pick path judged duration against the provider SCALAR, so re-picking
+// the CORRECT edition still read as a mismatch. It now asks the server for the same
+// chapter-runtime second opinion the match job gets (#1942).
+describe('#2055 re-pick corroborates against the chapter runtime (library surface)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSettings.mockResolvedValue(mockSettings);
+    mockGetBookIdentifiers.mockResolvedValue([]);
+    mockStartMatchJob.mockResolvedValue({ jobId: 'job-1' });
+    mockCancelMatchJob.mockResolvedValue({ cancelled: true });
+    localStorage.clear();
+    __resetOutboxCache();
+    wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, '/audiobooks/AuthorA/Book1', 'Fablehaven')] });
+  });
+
+  const PATH = '/audiobooks/AuthorA/Book1';
+  const PATH2 = '/audiobooks/AuthorB/Book2';
+
+  const discovery = (path: string, title: string) => ({
+    path, parsedTitle: title, parsedAuthor: 'Brandon Mull', parsedSeries: null,
+    fileCount: 3, totalSize: 100000, isDuplicate: false,
+  });
+  const scanOne: ScanResult = { discoveries: [discovery(PATH, 'Fablehaven')], totalFolders: 1 };
+  const scanTwo: ScanResult = { discoveries: [discovery(PATH, 'Fablehaven'), discovery(PATH2, 'Fablehaven Two')], totalFolders: 2 };
+
+  async function seed(scan: ScanResult = scanOne, results = [fablehavenMismatch(PATH)]) {
+    mockScanDirectory.mockReset().mockResolvedValue(scan);
+    mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+    mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'completed', total: results.length, matched: results.length, results });
+    const view = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => { expect(view.result.current.state.step).toBe('review'); });
+    await waitFor(() => {
+      expect(view.result.current.state.rows[0]!.matchResult?.reasonKind).toBe('duration-mismatch');
+    }, { timeout: 5000 });
+    return view;
+  }
+
+  const matchAt = (result: ReturnType<typeof renderHook<ReturnType<typeof useLibraryImport>, unknown>>['result'], i = 0) =>
+    result.current.state.rows[i]!.matchResult;
+
+  beforeEach(() => {
+    mockCorroborateImportDuration.mockResolvedValue({ corroborated: false });
+  });
+
+  // Test 9 — the issue's reproduction. Fails against develop, where no request is made
+  // and the row is stranded on the scalar verdict.
+  it('promotes the row to Matched when the chapter table corroborates the scanned file', async () => {
+    const gate = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
+    mockCorroborateImportDuration.mockReturnValue(gate.promise);
+    const { result } = await seed();
+
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+
+    // Optimistic: the synchronous verdict renders immediately, scalar-rendered.
+    expect(matchAt(result)?.confidence).toBe('medium');
+    expect(matchAt(result)?.reason).toBe(FABLEHAVEN.scalarReason);
+    expect(mockCorroborateImportDuration).toHaveBeenCalledWith({
+      asin: FABLEHAVEN.asin, scannedSeconds: FABLEHAVEN.scannedSeconds,
+    });
+
+    gate.resolve({ corroborated: true, chapterSeconds: FABLEHAVEN.chapterSeconds });
+    await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
+
+    expect(matchAt(result)?.reason).toBeUndefined();
+    expect(matchAt(result)?.reasonKind).toBeUndefined();
+    expect(matchAt(result)?.scannedSeconds).toBe(FABLEHAVEN.scannedSeconds);
+    // B7 (F3) — suppress-only: the promotion patches confidence, not the selection evidence.
+    expect(matchAt(result)?.bestMatch).toEqual(FABLEHAVEN_BEST);
+    expect(matchAt(result)?.alternatives).toEqual(FABLEHAVEN_ALTERNATIVES);
+  });
+
+  // Test 10 — the canonical ASIN is the trimmed one on BOTH sides of the round trip.
+  it('sends the TRIMMED ASIN and still promotes the row when it resolves', async () => {
+    const gate = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
+    mockCorroborateImportDuration.mockReturnValue(gate.promise);
+    const { result } = await seed();
+
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit({ asin: `  ${FABLEHAVEN.asin}  ` })); });
+
+    expect(mockCorroborateImportDuration).toHaveBeenCalledWith({
+      asin: FABLEHAVEN.asin, scannedSeconds: FABLEHAVEN.scannedSeconds,
+    });
+
+    gate.resolve({ corroborated: true, chapterSeconds: FABLEHAVEN.chapterSeconds });
+    await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
+  });
+
+  // Test 11 + F5 — an out-of-band chapter table changes nothing, and says nothing.
+  it('leaves the sync verdict untouched when the chapter table also disagrees', async () => {
+    mockCorroborateImportDuration.mockResolvedValue({
+      corroborated: false, chapterSeconds: FABLEHAVEN.outOfBandChapterSeconds,
+    });
+    const { result } = await seed();
+    const bannerBefore = result.current.state.banner;
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.warning).mockClear();
+
+    await act(async () => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    await waitFor(() => { expect(mockCorroborateImportDuration).toHaveBeenCalledTimes(1); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(matchAt(result)?.confidence).toBe('medium');
+    expect(matchAt(result)?.reasonKind).toBe('duration-mismatch');
+    // The reason stays rendered against the PICKED edition's catalog runtime — 40000s
+    // would render as `11h 6m`, and the user must never be shown that number here.
+    expect(matchAt(result)?.reason).toBe(FABLEHAVEN.scalarReason);
+    expect(matchAt(result)?.reason).not.toContain('11h 6m');
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.warning).not.toHaveBeenCalled();
+    expect(result.current.state.banner).toEqual(bannerBefore);
+  });
+
+  // Test 12 + F5 — transport failures are the same silent outcome.
+  it.each([
+    ['a network failure', new Error('network down')],
+    ['a non-2xx ApiError', new ApiError(503, { error: 'unavailable' })],
+  ])('leaves the sync verdict untouched and stays silent on %s', async (_label, failure) => {
+    mockCorroborateImportDuration.mockRejectedValue(failure);
+    const { result } = await seed();
+    const bannerBefore = result.current.state.banner;
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.warning).mockClear();
+
+    await act(async () => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    await waitFor(() => { expect(mockCorroborateImportDuration).toHaveBeenCalledTimes(1); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(matchAt(result)?.confidence).toBe('medium');
+    expect(matchAt(result)?.reasonKind).toBe('duration-mismatch');
+    expect(matchAt(result)?.reason).toBe(FABLEHAVEN.scalarReason);
+    expect(result.current.state.scanError).toBeNull();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.warning).not.toHaveBeenCalled();
+    expect(result.current.state.banner).toEqual(bannerBefore);
+  });
+
+  // Test 13 — B3: a request fired from inside a `setRows` updater goes out twice, because
+  // React 19 StrictMode double-invokes updater functions.
+  it('issues exactly one request per qualifying re-pick under StrictMode', async () => {
+    const inner = createWrapper();
+    const strictWrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(inner, null, React.createElement(React.StrictMode, null, children));
+
+    mockScanDirectory.mockReset().mockResolvedValue(scanOne);
+    mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+    mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'completed', total: 1, matched: 1, results: [fablehavenMismatch(PATH)] });
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: strictWrapper });
+    await waitFor(() => { expect(result.current.state.step).toBe('review'); });
+    await waitFor(() => { expect(matchAt(result)?.reasonKind).toBe('duration-mismatch'); }, { timeout: 5000 });
+
+    await act(async () => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+
+    expect(mockCorroborateImportDuration).toHaveBeenCalledTimes(1);
+  });
+
+  // Test 14 — the non-qualifying re-picks issue ZERO requests, at the hook level.
+  it.each([
+    ['an in-band re-pick the sync path already cleared', () => fablehavenEdit({ duration: 553 })],
+    ['a picked edition with no runtime (missing-duration)', () => fablehavenEdit({ duration: undefined })],
+    ['a picked edition with no ASIN', () => fablehavenEdit({ asin: undefined })],
+  ])('issues no request for %s', async (_label, buildEdit) => {
+    const { result } = await seed();
+
+    await act(async () => { result.current.actions.handleEdit(0, buildEdit()); });
+
+    expect(mockCorroborateImportDuration).not.toHaveBeenCalled();
+  });
+
+  it('issues no request for the by-reference no-op', async () => {
+    const { result } = await seed();
+    // The modal hands the pre-populated bestMatch straight back, unspread.
+    const sameRef = result.current.state.rows[0]!.edited.metadata!;
+
+    await act(async () => {
+      result.current.actions.handleEdit(0, { title: 'Fablehaven', author: 'Brandon Mull', series: '', metadata: sameRef });
+    });
+
+    expect(mockCorroborateImportDuration).not.toHaveBeenCalled();
+  });
+
+  // Test 15 — a held response for a superseded edition must not resurrect its verdict.
+  it('drops a held response after the user re-picks a DIFFERENT edition', async () => {
+    const first = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
+    const second = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
+    mockCorroborateImportDuration.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const { result } = await seed();
+
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit({ asin: 'B00ALT00002', duration: 540 })); });
+    expect(mockCorroborateImportDuration).toHaveBeenCalledTimes(2);
+
+    second.resolve({ corroborated: false, chapterSeconds: FABLEHAVEN.outOfBandChapterSeconds });
+    await act(async () => { await Promise.resolve(); });
+    first.resolve({ corroborated: true, chapterSeconds: FABLEHAVEN.chapterSeconds });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(matchAt(result)?.confidence).toBe('medium');
+    expect(matchAt(result)?.reasonKind).toBe('duration-mismatch');
+  });
+
+  // Test 16 — the blocking case for B8's generation token. Every FIELD check passes here:
+  // Restart clears only `matchResult`, and `mergeMatchIntoRow` preserves `edited` for a
+  // `userEdited` row, so the fresh match reproduces path + ASIN + scannedSeconds +
+  // `duration-mismatch`. Only the stamp can reject the held response.
+  it('drops a held response across a Restart that reproduces the same evidence fingerprint', async () => {
+    const held = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
+    mockCorroborateImportDuration.mockReturnValue(held.promise);
+    const { result } = await seed();
+
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    expect(mockCorroborateImportDuration).toHaveBeenCalledTimes(1);
+
+    mockGetMatchJob.mockResolvedValue({ id: 'job-2', status: 'completed', total: 1, matched: 1, results: [fablehavenMismatch(PATH)] });
+    mockStartMatchJob.mockResolvedValue({ jobId: 'job-2' });
+    await act(async () => { result.current.actions.handleRestartMatch(); });
+    await waitFor(() => { expect(matchAt(result)?.reasonKind).toBe('duration-mismatch'); }, { timeout: 5000 });
+
+    // Precondition: the fingerprint really is identical, so only the stamp differs.
+    expect(result.current.state.rows[0]!.edited.metadata?.asin).toBe(FABLEHAVEN.asin);
+    expect(matchAt(result)?.scannedSeconds).toBe(FABLEHAVEN.scannedSeconds);
+
+    held.resolve({ corroborated: true, chapterSeconds: FABLEHAVEN.chapterSeconds });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(matchAt(result)?.confidence).toBe('medium');
+    expect(matchAt(result)?.reasonKind).toBe('duration-mismatch');
+  });
+
+  // Test 17 — a settle after unmount is harmless because the handler carries NO
+  // lifecycle-local side effect. Row state is unobservable after unmount, so the toast
+  // mock is the observation point that can actually fail.
+  it('settles after unmount without emitting any lifecycle-local side effect', async () => {
+    const held = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
+    mockCorroborateImportDuration.mockReturnValue(held.promise);
+    const { result, unmount } = await seed();
+
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.warning).mockClear();
+
+    unmount();
+    held.resolve({ corroborated: true, chapterSeconds: FABLEHAVEN.chapterSeconds });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.warning).not.toHaveBeenCalled();
+  });
+
+  // F4 — resolving one row's corroboration must not touch any other row.
+  it('patches only the row whose corroboration resolved', async () => {
+    mockCorroborateImportDuration.mockResolvedValue({ corroborated: true, chapterSeconds: FABLEHAVEN.chapterSeconds });
+    const { result } = await seed(scanTwo, [fablehavenMismatch(PATH), fablehavenMismatch(PATH2)]);
+    await waitFor(() => { expect(matchAt(result, 1)?.reasonKind).toBe('duration-mismatch'); }, { timeout: 5000 });
+    const otherBefore = result.current.state.rows[1]!;
+
+    await act(async () => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
+
+    expect(result.current.state.rows[1]).toBe(otherBefore);
   });
 });
