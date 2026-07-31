@@ -57,7 +57,6 @@ export const settingsRegistry = {
       outputFormat: 'm4b' as const,
       keepOriginalBitrate: true,
       bitrate: 128,
-      mergeBehavior: 'multi-file-only' as const,
       maxConcurrentProcessing: 1,
       autoMergeDownloads: false,
       postProcessingScript: '',

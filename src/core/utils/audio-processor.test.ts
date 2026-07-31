@@ -1523,7 +1523,7 @@ describe('#424 cover art detection and extraction', () => {
       return child as never;
     });
 
-    // No callbacks — simulates import/bulk-convert callers
+    // No callbacks — exercises the optional-callback path
     const result = await processAudioFiles(
       '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
     );
@@ -1708,7 +1708,7 @@ describe('#424 cover art reattach (M4B only)', () => {
       return child as never;
     });
 
-    // No callbacks — simulates import/bulk-convert callers
+    // No callbacks — exercises the optional-callback path
     const result = await processAudioFiles(
       '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
     );

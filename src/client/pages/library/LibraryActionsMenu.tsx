@@ -39,7 +39,6 @@ function runningVerb(jobType: BulkOpType | null): string {
     case 'rename': return 'Renaming';
     case 'retag': return 'Re-tagging';
     case 'write_metadata_sidecars': return 'Writing sidecars';
-    case 'convert': return 'Converting';
     default: return 'Running';
   }
 }
