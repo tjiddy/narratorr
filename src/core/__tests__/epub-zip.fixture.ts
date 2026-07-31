@@ -9,7 +9,7 @@ import { PassThrough } from 'node:stream';
  *
  * **Synthesised, never copied.** The plan suggested using the real library EPUB
  * as a fixture; that file is a commercial, copyrighted book and does not belong
- * in the repo. This builder reproduces its *shape* with `archiver@7`, already a
+ * in the repo. This builder reproduces its *shape* with `archiver@8`, already a
  * production dependency (`package.json`, `backup.service.ts:5`), so no new
  * dependency is needed and nothing binary is committed.
  *
@@ -17,16 +17,26 @@ import { PassThrough } from 'node:stream';
  * every non-`.test.ts` file in that folder as a production module and would scan
  * this one.
  *
- * **Two modes for entry names.** `archiver-utils@5.0.2`'s `sanitizePath`
- * (`index.js:92`) rewrites leading traversal, absolute, drive-letter, and
- * backslash names on the way in — `../../etc/passwd` is written as
- * `etc/passwd`, `/abs/x.txt` as `abs/x.txt`, `C:/x.txt` as `x.txt`, and
- * `dir\win.txt` as `dir/win.txt` — while **mid-path** traversal such as
- * `a/../../b.txt` survives verbatim. So names archiver preserves are appended
- * directly, and the rest are built then patched with {@link patchEntryName},
- * which rewrites the filename bytes in **both** the local file header and the
- * central directory. Every hostile-name fixture asserts its precondition on the
- * raw central-directory bytes before invoking anything.
+ * **Two modes for entry names.** `archiver@8.0.0`'s own `sanitizePath`
+ * (`lib/utils.js:58`, called from `lib/core.js:276` for every named append)
+ * rewrites leading traversal, absolute, drive-letter, and backslash names on
+ * the way in — `../../etc/passwd` is written as `etc/passwd`, `/abs/x.txt` as
+ * `abs/x.txt`, `C:/x.txt` as `x.txt`, and `dir\win.txt` as `dir/win.txt` —
+ * while **mid-path** traversal such as `a/../../b.txt` survives verbatim. So
+ * names archiver preserves are appended directly, and the rest are built then
+ * patched with {@link patchEntryName}, which rewrites the filename bytes in
+ * **both** the local file header and the central directory. Every hostile-name
+ * fixture asserts its precondition on the raw central-directory bytes before
+ * invoking anything.
+ *
+ * Through archiver 7 this function lived in the separate `archiver-utils`
+ * package (`index.js:92`); v8 dropped that dependency and **internalised the
+ * function unchanged**, so all four rewrite modes and the mid-path carve-out
+ * behave identically. That equivalence is not assumed — the `src/core/epub/`
+ * suites' `archiver 8 fixture-construction contract` block asserts each mode on
+ * the raw central-directory bytes (#2057), because a bump that silently started
+ * sanitising `a/../../b.txt` would leave every adversarial suite green while
+ * attacking the reader with a harmless name.
  *
  * **The EPUB-document builders at the bottom** (#1990) started life inside
  * `validate.test.ts` and were lifted here when `extract.test.ts` needed the same
@@ -52,9 +62,10 @@ export interface BuildArchiveOptions {
   comment?: string;
   /**
    * Emit ZIP64 structures. `forceZip64` is the only ZIP64 knob that exists:
-   * `@types/archiver@7`'s `ZipOptions` declares it and no `zip64`, and the
+   * `@types/archiver@8`'s `ZipOptions` declares it and no `zip64`, and the
    * pinned writer reads only `forceZip64`
-   * (`compress-commons@6.0.2/lib/archivers/zip/zip-archive-output-stream.js:117`).
+   * (`compress-commons@7.0.1/lib/archivers/zip/zip-archive-output-stream.js:361`;
+   * the `!!` coercion is at `:38`).
    */
   forceZip64?: boolean;
   /** STORE instead of DEFLATE, so fixture sizes are exactly predictable. */
@@ -137,7 +148,7 @@ export async function buildArchiveWithCentralDirectorySpan(
   if (each < 7 || last > 65535) throw new Error(`${nameBytes} name bytes do not fit ${filler} entries`);
   const fillerEntries = Array.from({ length: filler }, (_, index) => ({
     // A unique numeric prefix, then padding — no leading traversal, absolute, or
-    // drive-letter shape, so `archiver-utils`' `sanitizePath` leaves it verbatim.
+    // drive-letter shape, so `archiver`'s own `sanitizePath` leaves it verbatim.
     name: `${String(index).padStart(6, '0')}${'a'.repeat((index === filler - 1 ? last : each) - 6)}`,
     content: 'x',
   }));

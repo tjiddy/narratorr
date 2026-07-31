@@ -1227,8 +1227,11 @@ describe('entry-name handling', () => {
   });
 
   it('rejects a byte-patched leading-traversal name', async () => {
-    // `archiver-utils@5.0.2` rewrites `../../etc/passwd` to `etc/passwd` on the
-    // way in, so this name only exists in the archive by byte patching.
+    // `archiver@8.0.0`'s `sanitizePath` (`lib/utils.js:58`) rewrites
+    // `../../etc/passwd` to `etc/passwd` on the way in, so this name only exists
+    // in the archive by byte patching. That rewrite is itself pinned by the
+    // `archiver 8 fixture-construction contract` suite below — if it ever stops
+    // happening, this test's precondition goes vacuous rather than red.
     const bytes = await F.buildArchive({
       store: true,
       entries: [{ name: 'aaaaaaaaaaaaaaaa', content: 'hi' }],
