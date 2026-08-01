@@ -87,17 +87,17 @@ function renderSettingsPage(route = '/settings/indexers') {
 }
 
 /**
- * #2033 — wait until the settings query has actually HYDRATED the forms. The mocked
- * settings equal the defaults, so the input's value is identical before and after the
- * query lands and nothing in the DOM distinguishes "form populated from the query" from
- * "form still on defaults" — which made the pre-hydration window invisible to every
- * anchor these tests could use, and un-waitable. Query state is the observable the DOM
- * cannot provide (the react-query-error-after-retry-ladder idiom, success-side).
+ * #2033 — two-stage barrier: wait until the settings query has hydrated the forms AND the
+ * hydration has finished applying. Stage 1 observes cache success (the
+ * react-query-error-after-retry-ladder idiom, success-side). Stage 2 waits for the fixture's
+ * deliberately-distinct library.path ('/audiobooks-hydrated' — see mockSettings) to render:
+ * RHF's reset() applies field values a commit after the hydrate effect fires, and that value
+ * is written by the same application wave, so its appearance proves every card's reset has
+ * flushed. Callers need no follow-up DOM waitFor — typing is safe once this resolves.
  *
- * PRECISION: this observes CACHE success, which precedes the hydrate effect's form flush by
- * one act cycle. A caller asserting anything about hydration's EFFECT must follow this with
- * its own waitFor over the DOM (see the #2033 regression pin) — success alone is necessary,
- * not sufficient.
+ * Historically the fixture's values equaled the code defaults, so the reset's application was
+ * invisible in the DOM and un-waitable — the clobber window the #2033 flake lived in (and the
+ * regression pin below exercises).
  */
 async function settingsHydrated(queryClient: QueryClient): Promise<void> {
   await waitFor(() => {
