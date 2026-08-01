@@ -3,7 +3,7 @@ import type { LibraryBookListItem } from '@/lib/api';
 import {
   LIBRARY_FILTER_VALUES,
   type LibraryFilterValue,
-} from '../../../shared/schemas/book.js';
+} from '@shared/schemas/book.js';
 
 export type StatusFilter = LibraryFilterValue;
 export type SortField = 'createdAt' | 'title' | 'author' | 'narrator' | 'series' | 'quality' | 'size' | 'format';

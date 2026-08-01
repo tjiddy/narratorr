@@ -81,6 +81,20 @@ describe('GeneralSettings', () => {
     expect(screen.queryByText('Logging')).not.toBeInTheDocument();
   });
 
+  // #1958 — a positive composition assertion, not a survival claim: updating a mock until
+  // the old suite goes green cannot prove the Ebooks section is mounted, nor where.
+  it('mounts the Ebooks section after Discovery in DOM order', async () => {
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Library')).toBeInTheDocument();
+    });
+
+    const headings = screen.getAllByRole('heading').map((h) => h.textContent);
+    expect(headings).toContain('Ebooks');
+    expect(headings.indexOf('Ebooks')).toBeGreaterThan(headings.indexOf('Discovery'));
+  });
+
   it('renders Appearance section in the settings page', async () => {
     renderWithProviders(<GeneralSettings />);
 

@@ -11,11 +11,11 @@ import {
   CACHE_INVALIDATION_MATRIX,
   TOAST_EVENT_CONFIG,
   sseEventTypeSchema,
-} from '../../shared/schemas.js';
+} from '@shared/schemas.js';
 import { setMergeProgress } from './useMergeProgress.js';
 import { handleSearchEvent } from './useSearchProgress.js';
 import { safeParseSseEvent } from '@/lib/sse/safe-parse-event';
-import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_EVENT } from '../../shared/sse-constants.js';
+import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_EVENT } from '@shared/sse-constants.js';
 
 // Silence threshold for the liveness watchdog (#1798). A deaf (half-open) stream
 // delivers no frames at all — not even heartbeats — yet EventSource keeps

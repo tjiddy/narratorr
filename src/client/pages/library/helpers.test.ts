@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { computeMbPerHour, filterTabs } from './helpers';
-import { LIBRARY_FILTER_VALUES } from '../../../shared/schemas/book.js';
+import { LIBRARY_FILTER_VALUES } from '@shared/schemas/book.js';
 import type { LibraryBookListItem } from '@/lib/api';
 
 function makeBook(overrides: Partial<LibraryBookListItem> = {}): LibraryBookListItem {

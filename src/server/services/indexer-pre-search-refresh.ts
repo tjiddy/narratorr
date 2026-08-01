@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { IndexerAdapter } from '../../core/index.js';
+import type { IndexerAdapter } from '@core/index.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { IndexerRow } from './types.js';
 

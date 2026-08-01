@@ -6,7 +6,7 @@ import {
   stagedRequestBytes,
   type StagedPutRow,
 } from './confirm-chunks.js';
-import type { StagedImportItem } from '../../core/import-staging/schemas.js';
+import type { StagedImportItem } from '@core/import-staging/schemas.js';
 
 /** A staged PUT row whose serialized `item` is padded to roughly `bytes`. */
 function stagedRowOfSize(ordinal: number, bytes: number): StagedPutRow {

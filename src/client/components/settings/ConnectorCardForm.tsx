@@ -6,12 +6,12 @@ import { FormField } from './FormField';
 import { SettingsFormActions } from './SettingsFormActions';
 import { SelectWithChevron } from './SelectWithChevron';
 import { ConnectorFields } from './ConnectorFields';
-import { CONNECTOR_REGISTRY, type ConnectorType } from '../../../shared/connector-registry.js';
-import { getErrorMessage } from '../../../shared/error-message.js';
+import { CONNECTOR_REGISTRY, type ConnectorType } from '@shared/connector-registry.js';
+import { getErrorMessage } from '@shared/error-message.js';
 import {
   connectorTypeSchema,
   type CreateConnectorFormData,
-} from '../../../shared/schemas.js';
+} from '@shared/schemas.js';
 
 /** A test/targets failure envelope carries field-scoped errors at runtime. */
 type FieldErrorResult = TestResult & { fieldErrors?: Record<string, string> };

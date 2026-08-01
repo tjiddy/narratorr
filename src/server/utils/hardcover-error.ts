@@ -1,4 +1,4 @@
-import { RateLimitError, TransientError, MetadataError } from '../../core/metadata/errors.js';
+import { RateLimitError, TransientError, MetadataError } from '@core/metadata/errors.js';
 import { getErrorMessage } from './error-message.js';
 
 /**

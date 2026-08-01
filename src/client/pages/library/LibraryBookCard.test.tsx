@@ -2,13 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { LibraryBookCard } from './LibraryBookCard';
 import { createMockLibraryBook } from '@/__tests__/factories';
 import * as ImageErrorModule from '@/hooks/useImageError';
 import { api } from '@/lib/api';
-import type { BookStatus } from '../../../shared/schemas.js';
+import type { BookStatus } from '@shared/schemas.js';
 import { bookStatusConfig } from '@/lib/status';
 
 vi.mock('@/lib/api', () => ({

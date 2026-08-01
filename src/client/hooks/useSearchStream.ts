@@ -11,7 +11,7 @@ import {
   indexerErrorEventSchema,
   indexerCancelledEventSchema,
   searchResponseSchema,
-} from '../../shared/schemas/search-stream.js';
+} from '@shared/schemas/search-stream.js';
 
 // ============================================================================
 // Types

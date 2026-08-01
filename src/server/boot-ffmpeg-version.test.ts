@@ -4,12 +4,12 @@ import type { Mock } from 'vitest';
 // Mock the production probes so the boot orchestration (`checkFfmpegVersionAtBoot`)
 // can be exercised with the SAME real dependency module it wires in production —
 // proving the wiring, not just the deps-injected helper.
-vi.mock('../core/utils/audio-processor.js', () => ({
+vi.mock('@core/utils/audio-processor.js', () => ({
   detectFfmpegPath: vi.fn(),
   probeFfmpeg: vi.fn(),
 }));
 
-import { detectFfmpegPath, probeFfmpeg } from '../core/utils/audio-processor.js';
+import { detectFfmpegPath, probeFfmpeg } from '@core/utils/audio-processor.js';
 import { logFfmpegVersionAtBoot, checkFfmpegVersionAtBoot } from './boot-ffmpeg-version.js';
 import { createMockLogger, inject } from './__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';

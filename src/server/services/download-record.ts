@@ -1,11 +1,11 @@
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads } from '../../db/schema.js';
+import { downloads } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
-import type { DownloadProtocol } from '../../core/index.js';
-import { DownloadUrl, type LanAllowlist } from '../../core/utils/download-url.js';
-import type { DownloadArtifact } from '../../core/download-clients/types.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { DownloadProtocol } from '@core/index.js';
+import { DownloadUrl, type LanAllowlist } from '@core/utils/download-url.js';
+import type { DownloadArtifact } from '@core/download-clients/types.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 /** Resolve a downloadUrl into a typed artifact. HTTP grabs (torrent *and*

@@ -1,6 +1,6 @@
-import { calculateQuality } from '../../core/utils/index.js';
-import { narratorsFuzzyMatch } from '../../core/utils/similarity.js';
-import type { SearchResult } from '../../core/index.js';
+import { calculateQuality } from '@core/utils/index.js';
+import { narratorsFuzzyMatch } from '@core/utils/similarity.js';
+import type { SearchResult } from '@core/index.js';
 
 /** Optional narrator-priority config for auto-grab scoring. */
 export interface NarratorPriority {

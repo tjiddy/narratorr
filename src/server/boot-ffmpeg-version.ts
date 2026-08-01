@@ -1,8 +1,8 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { serializeError } from './utils/serialize-error.js';
-import { deriveFfprobePath } from '../core/utils/ffprobe-path.js';
-import { extractFfmpegMajor } from '../core/utils/ffmpeg-version.js';
-import { detectFfmpegPath, probeFfmpeg } from '../core/utils/audio-processor.js';
+import { deriveFfprobePath } from '@core/utils/ffprobe-path.js';
+import { extractFfmpegMajor } from '@core/utils/ffmpeg-version.js';
+import { detectFfmpegPath, probeFfmpeg } from '@core/utils/audio-processor.js';
 
 /** Injected probes — mirror the `audio-processor` exports, kept as deps for testability. */
 export interface FfmpegVersionProbeDeps {

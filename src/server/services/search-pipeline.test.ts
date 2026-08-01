@@ -10,9 +10,9 @@ import { DuplicateDownloadError } from './download.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { SearchResult } from '../../core/index.js';
-import { BYTES_PER_GB as GB, BYTES_PER_MB as MB } from '../../shared/constants.js';
-import type { SearchResponsePayload, SearchResultPayload } from '../../shared/schemas/search-stream.js';
+import type { SearchResult } from '@core/index.js';
+import { BYTES_PER_GB as GB, BYTES_PER_MB as MB } from '@shared/constants.js';
+import type { SearchResponsePayload, SearchResultPayload } from '@shared/schemas/search-stream.js';
 
 const mockIndexer = {
   getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }),
@@ -534,6 +534,17 @@ describe('filterAndRankResults — ebook format filtering', () => {
   it('passes result with EPUB and OGG (mixed format)', () => {
     const { results } = filterAndRankResults([makeResult({ title: 'Dune EPUB OGG' })], base.bookDuration, { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference });
     expect(results).toHaveLength(1);
+  });
+
+  // Companion-ebook slate guardrail (#1986). Narratorr *observes* an ebook the
+  // owner placed beside an audiobook; it never *acquires* one. Adding companion
+  // EPUB support must not relax EBOOK_FORMAT_RE — this is the single most
+  // likely accidental breach in that slate.
+  it('still rejects an ebook-only release while companion EPUB support lands (#1986)', () => {
+    const ebookOnly = filterAndRankResults([makeResult({ title: 'Dune EPUB' })], base.bookDuration, { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference });
+    const withAudio = filterAndRankResults([makeResult({ title: 'Dune EPUB M4B' })], base.bookDuration, { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference });
+    expect(ebookOnly.results).toHaveLength(0);
+    expect(withAudio.results).toHaveLength(1);
   });
 
   describe('debug-level drop logging (AC6)', () => {

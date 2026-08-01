@@ -9,7 +9,7 @@ vi.mock('node:crypto', async (importOriginal) => {
   };
   return { ...mod, timingSafeEqual: vi.fn(mod.timingSafeEqual), scrypt: vi.fn(mod.scrypt) };
 });
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { AuthService, NoCredentialsError } from './auth.service.js';
 import { createMockDb, createMockLogger, mockDbChain, inject } from '../__tests__/helpers.js';

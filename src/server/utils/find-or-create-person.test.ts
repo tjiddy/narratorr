@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createMockDb, inject, mockDbChain } from '../__tests__/helpers.js';
-import type { DbOrTx } from '../../db/index.js';
+import type { DbOrTx } from '@db/index.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from './find-or-create-person.js';
 
 describe('findOrCreateAuthor', () => {

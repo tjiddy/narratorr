@@ -1,4 +1,4 @@
-import type { ProductionType } from '../../shared/schemas/book.js';
+import type { ProductionType } from '@shared/schemas/book.js';
 
 /**
  * Map a provider `formatType` to the canonical `production_type` column value

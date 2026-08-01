@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ApiError, type Api } from '@/lib/api';
-import { SUBMISSION_ERROR_CODES, type StagedImportItem } from '../../../core/import-staging/schemas.js';
+import { SUBMISSION_ERROR_CODES, type StagedImportItem } from '@core/import-staging/schemas.js';
 import { runSubmit, SubmitError, type SubmitDisposition } from './submit-flow.js';
 
 const noSleep = { sleep: () => Promise.resolve(), random: () => 0 };

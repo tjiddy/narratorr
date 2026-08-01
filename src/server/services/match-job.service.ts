@@ -2,15 +2,15 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { BookService } from './book.service.js';
-import type { BookMetadata } from '../../core/metadata/index.js';
+import type { BookMetadata } from '@core/metadata/index.js';
 import type { Confidence, MatchCandidate, MatchResult, MatchJobStatus } from './match-job.types.js';
-import type { MatchReasonKind } from '../../shared/match-reason-kind.js';
-import { scanAudioDirectory, type AudioScanResult } from '../../core/utils/audio-scanner.js';
-import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
-import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
+import type { MatchReasonKind } from '@shared/match-reason-kind.js';
+import { scanAudioDirectory, type AudioScanResult } from '@core/utils/audio-scanner.js';
+import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
+import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import type { SettingsService } from './settings.service.js';
 import { Semaphore } from '../utils/semaphore.js';
-import { diceCoefficient } from '../../core/utils/similarity.js';
+import { diceCoefficient } from '@core/utils/similarity.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -184,13 +184,13 @@ class MatchJob {
 
   private async matchWithSemaphore(book: MatchCandidate): Promise<void> {
     if (this.isCancelled) return;
-    await this.semaphore.acquire();
+    const release = await this.semaphore.acquire();
     try {
       if (this.isCancelled) return;
       const result = await this.matchSingleBook(book);
       this.results.push(result);
     } finally {
-      this.semaphore.release();
+      release();
     }
   }
 

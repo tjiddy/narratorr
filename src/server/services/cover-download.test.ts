@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
-import { MAX_COVER_SIZE } from '../../shared/constants.js';
-import type * as NetworkServiceModule from '../../core/utils/network-service.js';
+import type { Db } from '@db/index.js';
+import { MAX_COVER_SIZE } from '@shared/constants.js';
+import type * as NetworkServiceModule from '@core/utils/network-service.js';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
@@ -26,7 +26,7 @@ const dispatcherCloseSpy = vi.fn().mockResolvedValue(undefined);
 //
 // `createSsrfSafeDispatcher` is also stubbed so the dispatcher.close() call in
 // downloadRemoteCover hits a spy instead of a real Agent.
-vi.mock('../../core/utils/network-service.js', async (importActual) => {
+vi.mock('@core/utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   const MAX = 5;
   const fetchWithSsrfRedirect: typeof actual.fetchWithSsrfRedirect = async (startUrl, opts = {}) => {

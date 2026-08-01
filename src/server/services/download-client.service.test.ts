@@ -3,7 +3,7 @@ import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests_
 import { createMockDbDownloadClient } from '../__tests__/factories.js';
 import { DownloadClientService } from './download-client.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { initializeKey, _resetKey, encrypt } from '../utils/secret-codec.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');

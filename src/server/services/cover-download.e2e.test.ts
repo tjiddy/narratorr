@@ -4,8 +4,8 @@ import type { AddressInfo, LookupFunction } from 'node:net';
 import { Agent } from 'undici';
 import type { FastifyBaseLogger } from 'fastify';
 import { inject } from '../__tests__/helpers.js';
-import type { Db } from '../../db/index.js';
-import type * as NetworkServiceModule from '../../core/utils/network-service.js';
+import type { Db } from '@db/index.js';
+import type * as NetworkServiceModule from '@core/utils/network-service.js';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
@@ -19,13 +19,13 @@ vi.mock('node:fs/promises', () => ({
 // mocks bypass the internal callsite) sees test-controlled answers.
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
 
-vi.mock('../../core/utils/network-service.js', async (importActual) => {
+vi.mock('@core/utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   return { ...actual, createSsrfSafeDispatcher: vi.fn() };
 });
 
 import { lookup as dnsLookup } from 'node:dns/promises';
-import { createSsrfSafeDispatcher } from '../../core/utils/network-service.js';
+import { createSsrfSafeDispatcher } from '@core/utils/network-service.js';
 import { downloadRemoteCover } from './cover-download.js';
 
 const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;

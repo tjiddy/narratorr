@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { SearchBookCard } from './SearchBookCard';
 import { mapBookMetadataToPayload } from '@/lib/helpers';
 import { createMockBookMetadata, createMockBook } from '@/__tests__/factories';
@@ -29,19 +29,38 @@ vi.mock('sonner', () => ({
   },
 }));
 
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, type BookIdentifier, type LibraryEntry } from '@/lib/api';
 import { toast } from 'sonner';
+import { queryKeys } from '@/lib/queryKeys';
 
-function renderCard(bookOverrides = {}, libraryBooks?: ReturnType<typeof createMockBook>[]) {
+// `libraryBooks` accepts the canonical `LibraryEntry` ownership type (#1916) —
+// the search page now feeds it the unpaginated identifiers list.
+function renderCard(bookOverrides = {}, libraryBooks?: LibraryEntry[]) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries');
   const book = createMockBookMetadata(bookOverrides);
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
-        <SearchBookCard book={book} index={0} {...(libraryBooks !== undefined && { libraryBooks })} queryClient={queryClient} />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+  return {
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SearchBookCard book={book} index={0} {...(libraryBooks !== undefined && { libraryBooks })} queryClient={queryClient} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+    invalidateQueries,
+  };
+}
+
+/** Narrow identifiers-shaped library entry, as `/api/books/identifiers` returns it. */
+function identifier(overrides: Partial<BookIdentifier> = {}): BookIdentifier {
+  return {
+    id: 1,
+    asin: 'B003P2WO5E',
+    title: 'The Way of Kings',
+    authorName: 'Brandon Sanderson',
+    authorSlug: 'brandon-sanderson',
+    ...overrides,
+  };
 }
 
 describe('SearchBookCard', () => {
@@ -284,6 +303,74 @@ describe('SearchBookCard', () => {
     });
     expect(screen.getByRole('link', { name: /view this book in your library/i }))
       .toHaveAttribute('href', '/books/7');
+  });
+
+  // #1916 — the search page now feeds this card the unpaginated identifiers
+  // list, so every ownership branch has to work off the narrow BookIdentifier
+  // shape and stay correct past the old 120-row window.
+  describe('#1916 identifiers-backed ownership', () => {
+    it('links the In Library badge at the exact-ASIN incumbent even when it sits past row 120', () => {
+      const book = createMockBookMetadata();
+      // A title-identity entry first (the naive-first-match trap), 120 unrelated
+      // rows after it, and the exact-ASIN incumbent last — the exact arrangement
+      // the capped `/api/books` page used to hide.
+      const libraryBooks: BookIdentifier[] = [
+        identifier({ id: 1, asin: 'B00OTHERED' }),
+        ...Array.from({ length: 120 }, (_, i) =>
+          identifier({ id: 100 + i, asin: `B00FILLER${i}`, title: `Filler ${i}`, authorName: 'Someone Else', authorSlug: 'someone-else' }),
+        ),
+        identifier({ id: 42, ...(book.asin !== undefined ? { asin: book.asin } : {}) }),
+      ];
+      expect(libraryBooks.length).toBeGreaterThan(120);
+
+      renderCard({}, libraryBooks);
+
+      expect(screen.getByRole('link', { name: /view this book in your library/i })).toHaveAttribute('href', '/books/42');
+      expect(screen.queryByRole('button', { name: /add book/i })).not.toBeInTheDocument();
+      expect(screen.queryByText('Edition in library')).not.toBeInTheDocument();
+    });
+
+    it('reads entry.id off a BookIdentifier-only exact-ASIN match', () => {
+      renderCard({}, [identifier({ id: 55 })]);
+      expect(screen.getByRole('link', { name: /view this book in your library/i })).toHaveAttribute('href', '/books/55');
+    });
+
+    it('keeps Add and the related-edition badge for a BookIdentifier-only title-identity match', () => {
+      renderCard({}, [identifier({ id: 55, asin: 'B00DIFFEDN' })]);
+      expect(screen.getByText('Edition in library')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /add book/i })).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /view this book in your library/i })).not.toBeInTheDocument();
+    });
+
+    // AC7 — `queryKeys.bookIdentifiers()` is a child of the `['books']` prefix,
+    // so the existing invalidation already refreshes the search page's ownership
+    // data. Asserted, not assumed.
+    it('invalidates the books prefix (which covers the identifiers cache) after a successful add', async () => {
+      vi.mocked(api.addBook).mockResolvedValue({ id: 99, title: 'The Way of Kings' } as never);
+      const user = userEvent.setup();
+      const { invalidateQueries } = renderCard({}, []);
+
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+      await user.click(await screen.findByRole('button', { name: /add to library/i }));
+
+      await waitFor(() => {
+        expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+      });
+      expect(queryKeys.bookIdentifiers().slice(0, queryKeys.books().length)).toEqual([...queryKeys.books()]);
+    });
+
+    it('invalidates the books prefix on the 409-with-incumbent path too', async () => {
+      vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, { id: 7 }));
+      const user = userEvent.setup();
+      const { invalidateQueries } = renderCard({}, []);
+
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+      await user.click(await screen.findByRole('button', { name: /add to library/i }));
+
+      await waitFor(() => {
+        expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+      });
+    });
   });
 
   it('shows error toast for non-409 errors', async () => {

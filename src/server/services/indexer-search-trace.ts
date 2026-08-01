@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { IndexerSearchResponse } from '../../core/index.js';
+import type { IndexerSearchResponse } from '@core/index.js';
 import type { IndexerRow } from './types.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 

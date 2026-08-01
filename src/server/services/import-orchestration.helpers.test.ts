@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { inject, createMockSettingsService } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -14,7 +14,7 @@ import { mkdir, writeFile, readFile, readdir, rm, stat, symlink } from 'node:fs/
 import { mkdtempSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createDb, runMigrations } from '../../db/index.js';
+import { createDb, runMigrations } from '@db/index.js';
 import type { ImportConfirmItem } from './library-scan.service.js';
 
 // copyToLibrary returns the target POSIX-normalized (paths are stored in the DB and consumed
@@ -632,6 +632,24 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     // Source audio removed, bundled e-book preserved, source folder retained.
     expect(await pathExists(join(source, 'new.mp3'))).toBe(false);
     expect(await pathExists(join(source, 'bundled.epub'))).toBe(true);
+    expect(await pathExists(source)).toBe(true);
+  });
+
+  // #1960 AC32 — the EMPTY-target single-source move cleanup, the sibling of the populated-target
+  // case above. Pins the companion contract explicitly: an owner-placed `.epub` beside the
+  // audiobook is the substrate of the whole feature and must survive a move-mode import.
+  it('preserves a bundled .epub in the source after an EMPTY-target move (#1960 AC32)', async () => {
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+    await writeFile(join(source, 'companion.epub'), Buffer.from('EBOOK'));
+
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+
+    // Only audio was staged into the library — the e-book is NOT copied in (imports stay
+    // audio-only; the bundled-EPUB copy cluster is deferred).
+    expect((await readdir(target)).sort()).toEqual(['new.mp3']);
+    // Source audio removed, bundled e-book preserved, source folder retained because of it.
+    expect(await pathExists(join(source, 'new.mp3'))).toBe(false);
+    expect(await pathExists(join(source, 'companion.epub'))).toBe(true);
     expect(await pathExists(source)).toBe(true);
   });
 

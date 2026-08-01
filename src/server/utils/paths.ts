@@ -1,9 +1,9 @@
 import { readdir, rename, rmdir, realpath } from 'node:fs/promises';
 import { join, extname, basename, dirname, normalize, resolve, relative, isAbsolute } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/index.js';
-import { compareAudioNames, disambiguateStems } from '../../core/utils/collect-audio-files.js';
-import type { NamingOptions } from '../../core/utils/naming.js';
+import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/index.js';
+import { compareAudioNames, disambiguateStems } from '@core/utils/collect-audio-files.js';
+import type { NamingOptions } from '@core/utils/naming.js';
 import { extractYear } from './import-helpers.js';
 import { serializeError } from './serialize-error.js';
 
@@ -86,6 +86,33 @@ export async function assertRealPathInsideLibrary(bookPath: string, libraryRoot:
   }
 }
 
+/**
+ * The ENOENT-**rejecting** twin of {@link assertRealPathInsideLibrary} (#1974 AC4), for the
+ * companion-ebook open-and-verify helper.
+ *
+ * Identical in every respect — lexical containment first and unconditional, then the
+ * `realpath`-canonicalized re-check through the same `isOutsideRoot` predicate, catching a
+ * **parent-directory** symlink escape and not only a final-component one — except that a
+ * `realpath` ENOENT **propagates** instead of being swallowed.
+ *
+ * That difference is the whole point. The sibling's swallow-and-return is deliberate and its
+ * callers depend on it (they pass DB paths whose absence their own logic surfaces), but a
+ * serve-time file opener must never conclude "contained" from "vanished": the caller
+ * classifies the propagated errno as a `missing` outcome instead. The sibling's behaviour and
+ * callers are untouched.
+ */
+export async function assertRealPathInsideLibraryStrict(bookPath: string, libraryRoot: string): Promise<void> {
+  assertPathInsideLibrary(bookPath, libraryRoot);
+
+  // No ENOENT branch: every realpath failure, absence included, is the caller's to classify.
+  const realRoot = await realpath(libraryRoot);
+  const realBook = await realpath(bookPath);
+
+  if (isOutsideRoot(relative(realRoot, realBook))) {
+    throw new PathOutsideLibraryError(bookPath, libraryRoot);
+  }
+}
+
 /** Minimal book shape required by renameFilesWithTemplate. */
 export interface RenameableBook {
   title: string;
@@ -151,10 +178,10 @@ export interface BookNamingContext {
 }
 
 /**
- * Assemble the naming half of the convert/merge `ProcessingContext` from a book row + library
- * naming settings. Centralizes the "omit empty `fileFormat`" fallback rule (so audio-processor
- * keeps its basename / `${author} - ${title}` fallback) and the null-book guard in ONE place,
- * keeping both call sites (`convertBook`, `MergeService.runStaging`) below the complexity cap.
+ * Assemble the naming half of the `ProcessingContext` from a book row + library naming settings.
+ * Centralizes the "omit empty `fileFormat`" fallback rule (so audio-processor keeps its basename /
+ * `${author} - ${title}` fallback) and the null-book guard in ONE place, keeping the call site
+ * (`MergeService.runStaging`) below the complexity cap.
  */
 export function buildNamingContext(
   book: RenameableBook | null | undefined,
@@ -174,9 +201,9 @@ export function buildNamingContext(
  * Build the book-LEVEL naming token map from a book row and its resolved author.
  *
  * The single shared source of the `{author}`/`{title}`/`{series}`/`{narrator}`/`{year}`/
- * `{edition}` (+ sort variants) tokens consumed at rename time (`planFileRenames`),
- * merge time (`MergeService.runStaging`), and convert time (`convertBook`). Keeping the
- * book→tokens decision in ONE place stops the three paths from drifting on how a book row
+ * `{edition}` (+ sort variants) tokens consumed at rename time (`planFileRenames`) and at merge
+ * time (`MergeService.runStaging`, which reaches audio-processor's merge/convert stem builders).
+ * Keeping the book→tokens decision in ONE place stops those paths from drifting on how a book row
  * maps to filename tokens (the anti-drift consistency-test target). Per-FILE tokens
  * (`trackNumber`/`trackTotal`/`partName`) are computed per file by each caller and are
  * intentionally NOT built here.

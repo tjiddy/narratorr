@@ -1,7 +1,7 @@
 import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { NOTIFIER_TIMEOUT_MS } from '../utils/constants.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 
 export interface WebhookConfig {
   url: string;

@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { BookMetadata } from '../../core/index.js';
-import { diceCoefficient } from '../../core/utils/similarity.js';
-import type { SuggestionReason } from '../../shared/schemas/discovery.js';
+import type { BookMetadata } from '@core/index.js';
+import { diceCoefficient } from '@core/utils/similarity.js';
+import type { SuggestionReason } from '@shared/schemas/discovery.js';
 import type { MetadataService } from './metadata.service.js';
 import type { WeightMultipliers } from './discovery-weights.js';
 import { DEFAULT_MULTIPLIERS } from './discovery-weights.js';
@@ -9,7 +9,7 @@ import type { LibrarySignals } from './discovery.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { findMatchingSeriesRef, type TargetSeriesIdentity } from '../utils/series-match.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
-import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 
 const FP_TOLERANCE = 1e-9;

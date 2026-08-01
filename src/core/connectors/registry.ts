@@ -1,6 +1,6 @@
 import type { ConnectorAdapter } from './types.js';
-import type { ConnectorType } from '../../shared/connector-registry.js';
-import type { ConnectorSettingsMap, ConnectorSettings } from '../../shared/schemas/connector.js';
+import type { ConnectorType } from '@shared/connector-registry.js';
+import type { ConnectorSettingsMap, ConnectorSettings } from '@shared/schemas/connector.js';
 import { AudiobookshelfConnector } from './abs.js';
 import { PlexConnector } from './plex.js';
 

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import type { DbOrTx } from '../../db/index.js';
-import type { authors, books, downloads, narrators, series } from '../../db/schema.js';
+import type { DbOrTx } from '@db/index.js';
+import type { authors, books, downloads, narrators, series } from '@db/schema.js';
 
 /**
  * Opaque public identity for API-exposed entities (#1443).

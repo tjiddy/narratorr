@@ -1,4 +1,4 @@
-import type { SettingsCategory } from '../../shared/schemas/settings/registry.js';
+import type { SettingsCategory } from '@shared/schemas/settings/registry.js';
 import type { SecretEntity } from './secret-codec.js';
 
 // ─── Canonical settings-secret category → entity map ─────────────────────────

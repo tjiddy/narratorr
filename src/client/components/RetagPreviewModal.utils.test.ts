@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { FIELD_ORDER } from './RetagPreviewModal.utils';
-import { RETAG_EXCLUDABLE_FIELDS } from '../../shared/schemas.js';
+import { RETAG_EXCLUDABLE_FIELDS } from '@shared/schemas.js';
 
 describe('RetagPreviewModal.utils FIELD_ORDER', () => {
   // Guards against drift now that the client no longer redeclares the field

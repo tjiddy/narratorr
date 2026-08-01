@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import type { DownloadClientService } from '../services/download-client.service.js';
 import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
-import { applyPathMapping } from '../../core/utils/path-mapping.js';
+import { applyPathMapping } from '@core/utils/path-mapping.js';
 
 /**
  * Resolve the full save path for a download by querying the download client adapter.

@@ -4,7 +4,7 @@ import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { NumberField } from '@/components/settings/NumberField';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { logLevelSchema, DEFAULT_SETTINGS, generalFormSchema, type AppSettings } from '../../../shared/schemas.js';
+import { logLevelSchema, DEFAULT_SETTINGS, generalFormSchema, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 // Housekeeping and Logging write disjoint slices of the `general` category, so each is its own

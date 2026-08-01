@@ -8,14 +8,15 @@ import {
 import cookie from '@fastify/cookie';
 import authPlugin from '../../plugins/auth.js';
 import type { AuthService } from '../../services/auth.service.js';
-import type { Db } from '../../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { BookService } from '../../services/book.service.js';
 import type { BookListService } from '../../services/book-list.service.js';
 import { createMockDb, mockDbChain, inject } from '../../__tests__/helpers.js';
+import { findCompanionEbooksByBookIds } from '../../services/companion-ebook.repository.js';
 import { createMockDbBook, createMockDbAuthor } from '../../__tests__/factories.js';
 import { v1BooksRoutes } from './books.js';
-import { bookV1Schema } from '../../../shared/schemas/v1/books.js';
-import { v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { bookV1Schema } from '@shared/schemas/v1/books.js';
+import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 import { triggerImmediateSearch } from '../../services/trigger-immediate-search.js';
 import { OwnedRecordingError } from '../../services/book-dedup.js';
 
@@ -25,6 +26,13 @@ vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }
 // The immediate-search trigger is fire-and-forget; mock it so we can assert
 // whether the operator-gated branch invoked it without touching real services.
 vi.mock('../../services/trigger-immediate-search.js', () => ({ triggerImmediateSearch: vi.fn() }));
+
+// #1961 — the companion batch loader. Mocked at the module boundary so the tests
+// can assert the exact id set it receives (batching, no N+1) and drive its
+// rejection path, without going through the mock-db chain.
+vi.mock('../../services/companion-ebook.repository.js', () => ({
+  findCompanionEbooksByBookIds: vi.fn(),
+}));
 
 const VALID_KEY = 'valid-key';
 const keyHeaders = { 'x-api-key': VALID_KEY };
@@ -120,8 +128,9 @@ describe('v1 books routes', () => {
     (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
     (bookService.create as Mock).mockResolvedValue(hydratedRow({ status: 'wanted' }));
     (metadataService.lookupForFixMatch as Mock).mockResolvedValue({ kind: 'ok', book: metaBook() });
-    (settingsService.get as Mock).mockResolvedValue({ searchImmediately: false });
+    (settingsService.get as Mock).mockResolvedValue({ searchImmediately: false, enabled: false });
     (eventHistory.create as Mock).mockResolvedValue(undefined);
+    (findCompanionEbooksByBookIds as Mock).mockResolvedValue(new Map());
     db.select.mockReturnValue(mockDbChain([]));
   });
 
@@ -249,6 +258,25 @@ describe('v1 books routes', () => {
       expect(bookService.getById as Mock).toHaveBeenCalledWith(5);
     });
 
+    // #1983 F3 — pins the CANONICAL `v1PublicIdParamSchema` (`.trim().min(1)`) as this
+    // route's validator. Reverting this module to a private `z.string().min(1)` copy turns
+    // these back into 404 lookups, which `common.test.ts` (schema in isolation) and the
+    // companion-route suite (a different consumer) both stay green through.
+    it.each(['%20', '%20%20', '%09'])(
+      'returns a 400 BAD_REQUEST envelope for the whitespace-only publicId %s, without resolving',
+      async (encoded) => {
+        const res = await app.inject({ method: 'GET', url: `/api/v1/books/${encoded}`, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: { code: 'BAD_REQUEST', message: expect.any(String) } });
+        expectV1Envelope(res.json());
+        // Validation precedes the handler: neither the publicId resolution nor the
+        // service read was reached.
+        expect(db.select).not.toHaveBeenCalled();
+        expect(bookService.getById as Mock).not.toHaveBeenCalled();
+      },
+    );
+
     it('returns a 404 v1 envelope for a numeric rowid (opaque-key only)', async () => {
       db.select.mockReturnValue(mockDbChain([])); // a numeric id never matches publicId
 
@@ -275,7 +303,7 @@ describe('v1 books routes', () => {
       const body = res.json();
       expect(bookV1Schema.parse(body)).toBeTruthy();
       // DTO no-leak: exactly the BookV1 keys, nothing internal.
-      expect(Object.keys(body).sort()).toEqual(['authors', 'id', 'narrators', 'series', 'status', 'title']);
+      expect(Object.keys(body).sort()).toEqual(['authors', 'companionEbook', 'id', 'narrators', 'series', 'status', 'title']);
       expect(body).not.toHaveProperty('asin');
       expect(body).not.toHaveProperty('lastGrabInfoHash');
       expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
@@ -581,6 +609,339 @@ describe('v1 books routes', () => {
     });
   });
 
+  // #1961 — the top-level companion field. It is contract-pinned but DORMANT:
+  // its only Phase-1 consumer is these tests (the live surface is the nested
+  // `library.companionEbook` annotation on the metadata search).
+  describe('companionEbook on the v1 book DTO (#1961)', () => {
+    const EPUB = { format: 'epub', sizeBytes: 123456 };
+
+    /** An `available` observation row as `findCompanionEbooksByBookIds` returns it. */
+    function observation(bookId: number, overrides?: Record<string, unknown>) {
+      return { bookId, status: 'available', sizeBytes: 123456, filename: 'x.epub', ...overrides };
+    }
+
+    function enableFeature() {
+      (settingsService.get as Mock).mockResolvedValue({ enabled: true, searchImmediately: false });
+    }
+
+    // The settings category both GETs read is a bare string argument, and it is
+    // NOT self-checking: `tagging` (src/shared/schemas/settings/tagging.ts:7) and
+    // `discovery` (discovery.ts:5) also expose a boolean `enabled`, so swapping
+    // the key for either one typechecks and leaves every other test in this
+    // describe green while the endpoints start gating on an unrelated flag.
+    // These assertions pin the exact key AND the call count per request.
+    describe('reads the companionEpub settings category by exact key', () => {
+      it.each([
+        ['list', '/api/v1/books'],
+        ['detail', '/api/v1/books/bk_test000000000000000'],
+      ])('the %s GET issues exactly one settings read, for companionEpub', async (_label, url) => {
+        enableFeature();
+        const row = hydratedRow({ id: 1, status: 'imported' });
+        (bookListService.getAll as Mock).mockResolvedValue({ data: [row], total: 1 });
+        db.select.mockReturnValue(mockDbChain([{ id: 1 }]));
+        (bookService.getById as Mock).mockResolvedValue(row);
+        (findCompanionEbooksByBookIds as Mock).mockResolvedValue(new Map([[1, observation(1)]]));
+
+        const res = await app.inject({ method: 'GET', url, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        // The whole call list, so a second read or a different category fails.
+        expect((settingsService.get as Mock).mock.calls).toEqual([['companionEpub']]);
+        // The read is load-bearing, not incidental — this request did expose a
+        // companion, so the key that was read is the one that gated it.
+        expect(res.json().companionEbook ?? res.json().data[0].companionEbook).toEqual(EPUB);
+      });
+
+      it.each([
+        ['list', '/api/v1/books'],
+        ['detail', '/api/v1/books/bk_test000000000000000'],
+      ])('the %s GET reads companionEpub even when the feature is off (one read, no companion query)', async (_label, url) => {
+        (settingsService.get as Mock).mockResolvedValue({ enabled: false });
+        const row = hydratedRow({ id: 1, status: 'imported' });
+        (bookListService.getAll as Mock).mockResolvedValue({ data: [row], total: 1 });
+        db.select.mockReturnValue(mockDbChain([{ id: 1 }]));
+        (bookService.getById as Mock).mockResolvedValue(row);
+
+        const res = await app.inject({ method: 'GET', url, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        expect((settingsService.get as Mock).mock.calls).toEqual([['companionEpub']]);
+        expect(findCompanionEbooksByBookIds as Mock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('GET /api/v1/books (list)', () => {
+      const three = [
+        hydratedRow({ id: 1, publicId: 'bk_one00000000000000000', status: 'imported' }),
+        hydratedRow({ id: 2, publicId: 'bk_two00000000000000000', status: 'imported' }),
+        hydratedRow({ id: 3, publicId: 'bk_three000000000000000', status: 'imported' }),
+      ];
+
+      it('emits the companion object only for the item that carries an available observation', async () => {
+        enableFeature();
+        (bookListService.getAll as Mock).mockResolvedValue({ data: three, total: 3 });
+        (findCompanionEbooksByBookIds as Mock).mockResolvedValue(new Map([[2, observation(2)]]));
+
+        const res = await app.inject({ method: 'GET', url: '/api/v1/books', headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        const items = res.json().data;
+        expect(items.map((i: { companionEbook: unknown }) => i.companionEbook)).toEqual([null, EPUB, null]);
+        // Kills `data.map(toBookV1)` — `Array.map` would pass the array INDEX as
+        // the second argument, shipping a numeric companionEbook.
+        for (const item of items) {
+          expect(typeof item.companionEbook).not.toBe('number');
+        }
+      });
+
+      it('emits null on every item and never calls the companion loader when the feature is disabled', async () => {
+        (settingsService.get as Mock).mockResolvedValue({ enabled: false });
+        (bookListService.getAll as Mock).mockResolvedValue({ data: three, total: 3 });
+
+        const res = await app.inject({ method: 'GET', url: '/api/v1/books', headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().data.every((i: { companionEbook: unknown }) => i.companionEbook === null)).toBe(true);
+        expect(findCompanionEbooksByBookIds as Mock).not.toHaveBeenCalled();
+      });
+
+      // AC 22 — the `imported` term is the only thing stopping a book deleted off
+      // disk from advertising an ebook forever.
+      it('emits null for a missing book carrying a stale available observation', async () => {
+        enableFeature();
+        (bookListService.getAll as Mock).mockResolvedValue({
+          data: [hydratedRow({ id: 4, publicId: 'bk_stale0000000000000', status: 'missing' })],
+          total: 1,
+        });
+        (findCompanionEbooksByBookIds as Mock).mockResolvedValue(new Map([[4, observation(4)]]));
+
+        const res = await app.inject({ method: 'GET', url: '/api/v1/books', headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().data[0].companionEbook).toBeNull();
+      });
+
+      it('round-trips sizeBytes: 0 as 0, and maps an available row with a null sizeBytes to null (AC 27/28)', async () => {
+        enableFeature();
+        (bookListService.getAll as Mock).mockResolvedValue({
+          data: [
+            hydratedRow({ id: 1, publicId: 'bk_zero00000000000000', status: 'imported' }),
+            hydratedRow({ id: 2, publicId: 'bk_nosize000000000000', status: 'imported' }),
+          ],
+          total: 2,
+        });
+        (findCompanionEbooksByBookIds as Mock).mockResolvedValue(
+          new Map([
+            [1, observation(1, { sizeBytes: 0 })],
+            [2, observation(2, { sizeBytes: null })],
+          ]),
+        );
+
+        const res = await app.inject({ method: 'GET', url: '/api/v1/books', headers: keyHeaders });
+
+        // A null size must NOT become a serialization 500 and must NOT become 0.
+        expect(res.statusCode).toBe(200);
+        const [zero, noSize] = res.json().data;
+        expect(zero.companionEbook).toEqual({ format: 'epub', sizeBytes: 0 });
+        expect(noSize.companionEbook).toBeNull();
+      });
+
+      // AC 22a — batch-load once by numeric `books.id`, never one call per row.
+      it('calls the companion loader ONCE with every page id (no N+1)', async () => {
+        enableFeature();
+        const page = Array.from({ length: 25 }, (_, i) =>
+          hydratedRow({ id: i + 1, publicId: `bk_p${String(i).padStart(19, '0')}`, status: 'imported' }),
+        );
+        (bookListService.getAll as Mock).mockResolvedValue({ data: page, total: 25 });
+
+        await app.inject({ method: 'GET', url: '/api/v1/books', headers: keyHeaders });
+
+        expect(findCompanionEbooksByBookIds as Mock).toHaveBeenCalledTimes(1);
+        const [, ids] = (findCompanionEbooksByBookIds as Mock).mock.calls[0]!;
+        expect(ids).toEqual(page.map((r) => r.id));
+      });
+
+      it('hands a max-size (limit=500) page to the loader in ONE call carrying all 500 ids', async () => {
+        enableFeature();
+        const page = Array.from({ length: 500 }, (_, i) =>
+          hydratedRow({ id: i + 1, publicId: `bk_q${String(i).padStart(19, '0')}`, status: 'wanted' }),
+        );
+        (bookListService.getAll as Mock).mockResolvedValue({ data: page, total: 500 });
+
+        const res = await app.inject({ method: 'GET', url: '/api/v1/books?limit=500', headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        expect(findCompanionEbooksByBookIds as Mock).toHaveBeenCalledTimes(1);
+        expect((findCompanionEbooksByBookIds as Mock).mock.calls[0]![1]).toHaveLength(500);
+      });
+
+      // AC 22a's query-count half: 500 > the loader's 480-id chunk size, so a max
+      // page costs TWO companion selects — not one, and emphatically not 500. The
+      // route hands the loader one call; the loader itself does the chunking, so
+      // the count is asserted against the REAL implementation.
+      it('the real loader turns those 500 ids into exactly 2 selects (480-id chunking)', async () => {
+        const { findCompanionEbooksByBookIds: real } = await vi.importActual<
+          typeof import('../../services/companion-ebook.repository.js')
+        >('../../services/companion-ebook.repository.js');
+        const chunkDb = createMockDb();
+        chunkDb.select.mockReturnValue(mockDbChain([]));
+
+        await real(inject(chunkDb), Array.from({ length: 500 }, (_, i) => i + 1));
+
+        expect(chunkDb.select).toHaveBeenCalledTimes(2);
+      });
+
+      // AC 23a — a settings failure or a companion-read failure degrades to null,
+      // never a 500. These two reads are the only new dependencies on a pair of
+      // endpoints that read no settings at all today.
+      it('returns 200 with every companionEbook null and one warn when the settings read rejects', async () => {
+        (settingsService.get as Mock).mockRejectedValue(new Error('settings db down'));
+        (bookListService.getAll as Mock).mockResolvedValue({ data: three, total: 3 });
+        const warnSpy = vi.spyOn(app.log, 'warn');
+
+        const res = await app.inject({ method: 'GET', url: '/api/v1/books', headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        const items = res.json().data;
+        expect(items).toHaveLength(3);
+        expect(items.every((i: { companionEbook: unknown }) => i.companionEbook === null)).toBe(true);
+        // Core fields are untouched.
+        expect(items[0].id).toBe('bk_one00000000000000000');
+        expect(items[0].title).toBe('The Way of Kings');
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.anything() }),
+          expect.stringContaining('companion-ebook enrichment failed'),
+        );
+        warnSpy.mockRestore();
+      });
+
+      it('returns 200 with every companionEbook null and one warn when the companion read rejects', async () => {
+        enableFeature();
+        (bookListService.getAll as Mock).mockResolvedValue({ data: three, total: 3 });
+        (findCompanionEbooksByBookIds as Mock).mockRejectedValue(new Error('companion table locked'));
+        const warnSpy = vi.spyOn(app.log, 'warn');
+
+        const res = await app.inject({ method: 'GET', url: '/api/v1/books', headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().data.every((i: { companionEbook: unknown }) => i.companionEbook === null)).toBe(true);
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        warnSpy.mockRestore();
+      });
+    });
+
+    describe('GET /api/v1/books/:publicId (detail)', () => {
+      const URL = '/api/v1/books/bk_test000000000000000';
+
+      function resolvesTo(row: Record<string, unknown>) {
+        db.select.mockReturnValue(mockDbChain([{ id: 1 }]));
+        (bookService.getById as Mock).mockResolvedValue(row);
+      }
+
+      it('emits the companion VALUE { format, sizeBytes } for an eligible book (AC 23)', async () => {
+        enableFeature();
+        resolvesTo(hydratedRow({ id: 1, status: 'imported' }));
+        (findCompanionEbooksByBookIds as Mock).mockResolvedValue(new Map([[1, observation(1)]]));
+
+        const res = await app.inject({ method: 'GET', url: URL, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().companionEbook).toEqual({ format: 'epub', sizeBytes: 123456 });
+      });
+
+      it('emits null and issues NO companion query when the feature is disabled (AC 23)', async () => {
+        (settingsService.get as Mock).mockResolvedValue({ enabled: false });
+        resolvesTo(hydratedRow({ id: 1, status: 'imported' }));
+
+        const res = await app.inject({ method: 'GET', url: URL, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().companionEbook).toBeNull();
+        expect(findCompanionEbooksByBookIds as Mock).not.toHaveBeenCalled();
+      });
+
+      it('emits null for an imported book with no observation row', async () => {
+        enableFeature();
+        resolvesTo(hydratedRow({ id: 1, status: 'imported' }));
+        (findCompanionEbooksByBookIds as Mock).mockResolvedValue(new Map());
+
+        const res = await app.inject({ method: 'GET', url: URL, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().companionEbook).toBeNull();
+      });
+
+      it('emits null for a missing book carrying a stale available observation (AC 22)', async () => {
+        enableFeature();
+        resolvesTo(hydratedRow({ id: 1, status: 'missing' }));
+        (findCompanionEbooksByBookIds as Mock).mockResolvedValue(new Map([[1, observation(1)]]));
+
+        const res = await app.inject({ method: 'GET', url: URL, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().companionEbook).toBeNull();
+      });
+
+      it('returns 200 with companionEbook: null and one warn when the settings read rejects (AC 23a)', async () => {
+        (settingsService.get as Mock).mockRejectedValue(new Error('settings db down'));
+        resolvesTo(hydratedRow({ id: 1, status: 'imported' }));
+        const warnSpy = vi.spyOn(app.log, 'warn');
+
+        const res = await app.inject({ method: 'GET', url: URL, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().companionEbook).toBeNull();
+        expect(res.json().id).toBe('bk_test000000000000000');
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        warnSpy.mockRestore();
+      });
+
+      it('returns 200 with companionEbook: null and one warn when the companion read rejects (AC 23a)', async () => {
+        enableFeature();
+        resolvesTo(hydratedRow({ id: 1, status: 'imported' }));
+        (findCompanionEbooksByBookIds as Mock).mockRejectedValue(new Error('companion table locked'));
+        const warnSpy = vi.spyOn(app.log, 'warn');
+
+        const res = await app.inject({ method: 'GET', url: URL, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().companionEbook).toBeNull();
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        warnSpy.mockRestore();
+      });
+
+      it('still 404s a genuinely missing book while the companion read is failing (AC 23a scope limit)', async () => {
+        enableFeature();
+        db.select.mockReturnValue(mockDbChain([{ id: 1 }]));
+        (bookService.getById as Mock).mockResolvedValue(null);
+        (findCompanionEbooksByBookIds as Mock).mockRejectedValue(new Error('companion table locked'));
+
+        const res = await app.inject({ method: 'GET', url: URL, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(404);
+        expectV1Envelope(res.json());
+      });
+    });
+
+    describe('POST /api/v1/books (create)', () => {
+      it('returns 201 with companionEbook: null and reads no companion state at all (AC 24)', async () => {
+        (bookService.create as Mock).mockResolvedValue(hydratedRow({ status: 'wanted' }));
+
+        const res = await app.inject({
+          method: 'POST', url: '/api/v1/books', headers: keyHeaders, payload: { asin: 'B0ASIN12345' },
+        });
+
+        expect(res.statusCode).toBe(201);
+        expect(res.json().companionEbook).toBeNull();
+        expect(findCompanionEbooksByBookIds as Mock).not.toHaveBeenCalled();
+        // The create path's ONE settings read is the existing `quality` read.
+        expect(settingsService.get as Mock).toHaveBeenCalledTimes(1);
+        expect(settingsService.get as Mock).not.toHaveBeenCalledWith('companionEpub');
+      });
+    });
+  });
+
   describe('auth (real auth-plugin fixture, F3)', () => {
     it('rejects a missing API key with 401 (status only — missing key → ambient auth body, not the v1 envelope)', async () => {
       // A no-key request falls through to handleAmbientAuth, which returns the
@@ -623,6 +984,7 @@ describe('v1 response-schema fail-closed (Fastify serialization, F6)', () => {
       narrators: [],
       series: null,
       status: 'imported',
+      companionEbook: null,
       lastGrabInfoHash: 'leak',
     }));
     await leakyApp.ready();

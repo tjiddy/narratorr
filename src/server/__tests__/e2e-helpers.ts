@@ -5,9 +5,9 @@ import {
   validatorCompiler,
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
 import { eq } from 'drizzle-orm';
-import { downloads, books } from '../../db/schema.js';
+import { downloads, books } from '@db/schema.js';
 import { createServices, registerRoutes, type Services } from '../routes/index.js';
 import { clearImportAdapters } from '../services/import-adapters/registry.js';
 import { tmpdir } from 'os';

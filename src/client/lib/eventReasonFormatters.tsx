@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { formatBytes } from '@/lib/api';
 import { capitalize } from '@/lib/eventReasonHelpers';
-import { qualityGateReasonSchema } from '../../shared/schemas.js';
+import { qualityGateReasonSchema } from '@shared/schemas.js';
 import { QualityComparisonPanel } from '@/pages/activity/QualityComparisonPanel';
 import { AlertCircleIcon } from '@/components/icons';
 

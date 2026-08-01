@@ -8,7 +8,6 @@ import type { BookFile, BookIdentifier, BookStats } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
   api: {
-    getBooks: vi.fn(),
     listLibraryBooks: vi.fn(),
     getBookById: vi.fn(),
     getBookFiles: vi.fn(),
@@ -225,8 +224,8 @@ describe('useBookIdentifiers', () => {
 
   it('calls api.getBookIdentifiers and returns identifiers array', async () => {
     const mockIds: BookIdentifier[] = [
-      { asin: 'B001', title: 'Book One', authorName: 'Author A', authorSlug: null },
-      { asin: null, title: 'Book Two', authorName: null, authorSlug: null },
+      { id: 1, asin: 'B001', title: 'Book One', authorName: 'Author A', authorSlug: null },
+      { id: 2, asin: null, title: 'Book Two', authorName: null, authorSlug: null },
     ];
     vi.mocked(api.getBookIdentifiers).mockResolvedValue(mockIds);
 

@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import fss from 'fs';
 import path from 'path';
 import os from 'os';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import unzipper from 'unzipper';
 import { createClient } from '@libsql/client';
 import type { FastifyBaseLogger } from 'fastify';
@@ -10,7 +10,7 @@ import type { Readable } from 'stream';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { BYTES_PER_GB } from '../../shared/constants.js';
+import { BYTES_PER_GB } from '@shared/constants.js';
 
 /** Default cap on the uncompressed size of the extracted narratorr.db (1 GB; cf. MAX_COVER_SIZE). */
 const MAX_UNCOMPRESSED_DB_SIZE = BYTES_PER_GB;
@@ -105,7 +105,7 @@ export class BackupService {
       // Step 2: Zip the snapshot
       await new Promise<void>((resolve, reject) => {
         const output = fss.createWriteStream(zipPath);
-        const archive = archiver('zip', { zlib: { level: 9 } });
+        const archive = new ZipArchive({ zlib: { level: 9 } });
 
         output.on('close', resolve);
         archive.on('error', reject);

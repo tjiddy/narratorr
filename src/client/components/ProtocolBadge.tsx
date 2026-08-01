@@ -1,4 +1,4 @@
-import type { DownloadProtocol } from '../../core/indexers/types.js';
+import type { DownloadProtocol } from '@core/indexers/types.js';
 
 const protocolConfig = {
   torrent: {

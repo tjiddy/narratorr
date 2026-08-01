@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { suggestionReasonSchema, type SuggestionRowResponse } from '../../shared/schemas/discovery.js';
+import { suggestionReasonSchema, type SuggestionRowResponse } from '@shared/schemas/discovery.js';
 import type { DiscoveryService, SettingsService } from '../services/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
 import type { SuggestionRowWithLibraryBookId } from '../services/types.js';

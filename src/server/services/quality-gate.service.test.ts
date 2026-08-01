@@ -3,8 +3,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import { and, eq, isNotNull } from 'drizzle-orm';
 import { QualityGateService, QualityGateServiceError } from './quality-gate.service.js';
 import { inject, createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
-import type { Db } from '../../db/index.js';
-import { downloads } from '../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { downloads } from '@db/schema.js';
 import { completedDisplayDownloadCondition, qualityGateEligibleDownloadCondition } from '../utils/download-state.js';
 
 function createService() {

@@ -44,6 +44,7 @@ import type {
   SeriesCardService,
   ReferenceReadService,
   RetrySearchDeps,
+  CompanionEbookReconciler,
 } from './index.js';
 import type { MergeService } from './merge.service.js';
 import type { QualityGateOrchestrator } from './quality-gate-orchestrator.js';
@@ -96,6 +97,7 @@ export interface Services {
   retrySearchDeps: RetrySearchDeps;
   seriesCard: SeriesCardService;
   referenceRead: ReferenceReadService;
+  companionEbook: CompanionEbookReconciler;
 }
 
 /**
@@ -146,4 +148,5 @@ export const SERVICE_KEYS = Object.keys({
   retrySearchDeps: true,
   seriesCard: true,
   referenceRead: true,
+  companionEbook: true,
 } satisfies Record<keyof Services, true>) as (keyof Services)[];

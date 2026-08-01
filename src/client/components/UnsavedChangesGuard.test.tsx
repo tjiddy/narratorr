@@ -3,7 +3,7 @@ import { StrictMode } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Link, MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import { Link, MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router';
 import { UnsavedChangesGuard } from './UnsavedChangesGuard';
 import { useTrackedForm, _resetForTesting } from '@/hooks/dirty-forms';
 

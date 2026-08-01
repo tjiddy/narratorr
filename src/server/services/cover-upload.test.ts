@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { inject } from '../__tests__/helpers.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 vi.mock('node:fs/promises', () => ({

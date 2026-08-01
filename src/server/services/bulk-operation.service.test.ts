@@ -10,19 +10,16 @@ import { createMockDbBook } from '../__tests__/factories.js';
 import { BulkOperationService, BulkOpError } from './bulk-operation.service.js';
 import { RenameError } from './rename.service.js';
 import { RetagError } from './tagging.service.js';
-import { enrichBookFromAudio } from './enrichment-utils.js';
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
-import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 import { writeOpfSidecar } from '../utils/opf-writer.js';
 import { downloadRemoteCover } from './cover-download.js';
-import { cp, mkdir, rename, rm, readdir, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readdir } from 'node:fs/promises';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { RenameService } from './rename.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { BookService } from './book.service.js';
 import type { ConnectorService } from './connector.service.js';
+import type { CompanionSweepTrigger } from './companion-ebook-trigger.js';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 
 /** Serialize a Drizzle SQL expression into a raw SQL+params pair for predicate assertions. */
@@ -31,17 +28,6 @@ function toSQL(expr: unknown): { sql: string; params: unknown[] } {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return dialect.sqlToQuery((expr as any).getSQL());
 }
-
-vi.mock('./enrichment-utils.js', () => ({
-  enrichBookFromAudio: vi.fn(),
-}));
-
-const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
-vi.mock('../../core/utils/audio-processor.js', () => ({
-  processAudioFiles: vi.fn(),
-  // Plain arrow over a hoisted toggle — survives vi.clearAllMocks; flip false for the not-detected test.
-  resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null),
-}));
 
 // #1670 — the reconcile job composes the OPF writer + cover downloader; mock them at their module
 // boundaries to drive per-book outcomes (isRemoteCoverUrl stays real for the remote/local gate).
@@ -58,18 +44,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
     ...actual,
-    cp: vi.fn(),
-    mkdir: vi.fn(),
-    rename: vi.fn(),
-    rm: vi.fn(),
     readdir: vi.fn(),
-    unlink: vi.fn(),
   };
 });
 
 const BOOK_PATH = '/library/Author/Title';
-// Convert staging is now born-hidden (#1852 AC10): `.<book>.convert-tmp`, dot-led basename.
-const CONVERT_STAGING = dotPrefixBasename(BOOK_PATH + '.convert-tmp');
 
 function makeRenameService() {
   return inject<RenameService>({
@@ -101,6 +80,7 @@ function createService(opts?: {
   taggingService?: TaggingService;
   bookService?: BookService;
   connectorService?: { notifyRefresh: ReturnType<typeof vi.fn> };
+  companionEbook?: CompanionSweepTrigger;
 }) {
   const db = createMockDb();
   const log = createMockLogger();
@@ -109,7 +89,7 @@ function createService(opts?: {
   const bookService = opts?.bookService ?? makeBookService();
   const settingsService = createMockSettingsService({
     library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '' },
-    processing: { outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+    processing: { outputFormat: 'm4b' as const, bitrate: 128, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
     ...opts?.settingsOverrides,
   });
   const connectorService = opts?.connectorService;
@@ -121,6 +101,7 @@ function createService(opts?: {
     bookService,
     inject<FastifyBaseLogger>(log),
     connectorService ? inject<ConnectorService>(connectorService) : undefined,
+    opts?.companionEbook,
   );
   return { service, db, log, renameService, taggingService, bookService, settingsService, connectorService };
 }
@@ -482,6 +463,167 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
   });
 });
 
+// ===== #1960 AC21 — rename caller 3: ONE post-loop sweep, never a per-book fan-out =====
+
+describe('BulkOperationService — companion-ebook sweep after bulk rename (#1960 AC21)', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  const FILE_FORMAT_SETTINGS = {
+    settingsOverrides: {
+      library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+    },
+  };
+
+  /**
+   * Bulk rename is a SWEEP-only seam, so the stub carries `reconcileAll` — plus a
+   * `reconcileBook` PROBE that `CompanionSweepTrigger` does not declare. AC21's whole point is
+   * that a whole-library rename must NOT fan out N direct runs, and the probe is what makes
+   * that assertable at runtime on top of the type-level guarantee.
+   */
+  function makeCompanionStub() {
+    return {
+      reconcileAll: vi.fn().mockResolvedValue(undefined),
+      reconcileBook: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  function bookRow(overrides: Record<string, unknown>) {
+    return {
+      id: 1, path: '/library/Author Name/Book1', title: 'Book1',
+      seriesName: null, seriesPosition: null, publishedDate: null,
+      editionLabel: null, authorName: 'Author Name',
+      ...overrides,
+    };
+  }
+
+  it('a rename over N books produces ONE reconcileAll and ZERO reconcileBook calls', async () => {
+    const companionEbook = makeCompanionStub();
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+        bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+        bookRow({ id: 3, path: '/library/Author Name/Book3', title: 'Book3' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(renameService.renameBook).toHaveBeenCalledTimes(3);
+    // N-wide direct fan-out is exactly what this AC prevents: direct runs do not coalesce.
+    expect(companionEbook.reconcileBook).not.toHaveBeenCalled();
+    expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * AC21's ORDERING half. The call-count test above cannot see it: moving the sweep above the
+   * `for (const bookId of targetIds)` loop preserves "3 renames, 1 sweep" exactly, and every
+   * status assertion with it — while the sweep would then observe the OLD paths and miss every
+   * folder the rename just moved.
+   *
+   * The final rename is held pending, so "no sweep yet" is observed while the loop is provably
+   * still mid-flight, and the ordered trace pins the sweep strictly after the last rename
+   * returns.
+   */
+  it('AC21: the sweep runs strictly AFTER the loop — held on the final rename, no sweep until it settles', async () => {
+    const order: string[] = [];
+    const companionEbook = {
+      reconcileAll: vi.fn().mockImplementation(() => { order.push('sweep'); return Promise.resolve(); }),
+      reconcileBook: vi.fn().mockResolvedValue(undefined),
+    };
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+        bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+        bookRow({ id: 3, path: '/library/Author Name/Book3', title: 'Book3' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+
+    let releaseFinalRename!: () => void;
+    const finalRenameHeld = new Promise<void>((r) => { releaseFinalRename = r; });
+    let markFinalRenameStarted!: () => void;
+    const finalRenameStarted = new Promise<void>((r) => { markFinalRenameStarted = r; });
+
+    (renameService.renameBook as Mock).mockImplementation(async (bookId: number) => {
+      order.push(`rename:${bookId}`);
+      if (bookId === 3) {
+        markFinalRenameStarted();
+        await finalRenameHeld;
+      }
+      return { oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 };
+    });
+
+    const id = await service.startRenameJob();
+    await finalRenameStarted;
+    // Room for any pending microtask AND a macrotask turn — a sweep hoisted above the loop
+    // would already have run by this point.
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(order).toEqual(['rename:1', 'rename:2', 'rename:3']);
+    expect(companionEbook.reconcileAll).not.toHaveBeenCalled();
+
+    releaseFinalRename();
+    await waitForJob(service, id);
+
+    expect(order).toEqual(['rename:1', 'rename:2', 'rename:3', 'sweep']);
+    expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires once even when some books failed mid-loop', async () => {
+    const companionEbook = makeCompanionStub();
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+        bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock)
+      .mockRejectedValueOnce(new RenameError('conflict', 'CONFLICT'))
+      .mockResolvedValueOnce({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(service.getJob(id)?.failures).toBe(1);
+    expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('is NOT fired when the target set is empty', async () => {
+    const companionEbook = makeCompanionStub();
+    const { service, db } = createService({ companionEbook });
+    db.select.mockReturnValue(mockDbChain([])); // no eligible rows at all
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(service.getJob(id)?.total).toBe(0);
+    expect(companionEbook.reconcileAll).not.toHaveBeenCalled();
+  });
+
+  it('a rejecting sweep does not fail the job', async () => {
+    const companionEbook = { reconcileAll: vi.fn().mockRejectedValue(new Error('sweep rejected')) };
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService, companionEbook });
+    db.select
+      .mockReturnValueOnce(mockDbChain([bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' })]))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(service.getJob(id)?.failures).toBe(0);
+    expect(service.getJob(id)?.status).toBe('completed');
+  });
+});
+
 // ===== Job lifecycle tests =====
 
 describe('BulkOperationService — job lifecycle', () => {
@@ -499,13 +641,6 @@ describe('BulkOperationService — job lifecycle', () => {
     const { service, db } = createService();
     db.select.mockReturnValue(mockDbChain([]));
     const id = service.startRetagJob();
-    expect(typeof id).toBe('string');
-  });
-
-  it('startConvertJob returns UUID immediately', async () => {
-    const { service, db } = createService();
-    db.select.mockReturnValue(mockDbChain([]));
-    const id = await service.startConvertJob();
     expect(typeof id).toBe('string');
   });
 
@@ -592,7 +727,7 @@ describe('BulkOperationService — cross-operation exclusivity', () => {
     resolveQuery([]);
   });
 
-  it('startConvertJob while retag is running throws BULK_OP_IN_PROGRESS', async () => {
+  it('startRenameJob while retag is running throws BULK_OP_IN_PROGRESS', async () => {
     const { service, db } = createService();
     let resolveFn!: (v: unknown[]) => void;
     db.select.mockReturnValue({
@@ -601,7 +736,7 @@ describe('BulkOperationService — cross-operation exclusivity', () => {
     });
     service.startRetagJob();
     await new Promise(r => setTimeout(r, 10));
-    await expect(service.startConvertJob()).rejects.toThrow(expect.objectContaining({ code: 'BULK_OP_IN_PROGRESS' }));
+    await expect(service.startRenameJob()).rejects.toThrow(expect.objectContaining({ code: 'BULK_OP_IN_PROGRESS' }));
     resolveFn([]);
   });
 
@@ -629,17 +764,6 @@ describe('BulkOperationService — pre-flight validation', () => {
       },
     });
     await expect(service.startRenameJob()).rejects.toThrow(expect.objectContaining({ code: 'LIBRARY_NOT_CONFIGURED' }));
-  });
-
-  it('startConvertJob throws FFMPEG_NOT_CONFIGURED when ffmpeg is not detected', async () => {
-    ffmpegState.resolves = false;
-    const { service } = createService({
-      settingsOverrides: {
-        processing: { outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
-      },
-    });
-    await expect(service.startConvertJob()).rejects.toThrow(expect.objectContaining({ code: 'FFMPEG_NOT_CONFIGURED' }));
-    ffmpegState.resolves = true;
   });
 });
 
@@ -896,332 +1020,6 @@ describe('BulkOperationService — retag eligibility (single source)', () => {
     expect(sql).toMatch(/"books"\."path" is not null/i);
   });
 });
-
-// ===== Convert batch =====
-
-describe('BulkOperationService — convert batch', () => {
-  beforeEach(() => { vi.resetAllMocks(); });
-
-  function setupConvertMocks() {
-    (mkdir as Mock).mockResolvedValue(undefined);
-    (cp as Mock).mockResolvedValue(undefined);
-    (rename as Mock).mockResolvedValue(undefined);
-    (rm as Mock).mockResolvedValue(undefined);
-    (readdir as Mock).mockResolvedValue(['book.mp3']);
-    (unlink as Mock).mockResolvedValue(undefined);
-    (processAudioFiles as Mock).mockResolvedValue({
-      success: true,
-      outputFiles: [BOOK_PATH + '.convert-tmp/book.m4b'],
-    });
-    (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
-  }
-
-  it('calls processAudioFiles and enrichBookFromAudio for each eligible book', async () => {
-    setupConvertMocks();
-    const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: BOOK_PATH, title: 'Title' },
-    ]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    expect(processAudioFiles).toHaveBeenCalledWith(
-      CONVERT_STAGING,
-      expect.objectContaining({ outputFormat: 'm4b', mergeBehavior: 'always' }),
-      expect.objectContaining({ title: 'Title' }),
-    );
-    expect(enrichBookFromAudio).toHaveBeenCalledWith(1, BOOK_PATH, expect.anything(), expect.anything(), expect.anything(), expect.anything(), '/usr/bin/ffprobe');
-  });
-
-  it('#1852: a born-hidden temp beside the originals is never copied into staging', async () => {
-    setupConvertMocks();
-    (readdir as Mock).mockResolvedValue(['book.mp3', '.book.tmp.mp3']);
-    const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-
-    expect(cp).toHaveBeenCalledWith(join(BOOK_PATH, 'book.mp3'), join(CONVERT_STAGING, 'book.mp3'));
-    expect(cp).not.toHaveBeenCalledWith(expect.stringContaining('.book.tmp.mp3'), expect.anything());
-  });
-
-  it('#1852 Change 4/F25: resets the staging dir (rm before the first copy)', async () => {
-    setupConvertMocks();
-    const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-
-    expect(rm).toHaveBeenCalledWith(CONVERT_STAGING, { recursive: true, force: true });
-    expect((rm as Mock).mock.invocationCallOrder[0]!).toBeLessThan((cp as Mock).mock.invocationCallOrder[0]!);
-  });
-
-  it('#1852 F25: an un-emptyable staging dir fails the item (never copies) via the ordinary failure path', async () => {
-    setupConvertMocks();
-    (rm as Mock).mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' })); // reset fails
-    const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-
-    expect(cp).not.toHaveBeenCalled();
-    expect(processAudioFiles).not.toHaveBeenCalled();
-    expect(service.getJob(id)?.failures).toBe(1);
-  });
-
-  // #1720 — startConvertJob now also fetches library naming settings and threads
-  // fileFormat + namingOptions + book-level tokens into the convert context, so a
-  // re-encode renders the same series/narrator/edition tokens the rename path bakes in.
-  it('threads library fileFormat + book-level tokens into the convert ProcessingContext', async () => {
-    setupConvertMocks();
-    const bookService = makeBookService({
-      seriesName: 'The Stormlight Archive',
-      seriesPosition: 1,
-      editionLabel: 'Full Cast',
-      narrators: [{ name: 'Michael Kramer' }],
-      publishedDate: '2010-08-31',
-    });
-    const { service, db } = createService({
-      bookService,
-      settingsOverrides: { library: { fileFormat: '{author} - {series} - {title} ({edition})' } },
-    });
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
-
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-
-    expect(processAudioFiles).toHaveBeenCalledWith(
-      CONVERT_STAGING,
-      expect.anything(),
-      expect.objectContaining({
-        fileFormat: '{author} - {series} - {title} ({edition})',
-        namingOptions: expect.objectContaining({ separator: 'space', case: 'default' }),
-        bookTokens: expect.objectContaining({
-          series: 'The Stormlight Archive',
-          seriesPosition: 1,
-          edition: 'Full Cast',
-          narrator: 'Michael Kramer',
-        }),
-      }),
-    );
-  });
-
-  // #1707 — connector refresh after the irreversible convert swap
-  it("enqueues one 'convert' refresh per converted book, after the swap", async () => {
-    setupConvertMocks();
-    const notifyRefresh = vi.fn().mockResolvedValue(undefined);
-    const { service, db } = createService({ connectorService: { notifyRefresh } });
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    expect(notifyRefresh).toHaveBeenCalledTimes(1);
-    // The refresh item is built from the loaded book (re-read for title/author), so it carries the
-    // book's own title + path, not the bulk row's projection.
-    expect(notifyRefresh).toHaveBeenCalledWith('convert', [
-      expect.objectContaining({ bookId: 1, libraryPath: BOOK_PATH }),
-    ]);
-  });
-
-  it("still enqueues the 'convert' refresh when post-swap enrichment throws", async () => {
-    setupConvertMocks();
-    (enrichBookFromAudio as Mock).mockRejectedValue(new Error('enrich boom'));
-    const notifyRefresh = vi.fn().mockResolvedValue(undefined);
-    const { service, db } = createService({ connectorService: { notifyRefresh } });
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    // The refresh fires after the swap returns but before enrichment, so a later enrichment throw
-    // cannot suppress it (the originals are already deleted on disk).
-    expect(notifyRefresh).toHaveBeenCalledWith('convert', [expect.objectContaining({ bookId: 1 })]);
-  });
-
-  // #1721 — the convert refresh is built from the already-loaded book + bookPath/bookTitle (held
-  // from before the swap), not a fresh post-swap reload. So a transient post-swap getById failure
-  // can no longer drop it — the old reload-by-id path re-read the book post-swap and would have dropped it.
-  it("still enqueues the 'convert' refresh when a post-swap book reload would fail", async () => {
-    setupConvertMocks();
-    const notifyRefresh = vi.fn().mockResolvedValue(undefined);
-    // First load (pre-swap, for author/bitrate) succeeds; any later reload rejects.
-    const bookService = inject<BookService>({
-      getById: vi.fn()
-        .mockResolvedValueOnce({ id: 1, title: 'Title', path: BOOK_PATH, authors: [{ name: 'Author Name' }], narrators: [], audioBitrate: null })
-        .mockRejectedValue(new Error('libSQL read failed')),
-    });
-    const { service, db } = createService({ bookService, connectorService: { notifyRefresh } });
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    expect(notifyRefresh).toHaveBeenCalledTimes(1);
-    expect(notifyRefresh).toHaveBeenCalledWith('convert', [
-      expect.objectContaining({ bookId: 1, title: 'Title', libraryPath: BOOK_PATH }),
-    ]);
-  });
-
-  it("does NOT enqueue a 'convert' refresh when the processor succeeds with no output files (no swap)", async () => {
-    setupConvertMocks();
-    // processAudioFiles can return success with an empty outputFiles list (e.g. an empty staging
-    // dir — audio-processor.ts). No rename/unlink happens, so nothing media-visible changed and no
-    // refresh must fire — keying the trigger off an actual irreversible swap, not job success.
-    (processAudioFiles as Mock).mockResolvedValue({ success: true, outputFiles: [] });
-    const notifyRefresh = vi.fn().mockResolvedValue(undefined);
-    const { service, db } = createService({ connectorService: { notifyRefresh } });
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    expect(notifyRefresh).not.toHaveBeenCalled();
-  });
-
-  it('threads outputFormat and mergeBehavior from settings into processAudioFiles', async () => {
-    setupConvertMocks();
-    const { service, db } = createService({
-      settingsOverrides: {
-        processing: { outputFormat: 'mp3' as const, bitrate: 128, mergeBehavior: 'multi-file-only' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
-      },
-    });
-    db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: BOOK_PATH, title: 'Title' },
-    ]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    expect(processAudioFiles).toHaveBeenCalledWith(
-      CONVERT_STAGING,
-      expect.objectContaining({ outputFormat: 'mp3', mergeBehavior: 'multi-file-only' }),
-      expect.any(Object),
-    );
-  });
-
-  it('eligibility predicate targets the configured outputFormat (m4b default)', async () => {
-    setupConvertMocks();
-    const { service, db } = createService();
-    const chain = mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]);
-    db.select.mockReturnValueOnce(chain);
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    // The eligibility filter binds the configured target format, not a hardcoded literal.
-    const whereArg = (chain.where as Mock).mock.calls[0]![0];
-    const { sql, params } = toSQL(whereArg);
-    expect(sql).toMatch(/lower\("books"\."audio_file_format"\) != \?/i);
-    expect(params).toContain('m4b');
-    expect(params).not.toContain('mp3');
-  });
-
-  it('eligibility predicate targets the configured outputFormat (mp3)', async () => {
-    setupConvertMocks();
-    const { service, db } = createService({
-      settingsOverrides: {
-        processing: { outputFormat: 'mp3' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
-      },
-    });
-    const chain = mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]);
-    db.select.mockReturnValueOnce(chain);
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    // With an mp3 target, already-mp3 books are excluded and already-m4b books are included.
-    const whereArg = (chain.where as Mock).mock.calls[0]![0];
-    const { params } = toSQL(whereArg);
-    expect(params).toContain('mp3');
-    expect(params).not.toContain('m4b');
-  });
-
-  it('forwards sourceBitrateKbps from book.audioBitrate to processAudioFiles', async () => {
-    setupConvertMocks();
-    const bookService = makeBookService({ audioBitrate: 64000 });
-    const { service, db } = createService({ bookService });
-    db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: BOOK_PATH, title: 'Title' },
-    ]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    expect(processAudioFiles).toHaveBeenCalledWith(
-      CONVERT_STAGING,
-      expect.objectContaining({ sourceBitrateKbps: 64 }),
-      expect.any(Object),
-    );
-  });
-
-  it('passes sourceBitrateKbps as undefined when book.audioBitrate is null', async () => {
-    setupConvertMocks();
-    // default makeBookService has audioBitrate: null
-    const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: BOOK_PATH, title: 'Title' },
-    ]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    expect(processAudioFiles).toHaveBeenCalledWith(
-      CONVERT_STAGING,
-      expect.objectContaining({ sourceBitrateKbps: undefined }),
-      expect.any(Object),
-    );
-  });
-
-  it('emits debug log when source bitrate is lower than target', async () => {
-    setupConvertMocks();
-    const bookService = makeBookService({ audioBitrate: 64000 });
-    const { service, db, log } = createService({ bookService });
-    db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: BOOK_PATH, title: 'Title' },
-    ]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    expect(log.debug).toHaveBeenCalledWith(
-      expect.objectContaining({ sourceBitrateKbps: 64, targetBitrateKbps: 128, effectiveBitrateKbps: 64 }),
-      expect.stringContaining('Capping target bitrate'),
-    );
-  });
-
-  it('logs warnings from ProcessingResult when cover art degrades', async () => {
-    setupConvertMocks();
-    (processAudioFiles as Mock).mockResolvedValueOnce({
-      success: true,
-      outputFiles: [BOOK_PATH + '.convert-tmp/book.m4b'],
-      warnings: ['Cover art reattach failed — output will not contain embedded cover art'],
-    });
-    const { service, db, log } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: BOOK_PATH, title: 'Title' },
-    ]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ bookId: 1 }),
-      'Cover art reattach failed — output will not contain embedded cover art',
-    );
-  });
-
-  it('counts processAudioFiles failure as failure, continues batch', async () => {
-    setupConvertMocks();
-    (processAudioFiles as Mock)
-      .mockResolvedValueOnce({ success: false, error: 'ffmpeg failed' })
-      .mockResolvedValueOnce({ success: true, outputFiles: ['/library/B.convert-tmp/B.m4b'] });
-    const bookService = makeBookService();
-    const { service, db } = createService({ bookService });
-    db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: BOOK_PATH, title: 'A' },
-      { id: 2, path: '/library/B', title: 'B' },
-    ]));
-    (readdir as Mock)
-      .mockResolvedValueOnce(['a.mp3'])
-      .mockResolvedValueOnce(['b.mp3']);
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    const status = service.getJob(id);
-    expect(status?.failures).toBe(1);
-    expect(status?.completed).toBe(2);
-  });
-
-  it('returns completed status with final counts on success', async () => {
-    setupConvertMocks();
-    const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'T' }]));
-    const id = await service.startConvertJob();
-    await waitForJob(service, id);
-    const status = service.getJob(id);
-    expect(status?.status).toBe('completed');
-    expect(status?.failures).toBe(0);
-    expect(status?.total).toBe(1);
-  });
-});
-
 describe('TTL cleanup', () => {
   it('removes job from the jobs map after TTL expires', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });

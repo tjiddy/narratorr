@@ -1,8 +1,8 @@
 import { type FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { type ConnectorService } from '../services';
-import { createConnectorSchema, makeUpdateConnectorSchema, connectorSettingsSchemas, connectorTargetsSettingsSchemas, connectorTypeSchema } from '../../shared/schemas.js';
-import { idParamSchema } from '../../shared/schemas.js';
+import { createConnectorSchema, makeUpdateConnectorSchema, connectorSettingsSchemas, connectorTargetsSettingsSchemas, connectorTypeSchema } from '@shared/schemas.js';
+import { idParamSchema } from '@shared/schemas.js';
 import { makeTestSchema, loosenSettingsSchemas } from '../utils/secret-codec.js';
 import { registerCrudRoutes } from './crud-routes.js';
 

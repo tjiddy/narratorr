@@ -3,7 +3,7 @@ import { ZapIcon } from '@/components/icons';
 import { NumberField } from '@/components/settings/NumberField';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { DEFAULT_SETTINGS, qualityFormSchema, type AppSettings } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, qualityFormSchema, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const qualityGateFormSchema = qualityFormSchema.pick({ grabFloor: true, minSeeders: true, minDownloadSize: true, maxDownloadSize: true });

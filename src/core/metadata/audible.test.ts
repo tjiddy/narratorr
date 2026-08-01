@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AudibleProvider } from './audible.js';
@@ -684,26 +684,88 @@ describe('AudibleProvider', () => {
     });
   });
 
-  describe('edge cases — NaN and malformed data', () => {
-    it('handles NaN Retry-After header (defaults to 60s)', async () => {
-      server.use(
-        http.get('https://api.audible.com/1.0/catalog/products', () => {
-          return new HttpResponse(null, {
-            status: 429,
-            headers: { 'Retry-After': 'not-a-number' },
-          });
-        }),
-      );
+  /**
+   * #1948 — the identical defect #1944 fixed in Audnexus. Both 429 arms (`request`
+   * for the search/catalog path, `requestDetailed` for the Fix Match path) used to
+   * interpret `Retry-After` with an inline `parseInt(header, 10) * 1000`, which
+   * yields `NaN` for the HTTP-date form RFC 9110 equally permits. A `NaN` window is
+   * FALSY at the service's `isRateLimited` gate, so the backoff never engaged and a
+   * rate-limited Audible — the PRIMARY search provider — kept getting hammered. A
+   * test in this file used to pin that as intended (`.toBeNaN()`); it was the bug.
+   *
+   * Both arms now route through the shared `parseRetryAfterMs` (retry-after.ts). A
+   * fix to one arm does not exercise the other, so the matrix runs against both
+   * public surfaces.
+   */
+  describe('429 retry-window normalization across both request paths (#1948)', () => {
+    function response429(header?: string) {
+      return new HttpResponse(null, {
+        status: 429,
+        ...(header !== undefined && { headers: { 'Retry-After': header } }),
+      });
+    }
 
-      try {
-        await provider.searchBooks('test');
-      } catch (error: unknown) {
-        expect(error).toBeInstanceOf(RateLimitError);
-        // parseInt('not-a-number') = NaN, NaN * 1000 = NaN
-        expect((error as RateLimitError).retryAfterMs).toBeNaN();
-      }
+    /** `searchBooks` → `request` → thrown `RateLimitError`. */
+    async function searchWindow(header?: string): Promise<number> {
+      server.use(http.get('https://api.audible.com/1.0/catalog/products', () => response429(header)));
+      const error = await provider.searchBooks('test').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RateLimitError);
+      return (error as RateLimitError).retryAfterMs;
+    }
+
+    /** `getBookDetailed` → `requestDetailed` → typed `rate_limited` outcome. */
+    async function detailedWindow(header?: string): Promise<number> {
+      server.use(http.get('https://api.audible.com/1.0/catalog/products/:asin', () => response429(header)));
+      const result = await provider.getBookDetailed('B017V4IWVG');
+      expect(result.kind).toBe('rate_limited');
+      return (result as Extract<typeof result, { kind: 'rate_limited' }>).retryAfterMs;
+    }
+
+    const SURFACES: [string, (header?: string) => Promise<number>][] = [
+      ['searchBooks (request → thrown RateLimitError)', searchWindow],
+      ['getBookDetailed (requestDetailed → rate_limited outcome)', detailedWindow],
+    ];
+
+    describe.each(SURFACES)('%s', (_surface, windowFor) => {
+      it('delay-seconds → that many milliseconds', async () => {
+        expect(await windowFor('120')).toBe(120_000);
+      });
+
+      // Clock frozen (Date only — `toFake: ['Date']` leaves MSW's and
+      // `AbortSignal.timeout`'s real timers alone) so the HTTP-date arm asserts an
+      // EXACT window instead of a range.
+      describe('HTTP-date arm, frozen clock', () => {
+        const NOW = Date.parse('2026-07-29T12:00:00.000Z');
+
+        beforeEach(() => {
+          vi.useFakeTimers({ toFake: ['Date'] });
+          vi.setSystemTime(NOW);
+        });
+        afterEach(() => { vi.useRealTimers(); });
+
+        it('a FUTURE HTTP-date → exactly the delta to that instant', async () => {
+          expect(await windowFor(new Date(NOW + 120_000).toUTCString())).toBe(120_000);
+        });
+
+        it('a PAST HTTP-date → the finite 60000ms default, never negative', async () => {
+          expect(await windowFor(new Date(NOW - 120_000).toUTCString())).toBe(60_000);
+        });
+      });
+
+      it.each([
+        ['absent', undefined],
+        // The pre-#1948 read produced NaN here — the case the old test pinned as intended.
+        ['non-numeric', 'not-a-number'],
+        // Overflow guard applies to the PRODUCT: 1e306 in digits is finite until ×1000,
+        // and Date.now() + Infinity is a deadline that never expires.
+        ['all-digit overflow after ×1000', `1${'0'.repeat(306)}`],
+      ])('Retry-After %s → the finite 60000ms default', async (_label, header) => {
+        expect(await windowFor(header)).toBe(60_000);
+      });
     });
+  });
 
+  describe('edge cases — malformed data', () => {
     it('throws TransientError on malformed JSON response body', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products', () => {

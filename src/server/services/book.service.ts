@@ -3,20 +3,22 @@ import { deleteManagedBookFiles, type DeleteManagedFilesResult } from '../utils/
 import { uploadBookCover, CoverUploadError } from './cover-upload.js';
 import type { CoverWriteOutcome } from './cover-write.js';
 import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
-import { eq, sql, inArray } from 'drizzle-orm';
-import type { Db, DbOrTx } from '../../db/index.js';
+import { eq, sql, inArray, and, isNotNull } from 'drizzle-orm';
+import type { Db, DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
-import { slugify, findUnmatchedGenres, normalizeGenres } from '../../core/index.js';
+import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '@db/schema.js';
+import { slugify, findUnmatchedGenres, normalizeGenres } from '@core/index.js';
 import { replaceSeriesLink, upsertSeriesLink, type ReplaceSeriesLinkArgs } from './book-series-link.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
-import type { BookRow } from './types.js';
-import { productionTypeSchema, type BookStatus } from '../../shared/schemas/book.js';
+import type { BookRow, CompanionEbookRow } from './types.js';
+import { productionTypeSchema, type BookStatus } from '@shared/schemas/book.js';
+import { findCompanionEbooksByBookIds } from './companion-ebook.repository.js';
+import { toCompanionEbookV1, type CompanionEbookV1 } from '@shared/schemas/v1/companion-ebook.js';
 import { buildNewBookValues, type CreateBookInput, type ResolvedBookCreateInput } from './book-create.js';
-import { canonicalizeAsin } from '../../shared/asin.js';
-import { isUniqueViolation } from '../../shared/error-message.js';
+import { canonicalizeAsin } from '@shared/asin.js';
+import { isUniqueViolation } from '@shared/error-message.js';
 import {
   OwnedRecordingError,
   ASIN_UNIQUE_VIOLATION,
@@ -102,6 +104,14 @@ export interface BookWithAuthor extends BookRow {
   importListName?: string | null;
 }
 
+/** One entry of `findLibraryStatusByAsins`'s map — the v1 metadata-search
+ *  `library` annotation, ready to assign onto a result. */
+export interface LibraryStatusByAsin {
+  bookId: string;
+  status: BookStatus;
+  companionEbook: CompanionEbookV1 | null;
+}
+
 export class BookService {
   constructor(
     private db: Db,
@@ -161,34 +171,89 @@ export class BookService {
   /**
    * Batch ASIN → library-status lookup for the v1 metadata-search cross-reference
    * (#1537). Given the result ASINs of a metadata search, returns a Map keyed by
-   * the UPPERCASED ASIN with `{ bookId: <bk_ publicId>, status }` for each owned
-   * book — so the caller does a plain `.get(result.asin?.toUpperCase())`.
+   * the UPPERCASED ASIN with `{ bookId: <bk_ publicId>, status, companionEbook }`
+   * for each owned book — so the caller does a plain
+   * `.get(result.asin?.toUpperCase())`.
    *
    * Case-insensitive by design: ASINs are NOT globally normalized in narratorr
    * (the parser uppercases, but API validators only `.trim()` and add-by-ASIN
    * stores as-is), so an exact `IN` would silently miss a case-drifted stored
    * ASIN and wrongly show every such book as "not owned". We match on
-   * `lower(asin)` (the `book-list.service` precedent) and uppercase both the keys
-   * and the result rows. The query is bounded by the small search result set
-   * (currently ≤10) over the partial unique `idx_books_asin_unique`, so no
+   * `upper(asin)` — matching `idx_books_asin_unique`, which is
+   * `upper("asin") WHERE asin IS NOT NULL`, and matching what `:367` and `:484`
+   * already do. (An earlier revision used `lower(asin)` and cited a
+   * `book-list.service` precedent; that was the wrong precedent, and it made this
+   * query unable to use the index at all.)
+   *
+   * **`asin IS NOT NULL` in the predicate is NOT redundant.** SQLite will only use a
+   * PARTIAL index when the query restates its condition, even where the condition is
+   * logically implied. Measured with EXPLAIN QUERY PLAN against the real schema:
+   * `lower(asin) IN (…)` → `SCAN books`; `upper(asin) IN (…)` → **still** `SCAN books`;
+   * `upper(asin) IN (…) AND asin IS NOT NULL` → `SEARCH books USING INDEX
+   * idx_books_asin_unique`. Dropping either half silently returns this to a full scan
+   * of `books` on every metadata search.
+   *
+   * The query is bounded by the small search result set (currently ≤10), so no
    * chunking is needed — but guard the empty list so we never emit `IN ()`.
    *
-   * Null-ASIN owned books cannot match (the unique index is partial,
-   * `asin IS NOT NULL`); that limitation is accepted and documented in #1537.
+   * Null-ASIN owned books cannot match (the index is partial); that limitation is
+   * accepted and documented in #1537, so the added predicate encodes an existing
+   * invariant rather than changing behaviour.
+   *
+   * **Companion ebooks (#1961).** `companionEnabled` is supplied BY THE CALLER —
+   * this service takes no `SettingsService`, matching the convention
+   * `isCompanionEbookEligible` already sets. When it is false, or when no row
+   * matched, NO companion query is issued and every value carries
+   * `companionEbook: null`. Otherwise observations are batch-loaded by numeric
+   * `books.id` through `findCompanionEbooksByBookIds` (already chunked at 480),
+   * so the whole annotation costs one books select plus
+   * `ceil(matched / 480)` companion selects — never one per result.
+   *
+   * The select therefore also projects the numeric `books.id` (the companion FK).
+   * It does NOT project `books.path`: the exposure predicate takes exactly
+   * `{ enabled, bookStatus, observationStatus }` and must never grow a live/path
+   * term (see `src/shared/companion-ebook-exposure.ts`). The projection is built
+   * inside this method body, never as a module-level constant
+   * (`drizzle-schema-toplevel-deref-breaks-partial-mocks`).
    */
-  async findLibraryStatusByAsins(asins: string[]): Promise<Map<string, { bookId: string; status: BookStatus }>> {
-    const map = new Map<string, { bookId: string; status: BookStatus }>();
+  async findLibraryStatusByAsins(
+    asins: string[],
+    options: { companionEnabled: boolean },
+  ): Promise<Map<string, LibraryStatusByAsin>> {
+    const map = new Map<string, LibraryStatusByAsin>();
     if (asins.length === 0) return map;
 
-    const lowered = asins.map((a) => a.toLowerCase());
+    const uppered = asins.map((a) => a.toUpperCase());
     const rows = await this.db
-      .select({ bookId: books.publicId, status: books.status, asin: books.asin })
+      .select({ id: books.id, bookId: books.publicId, status: books.status, asin: books.asin })
       .from(books)
-      .where(inArray(sql`lower(${books.asin})`, lowered));
+      // `upper()`, and the redundant-looking `asin IS NOT NULL`, are BOTH required to hit
+      // `idx_books_asin_unique` — see the note above the method. Measured with
+      // EXPLAIN QUERY PLAN: `lower(asin) IN (…)` and `upper(asin) IN (…)` both SCAN;
+      // only `upper(asin) IN (…) AND asin IS NOT NULL` produces
+      // `SEARCH books USING INDEX idx_books_asin_unique`.
+      .where(and(inArray(sql`upper(${books.asin})`, uppered), isNotNull(books.asin)));
+
+    const matchedIds = rows.filter((r) => r.asin != null).map((r) => r.id);
+    const companionByBookId: Map<number, CompanionEbookRow> =
+      options.companionEnabled && matchedIds.length > 0
+        ? await findCompanionEbooksByBookIds(this.db, matchedIds)
+        : new Map();
 
     for (const row of rows) {
       if (row.asin == null) continue;
-      map.set(row.asin.toUpperCase(), { bookId: row.bookId, status: row.status as BookStatus });
+      const status = row.status as BookStatus;
+      map.set(row.asin.toUpperCase(), {
+        bookId: row.bookId,
+        status,
+        // The exposure→DTO decision lives in exactly one place (#1961 AC 10a) —
+        // no term, no size guard, and no `'epub'` literal is re-spelled here.
+        companionEbook: toCompanionEbookV1({
+          enabled: options.companionEnabled,
+          bookStatus: status,
+          observation: companionByBookId.get(row.id),
+        }),
+      });
     }
     return map;
   }
@@ -258,7 +323,12 @@ export class BookService {
     const resolved = await this.resolveCreateInput(data);
     const bookId = await this.createResolved(resolved);
 
-    this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: data.asin }, 'Book added to library');
+    // Report the ASIN the row was actually persisted with (#1898): read it off
+    // `resolved` so the enrich branch isn't logged as `undefined`, and run it
+    // through the same write-boundary canonicalization `createResolved` applied,
+    // so the line greps against the stored `books.asin` value. A miss logs an
+    // explicit `null` rather than a leftover input string.
+    this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: canonicalizeAsin(resolved.asin) }, 'Book added to library');
     this.trackUnmatchedGenres(data.genres).catch((error) => this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres'));
     return this.getById(bookId) as Promise<BookWithAuthor>;
   }

@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { scoreResult, resolveBookQualityInputs } from '../../core/utils/index.js';
-import type { SearchResult } from '../../core/index.js';
+import { scoreResult, resolveBookQualityInputs } from '@core/utils/index.js';
+import type { SearchResult } from '@core/index.js';
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookWithAuthor } from '../services/book.service.js';
 import type { BookListService } from '../services/book-list.service.js';

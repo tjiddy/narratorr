@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import { booksRoutes, type BookRouteDeps } from './books.js';
-import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
-import { DEFAULT_LIMITS } from '../../shared/schemas.js';
+import { DEFAULT_SETTINGS } from '@shared/schemas/settings/registry.js';
+import { DEFAULT_LIMITS } from '@shared/schemas.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { Services } from './index.js';
 import { RenameError } from '../services/rename.service.js';
@@ -63,7 +63,7 @@ const mockBook = {
 };
 
 /**
- * Build a complete `BookRouteDeps` with all 17 services mocked. Each call
+ * Build a complete `BookRouteDeps` with all 18 services mocked. Each call
  * derives fresh `vi.fn()`-backed mocks from `createMockServices()`, so a test
  * mutating the returned deps can't leak into a later call. Pass `overrides` to
  * replace any field; omitted fields keep their default mock.
@@ -93,6 +93,7 @@ function makeBookRouteDeps(overrides: Partial<BookRouteDeps> = {}): BookRouteDep
     eventBroadcaster: s.eventBroadcaster,
     seriesCardService: s.seriesCard,
     metadataService: s.metadata,
+    companionEbook: s.companionEbook,
     connectorService: makeMockConnector(),
     ...overrides,
   };
@@ -1141,6 +1142,91 @@ describe('books routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
 
       expect(res.statusCode).toBe(500);
+    });
+
+    // =======================================================================
+    // #1960 AC19/AC22 — rename caller 1: no-op / changed / thrown
+    // =======================================================================
+
+    describe('#1960 companion-ebook reconcile', () => {
+      beforeEach(() => {
+        (services.companionEbook.reconcileBook as Mock).mockResolvedValue(undefined);
+      });
+
+      it('AC19: a rename that MOVED the folder fires exactly one reconcileBook', async () => {
+        (services.rename.renameBook as Mock).mockResolvedValue({
+          oldPath: '/library/old', newPath: '/library/new',
+          message: 'Moved from /library/old to /library/new', filesRenamed: 0,
+        });
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+        expect(services.companionEbook.reconcileBook).toHaveBeenCalledWith(1);
+      });
+
+      it('AC19: a rename that only RENAMED FILES fires exactly one reconcileBook', async () => {
+        (services.rename.renameBook as Mock).mockResolvedValue({
+          oldPath: '/library/same', newPath: '/library/same',
+          message: 'Renamed 2 file(s)', filesRenamed: 2,
+        });
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+      });
+
+      it('AC22: the "Already organized" no-op shape fires ZERO reconciles', async () => {
+        // Discriminated STRUCTURALLY (`newPath === oldPath && filesRenamed === 0`), never on
+        // the message string. Nothing moved, so there is nothing to re-observe.
+        (services.rename.renameBook as Mock).mockResolvedValue({
+          oldPath: '/library/same', newPath: '/library/same',
+          message: 'Already organized', filesRenamed: 0,
+        });
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.companionEbook.reconcileBook).not.toHaveBeenCalled();
+      });
+
+      it('AC22: a THROW after the path write fires one reconcileBook and still propagates', async () => {
+        // `rename.service.ts` persists the new `books.path` BEFORE `renameFilesWithTemplate`
+        // can fail, so the EPUB may already have travelled — a throw always reconciles.
+        (services.rename.renameBook as Mock).mockRejectedValue(new Error('Unexpected'));
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+        expect(res.statusCode).toBe(500);
+        expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+        expect(services.companionEbook.reconcileBook).toHaveBeenCalledWith(1);
+      });
+
+      it('AC22: a coded RenameError also reconciles, with its mapping unchanged', async () => {
+        (services.rename.renameBook as Mock).mockRejectedValue(
+          new RenameError('Book has no path', 'NO_PATH'),
+        );
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+        expect(res.statusCode).toBe(400);
+        expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+      });
+
+      it('a rejecting reconciler changes neither the status code nor the body', async () => {
+        (services.companionEbook.reconcileBook as Mock).mockRejectedValue(new Error('reconcile rejected'));
+        (services.rename.renameBook as Mock).mockResolvedValue({
+          oldPath: '/library/old', newPath: '/library/new',
+          message: 'Moved from /library/old to /library/new', filesRenamed: 1,
+        });
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload).newPath).toBe('/library/new');
+      });
     });
   });
 
@@ -2442,10 +2528,10 @@ describe('books routes', () => {
 
   // #372 — Identifiers endpoint (duplicate detection)
   describe('GET /api/books/identifiers', () => {
-    it('returns identifiers including authorSlug from service through HTTP boundary', async () => {
+    it('returns identifiers including id and authorSlug from service through HTTP boundary', async () => {
       const mockIds = [
-        { asin: 'B001', title: 'Book One', authorName: 'Author A', authorSlug: 'author-a' },
-        { asin: null, title: 'Book Two', authorName: null, authorSlug: null },
+        { id: 1, asin: 'B001', title: 'Book One', authorName: 'Author A', authorSlug: 'author-a' },
+        { id: 2, asin: null, title: 'Book Two', authorName: null, authorSlug: null },
       ];
       (services.bookList.getIdentifiers as Mock).mockResolvedValue(mockIds);
 
@@ -2454,8 +2540,10 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body).toHaveLength(2);
-      expect(body[0]).toEqual({ asin: 'B001', title: 'Book One', authorName: 'Author A', authorSlug: 'author-a' });
-      expect(body[1]).toEqual({ asin: null, title: 'Book Two', authorName: null, authorSlug: null });
+      // #1916 — `id` must survive serialization; the search card links at it.
+      expect(typeof body[0].id).toBe('number');
+      expect(body[0]).toEqual({ id: 1, asin: 'B001', title: 'Book One', authorName: 'Author A', authorSlug: 'author-a' });
+      expect(body[1]).toEqual({ id: 2, asin: null, title: 'Book Two', authorName: null, authorSlug: null });
     });
 
     it('returns 500 when service throws', async () => {
@@ -3018,7 +3106,7 @@ import {
 } from 'fastify-type-provider-zod';
 import multipart from '@fastify/multipart';
 import { registerRoutes } from './index.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { inject } from '../__tests__/helpers.js';
 import { CoverUploadError } from '../services/book.service.js';
 
@@ -3362,7 +3450,8 @@ describe('POST /api/books/:id/cover', () => {
   });
 });
 
-// #1558 — `BookRouteDeps` now marks all 17 services required, so the old
+// #1558 — `BookRouteDeps` now marks all 18 services required (17 + #1960's
+// `companionEbook`), so the old
 // `#514` "absent blacklistService" test (which forced `services.blacklist =
 // undefined` and asserted search is NOT triggered) is no longer representable.
 // The positive required-deps path — search IS triggered for a `searchImmediately`
@@ -3374,12 +3463,12 @@ describe('#1558 makeBookRouteDeps factory', () => {
     'settingsService', 'renameService', 'mergeService', 'taggingService',
     'eventHistory', 'bookDeletionService', 'indexerSearchService', 'indexerService',
     'bookRejectionService', 'blacklistService', 'eventBroadcaster', 'seriesCardService',
-    'metadataService',
+    'metadataService', 'companionEbook',
   ];
 
-  it('returns a complete BookRouteDeps with all 17 fields defined', () => {
+  it('returns a complete BookRouteDeps with all 18 fields defined', () => {
     const deps = makeBookRouteDeps();
-    expect(ALL_FIELDS).toHaveLength(17);
+    expect(ALL_FIELDS).toHaveLength(18);
     for (const field of ALL_FIELDS) {
       expect(deps[field], `expected ${field} to be defined`).toBeDefined();
     }
@@ -3876,6 +3965,73 @@ describe('#1071 series routes', () => {
         expect(res.statusCode).toBe(200);
         expect(services.rename.renameBook).not.toHaveBeenCalled();
         expect(services.tagging.retagBook).not.toHaveBeenCalled();
+      });
+
+      // =====================================================================
+      // #1960 AC20/AC22 — rename caller 2: the same no-op / changed / thrown
+      // shapes as the standalone route, gated on `renameFiles`.
+      // =====================================================================
+
+      describe('#1960 companion-ebook reconcile', () => {
+        beforeEach(() => {
+          (services.companionEbook.reconcileBook as Mock).mockResolvedValue(undefined);
+        });
+
+        it('AC20: renameFiles=true with a MATERIAL rename fires exactly one reconcileBook', async () => {
+          primeSuccessfulFixMatch();
+          (services.rename.renameBook as Mock).mockResolvedValueOnce({ oldPath: '/a', newPath: '/b', message: 'ok', filesRenamed: 1 });
+
+          const res = await app.inject({
+            method: 'POST', url: '/api/books/7/fix-match',
+            payload: { asin: 'B_NEW', renameFiles: true },
+          });
+
+          expect(res.statusCode).toBe(200);
+          expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+          expect(services.companionEbook.reconcileBook).toHaveBeenCalledWith(7);
+        });
+
+        it('AC20: renameFiles=true whose rename REJECTS still fires one reconcileBook, and the swallow is unchanged', async () => {
+          primeSuccessfulFixMatch();
+          (services.rename.renameBook as Mock).mockRejectedValueOnce(new Error('rename blew up'));
+
+          const res = await app.inject({
+            method: 'POST', url: '/api/books/7/fix-match',
+            payload: { asin: 'B_NEW', renameFiles: true },
+          });
+
+          // The existing `catch` still absorbs the failure — Fix Match itself succeeds.
+          expect(res.statusCode).toBe(200);
+          expect(services.companionEbook.reconcileBook).toHaveBeenCalledTimes(1);
+        });
+
+        it('AC22: renameFiles=true with the "Already organized" no-op shape fires ZERO reconciles', async () => {
+          primeSuccessfulFixMatch();
+          (services.rename.renameBook as Mock).mockResolvedValueOnce({
+            oldPath: '/library/book-7', newPath: '/library/book-7',
+            message: 'Already organized', filesRenamed: 0,
+          });
+
+          const res = await app.inject({
+            method: 'POST', url: '/api/books/7/fix-match',
+            payload: { asin: 'B_NEW', renameFiles: true },
+          });
+
+          expect(res.statusCode).toBe(200);
+          expect(services.companionEbook.reconcileBook).not.toHaveBeenCalled();
+        });
+
+        it('AC20: renameFiles=false fires ZERO reconciles from this seam', async () => {
+          primeSuccessfulFixMatch();
+
+          const res = await app.inject({
+            method: 'POST', url: '/api/books/7/fix-match',
+            payload: { asin: 'B_NEW', renameFiles: false },
+          });
+
+          expect(res.statusCode).toBe(200);
+          expect(services.companionEbook.reconcileBook).not.toHaveBeenCalled();
+        });
       });
 
       // #1670 — Fix Match refreshes the OPF on BOTH the retag and non-retag paths, gated on

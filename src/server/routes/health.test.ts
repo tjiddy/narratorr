@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { TaskRegistryError } from '../services/task-registry.js';
 
 vi.mock('fs/promises', async (importOriginal) => {

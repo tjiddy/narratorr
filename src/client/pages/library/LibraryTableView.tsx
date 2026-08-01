@@ -1,11 +1,11 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { formatBytes } from '@/lib/api';
 import { formatDate } from '@/lib/format';
 import { ArrowUpDownIcon } from '@/components/icons';
 import type { DisplayBook, SortField, SortDirection } from './helpers.js';
 import { computeMbPerHour } from './helpers.js';
 import { bookStatusChipStyles } from '@/lib/status';
-import { requireDefined } from '../../../shared/utils/assert.js';
+import { requireDefined } from '@shared/utils/assert.js';
 
 function formatMbHr(book: DisplayBook): string {
   const val = computeMbPerHour(book);

@@ -18,7 +18,6 @@ function makeBulkService(overrides?: Record<string, unknown>) {
     getActiveJob: vi.fn().mockReturnValue(null),
     startRenameJob: vi.fn().mockResolvedValue('job-uuid-1'),
     startRetagJob: vi.fn().mockResolvedValue('job-uuid-2'),
-    startConvertJob: vi.fn().mockResolvedValue('job-uuid-3'),
     startWriteMetadataSidecarsJob: vi.fn().mockReturnValue('job-uuid-4'),
     getJob: vi.fn().mockReturnValue(null),
     ...overrides,
@@ -188,37 +187,13 @@ describe('POST /api/books/bulk/retag', () => {
   });
 });
 
-describe('POST /api/books/bulk/convert', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-  });
-
-  it('returns 202 { jobId } and starts convert job', async () => {
+// #2056 — POST /api/books/bulk/convert retired along with the UI-unreachable re-encode job.
+describe('POST /api/books/bulk/convert (removed)', () => {
+  it('returns 404', async () => {
     const services = createMockServices({ bulkOperation: makeBulkService() });
     const app = await createTestApp(services);
     const resp = await app.inject({ method: 'POST', url: '/api/books/bulk/convert' });
-    expect(resp.statusCode).toBe(202);
-    expect(resp.json()).toEqual({ jobId: 'job-uuid-3' });
-  });
-
-  it('returns 503 when ffmpeg is not configured', async () => {
-    const bulkOperation = makeBulkService({
-      startConvertJob: vi.fn().mockRejectedValue(new BulkOpError('ffmpeg not configured', 'FFMPEG_NOT_CONFIGURED')),
-    });
-    const services = createMockServices({ bulkOperation });
-    const app = await createTestApp(services);
-    const resp = await app.inject({ method: 'POST', url: '/api/books/bulk/convert' });
-    expect(resp.statusCode).toBe(503);
-  });
-
-  it('returns 409 BULK_OP_IN_PROGRESS when a job is already running', async () => {
-    const bulkOperation = makeBulkService({
-      startConvertJob: vi.fn().mockRejectedValue(new BulkOpError('A bulk operation is already running', 'BULK_OP_IN_PROGRESS')),
-    });
-    const services = createMockServices({ bulkOperation });
-    const app = await createTestApp(services);
-    const resp = await app.inject({ method: 'POST', url: '/api/books/bulk/convert' });
-    expect(resp.statusCode).toBe(409);
+    expect(resp.statusCode).toBe(404);
   });
 });
 
@@ -266,7 +241,7 @@ describe('GET /api/books/bulk/:jobId', () => {
   });
 
   it('returns 200 with { status: completed, completed, total, failures } after completion', async () => {
-    const completedJob = { jobId: 'job-2', type: 'convert', status: 'completed', completed: 10, total: 10, failures: 0 };
+    const completedJob = { jobId: 'job-2', type: 'rename', status: 'completed', completed: 10, total: 10, failures: 0 };
     const bulkOperation = makeBulkService({ getJob: vi.fn().mockReturnValue(completedJob) });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);

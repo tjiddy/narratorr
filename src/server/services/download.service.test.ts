@@ -2,14 +2,14 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { DownloadService, DownloadError, DuplicateDownloadError } from './download.service.js';
 import { type DownloadClientService } from './download-client.service.js';
-import { DownloadUrl } from '../../core/utils/download-url.js';
+import { DownloadUrl } from '@core/utils/download-url.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 
 import { createMockDbBook, createMockDbIndexer } from '../__tests__/factories.js';
-import * as statusRegistry from '../../shared/download-status-registry.js';
-import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
+import * as statusRegistry from '@shared/download-status-registry.js';
+import { deriveDisplayStatus } from '@shared/download-status-registry.js';
 
 /** Serialize a Drizzle SQL expression into a raw SQL+params pair for predicate assertions. */
 const dialect = new SQLiteSyncDialect();
@@ -2389,7 +2389,7 @@ describe('DownloadService', () => {
     });
 
     it('thrown IndexerError emits warn-level log', async () => {
-      const { IndexerError } = await import('../../core/index.js');
+      const { IndexerError } = await import('@core/index.js');
       const log = createMockLogger();
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
       const err = new IndexerError('MAM', 'torrent fetch failed');

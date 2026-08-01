@@ -5,8 +5,8 @@ import { NumberField } from '@/components/settings/NumberField';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { inputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { filteringFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
-import { CANONICAL_LANGUAGES, type CanonicalLanguage } from '../../../shared/language-constants.js';
+import { filteringFormSchema, DEFAULT_SETTINGS, type AppSettings } from '@shared/schemas.js';
+import { CANONICAL_LANGUAGES, type CanonicalLanguage } from '@shared/language-constants.js';
 import { SettingsSection } from './SettingsSection';
 
 type FilteringFormData = z.infer<typeof filteringFormSchema>;

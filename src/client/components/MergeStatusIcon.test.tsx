@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MergeStatusIcon } from './MergeStatusIcon';
 import type { MergeOutcome } from '@/hooks/useMergeProgress';
-import type { MergeDisplayPhase } from '../../shared/schemas/sse-events.js';
+import type { MergeDisplayPhase } from '@shared/schemas/sse-events.js';
 
 function getIconClass(container: HTMLElement): string {
   const svg = container.querySelector('svg');

@@ -3,7 +3,7 @@ import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { ReferenceReadService } from './reference-read.service.js';
 import { createMockDb, mockDbChain, inject } from '../__tests__/helpers.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 
 const db = createMockDb();
 const service = new ReferenceReadService(inject<Db>(db));

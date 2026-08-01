@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react';
 import { z } from 'zod';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { ZapIcon, AlertTriangleIcon, TerminalIcon } from '@/components/icons';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
@@ -10,7 +10,7 @@ import { InfoTip } from '@/components/settings/InfoTip';
 import { errorInputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { TAG_MODE_LABELS } from '@/lib/constants';
-import { tagModeSchema, postProcessingScriptTimeoutField, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { tagModeSchema, postProcessingScriptTimeoutField, DEFAULT_SETTINGS, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 

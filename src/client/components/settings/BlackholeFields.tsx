@@ -1,5 +1,5 @@
 import type { UseFormRegister, FieldErrors } from 'react-hook-form';
-import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
+import type { CreateDownloadClientFormData } from '@shared/schemas.js';
 import { SelectWithChevron } from './SelectWithChevron';
 import { inputClass, errorInputClass } from './formStyles';
 

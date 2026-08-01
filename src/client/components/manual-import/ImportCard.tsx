@@ -11,7 +11,7 @@ import {
 } from '@/components/icons';
 import { Badge } from '@/components/Badge';
 import { AudioPreview } from '@/pages/book/AudioPreview';
-import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 export type { ImportRow } from './types.js';
 
 interface ImportCardProps {

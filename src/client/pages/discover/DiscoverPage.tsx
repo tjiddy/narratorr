@@ -8,11 +8,11 @@ import { useBookStats } from '@/hooks/useLibrary';
 import { RefreshIcon, LoadingSpinner } from '@/components/icons';
 import { ErrorState } from '@/components/ErrorState.js';
 import { PageHeader } from '@/components/PageHeader.js';
-import { SUGGESTION_REASONS, SUGGESTION_REASON_REGISTRY, type SuggestionReason } from '../../../shared/schemas/discovery.js';
+import { SUGGESTION_REASONS, SUGGESTION_REASON_REGISTRY, type SuggestionReason } from '@shared/schemas/discovery.js';
 import { SuggestionCard } from './SuggestionCard.js';
 import { DiscoverEmpty } from './DiscoverEmpty.js';
 import { DiscoverSkeleton } from './DiscoverSkeleton.js';
-import { parseWordList, matchesWord } from '../../../shared/parse-word-list.js';
+import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
 
 type ReasonFilter = 'all' | SuggestionReason;
 

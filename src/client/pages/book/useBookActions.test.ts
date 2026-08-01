@@ -28,7 +28,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       refreshScanBook: vi.fn(),
       getFfmpegStatus: vi.fn().mockResolvedValue({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' }),
       getSettings: vi.fn().mockResolvedValue({
-        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1 },
+        processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, maxConcurrentProcessing: 1 },
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
         search: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 },
         import: { deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5 },
@@ -634,6 +634,46 @@ describe('useBookActions', () => {
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Refresh scan failed: No audio files found');
       });
+      queryClient.clear();
+    });
+
+    // #1963 AC30 — the invalidation lives in onSettled, not onSuccess. The server fires the
+    // companion-ebook reconcile in a `finally`, so a book with no audio files throws
+    // NO_AUDIO_FILES *after* the ebook observation was refreshed; invalidating only on success
+    // would leave the Ebook panel showing a stale observation in exactly that case.
+    it('still invalidates when the scan REJECTS, and toasts only the error', async () => {
+      (api.refreshScanBook as Mock).mockRejectedValue(new Error('No audio files found'));
+      const { queryClient, wrapper } = createTestHarness();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
+
+      act(() => { result.current.refreshScanMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 1] });
+      });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 1, 'files'] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+      expect(toast.error).toHaveBeenCalledWith('Refresh scan failed: No audio files found');
+      expect(toast.success).not.toHaveBeenCalled();
+      queryClient.clear();
+    });
+
+    it('invalidates the book key exactly once on success, and keeps the success toast', async () => {
+      (api.refreshScanBook as Mock).mockResolvedValue({
+        bookId: 1, codec: 'mp3', bitrate: 128000, fileCount: 1, durationMinutes: 60, narratorsUpdated: false,
+      });
+      const { queryClient, wrapper } = createTestHarness();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
+
+      act(() => { result.current.refreshScanMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Refreshed audio metadata');
+      });
+      expect(invalidateSpy.mock.calls.filter(([arg]) => JSON.stringify(arg) === JSON.stringify({ queryKey: ['books', 1] })))
+        .toHaveLength(1);
       queryClient.clear();
     });
 

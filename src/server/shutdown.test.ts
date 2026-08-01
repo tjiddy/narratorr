@@ -28,6 +28,7 @@ describe('gracefulShutdown', () => {
       eventBroadcaster: { stop: vi.fn(() => { order.push('eventBroadcaster.stop'); }) },
       importSubmissionRunner: { stop: vi.fn(async () => { order.push('importSubmissionRunner.stop'); }) },
       importQueueWorker: { stop: vi.fn(async () => { order.push('importQueueWorker.stop'); }) },
+      companionEbook: { stop: vi.fn(async () => { order.push('companionEbook.stop'); }) },
       connector: { stop: vi.fn(async () => { order.push('connector.stop'); }) },
     } as unknown as Services;
   }
@@ -44,7 +45,7 @@ describe('gracefulShutdown', () => {
     // (#1776); connector drain is both PRESENT and ordered before app.close —
     // catches a missing scheduler/heartbeat stop, a deleted connector stop(),
     // and a stop() moved after close().
-    expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop', 'connector.stop', 'app.close']);
+    expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop', 'companionEbook.stop', 'connector.stop', 'app.close']);
     expect(jobScheduler.stopAll).toHaveBeenCalledTimes(1);
     expect(services.eventBroadcaster.stop).toHaveBeenCalledTimes(1);
     expect(services.connector.stop).toHaveBeenCalledTimes(1);
@@ -63,6 +64,7 @@ describe('gracefulShutdown', () => {
           releaseImportStop = () => { order.push('importQueueWorker.stop'); resolve(); };
         })),
       },
+      companionEbook: { stop: vi.fn(async () => { order.push('companionEbook.stop'); }) },
       connector: { stop: vi.fn(async () => { order.push('connector.stop'); }) },
     } as unknown as Services;
 
@@ -77,7 +79,7 @@ describe('gracefulShutdown', () => {
     releaseImportStop();
     await done;
 
-    expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop', 'connector.stop', 'app.close']);
+    expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop', 'companionEbook.stop', 'connector.stop', 'app.close']);
   });
 
   it('awaits connector.stop() before invoking app.close() (drain is not fire-and-forget)', async () => {
@@ -89,6 +91,7 @@ describe('gracefulShutdown', () => {
       eventBroadcaster: { stop: vi.fn(() => { order.push('eventBroadcaster.stop'); }) },
       importSubmissionRunner: { stop: vi.fn(async () => { order.push('importSubmissionRunner.stop'); }) },
       importQueueWorker: { stop: vi.fn(async () => { order.push('importQueueWorker.stop'); }) },
+      companionEbook: { stop: vi.fn(async () => { order.push('companionEbook.stop'); }) },
       connector: {
         stop: vi.fn(() => new Promise<void>((resolve) => {
           releaseConnectorStop = () => { order.push('connector.stop'); resolve(); };
@@ -106,7 +109,7 @@ describe('gracefulShutdown', () => {
     releaseConnectorStop();
     await done;
 
-    expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop', 'connector.stop', 'app.close']);
+    expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop', 'companionEbook.stop', 'connector.stop', 'app.close']);
   });
 
   // #1515 — the scheduler must be quiesced BEFORE the awaited drains run, not just
@@ -126,6 +129,7 @@ describe('gracefulShutdown', () => {
           releaseImportStop = () => { order.push('importQueueWorker.stop'); resolve(); };
         })),
       },
+      companionEbook: { stop: vi.fn(async () => { order.push('companionEbook.stop'); }) },
       connector: { stop: vi.fn(async () => { order.push('connector.stop'); }) },
     } as unknown as Services;
 
@@ -144,6 +148,45 @@ describe('gracefulShutdown', () => {
     releaseImportStop();
     await done;
 
-    expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop', 'connector.stop', 'app.close']);
+    expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop', 'companionEbook.stop', 'connector.stop', 'app.close']);
+  });
+
+  // #1959 (F3) — the companion drain must be AWAITED, not fired and forgotten. Every other
+  // case in this file uses a companion stop that resolves immediately and records its order
+  // synchronously, so dropping the `await` in shutdown.ts satisfies all of them: the ordering
+  // array comes out identical either way. Parking the drain on a deferred promise is the only
+  // shape that can tell the two apart — with the `await` removed, `connector.stop` and
+  // `app.close` both run while the reconciler still has a guarded observation write in flight.
+  it('awaits companionEbook.stop() before the connector drain and app.close (drain is not fire-and-forget)', async () => {
+    const order: string[] = [];
+    let releaseCompanionStop!: () => void;
+    const app = makeApp(order);
+    const jobScheduler = makeScheduler(order);
+    const services = {
+      eventBroadcaster: { stop: vi.fn(() => { order.push('eventBroadcaster.stop'); }) },
+      importSubmissionRunner: { stop: vi.fn(async () => { order.push('importSubmissionRunner.stop'); }) },
+      importQueueWorker: { stop: vi.fn(async () => { order.push('importQueueWorker.stop'); }) },
+      companionEbook: {
+        stop: vi.fn(() => new Promise<void>((resolve) => {
+          releaseCompanionStop = () => { order.push('companionEbook.stop'); resolve(); };
+        })),
+      },
+      connector: { stop: vi.fn(async () => { order.push('connector.stop'); }) },
+    } as unknown as Services;
+
+    const done = gracefulShutdown(app, services, jobScheduler);
+    // Flush all pending microtasks so execution parks on the awaited companion drain.
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
+
+    expect(services.companionEbook.stop).toHaveBeenCalledTimes(1);
+    // Blocked on the still-pending companion drain — neither of these may have run.
+    expect(services.connector.stop).not.toHaveBeenCalled();
+    expect(app.close).not.toHaveBeenCalled();
+    expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop']);
+
+    releaseCompanionStop();
+    await done;
+
+    expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop', 'companionEbook.stop', 'connector.stop', 'app.close']);
   });
 });

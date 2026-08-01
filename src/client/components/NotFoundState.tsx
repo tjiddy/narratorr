@@ -1,5 +1,5 @@
 import type { ElementType } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { ArrowLeftIcon } from '@/components/icons';
 
 interface NotFoundStateProps {

@@ -7,8 +7,8 @@ import { createMockSettingsService } from '../__tests__/helpers.js';
 // arrow reading a hoisted toggle so vi.clearAllMocks() never wipes it; flip to `false` in the
 // not-detected tests. Default detected so the retag/tag success paths are deterministic.
 const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
-vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../core/utils/audio-processor.js')>();
+vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
 });
 
@@ -63,7 +63,7 @@ vi.mock('drizzle-orm', async (importOriginal) => {
 });
 
 // Mock db schema
-vi.mock('../../db/schema.js', () => ({
+vi.mock('@db/schema.js', () => ({
   books: { id: 'books.id' },
   authors: { id: 'authors.id', name: 'authors.name' },
   bookAuthors: { bookId: 'bookAuthors.bookId', authorId: 'bookAuthors.authorId', position: 'bookAuthors.position' },

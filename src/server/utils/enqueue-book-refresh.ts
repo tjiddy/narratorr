@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { ConnectorReason } from '../../core/connectors/types.js';
+import type { ConnectorReason } from '@core/connectors/types.js';
 import type { ConnectorService } from '../services/connector.service.js';
 import type { RetagResult } from '../services/tagging.service.js';
 import { fireAndForget } from './fire-and-forget.js';
@@ -16,12 +16,12 @@ export interface BookRefreshItem {
 
 /**
  * Fire-and-forget a connector refresh for a single book after a post-import file mutation
- * (merge, convert, OPF/cover sidecar write, re-tag). Centralized so every trigger site
+ * (merge, OPF/cover sidecar write, re-tag). Centralized so every trigger site
  * constructs the same item and fires identically (DRY) rather than copying the
  * `fireAndForget` + item-construction boilerplate.
  *
  * - **Never awaited**: a rejecting `notifyRefresh` is logged but never blocks or fails the
- *   operation that triggered it (the merge/convert/edit/reconcile/retag still succeeded).
+ *   operation that triggered it (the merge/edit/reconcile/retag still succeeded).
  * - **No-op when no connectors**: the guard here plus `notifyRefresh`'s own early-return when
  *   no connectors are enabled make firing free when ABS/Plex isn't configured.
  */

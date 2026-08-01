@@ -6,13 +6,13 @@ import { type SettingsService } from '../services/settings.service.js';
 import { type SearchSessionManager } from '../services/search-session.js';
 import { postProcessSearchResults } from '../services/search-pipeline.js';
 import { cleanIndexerQuery } from '../services/indexer-query.js';
-import { searchQuerySchema, type SearchQuery } from '../../shared/schemas.js';
+import { searchQuerySchema, type SearchQuery } from '@shared/schemas.js';
 import type {
   SearchStartEvent,
   IndexerCompleteEvent,
   IndexerErrorEvent,
   IndexerCancelledEvent,
-} from '../../shared/schemas/search-stream.js';
+} from '@shared/schemas/search-stream.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { SSE_HEARTBEAT_FRAME, startHeartbeat, stopHeartbeat } from '../utils/sse-stream.js';
 

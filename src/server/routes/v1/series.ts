@@ -1,23 +1,19 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { z } from 'zod';
-import type { Db } from '../../../db/index.js';
-import { series } from '../../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { series } from '@db/schema.js';
 import type { ReferenceReadService } from '../../services/reference-read.service.js';
 import {
   seriesV1Schema,
   seriesV1ListQuerySchema,
   toSeriesV1,
-} from '../../../shared/schemas/v1/series.js';
-import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+} from '@shared/schemas/v1/series.js';
+import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 
 export interface V1SeriesRouteDeps {
   referenceReadService: ReferenceReadService;
 }
-
-/** `:publicId` path param. `.strict()` per the v1 owned-schema convention. */
-const publicIdParamSchema = z.object({ publicId: z.string().min(1) }).strict();
 
 /**
  * Native public API v1 — Series (read). Registers `GET /api/v1/series` and
@@ -57,7 +53,7 @@ export async function v1SeriesRoutes(app: FastifyInstance, deps: V1SeriesRouteDe
         '/series/:publicId',
         {
           schema: {
-            params: publicIdParamSchema,
+            params: v1PublicIdParamSchema,
             response: { 200: seriesV1Schema, 400: v1ErrorEnvelopeSchema, 404: v1ErrorEnvelopeSchema },
           },
         },

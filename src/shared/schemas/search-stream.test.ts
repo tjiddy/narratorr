@@ -9,7 +9,7 @@ import {
   type SearchResultPayload,
   type SearchResponsePayload,
 } from './search-stream.js';
-import type { SearchResult } from '../../core/indexers/types.js';
+import type { SearchResult } from '@core/indexers/types.js';
 import type { SearchResponse } from '../../client/lib/api/search.js';
 
 describe('search-stream event schemas', () => {

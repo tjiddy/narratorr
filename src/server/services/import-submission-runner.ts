@@ -1,14 +1,14 @@
 import { EventEmitter } from 'node:events';
 import { eq, and, asc } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db, DbOrTx } from '../../db/index.js';
-import { importSubmissions, importSubmissionItems } from '../../db/schema.js';
+import type { Db, DbOrTx } from '@db/index.js';
+import { importSubmissions, importSubmissionItems } from '@db/schema.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { OwnedRecordingError, type BookService } from './book.service.js';
 import { ASIN_UNIQUE_VIOLATION } from './book-dedup.js';
-import { isUniqueViolation } from '../../shared/error-message.js';
+import { isUniqueViolation } from '@shared/error-message.js';
 import type { BookImportService } from './book-import.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { NotifierService } from './notifier.service.js';
@@ -17,7 +17,7 @@ import { classifyConfirmItem } from './import-confirm-item.helpers.js';
 import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
 import type { ImportConfirmItem } from './library-scan.service.js';
 import type { ManualImportJobPayload } from './import-adapters/types.js';
-import { aggregateDispositions, stagedImportItemSchema, type ItemDisposition, type SubmissionAggregates, type SubmissionSource } from '../../core/import-staging/schemas.js';
+import { aggregateDispositions, stagedImportItemSchema, type ItemDisposition, type SubmissionAggregates, type SubmissionSource } from '@core/import-staging/schemas.js';
 
 const SAFETY_POLL_INTERVAL_MS = 30_000;
 

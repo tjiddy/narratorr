@@ -35,13 +35,14 @@ import { filesystemApi } from './filesystem.js';
 import { indexersApi } from './indexers.js';
 import { libraryScanApi } from './library-scan.js';
 import { notifiersApi } from './notifiers.js';
-import type { NotificationEvent } from '../../../shared/notification-events.js';
+import type { NotificationEvent } from '@shared/notification-events.js';
 import { remotePathMappingsApi } from './remote-path-mappings.js';
 import { searchApi } from './search.js';
 import { settingsApi } from './settings.js';
 import { eventHistoryApi } from './event-history.js';
 import { systemApi } from './system.js';
 import { submissionsApi } from './submissions.js';
+import { companionEbookApi } from './companion-ebook.js';
 
 beforeEach(() => {
   mockFetchApi.mockClear();
@@ -207,42 +208,13 @@ describe('blacklistApi', () => {
 });
 
 describe('booksApi', () => {
-  it('getBooks → GET /books', async () => {
-    await booksApi.getBooks();
-    expect(mockFetchApi).toHaveBeenCalledWith('/books');
-  });
-
-  it('getBooks with status filter → GET /books?status=...', async () => {
-    await booksApi.getBooks({ status: 'missing' });
-    expect(mockFetchApi).toHaveBeenCalledWith('/books?status=missing');
-  });
-
-  it('getBooks with all params → GET /books?status=wanted&search=tolkien&sortField=title&sortDirection=asc&limit=10&offset=20', async () => {
-    await booksApi.getBooks({ status: 'wanted', search: 'tolkien', sortField: 'title', sortDirection: 'asc', limit: 10, offset: 20 });
-    expect(mockFetchApi).toHaveBeenCalledWith('/books?status=wanted&search=tolkien&sortField=title&sortDirection=asc&limit=10&offset=20');
-  });
+  // `getBooks` was removed in #1951 (no client callers left — see the comment on
+  // `booksApi` in books.ts). The shared `buildBookListQuery` it used is still reached
+  // through `listLibraryBooks` via `buildLibraryBookListQuery`, so the serialization
+  // contract below covers the same builder; only the dead wrapper's duplicate cases
+  // went away.
 
   // #1143 — server-side author/series/narrator filters: URL serialization contract
-  it('getBooks with author filter → GET /books?author=...', async () => {
-    await booksApi.getBooks({ author: 'Brandon Sanderson' });
-    expect(mockFetchApi).toHaveBeenCalledWith('/books?author=Brandon+Sanderson');
-  });
-
-  it('getBooks with series filter → GET /books?series=...', async () => {
-    await booksApi.getBooks({ series: 'The Stormlight Archive' });
-    expect(mockFetchApi).toHaveBeenCalledWith('/books?series=The+Stormlight+Archive');
-  });
-
-  it('getBooks with narrator filter → GET /books?narrator=...', async () => {
-    await booksApi.getBooks({ narrator: 'Michael Kramer' });
-    expect(mockFetchApi).toHaveBeenCalledWith('/books?narrator=Michael+Kramer');
-  });
-
-  it('getBooks with author + series + narrator combined → URL carries all three (#1143)', async () => {
-    await booksApi.getBooks({ author: 'Sanderson', series: 'Stormlight', narrator: 'Kramer' });
-    expect(mockFetchApi).toHaveBeenCalledWith('/books?author=Sanderson&series=Stormlight&narrator=Kramer');
-  });
-
   it('listLibraryBooks with author → GET /library/books?author=...', async () => {
     await booksApi.listLibraryBooks({ author: 'Brandon Sanderson' });
     expect(mockFetchApi).toHaveBeenCalledWith('/library/books?author=Brandon+Sanderson');
@@ -263,20 +235,30 @@ describe('booksApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/library/books?status=imported&search=kings&author=Sanderson');
   });
 
-  it('getBooks omits author/series/narrator from URL when not set', async () => {
-    await booksApi.getBooks({ status: 'wanted' });
+  // Retargeted from `getBooks` when it was removed (#1951). These pin
+  // `buildBookListQuery`'s falsy-skip (`if (value)`), which is shared machinery — not
+  // anything specific to the wrapper that used to call it.
+  it('listLibraryBooks omits author/series/narrator from URL when not set', async () => {
+    await booksApi.listLibraryBooks({ status: 'wanted' });
     const url = (mockFetchApi.mock.calls[0]?.[0] ?? '') as string;
     expect(url).not.toContain('author=');
     expect(url).not.toContain('series=');
     expect(url).not.toContain('narrator=');
   });
 
-  it('getBooks omits author/series/narrator when passed as empty strings', async () => {
-    await booksApi.getBooks({ author: '', series: '', narrator: '' });
+  it('listLibraryBooks omits author/series/narrator when passed as empty strings', async () => {
+    await booksApi.listLibraryBooks({ author: '', series: '', narrator: '' });
     const url = (mockFetchApi.mock.calls[0]?.[0] ?? '') as string;
     expect(url).not.toContain('author=');
     expect(url).not.toContain('series=');
     expect(url).not.toContain('narrator=');
+  });
+
+  // Also retargeted from `getBooks` (#1951): the full param set, which the
+  // listLibraryBooks cases above do not otherwise cover (sort fields, limit, offset).
+  it('listLibraryBooks with all params serializes every field', async () => {
+    await booksApi.listLibraryBooks({ status: 'wanted', search: 'tolkien', sortField: 'title', sortDirection: 'asc', limit: 10, offset: 20 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/library/books?status=wanted&search=tolkien&sortField=title&sortDirection=asc&limit=10&offset=20');
   });
 
   it('getBookStats → GET /books/stats', async () => {
@@ -551,6 +533,16 @@ describe('libraryScanApi', () => {
     await libraryScanApi.cancelMatchJob('abc123');
     expect(mockFetchApi).toHaveBeenCalledWith('/library/import/match/abc123', expect.objectContaining({ method: 'DELETE' }));
   });
+
+  // #2055 — dumb transport: the ASIN goes out verbatim (normalizing is the re-pick
+  // predicate's job; the server re-trims), and the scanner value is never rounded.
+  it('corroborateImportDuration → POST /library/import/duration-corroboration with asin + scannedSeconds', async () => {
+    await libraryScanApi.corroborateImportDuration({ asin: 'B00CXXEX8W', scannedSeconds: 33219.47 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/library/import/duration-corroboration', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ asin: 'B00CXXEX8W', scannedSeconds: 33219.47 }),
+    }));
+  });
 });
 
 describe('notifiersApi', () => {
@@ -744,10 +736,10 @@ describe('response pass-through', () => {
     expect(result).toBe(data);
   });
 
-  it('booksApi.getBooks returns fetchApi response', async () => {
+  it('booksApi.listLibraryBooks returns fetchApi response', async () => {
     const data = { data: [{ id: 1, title: 'Book' }], total: 1 };
     mockFetchApi.mockResolvedValue(data);
-    const result = await booksApi.getBooks();
+    const result = await booksApi.listLibraryBooks();
     expect(result).toBe(data);
   });
 
@@ -884,5 +876,26 @@ describe('submissionsApi', () => {
   it('getImportSubmissionByClientId (detail) → GET /import/submissions/by-client/:uuid?includeItems=true', async () => {
     await submissionsApi.getImportSubmissionByClientId('abc', true);
     expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/by-client/abc?includeItems=true');
+  });
+});
+
+describe('companionEbookApi', () => {
+  it('getCompanionEbookState → GET /books/7/companion-epub/state', async () => {
+    await companionEbookApi.getCompanionEbookState(7);
+    expect(mockFetchApi).toHaveBeenCalledWith('/books/7/companion-epub/state');
+  });
+
+  it('getCompanionEbookMetadata → GET /books/7/companion-epub/metadata', async () => {
+    await companionEbookApi.getCompanionEbookMetadata(7);
+    expect(mockFetchApi).toHaveBeenCalledWith('/books/7/companion-epub/metadata');
+  });
+
+  // The route's body schema is `.strict()`, so an extra key is a 400 before the handler runs.
+  it('putCompanionEbookSelection → PUT /books/7/companion-epub/selection with only {index}', async () => {
+    await companionEbookApi.putCompanionEbookSelection(7, 2);
+    expect(mockFetchApi).toHaveBeenCalledWith('/books/7/companion-epub/selection', {
+      method: 'PUT',
+      body: JSON.stringify({ index: 2 }),
+    });
   });
 });

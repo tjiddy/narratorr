@@ -8,8 +8,8 @@ import {
   ShieldIcon,
   PauseIcon,
 } from '@/components/icons';
-import { DOWNLOAD_STATUS_REGISTRY, type DownloadStatusMetadata } from '../../../shared/download-status-registry.js';
-import type { DownloadStatus } from '../../../shared/schemas.js';
+import { DOWNLOAD_STATUS_REGISTRY, type DownloadStatusMetadata } from '@shared/download-status-registry.js';
+import type { DownloadStatus } from '@shared/schemas.js';
 
 export interface DownloadStatusConfig {
   icon: React.FC<{ className?: string }>;

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useMutation } from '@tanstack/react-query';
 import { api, type ImportMode, type ImportConfirmItem, type MatchResult } from '@/lib/api';
 import { useMatchJob } from '@/hooks/useMatchJob';
@@ -8,6 +8,7 @@ import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
+import { needsChapterCorroboration, useRepickCorroboration } from '@/lib/repick-corroboration.js';
 import { useStagedSubmission } from '@/lib/staged-import/useStagedSubmission.js';
 
 export type Step = 'path' | 'review';
@@ -32,6 +33,9 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [mode, setMode] = useState<ImportMode>('copy');
   const [editIndex, setEditIndex] = useState<number | null>(null);
+  // Chapter-runtime second opinion for a re-pick (#2055) — shared with the library surface.
+  // Owns this hook instance's monotonic `matchGeneration` counter.
+  const { nextGeneration, dispatchCorroboration } = useRepickCorroboration(setRows);
 
   // Held-review recovery (#1732). Re-confirm uses the mode snapshotted at the original
   // confirm attempt, not the still-editable `mode` selector. `submitRef` breaks the cycle:
@@ -66,6 +70,10 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       resultMap.set(r.path, r);
     }
 
+    // One fresh stamp for this merge, taken OUTSIDE the updater: StrictMode double-invokes
+    // updater functions, and a stamp computed in there would not be the value a concurrent
+    // dispatch captured (#2055 B11).
+    const generation = nextGeneration();
     setRows(prev => prev.map(row => {
       const match = resultMap.get(row.book.path);
       if (!match) return row;
@@ -73,9 +81,9 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       // Duplicate rows are not in the match job — if a result somehow arrives, don't auto-select
       if (row.book.isDuplicate) return row;
 
-      return mergeMatchIntoRow(row, match);
+      return { ...mergeMatchIntoRow(row, match), matchGeneration: generation };
     }));
-  }, []);
+  }, [nextGeneration]);
 
   useEffect(() => {
     if (matchResults.length === prevMatchCountRef.current) return;
@@ -92,11 +100,13 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
         return;
       }
 
+      const scanGeneration = nextGeneration();
       const newRows: ImportRow[] = result.discoveries.map((book) => ({
         book,
         // Duplicate rows start unchecked; new books start checked
         selected: !book.isDuplicate,
         userEdited: false,
+        matchGeneration: scanGeneration,
         edited: {
           title: book.parsedTitle,
           author: book.parsedAuthor || '',
@@ -152,13 +162,24 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   }, []);
 
   const handleEdit = useCallback((index: number, state: BookEditState) => {
+    // Read the pre-edit row and take the stamp OUTSIDE the updater (#2055 B3/B11): a
+    // request fired from inside a `setRows` updater goes out twice under StrictMode, and a
+    // stamp taken in there would not be the one the dispatch captured.
+    const previous = rows[index];
+    const generation = nextGeneration();
+    const request = previous && needsChapterCorroboration(previous.matchResult, state.metadata, previous.edited.metadata);
+
     setRows(prev => prev.map((r, i) => {
       if (i !== index) return r;
       const autoCheck = !r.selected && state.metadata ? true : r.selected;
       const matchResult = upgradeMatchConfidence(r.matchResult, state.metadata, r.edited.metadata);
-      return { ...r, edited: state, selected: autoCheck, userEdited: true, matchResult };
+      return { ...r, edited: state, selected: autoCheck, userEdited: true, matchResult, matchGeneration: generation };
     }));
-  }, []);
+
+    // Optimistic first: the synchronous verdict above already rendered. The corroborated
+    // answer, if any, patches the row when it arrives and can only promote it to Matched.
+    if (previous && request) dispatchCorroboration({ path: previous.book.path, generation, request });
+  }, [rows, nextGeneration, dispatchCorroboration]);
 
   const handleImport = useCallback(() => {
     // Shared canonical builder (#1732/#1765) — `forceImport` still derives from
@@ -181,9 +202,10 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       }));
     if (candidates.length === 0) return;
     prevMatchCountRef.current = 0;
-    setRows(prev => prev.map(r => r.book.isDuplicate ? r : { ...r, matchResult: undefined }));
+    const generation = nextGeneration();
+    setRows(prev => prev.map(r => r.book.isDuplicate ? r : { ...r, matchResult: undefined, matchGeneration: generation }));
     restart(candidates);
-  }, [rows, restart]);
+  }, [rows, restart, nextGeneration]);
 
   // Resume remaining (#1864 §5) — re-match only the result-less remainder; already
   // matched rows keep their result (the engine's observed map is preserved).

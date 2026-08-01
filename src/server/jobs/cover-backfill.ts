@@ -1,7 +1,7 @@
 import { and, like, isNotNull } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books } from '../../db/schema.js';
+import { books } from '@db/schema.js';
 import { downloadRemoteCover } from '../services/cover-download.js';
 import type { ConnectorService } from '../services/connector.service.js';
 import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';

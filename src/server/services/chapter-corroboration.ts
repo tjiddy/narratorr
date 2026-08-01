@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { ChapterRuntimeOutcome } from '../../core/index.js';
+import type { ChapterRuntimeOutcome } from '@core/index.js';
 import type { DurationConfidenceResult } from './match-job.helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 

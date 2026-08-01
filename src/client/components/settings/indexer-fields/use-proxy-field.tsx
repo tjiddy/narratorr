@@ -1,5 +1,5 @@
 import type { UseFormRegister, UseFormWatch } from 'react-hook-form';
-import type { CreateIndexerFormData } from '../../../../shared/schemas.js';
+import type { CreateIndexerFormData } from '@shared/schemas.js';
 import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';

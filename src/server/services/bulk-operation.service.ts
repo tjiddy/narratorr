@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, eq, isNotNull, sql, type SQL } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
-import { books, bookAuthors, authors, narrators, bookNarrators } from '../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { books, bookAuthors, authors, narrators, bookNarrators } from '@db/schema.js';
 import type { RenameService } from './rename.service.js';
 import { RenameError } from './rename.service.js';
 import type { TaggingService } from './tagging.service.js';
@@ -14,15 +14,14 @@ import { enqueueRetagRefresh } from '../utils/enqueue-book-refresh.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { BulkJob } from './bulk-job.js';
 import { runSidecarReconcile } from './bulk-sidecar-reconcile.js';
-import { convertBook, type ConvertProcessingSettings } from './bulk-convert.js';
-import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
-import { toNamingOptions } from '../../core/utils/naming.js';
+import { triggerCompanionSweep, type CompanionSweepTrigger } from './companion-ebook-trigger.js';
+import { toNamingOptions } from '@core/utils/naming.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
 // ============ Types ============
 
-export type BulkOpType = 'rename' | 'retag' | 'convert' | 'write_metadata_sidecars';
+export type BulkOpType = 'rename' | 'retag' | 'write_metadata_sidecars';
 
 export interface BulkJobStatus {
   jobId: string;
@@ -81,7 +80,7 @@ interface RenameEligibleRow {
 export class BulkOpError extends Error {
   constructor(
     message: string,
-    public code: 'BULK_OP_IN_PROGRESS' | 'FFMPEG_NOT_CONFIGURED' | 'LIBRARY_NOT_CONFIGURED',
+    public code: 'BULK_OP_IN_PROGRESS' | 'LIBRARY_NOT_CONFIGURED',
   ) {
     super(message);
     this.name = 'BulkOpError';
@@ -104,6 +103,8 @@ export class BulkOperationService {
     private bookService: BookService,
     private log: FastifyBaseLogger,
     private connectorService?: ConnectorService,
+    /** #1960 AC21 — optional so unit suites that do not exercise the sweep can omit it. */
+    private companionEbook?: CompanionSweepTrigger,
   ) {}
 
   /**
@@ -292,6 +293,15 @@ export class BulkOperationService {
         }
         tick(false); // success
       }
+
+      // #1960 AC21 — caller 3 of three: ONE coalesced sweep after the whole loop, never a
+      // per-book `reconcileBook` inside it. A whole-library rename would otherwise fan out N
+      // direct runs, and direct runs do not coalesce — only `reconcileAll()` does. Fires even
+      // when some books failed (their folders may still have moved) and is skipped entirely
+      // for an empty target set.
+      if (targetIds.length > 0) {
+        triggerCompanionSweep(this.companionEbook, this.log, 'Companion ebook sweep failed after bulk rename');
+      }
     }, () => this.onJobComplete(id));
 
     return this.launch(id, job, 'Bulk rename job started');
@@ -333,7 +343,7 @@ export class BulkOperationService {
   /**
    * Library reconcile: (re)write the `metadata.opf` + folder cover sidecar for every imported book
    * with a path, backfilling existing libraries and backstopping any drift. The per-book body and
-   * row loop live in `bulk-sidecar-reconcile.ts` (this file is at the line cap). No cancel — the
+   * row loop live in `bulk-sidecar-reconcile.ts` (one reason to change per file). No cancel — the
    * bulk infra is start+poll only. Writes regardless of `tagging.writeOpf` (the button is the opt-in).
    */
   startWriteMetadataSidecarsJob(): string {
@@ -344,60 +354,6 @@ export class BulkOperationService {
       (setTotal, tick) => runSidecarReconcile(reconcileDeps, setTotal, tick),
       () => this.onJobComplete(id));
     return this.launch(id, job, 'Bulk write-metadata-sidecars job started');
-  }
-
-  async startConvertJob(): Promise<string> {
-    this.assertNoActiveJob();
-    const processingSettings = await this.settingsService.get('processing');
-    const ffmpegPath = await resolveFfmpegPath();
-    if (!ffmpegPath) {
-      throw new BulkOpError('ffmpeg not available', 'FFMPEG_NOT_CONFIGURED');
-    }
-    // Fetch library naming settings too, so converted filenames render the same book-level
-    // tokens (series/narrator/year/edition) the rename path bakes in — otherwise a re-encode
-    // silently drops them (#1720). Same for all rows, so read once outside the loop.
-    const librarySettings = await this.settingsService.get('library');
-    const convertSettings: ConvertProcessingSettings = {
-      ...processingSettings,
-      ffmpegPath,
-      fileFormat: librarySettings.fileFormat,
-      namingOptions: toNamingOptions(librarySettings),
-    };
-    const targetFormat = processingSettings.outputFormat ?? 'm4b';
-    const id = randomUUID();
-    const job = new BulkJob(id, 'convert', this.log, async (setTotal, tick) => {
-      const rows = await this.db
-        .select({ id: books.id, path: books.path, title: books.title })
-        .from(books)
-        .where(
-          and(
-            eq(books.status, 'imported'),
-            or(isNull(books.audioFileFormat), sql`LOWER(${books.audioFileFormat}) != ${targetFormat}`),
-          ),
-        );
-
-      setTotal(rows.length);
-
-      for (const row of rows) {
-        if (!row.path) {
-          tick(false); // skip silently
-          continue;
-        }
-        try {
-          await convertBook(
-            { db: this.db, bookService: this.bookService, log: this.log, connectorService: this.connectorService },
-            row.id, row.path, row.title, convertSettings,
-          );
-        } catch (error: unknown) {
-          this.log.warn({ bookId: row.id, jobId: id, error: serializeError(error) }, 'Bulk convert: book failed');
-          tick(true); // failure
-          continue;
-        }
-        tick(false); // success
-      }
-    }, () => this.onJobComplete(id));
-
-    return this.launch(id, job, 'Bulk convert job started');
   }
 
   getJob(jobId: string): BulkJobStatus | null {

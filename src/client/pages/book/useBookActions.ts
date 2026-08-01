@@ -64,11 +64,17 @@ export function useBookActions(bookId: number) {
   const refreshScanMutation = useMutation({
     mutationFn: () => api.refreshScanBook(bookId),
     onSuccess: () => {
-      invalidateBookQueries();
       toast.success('Refreshed audio metadata');
     },
     onError: (error: Error) => {
       toast.error(`Refresh scan failed: ${getErrorMessage(error)}`);
+    },
+    // onSettled, not onSuccess (#1963): the route fires the companion-ebook reconcile in a
+    // `finally`, so a book with no audio files throws NO_AUDIO_FILES *after* the ebook
+    // observation was refreshed. Invalidating only on success would leave the Ebook panel
+    // showing a stale observation in exactly that case. The toasts stay where they were.
+    onSettled: () => {
+      invalidateBookQueries();
     },
   });
 

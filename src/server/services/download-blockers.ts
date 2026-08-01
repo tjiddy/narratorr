@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, or } from 'drizzle-orm';
-import type { Db, DbOrTx } from '../../db/index.js';
-import { downloads, importJobs } from '../../db/schema.js';
-import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
+import type { Db, DbOrTx } from '@db/index.js';
+import { downloads, importJobs } from '@db/schema.js';
+import { deriveDisplayStatus } from '@shared/download-status-registry.js';
 import {
   inProgressDownloadCondition,
   qualityGateEligibleDownloadCondition,
@@ -9,7 +9,7 @@ import {
   transitionDownloadState,
 } from '../utils/download-state.js';
 import { ClaimMissError, type PipelineActiveReason } from './download-errors.js';
-import type { ClientStatus, PipelineStage } from '../../shared/schemas/activity.js';
+import type { ClientStatus, PipelineStage } from '@shared/schemas/activity.js';
 import type { DownloadRow } from './types.js';
 
 // ============================================================================

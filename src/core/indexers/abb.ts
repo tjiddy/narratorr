@@ -8,12 +8,12 @@ import {
   type SearchResult,
 } from './types.js';
 import { buildMagnetUri } from '../utils';
-import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
+import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
 import { fetchWithProxy } from './fetch.js';
 import { isProxyRelatedError } from './errors.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
-import { getErrorMessage } from '../../shared/error-message.js';
-import { requireDefined } from '../../shared/utils/assert.js';
+import { getErrorMessage } from '@shared/error-message.js';
+import { requireDefined } from '@shared/utils/assert.js';
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface ABBConfig {

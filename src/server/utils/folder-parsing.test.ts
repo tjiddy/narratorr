@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseTitledDiscFolder } from '../../core/utils/book-discovery.js';
+import { parseTitledDiscFolder } from '@core/utils/book-discovery.js';
 import {
   parseFolderStructure,
   parseFolderStructureRaw,

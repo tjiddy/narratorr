@@ -1,28 +1,30 @@
 import { access } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors, bookAuthors } from '../../db/schema.js';
+import { books, authors, bookAuthors } from '@db/schema.js';
 import { eq, inArray, and } from 'drizzle-orm';
-import { slugify } from '../../core/utils/parse.js';
-import { discoverBooks, type DiscoveredFolder } from '../../core/utils/book-discovery.js';
+import { slugify } from '@core/utils/parse.js';
+import { discoverBooks, type DiscoveredFolder } from '@core/utils/book-discovery.js';
 import { transitionBookStatus } from '../utils/book-status.js';
+import { errnoCode, isDefinitiveAbsence } from '../utils/fs-errno.js';
+import { serializeError } from '../utils/serialize-error.js';
 import type { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
-import type { BookMetadata } from '../../core/metadata/index.js';
+import type { BookMetadata } from '@core/metadata/index.js';
 import { type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import { type ImportPipelineDeps } from './import-orchestration.helpers.js';
 import { buildDiscoveredBook } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
-import type { ConnectorImportItem } from '../../core/connectors/index.js';
+import type { ConnectorImportItem } from '@core/connectors/index.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
-import { buildTitleShape, titlesMatchForDedup, type TitleShape } from '../../shared/dedup.js';
-import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
+import { buildTitleShape, titlesMatchForDedup, type TitleShape } from '@shared/dedup.js';
+import type { DiscoveredBook } from '@shared/schemas/library-scan.js';
 
 
 export type { DiscoveredBook };
@@ -151,13 +153,19 @@ export class LibraryScanService {
       let scanned = 0;
       let missing = 0;
       let restored = 0;
+      // Rows whose on-disk presence could not be determined (#1955). Tallied for
+      // the diagnostics below but deliberately NOT part of the public
+      // `RescanResult` — the route and client contract stay three fields.
+      let unreachable = 0;
+      const unreachableCodes = new Set<string>();
       const restoredItems: ConnectorImportItem[] = [];
 
       for (const row of rows) {
-        const outcome = await this.reconcileBookPath(row, resolvedRoot);
+        const outcome = await this.reconcileBookPath(row, resolvedRoot, unreachableCodes);
         if (outcome === 'skipped') continue;
         scanned++;
         if (outcome === 'missing') missing++;
+        else if (outcome === 'unreachable') unreachable++;
         else if (outcome === 'restored') {
           restored++;
           // row.path is non-null here: a 'restored' outcome requires an existing path.
@@ -175,7 +183,17 @@ export class LibraryScanService {
         );
       }
 
-      this.log.info({ scanned, missing, restored, elapsedMs: Date.now() - startMs }, 'Library rescan complete');
+      // One aggregate warn per degraded sweep, never one per row: a downed mount
+      // would otherwise emit a warn per book, and retention is the safe outcome —
+      // it is the aggregate (a whole share gone quiet) that warrants attention.
+      if (unreachable > 0) {
+        this.log.warn(
+          { unreachable, codes: [...unreachableCodes].sort() },
+          'Library rescan could not reach some book paths — statuses retained',
+        );
+      }
+
+      this.log.info({ scanned, missing, restored, unreachable, elapsedMs: Date.now() - startMs }, 'Library rescan complete');
       return { scanned, missing, restored };
     } finally {
       this.scanning = false;
@@ -183,38 +201,66 @@ export class LibraryScanService {
   }
 
   /**
+   * Classify a failed `access()` probe. Only a definitive-absence errno
+   * (`ENOENT`/`ENOTDIR`) proves the book is gone; anything else — `EACCES` from a
+   * parent directory that lost search permission on a re-mounting share, `EIO`,
+   * `ESTALE`, fd exhaustion, or a throw with no `code` at all — means the probe
+   * could not tell, and an undetermined row must keep its persisted status
+   * (#1955). Records the attempt at `debug` and collects the errno for the
+   * sweep's aggregate warn.
+   */
+  private classifyProbeFailure(
+    row: { id: number; path: string },
+    error: unknown,
+    unreachableCodes: Set<string>,
+  ): 'absent' | 'unreachable' {
+    if (isDefinitiveAbsence(error)) return 'absent';
+
+    const code = errnoCode(error);
+    if (code) unreachableCodes.add(code);
+    this.log.debug(
+      { bookId: row.id, path: row.path, error: serializeError(error) },
+      'Book path unreachable during rescan — status retained',
+    );
+    return 'unreachable';
+  }
+
+  /**
    * Reconcile a single book row's on-disk presence against its persisted status.
    * Returns `'skipped'` for rows outside the library root or with no path (not
    * counted as scanned), `'missing'`/`'restored'` when a guarded transition
-   * lands, or `null` when scanned but unchanged. The `expected` guard ensures a
-   * concurrent in-flight import (`importing`) is never clobbered by the scan's
-   * reconciliation, which read the row status before the import landed.
+   * lands, `'unreachable'` when the path could not be probed (scanned, but no
+   * write of any kind), or `null` when scanned but unchanged. The `expected`
+   * guard ensures a concurrent in-flight import (`importing`) is never clobbered
+   * by the scan's reconciliation, which read the row status before the import
+   * landed.
    */
   private async reconcileBookPath(
     row: { id: number; path: string | null; status: string; title: string },
     resolvedRoot: string,
-  ): Promise<'skipped' | 'missing' | 'restored' | null> {
+    unreachableCodes: Set<string>,
+  ): Promise<'skipped' | 'missing' | 'restored' | 'unreachable' | null> {
     if (!row.path) return 'skipped';
 
     // Path ancestry check — skip books outside library root
     const rel = relative(resolvedRoot, resolve(row.path));
     if (rel.startsWith('..') || isAbsolute(rel)) return 'skipped';
 
-    let exists = false;
+    let probe: 'reachable' | 'absent' | 'unreachable' = 'reachable';
     try {
       await access(row.path);
-      exists = true;
-    } catch {
-      // path does not exist
+    } catch (error: unknown) {
+      probe = this.classifyProbeFailure({ id: row.id, path: row.path }, error, unreachableCodes);
     }
+    if (probe === 'unreachable') return 'unreachable';
 
-    if (row.status === 'imported' && !exists) {
+    if (row.status === 'imported' && probe === 'absent') {
       const flipped = await transitionBookStatus(this.db, row.id, { status: 'missing', expected: { status: 'imported' } });
       if (flipped) {
         this.log.warn({ bookId: row.id, path: row.path }, 'Book path missing from disk');
         return 'missing';
       }
-    } else if (row.status === 'missing' && exists) {
+    } else if (row.status === 'missing' && probe === 'reachable') {
       const flipped = await transitionBookStatus(this.db, row.id, { status: 'imported', expected: { status: 'missing' } });
       if (flipped) {
         this.log.info({ bookId: row.id, path: row.path }, 'Book path restored on disk');

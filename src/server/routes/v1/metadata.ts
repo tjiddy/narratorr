@@ -2,13 +2,14 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { MetadataService } from '../../services/metadata.service.js';
 import type { BookService } from '../../services/book.service.js';
+import type { SettingsService } from '../../services/settings.service.js';
 import {
   metadataSearchResultV1Schema,
   metadataSearchV1QuerySchema,
   toMetadataSearchResultV1,
   type MetadataSearchResultV1,
-} from '../../../shared/schemas/v1/metadata.js';
-import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+} from '@shared/schemas/v1/metadata.js';
+import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 import { v1ErrorHandler } from './_helpers.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -16,6 +17,30 @@ import type { FastifyBaseLogger } from 'fastify';
 export interface V1MetadataRouteDeps {
   metadataService: MetadataService;
   bookService: BookService;
+  settingsService: SettingsService;
+}
+
+/**
+ * Read the companion-ebook feature flag once per request (#1961 AC 17).
+ *
+ * Caught SEPARATELY from `annotateLibraryStatus` on purpose: this new dependency
+ * must not grow the enrichment's blast radius. A settings failure fails closed to
+ * `false` — every annotation then carries `companionEbook: null` — while the
+ * `library` annotation itself is still produced.
+ */
+async function readCompanionEnabled(
+  settingsService: SettingsService,
+  log: FastifyBaseLogger,
+): Promise<boolean> {
+  try {
+    return (await settingsService.get('companionEpub')).enabled;
+  } catch (error: unknown) {
+    log.warn(
+      { error: serializeError(error) },
+      'v1 metadata-search companionEpub settings read failed — annotating without companion ebooks',
+    );
+    return false;
+  }
 }
 
 /**
@@ -25,16 +50,21 @@ export interface V1MetadataRouteDeps {
  * 5xx — enrichment must never fail the search. Casing is normalized in exactly
  * one place: the service keys the map by uppercased ASIN and we look up with
  * `result.asin?.toUpperCase()`. An empty ASIN set issues NO query.
+ *
+ * `companionEnabled` is passed in (read once per request by the handler) and
+ * handed to the service, which owns the batch companion load and the shared
+ * exposure→DTO mapper — this route never re-spells an exposure term.
  */
 async function annotateLibraryStatus(
   data: MetadataSearchResultV1[],
   bookService: BookService,
+  companionEnabled: boolean,
   log: FastifyBaseLogger,
 ): Promise<void> {
   try {
     const asins = data.map((r) => r.asin).filter((a): a is string => a !== undefined);
     if (asins.length === 0) return;
-    const statusByAsin = await bookService.findLibraryStatusByAsins(asins);
+    const statusByAsin = await bookService.findLibraryStatusByAsins(asins, { companionEnabled });
     for (const result of data) {
       const match = result.asin !== undefined ? statusByAsin.get(result.asin.toUpperCase()) : undefined;
       if (match) result.library = match;
@@ -82,7 +112,8 @@ export async function v1MetadataRoutes(app: FastifyInstance, deps: V1MetadataRou
           const { q } = request.query;
           const { books } = await deps.metadataService.search(q);
           const data = books.map(toMetadataSearchResultV1);
-          await annotateLibraryStatus(data, deps.bookService, request.log);
+          const companionEnabled = await readCompanionEnabled(deps.settingsService, request.log);
+          await annotateLibraryStatus(data, deps.bookService, companionEnabled, request.log);
           return { data, total: data.length };
         },
       );

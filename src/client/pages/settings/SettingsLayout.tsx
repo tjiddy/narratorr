@@ -1,4 +1,4 @@
-import { NavLink, Routes, Route, useLocation } from 'react-router-dom';
+import { NavLink, Routes, Route, useLocation } from 'react-router';
 import { PageHeader } from '@/components/PageHeader.js';
 import { UnsavedChangesGuard } from '@/components/UnsavedChangesGuard.js';
 import { settingsPageRegistry } from './registry.js';

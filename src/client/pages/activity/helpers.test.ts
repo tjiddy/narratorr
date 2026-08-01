@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { downloadStatusSchema } from '../../../shared/schemas.js';
-import { DOWNLOAD_STATUS_REGISTRY } from '../../../shared/download-status-registry.js';
+import { downloadStatusSchema } from '@shared/schemas.js';
+import { DOWNLOAD_STATUS_REGISTRY } from '@shared/download-status-registry.js';
 import { statusConfig } from './helpers.js';
 
 describe('statusConfig (derived from registry)', () => {

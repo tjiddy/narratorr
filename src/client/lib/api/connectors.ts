@@ -1,5 +1,5 @@
 import { fetchApi } from './client.js';
-import type { connectorTypeSchema } from '../../../shared/schemas.js';
+import type { connectorTypeSchema } from '@shared/schemas.js';
 
 type ConnectorType = (typeof connectorTypeSchema)['options'][number];
 

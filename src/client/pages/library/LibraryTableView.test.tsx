@@ -6,7 +6,7 @@ import { createMockLibraryBook } from '../../__tests__/factories.js';
 import { LibraryTableView } from './LibraryTableView.js';
 import type { SortField, SortDirection, DisplayBook } from './helpers.js';
 import { bookStatusChipStyles } from '@/lib/status';
-import { BOOK_STATUSES } from '../../../shared/schemas/book.js';
+import { BOOK_STATUSES } from '@shared/schemas/book.js';
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal();

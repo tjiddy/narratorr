@@ -8,12 +8,12 @@ import {
 import cookie from '@fastify/cookie';
 import authPlugin from '../../plugins/auth.js';
 import type { AuthService } from '../../services/auth.service.js';
-import type { Db } from '../../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { ReferenceReadService } from '../../services/reference-read.service.js';
 import { createMockDb, mockDbChain, inject } from '../../__tests__/helpers.js';
 import { v1SeriesRoutes } from './series.js';
-import { seriesV1Schema } from '../../../shared/schemas/v1/series.js';
-import { v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { seriesV1Schema } from '@shared/schemas/v1/series.js';
+import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
 
@@ -139,6 +139,25 @@ describe('v1 series routes', () => {
       expectV1Envelope(res.json());
       expect(referenceReadService.getSeriesById as Mock).toHaveBeenCalledWith(5);
     });
+
+    // #1983 F3 — pins the CANONICAL `v1PublicIdParamSchema` (`.trim().min(1)`) as this
+    // route's validator. Reverting this module to a private `z.string().min(1)` copy turns
+    // these back into 404 lookups, which `common.test.ts` (schema in isolation) and the
+    // companion-route suite (a different consumer) both stay green through.
+    it.each(['%20', '%20%20', '%09'])(
+      'returns a 400 BAD_REQUEST envelope for the whitespace-only publicId %s, without resolving',
+      async (encoded) => {
+        const res = await app.inject({ method: 'GET', url: `/api/v1/series/${encoded}`, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: { code: 'BAD_REQUEST', message: expect.any(String) } });
+        expectV1Envelope(res.json());
+        // Validation precedes the handler: neither the publicId resolution nor the
+        // service read was reached.
+        expect(db.select).not.toHaveBeenCalled();
+        expect(referenceReadService.getSeriesById as Mock).not.toHaveBeenCalled();
+      },
+    );
 
     it('returns a 404 v1 envelope for a numeric rowid (opaque-key only)', async () => {
       db.select.mockReturnValue(mockDbChain([]));

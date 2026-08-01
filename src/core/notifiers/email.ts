@@ -1,7 +1,7 @@
 import { createTransport } from 'nodemailer';
 import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
 import { formatEventMessage } from './types.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 
 export interface EmailConfig {
   host: string;

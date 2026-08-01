@@ -1,9 +1,9 @@
 import { eq, and, like, desc, asc, sql, count as countFn, inArray, or, getTableColumns, type SQL } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
-import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '../../db/schema.js';
-import type { BookSortField, BookSortDirection, BookStatus, LibraryFilterBucket } from '../../shared/schemas/book.js';
-import { LIBRARY_FILTER_BUCKETS } from '../../shared/schemas/book.js';
-import type { LibraryBookListItem } from '../../shared/schemas/library-book.js';
+import type { Db } from '@db/index.js';
+import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '@db/schema.js';
+import type { BookSortField, BookSortDirection, BookStatus, LibraryFilterBucket } from '@shared/schemas/book.js';
+import { LIBRARY_FILTER_BUCKETS } from '@shared/schemas/book.js';
+import type { LibraryBookListItem } from '@shared/schemas/library-book.js';
 import { sortCollapsedRows, collapseRows, buildFallbackCompare } from './book-list-collapse.js';
 import type { BookWithAuthor } from './book.service.js';
 import type { BookRow } from './types.js';
@@ -369,10 +369,19 @@ export class BookListService {
     }
   }
 
-  /** Lightweight list of all book identifiers for duplicate detection (no pagination). */
-  async getIdentifiers(): Promise<{ asin: string | null; title: string; authorName: string | null; authorSlug: string | null }[]> {
+  /**
+   * Lightweight list of all book identifiers for duplicate detection (no pagination).
+   *
+   * `id` is part of the projection (#1916) because this is also the client's
+   * ownership source for the Add-Book search card, which links its "In Library"
+   * badge at the matched book. Deliberately has no `where`, no `limit`, and no
+   * `ORDER BY`: it must stay status-blind and uncapped, and every consumer
+   * matches by identity rather than depending on row order.
+   */
+  async getIdentifiers(): Promise<{ id: number; asin: string | null; title: string; authorName: string | null; authorSlug: string | null }[]> {
     const results = await this.db
       .select({
+        id: books.id,
         asin: books.asin,
         title: books.title,
         authorName: authors.name,

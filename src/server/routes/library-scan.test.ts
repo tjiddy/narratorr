@@ -1,6 +1,6 @@
 import { describe, it, expect, type vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Buffer } from 'node:buffer';
-import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { createTestApp, createMockServices, resetMockServices, installMockAppLog } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
 import { initializeKey, _resetKey } from '../utils/secret-codec.js';
@@ -486,6 +486,93 @@ describe('library-scan routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.error).toBe('unknown');
     });
+
+    // =======================================================================
+    // #1960 AC9/AC12/AC14 — the route goes through the companion sweep wrapper
+    // =======================================================================
+
+    it('AC9/AC12: a successful rescan triggers exactly one companion sweep', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ scanned: 10, missing: 2, restored: 1 });
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(undefined);
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+      expect(services.companionEbook.reconcileBook).not.toHaveBeenCalled();
+    });
+
+    it('AC12: a 409 (ScanInProgressError) triggers ZERO companion sweeps', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new ScanInProgressError());
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(undefined);
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+
+      expect(res.statusCode).toBe(409);
+      expect(services.companionEbook.reconcileAll).not.toHaveBeenCalled();
+    });
+
+    it('AC12: a 400 (LibraryPathError) still sweeps, and the mapping is unchanged', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new LibraryPathError('Library path is not configured'));
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(undefined);
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Library path is not configured');
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('AC12: a 500 (unexpected throw) still sweeps, and the mapping is unchanged', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new Error('Unexpected DB failure'));
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(undefined);
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Unexpected DB failure');
+      expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('AC14: a rescan issued while a companion sweep is still in flight returns 200, not 409', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ scanned: 1, missing: 0, restored: 0 });
+      // Sweep A never settles — it is provably still pending when the second POST lands.
+      let releaseSweep!: () => void;
+      const pendingSweep = new Promise<void>((r) => { releaseSweep = r; });
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
+        .mockReturnValue(pendingSweep);
+
+      const first = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+      expect(first.statusCode).toBe(200);
+
+      const second = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+      expect(second.statusCode).toBe(200);
+      expect(JSON.parse(second.payload)).toEqual({ scanned: 1, missing: 0, restored: 0 });
+
+      releaseSweep();
+      await pendingSweep;
+    });
+
+    it('AC12: a rejecting sweep does not change the 200 the route already returned', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ scanned: 4, missing: 0, restored: 0 });
+      (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new Error('sweep rejected'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/rescan' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ scanned: 4, missing: 0, restored: 0 });
+    });
   });
 
   // ===========================================================================
@@ -572,6 +659,118 @@ describe('library-scan routes', () => {
       // The within-scan hard-flag machinery is gone — no duplicate reason/first-path survives serialization.
       expect(body.discoveries[1]).not.toHaveProperty('duplicateReason');
       expect(body.discoveries[1]).not.toHaveProperty('duplicateFirstPath');
+    });
+  });
+
+  // #2055 — the import editor's re-pick path asks the server for the same
+  // chapter-runtime second opinion the match job already gets (#1942).
+  describe('POST /api/library/import/duration-corroboration (#2055)', () => {
+    // The live Fablehaven case, canonical values already pinned in-repo:
+    // scanned 33219.47s (match-job.helpers.test.ts), chapter table 33219.49s
+    // (chapter-corroboration.test.ts FABLEHAVEN_MS), provider scalar 539min = 32340s.
+    const ASIN = 'B00CXXEX8W';
+    const SCANNED = 33219.47;
+    const CHAPTERS = 33219.49;
+
+    const chapterStub = () => services.metadata.getChapterRuntimeSeconds as unknown as ReturnType<typeof vi.fn>;
+
+    const post = (payload: unknown) =>
+      app.inject({ method: 'POST', url: '/api/library/import/duration-corroboration', payload: payload as object });
+
+    it('corroborates the scanned runtime against the chapter table', async () => {
+      chapterStub().mockResolvedValue(CHAPTERS);
+
+      const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ corroborated: true, chapterSeconds: CHAPTERS });
+    });
+
+    it('reports a chapter runtime that is also out of band as not corroborated', async () => {
+      chapterStub().mockResolvedValue(40000);
+
+      const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ corroborated: false, chapterSeconds: 40000 });
+    });
+
+    it('omits chapterSeconds entirely when there is no usable chapter runtime', async () => {
+      chapterStub().mockResolvedValue(undefined);
+
+      const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ corroborated: false });
+      // The observation point is the SERIALIZED body: JSON drops an `undefined` value, so
+      // present-but-undefined and absent are the same thing on the wire and this cannot
+      // distinguish them. What it does catch — verified counterfactually — is a fabricated
+      // stand-in (`chapterSeconds: 0`/`null`), which would read as a mismatch claim where
+      // the honest answer is "no second opinion available".
+      expect(body).not.toHaveProperty('chapterSeconds');
+    });
+
+    it('looks the edition up exactly once, with the trimmed ASIN', async () => {
+      chapterStub().mockResolvedValue(CHAPTERS);
+
+      const res = await post({ asin: `  ${ASIN}  `, scannedSeconds: SCANNED });
+
+      expect(res.statusCode).toBe(200);
+      expect(chapterStub()).toHaveBeenCalledTimes(1);
+      expect(chapterStub()).toHaveBeenCalledWith(ASIN);
+    });
+
+    it('pins the shared inclusive tolerance band in both directions', async () => {
+      chapterStub().mockResolvedValue(SCANNED + 240);
+      const inBand = await post({ asin: ASIN, scannedSeconds: SCANNED });
+      expect(JSON.parse(inBand.payload).corroborated).toBe(true);
+
+      chapterStub().mockResolvedValue(SCANNED + 241);
+      const outOfBand = await post({ asin: ASIN, scannedSeconds: SCANNED });
+      expect(JSON.parse(outOfBand.payload).corroborated).toBe(false);
+    });
+
+    it.each([
+      ['missing asin', { scannedSeconds: SCANNED }],
+      ['blank asin', { asin: '   ', scannedSeconds: SCANNED }],
+      ['missing scannedSeconds', { asin: ASIN }],
+      ['zero scannedSeconds', { asin: ASIN, scannedSeconds: 0 }],
+      ['negative scannedSeconds', { asin: ASIN, scannedSeconds: -1 }],
+      ['non-numeric scannedSeconds', { asin: ASIN, scannedSeconds: 'abc' }],
+    ])('rejects %s with 400 and never reaches the provider', async (_label, payload) => {
+      chapterStub().mockResolvedValue(CHAPTERS);
+
+      const res = await post(payload);
+
+      expect(res.statusCode).toBe(400);
+      expect(chapterStub()).not.toHaveBeenCalled();
+    });
+
+    it('degrades a rejected lookup to a 200 "no second opinion", logged at debug', async () => {
+      const { spies, restore } = installMockAppLog(app);
+      try {
+        chapterStub().mockRejectedValue(new Error('audnexus exploded'));
+
+        const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body).toEqual({ corroborated: false });
+        expect(body).not.toHaveProperty('chapterSeconds');
+
+        const debugCall = spies.debug.mock.calls.find(
+          (c) => typeof c[1] === 'string' && c[1].includes('Chapter corroboration failed'),
+        );
+        expect(debugCall).toBeDefined();
+        // serializeError shape — enumerable name/message keys, never the raw Error.
+        expect(debugCall![0]).toMatchObject({
+          asin: ASIN,
+          error: expect.objectContaining({ type: 'Error', message: 'audnexus exploded' }),
+        });
+      } finally {
+        restore();
+      }
     });
   });
 

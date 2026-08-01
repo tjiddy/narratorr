@@ -1,10 +1,10 @@
 import { randomBytes, randomUUID, scrypt, timingSafeEqual, createHmac, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { settings, users } from '../../db/schema.js';
-import { authModeSchema, type AuthMode } from '../../shared/schemas.js';
+import { settings, users } from '@db/schema.js';
+import { authModeSchema, type AuthMode } from '@shared/schemas.js';
 import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 
 const authConfigSchema = z.object({

@@ -1,8 +1,8 @@
 import { readdir, copyFile, mkdir, rm, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
-import { MIME_TO_EXT } from '../../shared/mime.js';
+import { COVER_FILE_REGEX } from '@core/utils/cover-regex.js';
+import { MIME_TO_EXT } from '@shared/mime.js';
 import { serializeError } from './serialize-error.js';
 
 

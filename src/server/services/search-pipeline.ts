@@ -1,9 +1,9 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { calculateQuality, filterByLanguage, filterMultiPartUsenet, resolveBookQualityInputs } from '../../core/utils/index.js';
+import { calculateQuality, filterByLanguage, filterMultiPartUsenet, resolveBookQualityInputs } from '@core/utils/index.js';
 import { canonicalCompare, type NarratorPriority } from './search-ranking.js';
 export type { NarratorPriority } from './search-ranking.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
-import type { SearchResult } from '../../core/index.js';
+import type { SearchResult } from '@core/index.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
@@ -16,8 +16,8 @@ import { recordGrabFailedEvent } from '../utils/download-side-effects.js';
 import { type SearchBook, type SearchEventSink, NOOP_SINK, createBroadcasterSink } from './search-event-sink.js';
 import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
-import { parseWordList, matchesWord } from '../../shared/parse-word-list.js';
-import { BYTES_PER_GB, BYTES_PER_MB } from '../../shared/constants.js';
+import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
+import { BYTES_PER_GB, BYTES_PER_MB } from '@shared/constants.js';
 import { cleanIndexerQuery } from './indexer-query.js';
 
 /** Build a search query string from a book's title and primary author. */

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { BookService } from './book.service.js';
 
 // reconcileBookSidecars composes two cross-module helpers — mock them at their module boundaries

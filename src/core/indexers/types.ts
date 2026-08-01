@@ -1,4 +1,4 @@
-import type { DownloadProtocol } from '../../shared/schemas/download-protocol.js';
+import type { DownloadProtocol } from '@shared/schemas/download-protocol.js';
 
 export type { DownloadProtocol };
 

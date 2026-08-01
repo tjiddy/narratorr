@@ -5,27 +5,27 @@
 import { stat } from 'node:fs/promises';
 import { relative, resolve, isAbsolute, normalize } from 'node:path';
 import { copyToLibrary as stageSourceAudio, stagedAudioReplace } from '../utils/import-steps.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { OwnedRecordingError, type BookService, type BookWithAuthor } from './book.service.js';
-import { resolveRecordingIdentity, deriveEditionLabel, type RecordingCandidate } from '../../core/utils/recording-identity.js';
-import { sanitizeEditionDiscriminator } from '../../core/utils/naming.js';
-import { normalizeProductionType } from '../../core/metadata/production-type.js';
+import { resolveRecordingIdentity, deriveEditionLabel, type RecordingCandidate } from '@core/utils/recording-identity.js';
+import { sanitizeEditionDiscriminator } from '@core/utils/naming.js';
+import { normalizeProductionType } from '@core/metadata/production-type.js';
 import { toLibraryRecording } from './book-dedup.js';
 import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
-import type { BookMetadata } from '../../core/metadata/index.js';
+import type { BookMetadata } from '@core/metadata/index.js';
 import { buildTargetPath, getAudioPathSize, assertCopyVerified, reconstructDiscGroup, copyDiscGroup } from '../utils/import-helpers.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 import { deleteManagedBookFiles } from '../utils/delete-managed-files.js';
-import { toNamingOptions } from '../../core/utils/naming.js';
+import { toNamingOptions } from '@core/utils/naming.js';
 import type { EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
 import type { ImportConfirmItem, ImportMode } from './library-scan.service.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 import { resolveImportSeries } from './resolve-import-series.js';
 
 

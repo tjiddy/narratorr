@@ -7,7 +7,7 @@ import { WifiIcon, LoadingSpinner } from '@/components/icons';
 import { errorInputClass } from '@/components/settings/formStyles';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { networkFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { networkFormSchema, DEFAULT_SETTINGS, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 type NetworkFormData = z.infer<typeof networkFormSchema>;

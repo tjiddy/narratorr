@@ -87,7 +87,7 @@ describe('eventTypeSchema', () => {
 
 describe('eventTypeSchema ↔ DB enum alignment (#1129)', () => {
   it('every Zod enum member is also a DB schema enum member, and vice versa', async () => {
-    const { bookEvents } = await import('../../db/schema.js');
+    const { bookEvents } = await import('@db/schema.js');
     // Drizzle stores the enum on the column config as `enumValues`. This is
     // the same list passed to `text(name, { enum: [...] })` at definition.
     const dbEnum = (bookEvents.eventType as unknown as { enumValues: readonly string[] }).enumValues;

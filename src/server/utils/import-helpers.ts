@@ -6,15 +6,15 @@ import { join, extname, basename, dirname } from 'node:path';
 import {
   renderTemplate, templateHasToken, toLastFirst, toSortTitle, AUDIO_EXTENSIONS, isHiddenName,
   sanitizeEditionDiscriminator, composeEditionSuffixLeaf, PATH_SEGMENT_LIMIT,
-} from '../../core/utils/index.js';
-import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
+} from '@core/utils/index.js';
+import { collectSortedAudioFiles } from '@core/utils/collect-audio-files.js';
 import {
   DISC_FOLDER_PATTERN, parseTitledDiscFolder, parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass,
   type EmbeddedDiscMarker,
-} from '../../core/utils/book-discovery.js';
-import type { NamingOptions } from '../../core/utils/naming.js';
+} from '@core/utils/book-discovery.js';
+import type { NamingOptions } from '@core/utils/naming.js';
 
-import type { authors } from '../../db/schema.js';
+import type { authors } from '@db/schema.js';
 
 /** Minimum ratio of target/source file size for copy verification to pass. */
 export const COPY_VERIFICATION_THRESHOLD = 0.99;

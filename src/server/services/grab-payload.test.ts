@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SearchResult } from '../../core/indexers/types.js';
+import type { SearchResult } from '@core/indexers/types.js';
 import { buildGrabPayload } from './grab-payload.js';
 
 const baseResult: SearchResult = {

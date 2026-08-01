@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { BookService } from '../services/index.js';
-import { idParamSchema } from '../../shared/schemas/common.js';
+import { idParamSchema } from '@shared/schemas/common.js';
 import { resolvePreviewAudioFile, streamAudioFile } from '../services/audio-preview-stream.js';
 import type { z } from 'zod';
 

@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { ProxyAgent } from 'undici';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { ProxyError } from './errors.js';
-import { getErrorMessage, getErrorMessageWithCause } from '../../shared/error-message.js';
+import { getErrorMessage, getErrorMessageWithCause } from '@shared/error-message.js';
 import { mapNetworkError } from '../utils/map-network-error.js';
 import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
 import type { FetchResult } from './fetch.js';

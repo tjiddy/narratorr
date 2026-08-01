@@ -4,8 +4,8 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { eq, and, inArray } from 'drizzle-orm';
-import { books, importJobs } from '../../db/schema.js';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
+import { books, importJobs } from '@db/schema.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { BookImportService } from './book-import.service.js';
 

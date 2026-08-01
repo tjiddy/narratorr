@@ -4,6 +4,10 @@ import {
   bookV1ListQuerySchema,
   toBookV1,
 } from './books.js';
+import type { CompanionEbookV1 } from './companion-ebook.js';
+
+/** The already-mapped companion value the projector receives (#1961 AC 20). */
+const COMPANION: CompanionEbookV1 = { format: 'epub', sizeBytes: 42 };
 
 // A fully-hydrated, leaky source row: numeric rowid, grab ids, FK columns,
 // enrichment internals, and authors/narrators carrying id/publicId/slug/asin/
@@ -35,18 +39,18 @@ function makeLeakyRow() {
 }
 
 describe('toBookV1 projection (zero-leak)', () => {
-  it('emits exactly { id, title, authors, narrators, series, status } — no internal fields', () => {
-    const dto = toBookV1(makeLeakyRow());
-    expect(Object.keys(dto).sort()).toEqual(['authors', 'id', 'narrators', 'series', 'status', 'title']);
+  it('emits exactly { id, title, authors, narrators, series, status, companionEbook } — no internal fields', () => {
+    const dto = toBookV1(makeLeakyRow(), null);
+    expect(Object.keys(dto).sort()).toEqual(['authors', 'companionEbook', 'id', 'narrators', 'series', 'status', 'title']);
   });
 
   it('maps id to the opaque publicId (string), not the numeric rowid', () => {
-    const dto = toBookV1(makeLeakyRow());
+    const dto = toBookV1(makeLeakyRow(), null);
     expect(dto.id).toBe('bk_abc123');
   });
 
   it('maps each author/narrator id to the entity publicId and exposes only { id, name }', () => {
-    const dto = toBookV1(makeLeakyRow());
+    const dto = toBookV1(makeLeakyRow(), null);
     expect(dto.authors).toEqual([{ id: 'au_one', name: 'Hugh Howey' }]);
     expect(Object.keys(dto.authors[0]!).sort()).toEqual(['id', 'name']);
     expect(dto.narrators).toEqual([{ id: 'nr_one', name: 'Minnie Goode' }]);
@@ -54,33 +58,33 @@ describe('toBookV1 projection (zero-leak)', () => {
   });
 
   it('copies status through from the row (canonical BOOK_STATUSES literal)', () => {
-    expect(toBookV1(makeLeakyRow()).status).toBe('imported');
-    expect(toBookV1({ ...makeLeakyRow(), status: 'wanted' }).status).toBe('wanted');
+    expect(toBookV1(makeLeakyRow(), null).status).toBe('imported');
+    expect(toBookV1({ ...makeLeakyRow(), status: 'wanted' }, null).status).toBe('wanted');
   });
 
   describe('series shape', () => {
     it('projects { name, position } from seriesName/seriesPosition', () => {
-      const dto = toBookV1({ ...makeLeakyRow(), seriesName: 'Wool', seriesPosition: 2 });
+      const dto = toBookV1({ ...makeLeakyRow(), seriesName: 'Wool', seriesPosition: 2 }, null);
       expect(dto.series).toEqual({ name: 'Wool', position: 2 });
     });
 
     it('keeps a null position when seriesPosition is null', () => {
-      const dto = toBookV1({ ...makeLeakyRow(), seriesName: 'Wool', seriesPosition: null });
+      const dto = toBookV1({ ...makeLeakyRow(), seriesName: 'Wool', seriesPosition: null }, null);
       expect(dto.series).toEqual({ name: 'Wool', position: null });
     });
 
     it('is null when seriesName is null', () => {
-      expect(toBookV1({ ...makeLeakyRow(), seriesName: null, seriesPosition: null }).series).toBeNull();
+      expect(toBookV1({ ...makeLeakyRow(), seriesName: null, seriesPosition: null }, null).series).toBeNull();
     });
 
     it('is null when seriesName is empty', () => {
-      expect(toBookV1({ ...makeLeakyRow(), seriesName: '', seriesPosition: 3 }).series).toBeNull();
+      expect(toBookV1({ ...makeLeakyRow(), seriesName: '', seriesPosition: 3 }, null).series).toBeNull();
     });
   });
 
   describe('edges', () => {
     it('yields empty arrays for a book with no authors/narrators (no throw)', () => {
-      const dto = toBookV1({ ...makeLeakyRow(), authors: [], narrators: [] });
+      const dto = toBookV1({ ...makeLeakyRow(), authors: [], narrators: [] }, null);
       expect(dto.authors).toEqual([]);
       expect(dto.narrators).toEqual([]);
     });
@@ -96,9 +100,48 @@ describe('toBookV1 projection (zero-leak)', () => {
           { publicId: 'nr_z', name: 'Zed' },
           { publicId: 'nr_y', name: 'Yan' },
         ],
-      });
+      }, null);
       expect(dto.authors.map((a) => a.id)).toEqual(['au_b', 'au_a']);
       expect(dto.narrators.map((n) => n.id)).toEqual(['nr_z', 'nr_y']);
+    });
+  });
+
+  // #1961 AC 20 — the already-mapped companion value is passed IN. The projector
+  // never looks it up, never re-derives it, and cannot be widened by it.
+  describe('companionEbook second argument (#1961)', () => {
+    it('copies the supplied companion object through unchanged', () => {
+      const dto = toBookV1(makeLeakyRow(), COMPANION);
+      expect(dto.companionEbook).toEqual({ format: 'epub', sizeBytes: 42 });
+    });
+
+    it('emits companionEbook: null with the KEY PRESENT when null is supplied', () => {
+      const dto = toBookV1(makeLeakyRow(), null);
+      expect(dto.companionEbook).toBeNull();
+      expect(Object.keys(dto)).toContain('companionEbook');
+    });
+
+    it('does not derive the value from the row — a leaky row with its own companion fields is ignored', () => {
+      const dto = toBookV1(
+        { ...makeLeakyRow(), companionEbook: { format: 'pdf', sizeBytes: 9 } } as never,
+        COMPANION,
+      );
+      expect(dto.companionEbook).toEqual(COMPANION);
+    });
+
+    it('cannot inject extra keys — the DTO key set is unchanged by a companion argument', () => {
+      const dto = toBookV1(makeLeakyRow(), { ...COMPANION, path: '/leak.epub' } as never);
+      expect(Object.keys(dto).sort()).toEqual(['authors', 'companionEbook', 'id', 'narrators', 'series', 'status', 'title']);
+      // The extra nested key is caught by the strict schema, not silently shipped.
+      expect(bookV1Schema.safeParse(dto).success).toBe(false);
+    });
+
+    // The runtime half of `data.map(toBookV1)` — `Array.map` passes the INDEX as
+    // the second argument, so the DTO would carry a numeric `companionEbook`.
+    // The route-level guard is in `src/server/routes/v1/books.test.ts`.
+    it('index-argument regression guard: [row].map(toBookV1) produces a numeric companionEbook that the schema rejects', () => {
+      const dtos = [makeLeakyRow()].map(toBookV1 as never) as { companionEbook: unknown }[];
+      expect(typeof dtos[0]!.companionEbook).toBe('number');
+      expect(bookV1Schema.safeParse(dtos[0]).success).toBe(false);
     });
   });
 });
@@ -111,6 +154,7 @@ describe('bookV1Schema (fail-closed, .strict())', () => {
     narrators: [],
     series: null,
     status: 'imported',
+    companionEbook: null,
   };
 
   it('round-trips a projected DTO', () => {
@@ -132,6 +176,27 @@ describe('bookV1Schema (fail-closed, .strict())', () => {
 
   it('rejects a non-canonical status', () => {
     expect(bookV1Schema.safeParse({ ...valid, status: 'downloading-ish' }).success).toBe(false);
+  });
+
+  // #1961 AC 19/30 — `companionEbook` is REQUIRED and nullable. `.strict()` cuts
+  // both ways: a producer that forgets the key fails serialization (a 500), it
+  // does NOT ship a partial DTO.
+  describe('companionEbook member (#1961)', () => {
+    it('accepts an exposed companion object', () => {
+      expect(bookV1Schema.safeParse({ ...valid, companionEbook: { format: 'epub', sizeBytes: 0 } }).success).toBe(true);
+    });
+
+    it('rejects a DTO with companionEbook MISSING (required, not optional)', () => {
+      const { companionEbook: _omitted, ...withoutCompanion } = valid;
+      expect(bookV1Schema.safeParse(withoutCompanion).success).toBe(false);
+    });
+
+    it('rejects a non-epub format and an unknown nested key (strict + literal)', () => {
+      expect(bookV1Schema.safeParse({ ...valid, companionEbook: { format: 'pdf', sizeBytes: 1 } }).success).toBe(false);
+      expect(
+        bookV1Schema.safeParse({ ...valid, companionEbook: { format: 'epub', sizeBytes: 1, path: '/x' } }).success,
+      ).toBe(false);
+    });
   });
 });
 

@@ -8,7 +8,7 @@ import {
 import cookie from '@fastify/cookie';
 import authPlugin from '../../plugins/auth.js';
 import type { AuthService } from '../../services/auth.service.js';
-import type { Db } from '../../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { BookService } from '../../services/book.service.js';
 import type { IndexerSearchService } from '../../services/indexer-search.service.js';
 import type { DownloadOrchestrator } from '../../services/download-orchestrator.js';
@@ -18,15 +18,15 @@ import type { SettingsService } from '../../services/settings.service.js';
 import type { IndexerService } from '../../services/indexer.service.js';
 import * as searchPipeline from '../../services/search-pipeline.js';
 import { DuplicateDownloadError } from '../../services/download.service.js';
-import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../../core/download-clients/errors.js';
+import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import { createMockDb, mockDbChain, inject } from '../../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../../__tests__/factories.js';
 import { v1ActionsRoutes } from './actions.js';
-import { releaseV1Schema, encodeReleaseId } from '../../../shared/schemas/v1/actions.js';
+import { releaseV1Schema, encodeReleaseId } from '@shared/schemas/v1/actions.js';
 import { signReleaseId } from '../../services/grab-token.js';
 import { initializeKey, _resetKey } from '../../utils/secret-codec.js';
-import { downloadV1Schema } from '../../../shared/schemas/v1/downloads.js';
-import { v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { downloadV1Schema } from '@shared/schemas/v1/downloads.js';
+import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors books.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
@@ -187,6 +187,26 @@ describe('v1 action routes (search + grab)', () => {
       expectV1Envelope(res.json());
       expect(indexerSearchService.searchAll as Mock).not.toHaveBeenCalled();
     });
+
+    // #1983 F3 — pins the CANONICAL `v1PublicIdParamSchema` (`.trim().min(1)`) as this
+    // route's validator. Reverting this module to a private `z.string().min(1)` copy turns
+    // these back into 404 lookups, which `common.test.ts` (schema in isolation) and the
+    // companion-route suite (a different consumer) both stay green through.
+    it.each(['%20', '%20%20', '%09'])(
+      'returns a 400 BAD_REQUEST envelope for the whitespace-only publicId %s, without resolving',
+      async (encoded) => {
+        const res = await app.inject({ method: 'POST', url: `/api/v1/books/${encoded}/search`, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: { code: 'BAD_REQUEST', message: expect.any(String) } });
+        expectV1Envelope(res.json());
+        // Validation precedes the handler: neither the publicId resolution nor the
+        // search fan-out was reached.
+        expect(db.select).not.toHaveBeenCalled();
+        expect(bookService.getById as Mock).not.toHaveBeenCalled();
+        expect(indexerSearchService.searchAll as Mock).not.toHaveBeenCalled();
+      },
+    );
 
     it('returns 200 with a { data, total } envelope of opaque releases (no raw downloadUrl/infoHash/guid)', async () => {
       (indexerSearchService.searchAll as Mock).mockResolvedValue([searchResult(), searchResult({ guid: 'guid-2', title: 'Words of Radiance' })]);
@@ -709,6 +729,30 @@ describe('v1 action routes (search + grab)', () => {
       expect(res.statusCode).toBe(400);
       expectV1Envelope(res.json());
     });
+
+    // #1983 F3 — the body is VALID here, so the only thing that can fail is the path
+    // param: a whitespace-only publicId must be a 400 from the canonical validator, never
+    // a 404 from the resolver.
+    it.each(['%20', '%20%20', '%09'])(
+      'returns a 400 BAD_REQUEST envelope for the whitespace-only publicId %s with a valid body, without resolving',
+      async (encoded) => {
+        const res = await app.inject({
+          method: 'POST',
+          url: `/api/v1/books/${encoded}/grab`,
+          headers: keyHeaders,
+          payload: { releaseId },
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: { code: 'BAD_REQUEST', message: expect.any(String) } });
+        expectV1Envelope(res.json());
+        // Validation precedes the handler: neither the publicId resolution nor the grab
+        // was reached.
+        expect(db.select).not.toHaveBeenCalled();
+        expect(bookService.getById as Mock).not.toHaveBeenCalled();
+        expect(downloadOrchestrator.grab as Mock).not.toHaveBeenCalled();
+      },
+    );
 
     it('returns a 404 v1 envelope for an unknown publicId', async () => {
       bookRows = [];

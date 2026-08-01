@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { SearchOptions } from '../../core/index.js';
+import type { SearchOptions } from '@core/index.js';
 import { cleanIndexerQuery, cleanIndexerSearchOptions } from './indexer-query.js';
 
 describe('cleanIndexerQuery', () => {

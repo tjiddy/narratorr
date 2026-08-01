@@ -8,7 +8,7 @@ import {
 import cookie from '@fastify/cookie';
 import authPlugin from '../../plugins/auth.js';
 import type { AuthService } from '../../services/auth.service.js';
-import type { Db } from '../../../db/index.js';
+import type { Db } from '@db/index.js';
 import { createMockDb, inject } from '../../__tests__/helpers.js';
 import { registerV1OpenApi, V1_DOCS_BASE_PATH } from './openapi.js';
 import { v1BooksRoutes } from './books.js';
@@ -19,6 +19,8 @@ import { v1DownloadsRoutes } from './downloads.js';
 import { v1ActionsRoutes } from './actions.js';
 import { v1MetadataRoutes } from './metadata.js';
 import { v1SystemRoutes } from './system.js';
+import { v1CapabilitiesRoutes } from './capabilities.js';
+import { v1CompanionEbookRoutes } from './companion-ebook.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors books.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
@@ -52,6 +54,10 @@ const downloadService = { getAll: vi.fn().mockResolvedValue({ data: [], total: 0
 const indexerSearchService = { searchAll: vi.fn().mockResolvedValue([]) };
 const downloadOrchestrator = { grab: vi.fn() };
 const metadataService = { search: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }) };
+const settingsService = { get: vi.fn().mockResolvedValue({ enabled: false }) };
+/** A DEDICATED stub for the capabilities route only, so "the public docs surface
+ *  never reads the setting" (#1961 AC 9 / F9) is assertable in isolation. */
+const capabilitiesSettingsService = { get: vi.fn().mockResolvedValue({ enabled: true }) };
 
 /**
  * Build a Fastify app mirroring `src/server/index.ts` composition: swagger is
@@ -78,7 +84,7 @@ async function buildApp(urlBase = ''): Promise<FastifyInstance> {
       indexerSearchService: indexerSearchService as never,
       indexerService: {} as never,
       blacklistService: {} as never,
-      settingsService: {} as never,
+      settingsService: settingsService as never,
       eventHistory: {} as never,
     }, db);
     await v1AuthorsRoutes(scoped, { referenceReadService: refRead as never }, db);
@@ -94,8 +100,22 @@ async function buildApp(urlBase = ''): Promise<FastifyInstance> {
       settingsService: {} as never,
       indexerService: {} as never,
     }, db);
-    await v1MetadataRoutes(scoped, { metadataService: metadataService as never, bookService: bookService as never });
+    await v1MetadataRoutes(scoped, {
+      metadataService: metadataService as never,
+      bookService: bookService as never,
+      settingsService: settingsService as never,
+    });
     await v1SystemRoutes(scoped);
+    await v1CapabilitiesRoutes(scoped, { settingsService: capabilitiesSettingsService as never });
+    // `buildApp()` composes the v1 surface by hand (#1975 AC27) and is not coupled to
+    // `routeRegistry` — but forgetting a route here is no longer silent: the #1979
+    // completeness guard at the bottom of this file diffs the spec against the routes
+    // the production registry actually mounts, so this list going stale fails loudly.
+    await v1CompanionEbookRoutes(scoped, {
+      bookService: bookService as never,
+      settingsService: settingsService as never,
+      reconciler: { reconcileBook: vi.fn() },
+    }, db);
     // Non-v1 decoys (must be ABSENT from the public spec).
     scoped.get('/api/books', async () => ({ ok: true }));
     scoped.get('/api/v1/system/status', async () => ({ ok: true })); // Prowlarr-compat shim
@@ -120,7 +140,7 @@ const READ_PATHS = [
 const ACTION_PATHS = ['/api/v1/books/{publicId}/search', '/api/v1/books/{publicId}/grab'];
 // Singleton resources — no `{publicId}` detail and no list `{ data, total }`
 // envelope, so they sit outside READ_PATHS' DETAIL/LIST 400/404 assertions.
-const SINGLETON_PATHS = ['/api/v1/system'];
+const SINGLETON_PATHS = ['/api/v1/system', '/api/v1/capabilities'];
 const DETAIL_PATHS = READ_PATHS.filter((p) => p.endsWith('{publicId}'));
 const LIST_PATHS = READ_PATHS.filter((p) => !p.endsWith('{publicId}'));
 
@@ -237,6 +257,95 @@ describe('v1 OpenAPI spec generation', () => {
     expect(library.anyOf).toBeUndefined();
     expect(library.oneOf).toBeUndefined();
   });
+
+  // #1961 — the capability endpoint. Only the SHAPE is public.
+  describe('GET /api/v1/capabilities (#1961)', () => {
+    function capabilitySchema() {
+      return spec.paths['/api/v1/capabilities'].get.responses['200'].content['application/json'].schema;
+    }
+
+    it('documents the endpoint at the RELATIVE path key with a 200 exposing companionEpub.enabled as a boolean', () => {
+      // Relative path key (NOT URL_BASE-prefixed) — the base lives in
+      // servers[].url (learning fastify-swagger-servers-strips-path-prefix).
+      expect(spec.paths).toHaveProperty(['/api/v1/capabilities']);
+      expect(spec.paths['/api/v1/capabilities'].get.responses).toHaveProperty(['200']);
+      const enabled = capabilitySchema().properties.companionEpub.properties.enabled;
+      expect(enabled.type).toBe('boolean');
+    });
+
+    // AC 9 / F9 — the emitted `enabled` schema must publish NO value-shaped hint.
+    // This is the assertion that fails if someone reuses
+    // `companionEpubSettingsSchema`, whose `.default(false)` would surface here.
+    it.each(['default', 'example', 'examples', 'const', 'enum'])(
+      'never publishes the enabled VALUE — the emitted schema carries no %s',
+      (key) => {
+        expect(capabilitySchema().properties.companionEpub.properties.enabled).not.toHaveProperty([key]);
+      },
+    );
+
+    it('generates the spec without ever reading the companionEpub setting', () => {
+      // The public docs surface is unauthenticated; it must describe the shape
+      // without consulting the owner's configuration.
+      expect(capabilitiesSettingsService.get).not.toHaveBeenCalled();
+    });
+  });
+
+  // #1975 AC27/AC28 — the public companion-ebook stream.
+  describe('GET /api/v1/books/{publicId}/companion-epub (#1975)', () => {
+    it('documents the endpoint at the RELATIVE path key with a get operation', () => {
+      // Relative path key (NOT URL_BASE-prefixed) — the base lives in servers[].url
+      // (learning fastify-swagger-servers-strips-path-prefix).
+      expect(spec.paths).toHaveProperty(['/api/v1/books/{publicId}/companion-epub']);
+      expect(spec.paths['/api/v1/books/{publicId}/companion-epub'].get).toBeTruthy();
+    });
+
+    it('documents the publicId path parameter', () => {
+      const params = spec.paths['/api/v1/books/{publicId}/companion-epub'].get.parameters ?? [];
+      expect(params.map((p: { name: string }) => p.name)).toContain('publicId');
+    });
+  });
+
+  // #1961 — `companionEbook` on both producers: required and nullable.
+  describe('companionEbook on both producers (#1961)', () => {
+    function bookItem() {
+      return spec.paths['/api/v1/books'].get.responses['200'].content['application/json'].schema
+        .properties.data.items;
+    }
+    function libraryObject() {
+      return spec.paths['/api/v1/metadata/search'].get.responses['200'].content['application/json'].schema
+        .properties.data.items.properties.library;
+    }
+
+    it('documents it as a REQUIRED nullable member of the book item', () => {
+      const item = bookItem();
+      expect(item.properties).toHaveProperty('companionEbook');
+      expect(item.required).toContain('companionEbook');
+      expect(item.properties.companionEbook.nullable).toBe(true);
+    });
+
+    it('documents it as a REQUIRED nullable member INSIDE the metadata-search library annotation', () => {
+      const library = libraryObject();
+      expect(library.properties).toHaveProperty('companionEbook');
+      expect(library.required).toContain('companionEbook');
+      expect(library.properties.companionEbook.nullable).toBe(true);
+    });
+
+    it('keeps library itself optional even though its members are required', () => {
+      const item = spec.paths['/api/v1/metadata/search'].get.responses['200'].content['application/json'].schema
+        .properties.data.items;
+      expect(item.required ?? []).not.toContain('library');
+    });
+
+    it.each([
+      ['book item', () => bookItem().properties.companionEbook],
+      ['library annotation', () => libraryObject().properties.companionEbook],
+    ])('describes the same { format: epub, sizeBytes } shape on the %s', (_label, get) => {
+      const schema = get() as { properties: Record<string, { type: string; enum?: string[] }>; required: string[] };
+      expect(schema.properties.format!.enum).toEqual(['epub']);
+      expect(schema.properties.sizeBytes!.type).toBe('number');
+      expect(schema.required.sort()).toEqual(['format', 'sizeBytes']);
+    });
+  });
 });
 
 describe('v1 docs surface — public (no API key)', () => {
@@ -305,6 +414,9 @@ describe('v1 docs surface — URL_BASE honored', () => {
     // relative to it. Full URL = servers.url + path = `/narratorr/api/v1/books`.
     expect(spec.servers).toEqual([{ url: URL_BASE }]);
     expect(spec.paths).toHaveProperty(['/api/v1/books']);
+    // #1961 — the new capability route follows the same rule.
+    expect(spec.paths).toHaveProperty(['/api/v1/capabilities']);
+    expect(spec.paths).not.toHaveProperty([`${URL_BASE}/api/v1/capabilities`]);
   });
 
   it('does NOT duplicate URL_BASE — no path key carries the prefix, and the composed URL has it exactly once', () => {
@@ -319,5 +431,85 @@ describe('v1 docs surface — URL_BASE honored', () => {
       expect(effectiveUrl.startsWith(`${URL_BASE}/api/v1/`)).toBe(true);
       expect(effectiveUrl.startsWith(`${URL_BASE}${URL_BASE}`)).toBe(false);
     }
+  });
+});
+
+/**
+ * #1979 — `buildApp()` composes the v1 surface BY HAND, so before this guard a new
+ * v1 route added to `routeRegistry` but forgotten here was silently absent from the
+ * spec this suite asserts, and every test above still passed. (Production is not the
+ * victim — the runtime spec is generated from the real app — the victim is this
+ * suite's coverage, which is what third parties' contract is verified against.)
+ *
+ * The guard drives the REAL production `routeRegistry` against a collector app and
+ * requires SET EQUALITY between the native-v1 routes the registry mounts and the
+ * paths in buildApp's spec. Equality, not containment, on purpose:
+ *  - registry mounts a route buildApp forgot → collected ⊃ spec → red;
+ *  - buildApp registers a route the registry dropped → spec ⊃ collected → red;
+ *  - every v1 factory silently throwing under the proxies → collected = ∅ ≠ spec → red,
+ *    so the guard cannot pass vacuously.
+ */
+describe('spec completeness against the production routeRegistry (#1979)', () => {
+  it('documents exactly the native-v1 surface the registry mounts', async () => {
+    const { routeRegistry } = await import('../index.js');
+
+    const collector = Fastify({ logger: false, routerOptions: { maxParamLength: 2048 } }).withTypeProvider<ZodTypeProvider>();
+    collector.setValidatorCompiler(validatorCompiler);
+    collector.setSerializerCompiler(serializerCompiler);
+
+    // Fastify `:param` → OpenAPI `{param}`; collapse HEAD (added implicitly with GET).
+    // The same native-v1 predicate `createV1Transform` applies (openapi.ts): under
+    // /api/v1, minus the Prowlarr-compat shim and the docs subtree. Reusing the real
+    // exclusion helper keeps guard and transform from drifting apart.
+    const { isProwlarrCompatPath } = await import('../prowlarr-compat.js');
+    const collected = new Set<string>();
+    collector.addHook('onRoute', (route) => {
+      if (!(route.url === '/api/v1' || route.url.startsWith('/api/v1/'))) return;
+      if (isProwlarrCompatPath(route.url, '')) return; // compat shim: hidden from the spec on purpose
+      if (route.url.startsWith('/api/v1/docs')) return; // the docs subtree documents, it is not documented
+      const specPath = route.url.replace(/:([A-Za-z0-9_]+)/g, '{$1}');
+      const methods = Array.isArray(route.method) ? route.method : [route.method];
+      for (const m of methods) {
+        if (m === 'HEAD' || m === 'OPTIONS') continue;
+        collected.add(`${m.toLowerCase()} ${specPath}`);
+      }
+    });
+
+    // The registry's factories close over a full `Services` object; the memoizing
+    // proxy hands each property a stable stub (same shape as routes/index.test.ts).
+    // Factories only CLOSE OVER deps at registration, so stubs are never invoked.
+    const stubs = new Map<string, object>();
+    const services = new Proxy({}, {
+      get(_t, prop: string) {
+        if (!stubs.has(prop)) stubs.set(prop, { __service: prop });
+        return stubs.get(prop);
+      },
+    }) as never;
+    const db = inject<Db>(createMockDb());
+
+    // Non-v1 factories may throw against this partially-stubbed environment — fine,
+    // their routes are hidden from the spec anyway. A v1 factory that throws shows up
+    // as a set inequality below, never as a silent pass.
+    for (const factory of routeRegistry) {
+      try {
+        await factory(collector as never, services, db);
+      } catch {
+        /* non-v1 factory incompatible with the stub environment */
+      }
+    }
+    await collector.close();
+
+    const app = await buildApp('');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spec = (app as any).swagger();
+    await app.close();
+
+    const documented = new Set<string>();
+    for (const [pathKey, item] of Object.entries<Record<string, unknown>>(spec.paths)) {
+      for (const method of Object.keys(item)) documented.add(`${method} ${pathKey}`);
+    }
+
+    expect(collected.size).toBeGreaterThan(0); // anti-vacuity floor
+    expect([...documented].sort()).toEqual([...collected].sort());
   });
 });

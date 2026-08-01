@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { clientSubmissionIdSchema } from '../../../core/import-staging/schemas.js';
+import { clientSubmissionIdSchema } from '@core/import-staging/schemas.js';
 import { generateClientSubmissionId, EntropyUnavailableError } from './client-uuid.js';
 
 /** A deterministic getRandomValues that fills the buffer with an incrementing pattern. */

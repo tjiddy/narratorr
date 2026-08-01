@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { formatBytes, type Download } from '@/lib/api';
 import { formatRelativeDate } from '@/lib/format';
 import { AlertCircleIcon, LoadingSpinner, ChevronDownIcon } from '@/components/icons';
@@ -8,7 +8,7 @@ import { statusConfig } from './helpers.js';
 import { DownloadProgress } from './DownloadProgress.js';
 import { DownloadActions } from './DownloadActions.js';
 import { QualityComparisonPanel } from './QualityComparisonPanel.js';
-import { requireDefined } from '../../../shared/utils/assert.js';
+import { requireDefined } from '@shared/utils/assert.js';
 
 function PendingReviewActions({
   onApprove,

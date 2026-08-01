@@ -6,7 +6,7 @@ import { LoadingSpinner, HistoryIcon, SearchIcon, TrashIcon } from '@/components
 import { usePagination } from '@/hooks/usePagination';
 import { Pagination } from '@/components/Pagination';
 import { FilterPill } from '@/components/FilterPill.js';
-import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
+import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 
 const EVENT_TYPE_FILTERS = [
   { value: '', label: 'All' },

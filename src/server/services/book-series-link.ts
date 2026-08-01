@@ -1,7 +1,7 @@
 import { and, eq, isNull, ne } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import type { DbOrTx } from '../../db/index.js';
-import { series, seriesMembers } from '../../db/schema.js';
+import type { DbOrTx } from '@db/index.js';
+import { series, seriesMembers } from '@db/schema.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { normalizeMemberTitleForMatch } from './series-title-match.js';

@@ -3,11 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
-import { indexerSettingsSchemas } from '../../shared/schemas/indexer.js';
-import { downloadClientSettingsSchemas } from '../../shared/schemas/download-client.js';
-import { notifierSettingsSchemas } from '../../shared/schemas/notifier.js';
-import { importListSettingsSchemas } from '../../shared/schemas/import-list.js';
-import { connectorSettingsSchemas } from '../../shared/schemas/connector.js';
+import { indexerSettingsSchemas } from '@shared/schemas/indexer.js';
+import { downloadClientSettingsSchemas } from '@shared/schemas/download-client.js';
+import { notifierSettingsSchemas } from '@shared/schemas/notifier.js';
+import { importListSettingsSchemas } from '@shared/schemas/import-list.js';
+import { connectorSettingsSchemas } from '@shared/schemas/connector.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

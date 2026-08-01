@@ -1,6 +1,6 @@
-import { type books } from '../../db/schema.js';
+import { type books } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
-import { productionTypeSchema, type ProductionType } from '../../shared/schemas/book.js';
+import { productionTypeSchema, type ProductionType } from '@shared/schemas/book.js';
 import type { BookRow } from './types.js';
 
 /**

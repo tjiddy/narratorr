@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { sql } from 'drizzle-orm';
 import type { Services } from './index.js';
 import { runSearchJob, searchAllWanted } from '../jobs/search.js';

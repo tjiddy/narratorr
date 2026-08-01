@@ -1,8 +1,8 @@
-import type { NotificationEvent, EventPayload } from '../../shared/notification-events.js';
+import type { NotificationEvent, EventPayload } from '@shared/notification-events.js';
 
 // Re-export from shared for backward compatibility with existing core consumers
 export type { NotificationEvent, EventPayload };
-export { formatEventMessage } from '../../shared/notification-events.js';
+export { formatEventMessage } from '@shared/notification-events.js';
 
 export interface NotifierAdapter {
   readonly type: string;

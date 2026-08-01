@@ -16,7 +16,7 @@ import { MergeError } from '../services/merge.service.js';
 import { DownloadError, DuplicateDownloadError } from '../services/download.service.js';
 import { TaskRegistryError } from '../services/task-registry.js';
 import { CoverUploadError } from '../services/cover-upload.js';
-import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../core/download-clients/errors.js';
+import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import { BackupRecoveryError, BackupAmbiguityError, MarkerPathConflictError } from '../utils/import-staging.js';
 
 function createTestApp() {

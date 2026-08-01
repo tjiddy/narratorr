@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { mkdtemp, mkdir, writeFile, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
-import { downloads } from '../../db/schema.js';
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { downloads } from '@db/schema.js';
+import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { createE2EApp, seedBookAndDownload, type E2EApp } from './e2e-helpers.js';
 import {
   QB_BASE,
@@ -19,7 +19,7 @@ import {
 } from './msw-handlers.js';
 
 // Mock audio scanner at module level — enrichment calls this but real parsing needs valid audio files
-vi.mock('../../core/utils/audio-scanner.js', () => ({
+vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 

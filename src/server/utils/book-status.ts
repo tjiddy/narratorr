@@ -1,7 +1,7 @@
 import { and, eq, type SQL } from 'drizzle-orm';
-import type { DbOrTx } from '../../db/index.js';
-import { books } from '../../db/schema.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { DbOrTx } from '@db/index.js';
+import { books } from '@db/schema.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 
 // ============================================================================
 // Authoritative book-status transitions (#1446, epic #1441 / S2c)

@@ -7,7 +7,7 @@
  * can't trigger a strict-clear of an adjacent `.import-bak`.
  */
 import { stat } from 'node:fs/promises';
-import { MARKER_SUFFIX } from '../../core/utils/import-sibling-suffixes.js';
+import { MARKER_SUFFIX } from '@core/utils/import-sibling-suffixes.js';
 
 /**
  * Thrown when a non-file (typically a directory) occupies the commit-pending marker path

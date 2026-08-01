@@ -16,9 +16,9 @@ import { runReplaceWorkflow, type ReplaceCtx } from './download-replace-workflow
 import { emitBookStatusChange } from '../utils/download-side-effects.js';
 import { REVERT_FALLBACK_STATUS } from '../utils/book-status.js';
 import { createMockDb, mockDbChain, createMockLogger, inject } from '../__tests__/helpers.js';
-import { books } from '../../db/schema.js';
-import type { Db } from '../../db/index.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import { books } from '@db/schema.js';
+import type { Db } from '@db/index.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import type { DownloadService } from './download.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { GrabParams } from './download-orchestrator.js';

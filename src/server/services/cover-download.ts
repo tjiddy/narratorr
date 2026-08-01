@@ -1,16 +1,16 @@
 import { writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { MAX_COVER_SIZE } from '../../shared/constants.js';
-import { mimeToExt } from '../../shared/mime.js';
+import { MAX_COVER_SIZE } from '@shared/constants.js';
+import { mimeToExt } from '@shared/mime.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import {
   createSsrfSafeDispatcher,
   fetchWithSsrfRedirect,
-} from '../../core/utils/network-service.js';
+} from '@core/utils/network-service.js';
 import { finalizeCoverWrite, type CoverWriteOutcome } from './cover-write.js';
 
 /** Check whether a coverUrl points to a remote HTTP(S) resource. */

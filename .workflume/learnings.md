@@ -11,24 +11,22 @@ Fastify's `app.inject()` cannot exercise SSE/streaming routes because Fastify hi
 
 Observed in `src/server/__tests__/e2e-helpers.ts` during the #755 migration: three tests originally hit `GET /api/search?q=...` via `app.inject()` and were ported to call `e2e.services.indexer.searchAll()` directly against `/api/search/stream`. The route-layer coverage was lost as a tradeoff. See the explanatory comment in `src/server/__tests__/search-grab-flow.e2e.test.ts` (where `GET /api/search` is noted as retired in favor of the SSE surface, and the indexer service is exercised directly so the MSW capture still verifies the outgoing query params); `src/server/__tests__/sse-helpers.ts` documents why `app.inject()` hangs on `reply.hijack()` routes.
 
-If future work needs true end-to-end SSE coverage in this harness, add a `searchViaStream(e2e, query)` helper that spins up the app on a free port, opens a streaming HTTP request, and accumulates SSE `data:` frames into a result array. Until that helper exists, prefer the direct-service-call pattern for SSE route tests and document the bypass in the test.
+For true end-to-end SSE coverage in this harness, that helper now exists: `fetchSseEvents` in `src/server/__tests__/sse-helpers.ts` binds a real ephemeral port, opens a streaming HTTP request, and accumulates SSE `data:` frames — use it instead of re-deriving the pattern. The direct-service-call bypass (now `e2e.services.indexerSearch.searchAll()`) remains valid where MSW capture of outgoing query params is the point and route-layer coverage is an accepted tradeoff; document the bypass in the test either way.
 
 ## edit-mode-id-injection-on-form-test
 
 **source:** #827
 **added:** 2026-05-04
+**files:** src/client/hooks/useConnectionTest.ts, src/client/hooks/useCrudSettings.ts
 **tags:** forms, settings, react, secrets, dry
 
 ---
 
-When a settings form runs a server-side test (`onFormTest`) while editing an existing entity, it must spread the entity id alongside the form data: `{ ...data, id: entity.id }`. The server uses that id to resolve sentinel placeholders for secret fields the client never sees in plaintext. Without it, the test runs against a partial payload and the server can't reconstruct the real credentials.
+When a settings form runs a server-side test (`onFormTest`) while editing an existing entity, it must send the entity id alongside the form data. The server uses that id to resolve sentinel placeholders for secret fields the client never sees in plaintext. Without it, the test runs against a partial payload and the server can't reconstruct the real credentials.
 
-Three forms currently follow this pattern by hand: `IndexerCard`, `NotifierCard`, and `DownloadClientForm`. Each carries the same explanatory comment. If a fourth edit form is added, prefer one of:
+The injection is lifted into the hooks (shipped as #1057): `useConnectionTest` accepts an `entityId` and merges `{ ...data, id: entityId }` inside the test call, and `useCrudSettings` exposes `injectEditingId: true` to wire it. New edit forms should pass `injectEditingId` rather than hand-spreading the id in the card — the settings pages already do this; there are no remaining hand-rolled spreads.
 
-1. Lifting the injection into `useConnectionTest` / `useCrudSettings` by accepting an optional `entityId` and merging it inside `handleFormTest`. Consumers then stop having to remember.
-2. If keeping it inline, copy the comment verbatim so the intent stays discoverable.
-
-Known exception: the import-list form does NOT need this — it routes through a saved-id test endpoint instead of the generic test-with-payload endpoint. Don't 'normalize' it into the spread pattern; that would break it. Originally surfaced in #827.
+Known exception: the import-list form does NOT need this — it routes through a saved-id test endpoint instead of the generic test-with-payload endpoint (`ImportListCard` uses no `injectEditingId`). Don't 'normalize' it into the injection pattern; that would break it. Originally surfaced in #827.
 
 ## ts-diagnostic-offsets-for-codemods
 
@@ -60,6 +58,7 @@ for (const d of ts.getPreEmitDiagnostics(program)) {
 
 **source:** #938
 **added:** 2026-05-04
+**files:** src/server/services/search-pipeline.test.ts
 **tags:** typescript, exactoptionalpropertytypes, fixture-builders, test-helpers, eopt
 
 ---
@@ -72,7 +71,7 @@ Three viable patterns when you encounter or write such a builder:
 2. **Custom overrides type on the builder** — type the parameter as `{ [K in keyof T]?: T[K] | undefined }` instead of `Partial<T>`. Allows explicit `undefined` literals; localizes the workaround to the builder definition.
 3. **Explicit-undefined-stripping helper** — a shared utility that accepts overrides including `undefined` and applies them with key deletion semantics.
 
-First observed in `src/server/services/search-pipeline.test.ts` (`makeResult`) during #938. Before widening this pattern across production fixtures (Phase 2 of the eopt migration), the codebase should standardize on one approach. Option 2 (custom mapped type) is generally the lowest-friction choice because it keeps call sites idiomatic, but a centralized helper is preferable if many builders share the same shape.
+First observed in `src/server/services/search-pipeline.test.ts` (`makeResult`) during #938. Option 2 (custom mapped type) is the adopted in-repo standard — see `MakeResultOverrides` at `search-pipeline.test.ts:45-47`. It keeps call sites idiomatic; reach for a centralized helper only if many builders end up sharing the same shape.
 
 When reviewing or adding a fixture builder under eopt: check whether callers need to strip defaults; if so, do not use bare `Partial<T>` for the overrides parameter.
 
@@ -80,6 +79,7 @@ When reviewing or adding a fixture builder under eopt: check whether callers nee
 
 **source:** #966
 **added:** 2026-05-04
+**files:** src/core/utils/network-service.ts
 **tags:** undici, dns, node, callback-shape, network
 
 ---
@@ -99,20 +99,20 @@ Custom `LookupFunction` implementations (e.g. `validatingLookup` in `src/core/ut
 
 **source:** #1017
 **added:** 2026-05-07
-**files:** src/server/index.ts
+**files:** src/server/fastify-options.ts, src/server/__tests__/helpers.ts
 **tags:** fastify, routing, path-params, tokens
 
 ---
 
-Fastify 5 defaults `routerOptions.maxParamLength` to 100 chars per dynamic path parameter. Anything longer (signed capability tokens, base64url payloads, content hashes, JWT-shaped strings) silently fails to match the route — Fastify returns a generic 404 'Route not found' from its not-found handler, with no warning, no log, and no validation error. The handler is never invoked; throws and console.logs inside it do not fire.
+Fastify 5 defaults `routerOptions.maxParamLength` to 100 chars per dynamic path parameter. Anything longer (signed capability tokens, base64url payloads, content hashes, JWT-shaped strings) is rejected before the route matches. On fastify < 5.11 that rejection is a generic 404 'Route not found' with no warning, no log, and no validation error; fastify 5.11+ (find-my-way 9.7+) returns an explicit 414 URI Too Long instead, which is diagnosable — but either way the handler is never invoked; throws and console.logs inside it do not fire, and the cap still needs bumping for long-token routes.
 
-**Pattern:** When introducing a route that takes variable-length encoded data in a path parameter, bump the cap on the Fastify constructor: `Fastify({ routerOptions: { maxParamLength: 2048 } })` (or whatever the real upper bound is). Mirror the change in any test-app constructor (`src/server/__tests__/helpers.ts:createTestApp` and per-test ad-hoc instances) — the cap is per-instance, not a runtime config.
+**Pattern:** When introducing a route that takes variable-length encoded data in a path parameter, bump the cap on the Fastify constructor: `Fastify({ routerOptions: { maxParamLength: 2048 } })` (or whatever the real upper bound is). The production options live in `buildFastifyOptions()` (`src/server/fastify-options.ts`), consumed by `src/server/index.ts`. Mirror the change in any test-app constructor (`src/server/__tests__/helpers.ts:createTestApp` and per-test ad-hoc instances) — the cap is per-instance, not a runtime config.
 
 **Why this is non-obvious:** the 404 looks like a routing bug. Common debugging instincts (add a log to the handler, throw inside the handler, check Zod validation, check the type provider) all return the same 404 because the request never reaches the handler. The fix is not in your code — it's in the constructor option.
 
 **The deprecated form:** `Fastify({ maxParamLength: 2048 })` at the top level still works in Fastify 5 but emits FSTDEP022 and is removed in Fastify 6. Always use `routerOptions.maxParamLength`.
 
-**Where to keep this in mind:** any feature that encodes data into the URL path — signed tokens, hashes, encoded ids, capability strings. Reference: `src/server/index.ts` and `src/server/__tests__/helpers.ts` after #1017.
+**Where to keep this in mind:** any feature that encodes data into the URL path — signed tokens, hashes, encoded ids, capability strings. Reference: `src/server/fastify-options.ts` (executable-proven by `fastify-options.test.ts`'s default-cap 414 repro) and `src/server/__tests__/helpers.ts` after #1017.
 
 ## drizzle-migration-prompt-hang
 
@@ -166,14 +166,25 @@ Request-body schemas for API-impersonation/compatibility surfaces (narratorr's P
 
 ## drizzle-sqlite-text-enum-no-db-check
 
-**source:** #1129
+**source:** #1129, #1957
 **added:** 2026-05-15
 **files:** src/db/schema.ts
-**tags:** drizzle, sqlite, enums, migrations
+**tags:** drizzle, sqlite, enums, migrations, check-constraints, drizzle-kit
 
 ---
 
-Drizzle SQLite's `text(name, { enum: [...] })` produces a TS-only narrow union — no DB-level CHECK constraint is emitted. Adding/removing enum values requires no migration (`pnpm db:generate` reports `No schema changes`), and rows with any string value will be accepted at the DB layer. Enforce enum integrity by: (a) Zod `.parse()` on inbound writes, and (b) a schema-alignment test asserting `<zodEnum>.options ↔ <table>.<column>.enumValues` set equality. Adding a manual CHECK constraint requires a hand-written SQL migration since Drizzle won't emit one.
+Drizzle SQLite's `text(name, { enum: [...] })` produces a TS-only narrow union — no DB-level CHECK constraint is emitted. Adding/removing enum values requires no migration (`pnpm db:generate` reports `No schema changes`), and rows with any string value will be accepted at the DB layer. Enforce enum integrity by: (a) Zod `.parse()` on inbound writes, and (b) a schema-alignment test asserting `<zodEnum>.options ↔ <table>.<column>.enumValues` set equality.
+
+**Correction (#1957).** This entry used to end "Adding a manual CHECK constraint requires a hand-written SQL migration since Drizzle won't emit one." **That was false and it mis-steered a design document.** The claim holds only for the enum COLUMN helper above. The `check()` TABLE-CONSTRAINT helper from `drizzle-orm/sqlite-core` is a different API and it DOES emit DB-level constraints: return `` check('<name>', sql`<predicate>`) `` from the table's second-argument array and an ordinary `pnpm exec drizzle-kit generate --name <slug>` writes inline `CONSTRAINT "<name>" CHECK(...)` clauses into the CREATE TABLE. Verified on drizzle-orm@0.45.2 / drizzle-kit@0.31.10, dialect `turso` — see `src/db/schema.ts` (eight of them) and the emitted `CONSTRAINT "ck_companion_ebooks_*" CHECK(...)` clauses in `drizzle/0000_baseline.sql`, with real-DB proof in `src/db/companion-ebooks-schema.integration.test.ts`. (Cite the constraint names, not a migration index — the index is not stable pre-1.0; these clauses were emitted into a `0001_companion_ebooks` that has since been flattened into the baseline.)
+
+Four traps when writing them:
+
+1. **No bound parameters in DDL.** A `${value}` interpolation inside the `sql` template becomes a `?` placeholder, which is invalid inside a CHECK. To derive a literal list from a canonical tuple use `` sql.raw(TUPLE.map((s) => `'${s}'`).join(', ')) ``, and assert in a test that the emitted DDL contains the literals and no `?`.
+2. **Never use `--custom` for this.** `drizzle-kit generate --custom` writes an empty SQL file *and* a snapshot that does not contain the new table, so the next ordinary `generate` emits a second, duplicate `CREATE TABLE`. That migration applies cleanly on the generating machine and fails a from-scratch CI run with "table already exists" — the local-passes/CI-fails class the `git add drizzle/` rule exists to prevent. A new table is a pure add, so ordinary generate never prompts (cf. `drizzle-migration-prompt-hang`).
+3. **SQLite treats a CHECK evaluating to NULL as SATISFIED.** Any predicate touching a nullable column must go through a total operator (`IS NULL` / `IS NOT NULL` / `typeof(...)`) or be guarded by an `IS NOT NULL` term in the same conjunction.
+4. **SQLite evaluates CHECKs in declaration order and reports only the FIRST failure by name.** A test asserting *which* constraint fired must use a row that violates exactly one, and must compare the extracted name (`/CHECK constraint failed: (\S+)/`) with equality — a substring match lets a name that prefixes another satisfy the wrong assertion.
+
+Related: `migrated-db-assertions-through-drizzle` (the constraint message is on `.cause`, not `.message`).
 
 ## render-body-logging-lint-constraints
 
@@ -210,14 +221,32 @@ After #1336, the import failure-cleanup paths (`handleImportFailure` in import-s
 
 ## vimock-barrel-replace-drops-named-exports
 
-**source:** #1404  
+**source:** #1404, #1963  
 **added:** 2026-06-12  
-**files:** src/client/hooks/useCrudSettings.ts  
-**tags:** vitest, vi-mock, barrel-exports, importOriginal, tanstack-query
+**files:** src/client/hooks/useCrudSettings.ts, src/client/pages/book/BookPage.test.tsx  
+**tags:** vitest, vi-mock, barrel-exports, importOriginal, tanstack-query, jsdom, fetch
 
 ---
 
 A `vi.mock('<barrel>', () => ({...}))` factory REPLACES the module — any named export not listed becomes `undefined`. When a shared hook/component newly references a named export from that barrel at RUNTIME (not just types), every consumer test using a no-`importOriginal` factory breaks, but only when the code path touching the export executes (e.g. a mutation `onError`). This evades `tsc` and the hook's own tests; it surfaces only under full verify in consumer suites. Two fixes: (1) preferred — `vi.mock('<barrel>', async (importOriginal) => ({ ...(await importOriginal<typeof import('<barrel>')>()), api: {...} }))` to preserve real exports; (2) inline a hand-rolled stand-in in the factory (see CredentialsSection.test.tsx for the `ApiError` class precedent) — works but drifts from the real implementation. Rule of thumb: when you make a broadly-consumed module gain a runtime dependency on a new symbol from a heavily-mocked barrel, audit consumer mocks and run the full suite, not just typecheck + the unit's own tests. Originated in #1404 (useCrudSettings gained a runtime `ApiError` import; four settings-page suites broke only on their delete-failure tests).
+
+**The reciprocal hazard (#1963) — preserving the barrel keeps every unstubbed method REAL.** Fix (1) above is correct, but when the factory spreads `actual.api` rather than replacing `api` wholesale, every method you do NOT stub still runs. A real method calls `fetchApi` → `` fetch(`${URL_BASE}/api${path}`) ``, a relative URL jsdom resolves against its base — so the suite issues genuine network requests. They usually degrade silently, so nothing goes red and the suite quietly depends on the host's fetch behaviour. Measured on `BookPage.test.tsx`, where only the book loaders were stubbed; a `vi.spyOn(globalThis, 'fetch')` probe caught three escapees: `/api/books/1/series` (SeriesCard, via BookDetailsContent), `/api/settings/ffmpeg-status` (useFfmpegStatus, which BookDetails always executes), `/api/auth/stream-token` (mintStreamToken, via SearchReleasesModal).
+
+Enumerating them is not durable — a new child component adds a fourth. Add a standing guard:
+
+```ts
+let fetchSpy: MockInstance<typeof globalThis.fetch>
+beforeEach(() => { fetchSpy = vi.spyOn(globalThis, 'fetch') })
+afterEach(() => { fetchSpy.mockRestore() })
+
+it('issues no real network request while rendering the fully-loaded page', async () => {
+  renderPage()
+  await waitFor(() => expect(screen.getByText('<late-arriving content>')).toBeInTheDocument())
+  expect(fetchSpy.mock.calls.map((c) => String(c[0]))).toEqual([])
+})
+```
+
+Two details: await the fully-loaded page or the secondary queries have not fired yet; and type the handle as `MockInstance<typeof globalThis.fetch>` — `ReturnType<typeof vi.spyOn>` loses the generic and trips TS7006 on `.mock.calls`. This is a per-suite audit, not an automatic consequence: `BookDetails.test.tsx` and `BookDetailsContent.test.tsx` use the same shape and were already clean.
 
 ## marker-recovery-is-additive
 
@@ -228,7 +257,7 @@ A `vi.mock('<barrel>', () => ({...}))` factory REPLACES the module — any named
 
 ---
 
-The commit-pending recovery sequence (recoverInterruptedBackup in src/server/utils/import-staging.ts, reached via recoverInterruptedCommit) is ADDITIVE: it renames files from `<target>.import-bak` into the target (overwriting only same-named files), then clears the backup and marker. It never deletes existing target files, so the top-level audio count after recovery is always >= the count before. Do not reason about recovery as 'swapping in' or 'replacing' the target's file set — that's what the #1287 staged swap (stagedAudioReplace/commitStagedImport) does, not bare recovery. Practical effect: a guard that re-checks a minimum-file-count AFTER recovery (e.g. the #1418 merge >=2 re-validation) is correct defense-in-depth but cannot be triggered by the real recovery flow when a pre-recovery validation already enforced that minimum; test such guards by simulating divergent pre/post-recovery readdir results in a mocked-fs suite rather than trying to arrange a real-tmpdir shrink.
+The commit-pending recovery sequence (recoverInterruptedBackup in src/server/utils/import-staging.ts, reached via recoverInterruptedCommit in src/server/utils/recover-interrupted-commit.ts) is ADDITIVE: it renames files from `<target>.import-bak` into the target (overwriting only same-named files), then clears the backup and marker. It never deletes existing target files, so the top-level audio count after recovery is always >= the count before. Do not reason about recovery as 'swapping in' or 'replacing' the target's file set — that's what the #1287 staged swap (stagedAudioReplace/commitStagedImport) does, not bare recovery. Practical effect: a guard that re-checks a minimum-file-count AFTER recovery (e.g. the #1418 merge >=2 re-validation) is correct defense-in-depth but cannot be triggered by the real recovery flow when a pre-recovery validation already enforced that minimum; test such guards by simulating divergent pre/post-recovery readdir results in a mocked-fs suite rather than trying to arrange a real-tmpdir shrink.
 
 ## guarded-transition-needs-returning-in-tx-mocks
 
@@ -250,7 +279,7 @@ transitionBookStatus (src/server/utils/book-status.ts) and the symmetric transit
 
 ---
 
-fastify-type-provider-zod types FastifyReply.send() as the union of the schemas declared in the route's `response` map. So once a route (using withTypeProvider<ZodTypeProvider>()) declares its 200/201 success shape, `reply.status(400).send(envelope)` fails typecheck unless 400 is also declared in the response map. Two ways to satisfy it: (1) throw a typed error and let a setErrorHandler build the envelope via its own untyped reply (how the v1 READ routes avoid the issue — they throw V1NotFoundError → v1ErrorHandler), or (2) declare an error-envelope schema for every status the handler reply.send()s inline (how the v1 ACTION routes do it: response `{ 200, 201, 400, 401, 404, 409, 500, 502, 504 }`). Helper functions receiving a bare FastifyReply parameter are not subject to the narrowing. Approach (2) also fail-closes error-body serialization. Reference: src/server/routes/v1/actions.ts vs src/server/routes/v1/books.ts + _helpers.ts (v1ErrorHandler).
+fastify-type-provider-zod types FastifyReply.send() as the union of the schemas declared in the route's `response` map. So once a route (using withTypeProvider<ZodTypeProvider>()) declares its 200/201 success shape, `reply.status(400).send(envelope)` fails typecheck unless 400 is also declared in the response map. Two ways to satisfy it: (1) throw a typed error and let a setErrorHandler build the envelope via its own untyped reply (how the v1 READ routes avoid the issue — they throw V1NotFoundError → v1ErrorHandler), or (2) declare an error-envelope schema for every status the handler reply.send()s inline (how the v1 ACTION routes do it: an inline error-envelope schema for each status the route declares — the exact status set varies per route). Helper functions receiving a bare FastifyReply parameter are not subject to the narrowing. Approach (2) also fail-closes error-body serialization. Reference: src/server/routes/v1/actions.ts vs src/server/routes/v1/books.ts + _helpers.ts (v1ErrorHandler).
 
 ## fastify-swagger-servers-strips-path-prefix
 
@@ -297,6 +326,7 @@ Drizzle widens enum columns to `string` at the TS boundary. On READ, `typeof tab
 ## sqlite-in-clause-bind-limit
 
 **added:** 2026-06-17
+**files:** src/server/services/blacklist.service.ts, src/server/services/discovery.service.ts
 **tags:** sqlite, libsql, bind-limit, in-clause
 
 ---
@@ -311,7 +341,7 @@ When building a dynamic `IN (...)` query, chunk to stay under SQLite's bound-par
 
 ---
 
-`z.string().optional()` accepts `undefined` but REJECTS `null` ("Expected string, received null"). Real external APIs (NYT, Audible, ABS, Hardcover, MAM, Audnexus) return `null` for absent values, so ANY field parsed from an external response must use `.nullish()` (accepts both null and undefined). Reserve `.optional()` for schemas we own (request validators, DB-derived shapes, form data, settings) where we control the contract.
+`z.string().optional()` accepts `undefined` but REJECTS `null` (zod v4: "Invalid input: expected string, received null"). Real external APIs (NYT, Audible, ABS, Hardcover, MAM, Audnexus) return `null` for absent values, so ANY field parsed from an external response must use `.nullish()` (accepts both null and undefined). Reserve `.optional()` for schemas we own (request validators, DB-derived shapes, form data, settings) where we control the contract.
 
 ## zod-default-ignores-empty-string
 
@@ -336,12 +366,12 @@ When building a dynamic `IN (...)` query, chunk to stay under SQLite's bound-par
 ## zod-resolver-effects-divergence
 
 **added:** 2026-06-17
-**files:** src/client/components/**
+**files:** src/client/components/**, src/client/pages/settings/**, src/shared/schemas/settings/strip-defaults.ts
 **tags:** zod, zodresolver, react-hook-form, forms
 
 ---
 
-`z.preprocess()`, `z.transform()`, and `z.default()` create ZodEffects where the input type ≠ output type; `zodResolver` requires them aligned and otherwise mistypes the form. Fix: omit `.default()` in form schemas (forms always pass explicit `defaultValues`), and use `setValueAs` in `register()` for coercion instead of `z.preprocess()`. Use the `stripDefaults()` helper to remove defaults from a server schema before reusing it in a form.
+`z.preprocess()`, `z.transform()`, and `z.default()` create input ≠ output type divergence (zod v4: `ZodPipe`/`ZodTransform`/`ZodDefault` — the v3 `ZodEffects` class no longer exists); `zodResolver` requires input and output aligned and otherwise mistypes the form. Fix: omit `.default()` in form schemas (forms always pass explicit `defaultValues`), and use `setValueAs` in `register()` for coercion instead of `z.preprocess()`. Use the `stripDefaults()` helper (`src/shared/schemas/settings/strip-defaults.ts`) to remove defaults from a server schema before reusing it in a form.
 
 ## settings-field-dual-default
 
@@ -351,7 +381,7 @@ When building a dynamic `IN (...)` query, chunk to stay under SQLite's bound-par
 
 ---
 
-A new settings field needs TWO edits: the Zod schema `.default(...)` AND `DEFAULT_SETTINGS` / `settingsRegistry.*.defaults` in `registry.ts`. Runtime reads `DEFAULT_SETTINGS` (it does NOT Zod-parse to fill defaults), so a schema-only addition leaves the runtime value and the mock factories missing the field — green typecheck, `undefined` at runtime.
+A new settings field needs TWO edits: the Zod schema `.default(...)` AND `settingsRegistry.*.defaults` in `registry.ts` (from which `DEFAULT_SETTINGS` derives). `defineCategory` types `defaults` as `z.infer<S>`, so a schema-only addition is now a COMPILE ERROR at the registry until the defaults edit lands — the fix is to add the field to `defaults`, never to loosen the registry's types to make the error go away. At runtime the settings service DOES safeParse stored rows (zod fills `.default()`s there); `DEFAULT_SETTINGS` is the no-row / failed-parse fallback and what the mock factories clone, so both edits still matter.
 
 ## settings-from-entity-registry-overlay
 
@@ -375,13 +405,28 @@ For high-frequency SSE/stream updates, patch rows in place with `setQueryData()`
 
 ## react-query-optimistic-cancel
 
+**source:** #1963
 **added:** 2026-06-17
-**files:** src/client/hooks/**
-**tags:** react-query, optimistic-update, mutations
+**files:** src/client/hooks/**, src/client/pages/book/useCompanionEbookSelection.ts
+**tags:** react-query, optimistic-update, mutations, test-observability
 
 ---
 
 For optimistic updates, call `cancelQueries` before `setQueryData` — otherwise a pending refetch can overwrite the optimistic data. For paginated queries, set `placeholderData: (prev) => prev` to avoid flicker during page transitions.
+
+**Testing it (#1963) — the obvious test is vacuous.** `queryClient.invalidateQueries()` refetches with `cancelRefetch: true` by default, aborting the current retryer and discarding any in-flight fetch's result. So in the standard shape (`await cancelQueries()` → `setQueryData(result)` in `onSuccess`, then `invalidateQueries()` in `onSettled`), the trailing invalidation independently kills a pre-write GET. An END-STATE test — hold a GET open, do the write, release the stale GET late, assert the post-write value is still shown — therefore passes with the `cancelQueries` call **deleted**. Verified: removing it from `useCompanionEbookSelection.ts` left all 85 tests green.
+
+The window `cancelQueries` actually protects is between `setQueryData` and `onSettled`'s invalidation, and it is not deterministically reachable (react-query awaits `onSuccess` before `onSettled`). Assert the ordering directly instead:
+
+```ts
+const cancelSpy = vi.spyOn(client, 'cancelQueries')
+const setDataSpy = vi.spyOn(client, 'setQueryData')
+// ... drive the mutation ...
+expect(cancelSpy).toHaveBeenCalledWith({ queryKey: key })
+expect(cancelSpy.mock.invocationCallOrder[0]).toBeLessThan(setDataSpy.mock.invocationCallOrder[0])
+```
+
+Example: `src/client/pages/book/CompanionEbookSection.test.tsx`, 'cancels an in-flight /state GET before installing the post-write body'. Related: `vacuous-assertion-observation-points`.
 
 ## module-state-use-sync-external-store
 
@@ -424,6 +469,7 @@ Deduplicate dropdown/filter options case-insensitively (a Map keyed by the lower
 ## stable-list-keys
 
 **added:** 2026-06-17
+**files:** src/client/lib/stableKeys.ts
 **tags:** react, keys, lists
 
 ---
@@ -453,7 +499,7 @@ When a service method kicks off a background job (`.start()`), do all pre-flight
 ## db-update-after-first-irreversible-fs-step
 
 **added:** 2026-06-17
-**files:** src/server/utils/import-staging.ts, src/server/services/import.service.ts
+**files:** src/server/utils/import-staging.ts, src/server/services/import.service.ts, src/server/services/merge.service.ts, src/server/services/book-rejection.service.ts, src/server/services/bulk-convert.ts
 **tags:** import, filesystem, db-consistency
 
 ---
@@ -463,7 +509,7 @@ In a pipeline that mutates the filesystem, update the database immediately after
 ## fk-restore-find-or-create
 
 **added:** 2026-06-17
-**files:** src/server/services/**
+**files:** src/server/services/**, src/server/utils/find-or-create-person.ts
 **tags:** backup, restore, foreign-keys, db
 
 ---
@@ -502,7 +548,7 @@ When parsing a format with a variable field count, check the MOST specific shape
 ## retention-lt-not-lte
 
 **added:** 2026-06-17
-**files:** src/server/jobs/**
+**files:** src/server/jobs/**, src/server/services/event-history.service.ts
 **tags:** retention, cleanup, date-boundary
 
 ---
@@ -517,7 +563,7 @@ When parsing a format with a variable field count, check the MOST specific shape
 
 ---
 
-The mock-settings factory deep-clones `DEFAULT_SETTINGS` (via `JSON.parse(JSON.stringify(...))`) so a test mutating the returned object can't pollute the shared default for later tests. Any new factory built off a shared default object must deep-clone it — a shallow `{ ...obj }` shares nested references and leaks mutations across tests.
+The mock-settings factory deep-clones `DEFAULT_SETTINGS` (via `structuredClone`) so a test mutating the returned object can't pollute the shared default for later tests. Any new factory built off a shared default object must deep-clone it — a shallow `{ ...obj }` shares nested references and leaks mutations across tests.
 
 ## vitest-clearallmocks-once-queue
 
@@ -549,12 +595,24 @@ When an exported function calls another exported function from the SAME module (
 
 ## serialize-error-catch-binding-tracing
 
+**source:** #1974
 **added:** 2026-06-17
-**tags:** eslint, pino, serialize-error, logging
+**files:** src/server/services/companion-ebook-open.test.ts
+**tags:** eslint, pino, serialize-error, logging, test-assertions
 
 ---
 
 The `narratorr/no-raw-error-logging` rule traces values back to their catch-binding origin: it fires on `{ error: catchBinding.<dot.chain> }` (e.g. `{ error: error.cause }`, `{ error: err.message }`) but NOT on `{ error: typedResult.error }` where the root identifier is a typed result-union. Computed (`obj[key]`) segments are skipped. If it fires, wrap the value with `serializeError()` from `src/server/utils/serialize-error.js` — don't reach for `// eslint-disable`; check whether the value really traces back to a catch binding.
+
+**Asserting it in a test (#1974).** `expect.objectContaining({ message: ... })` and `toMatchObject` do NOT discriminate a serialized error from a raw one: `Error.prototype.message`/`.stack` are non-enumerable own properties and both matchers read through to them, so a raw `Error` satisfies the assertion and the test stays green if `serializeError()` is deleted. A recursive string scan over the record is hollow too when the fixture is `Object.assign(new Error(m), { code })` — `code` is enumerable and is found on the raw Error. **Assert something the raw Error lacks.** Either include `type: 'Error'` (the repo's prevailing idiom, ~20 sites — `type` is the load-bearing term, not `message`), or pin the full own-enumerable key set for maximum strength:
+
+```ts
+expect(logged).not.toBeInstanceOf(Error)
+expect(Object.keys(logged).sort()).toEqual(['code', 'message', 'stack', 'type'])
+// then toEqual the exact values
+```
+
+The key set is also what Pino actually emits, since it serializes own-enumerable properties only. Strongest precedent: `indexer-search.service.test.ts:715-724`; reusable `expectSerializedError` helpers in `companion-ebook-open.test.ts` / `companion-ebook-discovery.test.ts`. Validate any such assertion by mutating the production call to log the raw binding and confirming the test fails. Related: `vacuous-assertion-observation-points`.
 
 ## abortsignal-timeout-native-timer-retry-tests
 
@@ -582,14 +640,14 @@ music-metadata's `common` (ICommonTagsResult) returns these as `string[]` — re
 
 **source:** #1797
 **added:** 2026-07-02
-**files:** src/core/utils/quality.ts, src/server/services/book-list.service.ts
+**files:** src/core/utils/quality.ts, src/server/services/book-list.service.ts, src/server/services/match-job.helpers.ts
 **tags:** quality, duration-units, audiobook, grab-floor, resolveBookQualityInputs
 
 ---
 
-`books.duration` (DB column) is stored in MINUTES (Audible `runtime_length_min`); `books.audioDuration` is stored in SECONDS. The quality chain — `calculateQuality(sizeBytes, durationSeconds)`, `compareQuality`, and the MB-per-hour grab floor / quality tiers in `src/server/services/search-pipeline.ts` — is entirely SECONDS-based. Passing raw `book.duration` into that chain inflates MB/hr 60× and makes absolute thresholds (grabFloor, `NARRATOR_QUALITY_FLOOR_MBHR`) inert while leaving relative ranking unaffected (the 60× cancels within one book), so the bug is easy to miss. The single JS normalization home is `resolveBookQualityInputs(book)` in `src/core/utils/quality.ts`, precedence `audioDuration ?? duration*60`. Every grab/retry/RSS path and the display path must funnel duration through it; the display path already sends true seconds from the client (`SearchReleasesModal.tsx` now routes through `resolveBookQualityInputs`, not a manual multiply). Guard against reintroduction: `grep -rn "duration \* 60" src` (excluding tests/comments) must return exactly one production hit (quality.ts). When writing fixtures, remember a `duration` literal that looks like seconds (e.g. `36000`) in a minutes column is 600 hours, not 10 — pair `_SIZE = mbPerHour*hours*MB` fixtures with `duration` in minutes (`hours*60`).
+`books.duration` (DB column) is stored in MINUTES (Audible `runtime_length_min`); `books.audioDuration` is stored in SECONDS. The quality chain — `calculateQuality(sizeBytes, durationSeconds)`, `compareQuality`, and the MB-per-hour grab floor / quality tiers in `src/server/services/search-pipeline.ts` — is entirely SECONDS-based. Passing raw `book.duration` into that chain inflates MB/hr 60× and makes absolute thresholds (grabFloor, `NARRATOR_QUALITY_FLOOR_MBHR`) inert while leaving relative ranking unaffected (the 60× cancels within one book), so the bug is easy to miss. The single JS normalization home is `resolveBookQualityInputs(book)` in `src/core/utils/quality.ts`, precedence `audioDuration ?? duration*60`. Every grab/retry/RSS path and the display path must funnel duration through it; the display path already sends true seconds from the client (`SearchReleasesModal.tsx` now routes through `resolveBookQualityInputs`, not a manual multiply). Guard against reintroduction: `grep -rn "duration \* 60" src` (excluding tests/comments) must return exactly three production hits — `quality.ts` (the JS normalization home) plus `match-job.helpers.ts` (two hits: `meta.duration * 60` converting provider-metadata minutes to seconds for duration verification; `BookMetadata` has no `audioDuration`, so that shape can't route through the helper). Any NEW hit needs the same kind of written justification. When writing fixtures, remember a `duration` literal that looks like seconds (e.g. `36000`) in a minutes column is 600 hours, not 10 — pair `_SIZE = mbPerHour*hours*MB` fixtures with `duration` in minutes (`hours*60`).
 
-**Note (triage-verified, #1804):** there is a SECOND deliberate normalization home the grep-guard does not catch — the library list-sort path re-expresses the same conversion in SQL as `${books.duration} * 60` at `src/server/services/book-list.service.ts:355` (a Drizzle order-by can't call the JS helper), and it's DRY-3-commented there. So the guard's "exactly one production hit" counts only the JS `duration * 60` literal; the SQL twin is expected and must be kept in sync with the helper's precedence.
+**Note (triage-verified, #1804):** there is also a deliberate normalization home the grep-guard does not catch — the library list-sort path re-expresses the same conversion in SQL as `${books.duration} * 60` at `src/server/services/book-list.service.ts:355` (a Drizzle order-by can't call the JS helper), and it's DRY-3-commented there. The guard counts only the JS `duration * 60` literals; the SQL twin is expected and must be kept in sync with the helper's precedence.
 
 ## libsql-foreign-keys-on-by-default
 
@@ -625,3 +683,660 @@ Adding a nullable column to the `books` table (e.g. #1711 `edition_label`) break
 ---
 
 The scanner's two duration sources fail in disjoint ways, so neither is trustworthy alone. ffprobe's MP3 `format=duration` = filesize ÷ header bitrate: a file with a garbage Xing/Info header bitrate (e.g. The Rise of Endymion 001/118 at 827/746 bps) makes ffprobe report ~7.7–8.6 h for 4:00 files, inflating a book from ~30 h to ~46 h and raising a false duration-mismatch review flag. music-metadata derives MP3 length from the Xing frame count and reads those correctly, but historically halved ~1.7% of 64-bit-atom M4Bs (fixed in music-metadata v11.13.0) and returns no duration for version-1 `tkhd` M4Bs (ffprobe reads those). #1846 made music-metadata primary (free — already parsed for tags — and now trustworthy) with ffprobe as fallback/arbiter, gated by `isPlausibleDuration(duration, fileSize)` in src/core/utils/audio-probe.ts: implausible iff duration/fileSize non-finite-or-≤0, or implied bitrate `fileSize*8/duration` < 8000 bps AND duration > 1800 s (duration-gated floor so short low-bitrate files like e2e/assets/silent.m4b pass), or implied bitrate > 10_000_000 bps. When neither source is plausible the file's duration is omitted (never resurrect a known lie). The guard catches only gross lies — a subtle 2× halving inside the bitrate band is undetectable by bitrate alone; a downstream duration-mismatch comparison is the backstop where one exists. Constants are bps/seconds — never compare against kbps (see bitrate-bps-kbps-boundary).
+
+## zod-type-scoped-settings-transform
+
+**source:** #1879
+**added:** 2026-07-17
+**files:** src/shared/schemas/import-list.ts
+**tags:** zod, settings-schema, superRefine, transform
+
+---
+
+Per-adapter settings schemas that must emit ONLY the effective type's own keys (no stale foreign key from a prior type) should strip via a `.transform()` chained after `.superRefine()`, not a plain strict object (which keeps every present declared key). The server resolver (`validateSettingsPerType`, src/shared/schemas/import-list.ts) replaces `data.settings` with the schema's parsed output, so the transform's per-branch object becomes what is persisted. Zod runs a `.transform()` only when the preceding `.superRefine()` produced no issues (verified empirically on zod 4.4.1), so non-null assertions inside the transform for fields the refine guarantees present are safe. Declare the output as an explicit single wide optional-field type (not `z.infer`, which yields a discriminated union the registry factory can't index). Keep the discriminant (`listType`) optional with an omitted→default branch for backward compatibility. Prior art: `hardcoverSettingsSchema` (#1879). Related: settings-from-entity-registry-overlay, compat-surface-zod-strip-not-strict.
+
+## drizzle-schema-toplevel-deref-breaks-partial-mocks
+
+**source:** #1894
+**added:** 2026-07-21
+**files:** src/server/services/import-submission-report.service.ts
+**tags:** drizzle, vitest, vi-mock, db-schema, module-load
+
+---
+
+A module-level constant that dereferences Drizzle schema columns (e.g. `const PROJ = { disposition: importSubmissionItems.disposition }`) is evaluated at import time. Any suite that `vi.mock`s `db/schema` with a partial factory omitting that table will then crash on load of ANY module in the import graph — the error is `No "<table>" export is defined on the "@db/schema.js" mock` (the specifier follows however the suite mocks it — `@db/schema.js` post-alias-conversion), thrown from the const's line, not from the test. Existing services avoid this by only referencing tables inside method bodies (evaluated at call time). Build such column projections lazily (a function returning the object, called at query time). Symptom is invisible to typecheck and to the module's own focused tests; it only appears when an unrelated suite that partial-mocks the schema pulls the module into its graph — so validate with the full `vitest run`, not just the changed files. Seen: top-level `REPORT_ITEM_PROJECTION` in import-submission-report.service.ts vs the partial db/schema mock in tagging.service.test.ts (#1894). Related: vimock-barrel-replace-drops-named-exports.
+
+## react-query-mutation-callbacks-post-unmount
+
+**source:** #1905
+**added:** 2026-07-21
+**files:** src/client/hooks/useReplaceGrab.ts, src/client/components/SearchReleasesModal.tsx
+**tags:** react-query, tanstack-query, mutations, unmount, keyed-remount
+
+---
+
+TanStack Query v5's `useMutation({ onSuccess, onError, onSettled })` callbacks fire even after the component that called `mutate()` has unmounted — they are captured into the Mutation instance at build/mutate time and `mutation.execute()` invokes them regardless of whether the observer was removed. **This is the opposite of the `mutate(vars, { onSuccess })` form**, whose callbacks ARE skipped after unmount (`mutationObserver.js` gates them on `this.#mutateOptions && this.hasListeners()`); the docs describe that second form, so the two look contradictory unless you know which one you're holding. Consequence: unmounting a component (including a keyed remount on an id change) does NOT cancel a pending mutation's hook-level follow-up side effects. Any lifecycle-local effect (toast, modal close, setState on the unmounted tree's owner, confirm dialog) must be guarded — the established pattern here is a monotonic generation ref captured in `onMutate` and re-checked in the callbacks (see src/client/hooks/useReplaceGrab.ts), suppressing lifecycle-local effects for a stale generation while leaving unconditional cache invalidations in place. When the teardown is a keyed remount or close, advance that generation on a SYNCHRONOUS seam (a `useLayoutEffect` cleanup, which runs before the next instance is interactive), not a passive `useEffect` cleanup (which runs after the new instance has committed, leaving a stale-callback window). Verified in src/client/components/SearchReleasesModal.book-change.test.tsx. Related: rtl-layout-vs-passive-seam-testing (how to write a test that actually proves the seam).
+
+## rtl-layout-vs-passive-seam-testing
+
+**source:** #1905
+**added:** 2026-07-21
+**files:** src/client/components/SearchReleasesModal.book-change.test.tsx
+**tags:** useLayoutEffect, effect-ordering, act
+
+---
+
+React Testing Library's `render`/`rerender` wrap updates in `act`, which flushes passive effects synchronously before returning. Therefore a test that settles a held promise AFTER `rerender()` cannot distinguish a `useLayoutEffect` cleanup from a `useEffect` cleanup — the guarded state (e.g. a generation ref) is already advanced by the time the awaited callback runs, so the test passes for both seams and provides no protection. To prove a teardown runs on the synchronous (layout) seam, force the observation into the pre-passive window: (1) SYNCHRONOUS THENABLE — for a continuation attached directly to a promise, stub the awaited call to return a hand-rolled thenable whose `.resolve()` invokes queued `.then`/`.catch` synchronously, and trigger `.resolve()` from a sibling probe's `useLayoutEffect` setup (keyed alongside the swapped subtree) so the continuation runs in the layout phase; assert on the count of ALL constructed side-effect instances, not just live ones (a passive cleanup can construct-then-close within the same commit). (2) EFFECT-ORDERING MARKERS — when the continuation is inherently async (react-query awaits its mutationFn so its callbacks always run post-passive), technique 1 won't work; wrap the teardown hook via `vi.mock(m, importOriginal)` (memoize the wrapper to keep identity stable so the layout effect doesn't re-run), push a marker from the teardown and another from the incoming component's `useLayoutEffect` setup, and assert order `[teardown, interactive]` — React runs all layout cleanups before all layout setups, and a passive cleanup reverses that order. Non-negotiable: confirm each such test FAILS when the production seam is temporarily reverted to the passive form. Example: src/client/components/SearchReleasesModal.book-change.test.tsx (#1905).
+
+## fetch-status-classification-for-cached-outcomes
+
+**source:** #1942
+**added:** 2026-07-25
+**files:** src/core/utils/network-service.ts, src/core/metadata/audnexus.ts
+**tags:** fetch, http-status, network-service, provider-adapters, caching
+
+---
+
+Any adapter whose outcome gets CACHED must classify the response deliberately; the shortcuts in the uncached adapters are unsafe there.
+
+- **`response.ok` is not `status === 200`.** The Fetch Standard defines `ok` as 200-299, so a null-body 202/204/206 passes `if (response.ok)` and reaches the JSON parser. Gate a definitive/cacheable branch on `response.status === 200` exactly.
+- **Never fold all non-OK statuses into a 'not found'.** `audnexus.ts` `fetchJsonDetailed` does `if (!response.ok) return { kind: 'not_found' }`, which is fine for a throwaway result but would cache a temporary 401/403/408/auth-proxy error as a permanent absence. Map only the statuses the upstream API DOCUMENTS as absence (Audnexus: 400 and 404); everything else is transient.
+- **3xx never arrives as a status.** `fetchWithTimeout` (src/core/utils/network-service.ts) sets `redirect: 'manual'` and throws for 300-399 before returning, so redirects surface via the pre-header catch. No 3xx arm is needed — but that catch must classify as transient, not as a miss.
+- **Split at the body boundary.** `fetchWithTimeout` returns the Response with its `AbortSignal.timeout` still attached, so the body stream can reject after headers. `response.json()` reads AND parses in one call, conflating 'the exchange never completed' with 'the body arrived and is garbage'. Do `await response.text()` (rejection → transient) then `JSON.parse` (failure → invalid-record).
+- **Bytes arriving is not authority.** This boundary explicitly expects HTML interstitials, rate-limit pages, and upstream shape changes. If the cached verdict is about a specific entity, require an identity predicate (`body.asin === requestedAsin`) AND a shape predicate (the expected collection is present) — an OR admits both wrong-entity records and error envelopes.
+
+Reference implementation and full status/body test matrix: `AudnexusProvider.getChapterRuntime` / `classifyChapterBody` in src/core/metadata/audnexus.ts, tests in audnexus.test.ts ('getChapterRuntime — chapter-runtime adapter (#1942)'). Related: zod-nullish-external-api (optional external fields alone cannot prove a record is genuine).
+
+## windows-hostile-test-primitives
+
+**source:** #1959, #1976, #1989
+**added:** 2026-07-27
+**files:** src/server/**/*.test.ts, src/server/__tests__/**/*.ts, src/core/**/*.test.ts, src/core/__tests__/**/*.ts, src/db/**/*.test.ts, src/shared/**/*.test.ts
+**tags:** windows, vitest, filesystem, symlink, chmod, libsql, tmpdir, cross-platform
+
+---
+
+**Scope note.** The `files` list above is deliberately broad: it covers every server, core, db and
+shared test PLUS the test-infrastructure files under `__tests__/` (`e2e-helpers.ts`, `windows-fs.ts`,
+`epub-archive.fixture.ts`), because that is where these traps are actually written. It was originally
+scoped to the four directories where one batch's failures happened to land, which silently excluded
+`src/server/routes/**` and `src/server/__tests__/**` — the latter is where e2e suites live, and it
+missed the very next one written. Scope this by where the trap *applies*, not where it last bit.
+Client tests are excluded on purpose: jsdom touches no filesystem.
+
+Five filesystem primitives behave differently on Windows and will fail a suite that passes on the
+Linux pipeline. **The pipeline cannot observe any of them**, so they land green in CI and only surface
+when Todd runs `pnpm verify` on his machine — which is his gate before every push, so a suite carrying
+these blocks *all* local verification, not just its own file. One companion-ebook slate landed 38 such
+failures across 7 files in a single night, none of them production defects.
+
+**1. `symlink()` raises `EPERM`.** Windows requires Developer Mode or an elevated shell. A junction is
+not a substitute — it is directory-only and `lstat().isSymbolicLink()` is what production actually
+tests. Gate on a **capability probe**, not `process.platform === 'win32'`: a dev box with Developer
+Mode on can run it, and these assertions usually guard a security property worth skipping as rarely as
+possible.
+
+```ts
+const CAN_SYMLINK = await (async () => {
+  const { mkdtemp, writeFile, symlink, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const probe = await mkdtemp(path.join(tmpdir(), 'symlink-probe-'));
+  try { const t = path.join(probe, 't'); await writeFile(t, ''); await symlink(t, path.join(probe, 'l')); return true; }
+  catch { return false; }
+  finally { await rm(probe, { recursive: true, force: true }); }
+})();
+
+it.skipIf(!CAN_SYMLINK)('rejects a symlink ...', async () => { /* ... */ });
+```
+
+**2. `chmod 000` does not deny the owner.** The permission-denied branch never triggers, so a test
+asserting an `EACCES` path silently exercises the success path instead and fails on the *outcome*, not
+with an error. `it.skipIf(process.platform === 'win32')`. Prior art: the `case 52` chmod test in
+companion-ebook-reconciler.integration.test.ts.
+
+**3. The filesystem is case-insensitive — `a.epub` and `A.epub` cannot coexist.** A fixture that
+creates both silently produces **one** file, so candidate counts come up short and the failure reads
+as a logic bug. This is **not fixable by rewriting the fixture**: the scenario is unrepresentable on
+NTFS. If a test's whole point is case-distinct filenames (e.g. proving a code-point sort orders `A`
+before `a` where `localeCompare` ties them), it can only be skipped on win32. Prefer designing
+fixtures that do not need two names differing solely by case.
+
+**4. `rmSync(dir, { recursive: true, force: true })` in `afterAll` raises `EPERM`** when the directory
+held a libSQL database. Windows refuses to delete a directory containing open handles; Linux unlinks
+open files happily. **Closing the client first is NOT sufficient** — see the documented repro at
+src/server/__tests__/e2e-helpers.ts:38 (`create-client → close → rmSync fails EPERM`). Make temp-dir
+teardown tolerant rather than fighting it; a leaked tmpdir is cheaper than a red suite:
+
+```ts
+afterAll(() => {
+  try { rmSync(dir, { recursive: true, force: true }); } catch { /* Windows keeps libSQL handles open; see windows-hostile-test-primitives */ }
+});
+```
+
+**5. Nine characters are ILLEGAL in Windows filenames: `< > : " / \ | ? *`** (plus trailing dots
+and spaces). A fixture whose *name* contains one — a real temptation for "awkward basename"
+round-trip fixtures, where `"` is exactly the kind of awkwardness you want — fails at
+file-CREATION with `ENOENT`/`EINVAL`, taking the whole suite down. Discovered by recurrence:
+#2022's adversarial fixture `'A Book (50%) "done" ✓.epub'` shipped green from the Linux pipeline
+and failed Todd's `pnpm verify` at creation, in THIS entry's own `files` scope, after the entry
+already existed. Substitute a legal same-hazard character (apostrophe for double quote); spaces,
+`%`, parens, and non-ASCII glyphs are all fine.
+
+**Separately and already known:** `path.join()` yields backslashes on Windows. Never assert a
+hardcoded-separator path — normalize the actual with `.split('\\').join('/')`, or use
+`expect.stringContaining()`. Production code that persists paths (DB, API responses) normalizes to
+POSIX because the app runs in Docker.
+
+## max-lines-counts-code-not-raw-lines
+
+**source:** #1989
+**added:** 2026-07-27
+**files:** eslint.config.js, src/**/*.ts
+**tags:** eslint, max-lines, file-splitting, comments
+
+---
+
+`max-lines` (400) and `max-lines-per-function` (150) are configured with `skipBlankLines: true,
+skipComments: true` (eslint.config.js:190-191) — they count **code lines only**. Files in this repo
+run 40-50% comment density, so raw size is roughly double the counted size: `validate.ts` at ~759 raw
+lines counts well under the 400 cap and passes cleanly (the exact figure drifts; the ratio is the point).
+
+Two decisions this changes:
+
+- **Do not split a file (or decline to co-locate two concerns) because `wc -l` or the editor's line
+  count approaches 400.** Measure what the rule measures. Quick check:
+  `pnpm exec eslint <file> --rule '{"max-lines":["error",{"max":400,"skipBlankLines":true,"skipComments":true}]}'`
+  — or just run lint and see if it fires.
+- **Do not pad toward the cap either** — a heavily-commented 700-raw-line file that lints clean is
+  compliant, but the cap is a ceiling, not a target; the SRP question ("does this file have one
+  reason to change?") is still the real splitting criterion.
+
+Same trap in reverse for reviews: a "this file exceeds max-lines" finding based on raw line count is
+a false positive unless lint actually fires.
+
+## vacuous-assertion-observation-points
+
+**source:** #1992, #1993, #2002, #2012, #2017, #2020, #2032
+**added:** 2026-07-28
+**files:** src/**/*.test.ts, src/**/*.test.tsx
+**tags:** mutation-testing, test-observability, counterfactual-verification, async-ordering
+
+---
+
+**An assertion is only as strong as its observation point.** The companion-EPUB slate produced this
+same defect seven times in seven different media, every time with a green pre-existing test: the
+observable the test watched could not see the property the test claimed to prove, so it passed
+against broken production code. This is the single most repeated mistake in that slate, which is why
+these live in one entry rather than seven.
+
+**The closing step is non-negotiable: reproduce the counterfactual.** Break production exactly as
+the assertion claims to prevent, and confirm the new test fails while the pre-existing ones stay
+green. If the old tests also fail, the new one may be redundant. If nothing fails, the test proves
+nothing — and you have just written the eighth instance of this entry.
+
+The seven verified mechanisms, each with the observable that actually works:
+
+**1. Issuance ≠ persistence (#2017).** A Drizzle chain mock's `where()` body executes SYNCHRONOUSLY
+as the statement is built, so `where: () => { trace.push('update'); return terminus; }` records when
+the write was *issued*. Drop the `await` on the calling helper and the trace order is unchanged. Gate
+the terminus instead — and it must be BOTH awaitable and `.returning()`-capable (see
+`guarded-transition-needs-returning-in-tx-mocks`):
+
+```ts
+const settle = () => gate.then(() => { trace.push('persisted'); });
+return {
+  then: (res, rej) => settle().then(() => ({ rowsAffected: 1 })).then(res, rej),
+  returning: vi.fn().mockImplementation(() => settle().then(() => [{ id: 1 }])),
+};
+```
+
+Then: await issuance → assert the follow-up has NOT started → release → assert it has. Two siblings
+from the same review round: **call counts are order-blind** (`3 renames, 1 sweep` is identical whether
+the sweep precedes or follows the loop — hold the FINAL iteration pending instead), and **hard-coded
+post-state** reports the post-condition no matter when the dependent code ran (use ONE shared mutable
+state object that the production write itself advances, and make the pre-condition genuinely able to
+produce the failure).
+
+**2. react-query holds the error until the retry ladder ends (#2020).** TanStack Query v5 keeps a
+failed fetch in `failureReason`/`failureCount` and promotes it to `state.error` only after retries are
+exhausted. A test that waits on the fetch mock's CALL COUNT asserts before the error exists and passes
+for implementations that get the error path wrong — in #1963 it let both `if (isError) return null`
+and an any-4xx generalisation of a 409-only rule survive. Easy to miss because `renderWithProviders`
+sets `retry: false`, but a QUERY-level `retry` predicate overrides the client default. Wrong:
+`await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1))`. Right:
+`await waitFor(() => expect(client.getQueryState(queryKeys.X(id))?.status).toBe('error'))`. Supply
+`retryDelay: 0` to keep the ladder fast — it changes how long a retry waits, never whether one happens.
+`failureCount` starts at 0 and the default is three retries, so `failureCount < 3` yields FOUR requests.
+
+**3. Route-level status flattening masks guard removal (#2032).** The companion read routes collapse
+every rejection into one response *on purpose* — `loadCompanionInspection` maps every non-`available`
+inspection to a bare 404, and the v1 stream maps every non-`ok` open outcome to a single
+`UNAVAILABLE_BODY`, since the distinction is the existence oracle the endpoint must not become.
+Consequence: **a route-status assertion cannot attribute a red to a specific `src/core/epub/` guard**,
+and a test written that way stays green after the guard is deleted. Three mutations verified
+green-under-removal. Two observables that DO work: assert the persisted `validationCode` (poll
+`GET /api/books/:id/companion-epub/state` until it settles — requires seeding a deliberately stale
+`mtimeMs`/`ctimeMs`, or `isUnchanged` returns before any validation), or make the fixture valid on
+every other axis so removing the guard yields a 200 rather than a differently-caused 404. Corollary:
+pick the sharper observable BEFORE writing the fixture — a fixture that trips a second guard
+identically is indistinguishable from one that trips the intended guard.
+
+**4. A same-turn `stop()` test must gate PRE-lock setup (#2012).** `CompanionEbookReconciler`'s
+per-book methods register their run promise in `activeBookRuns` synchronously before the first
+`await`, and `stop()` drains that set — but every locked pass also re-checks `this.stopping` as its
+first statement inside `withBookAdmissionLock`. So a same-turn drain test that gates a collaborator
+called *inside* the lock is vacuous: the gate never fires, `stop()` resolves promptly, and the
+assertion fails against CORRECT code. Park the run on its pre-lock setup instead (make
+`settings.get('companionEpub')` return a deferred), which leaves the run observable only through the
+`activeBookRuns` registration — precisely the property under test. The complementary 'gated in-flight'
+case proves a different half; both are needed, neither substitutes for the other.
+
+**5. Aborting a Transform discards already-pushed chunks (#1992).** `callback(err)` inside
+`_transform` destroys the stream and drops chunks it had `push()`ed but whose consumer had not yet
+pulled. A "N chunks reached the sink before the abort" assertion reads 0 whenever the source feeds
+synchronously — under `stream.promises.pipeline` the source drains into the transform before the
+sink's `for await` begins. Source-side counters lie in the other direction (a Readable buffers to
+highWaterMark, 16 KiB). The transform's own running counter is the observable:
+`createCountingStream(4)` fed twenty 1-byte chunks yields `bytesCounted === 5`, and the raised error
+carries the same total.
+
+**6. `@ts-expect-error` is satisfied by ANY error on the next line (#1993).** A negative type test
+that supplies a WRONG VALUE for a field does not pin that field's requiredness — make the field
+optional and the assignment still errors on the value, the directive stays used, and no TS2578 fires.
+To pin requiredness, OMIT the field. The union analogue: instantiating one arm leaves the others
+unpinned — use a plain positive assignment per arm (deleting an arm then fails TS2322) plus
+`@ts-expect-error` on a cross-arm property access, and a bogus-discriminant negative to pin the closed
+status set. A type-only module has no runtime surface, so none of this is judgeable by reading the
+test: mutation-verify with `pnpm exec tsc --noEmit` and confirm non-zero exit. **Strip ANSI codes
+before grepping tsc output** (`sed -e 's/\x1b\[[0-9;]*m//g'`) or `grep 'error TS'` silently matches
+nothing. Worked example covering six mutations: `src/core/epub/result.test.ts:64-192`.
+
+**7. Under Vitest, a dynamic import's `Object.keys()` is SOURCE order (#2002).** A module namespace in
+native Node ESM is an exotic object that sorts its own string keys (ECMA-262 §10.4.6.1), so
+`Object.keys(ns)` is lexicographic. Under Vitest that does not hold — `await import('./m.js')`
+resolves through Vite's SSR transform to an ordinary `__vite_ssr_exports__` object, yielding the order
+the `export` statements appear in the file. When pinning a module's public surface, `.sort()` before
+comparing: it is ordering-agnostic and asserts exactly the property under test (the set of exports).
+A source-text scan that reads the `.ts` and filters `^export` lines is legitimately in file order, so a
+suite using both must keep the two orderings distinct.
+
+Related: [[serialize-error-assertion-needs-enumerable-keys]] is the same defect in logging assertions
+(folded into `serialize-error-catch-binding-tracing`); `react-query-optimistic-cancel` carries the
+`invalidateQueries` instance; `migrated-db-assertions-through-drizzle` carries the ORM-vs-DDL instance.
+
+## epub-stack-type-declaration-gaps
+
+**source:** #1987, #1988, #1989
+**added:** 2026-07-28
+**files:** src/core/epub/xml.ts, src/core/epub/zip-source.ts, src/core/epub/validate.test.ts
+**tags:** cheerio, htmlparser2, unzipper, type-declarations, pnpm, epub
+
+---
+
+Both third-party libraries behind the EPUB reader ship type declarations that are wrong or absent in
+load-bearing ways. In both cases the fix is the same shape: **declare the true shape locally, do not
+add the transitive dependency to `package.json` just to name a type.**
+
+**1. cheerio does not re-export `domhandler`'s node types (#1987).** `cheerio@1.2.0` re-exports only
+`Cheerio`, `CheerioAPI`, `CheerioOptions`, and `HTMLParser2Options` — not `Element`/`AnyNode`.
+`domhandler` is a transitive dependency only, so under pnpm's strict layout
+`import type { Element } from 'domhandler'` fails TS2307 at typecheck and ERR_MODULE_NOT_FOUND under
+tsx. Derive it from cheerio's own API instead:
+
+```ts
+import type { Cheerio, CheerioAPI } from 'cheerio';
+type RootChildren = ReturnType<ReturnType<CheerioAPI['root']>['children']>;
+export type EpubXmlElement = RootChildren extends Cheerio<infer T> ? T : never;
+```
+
+The derived type carries `.name: string` and `.attribs: Record<string, string>`. Shipped at
+`src/core/epub/xml.ts:37-39`. The other cheerio consumers in the tree (`newznab.ts`, `torznab.ts`,
+`abb.ts`) sidestep this by never naming an element type, so this was the first site that needed it.
+
+**2. `@types/unzipper` misdescribes `Open.custom` in two ways (#1988).** Pinned `unzipper@0.12.3` with
+`@types/unzipper@0.10.11`:
+
+- **`stream` takes an OPTIONAL length, and `undefined` means 'to end of file'.** The types declare
+  `stream: (offset: number, length: number) => Readable`, but `lib/Open/directory.js` calls it with
+  ONE argument for every structural read — the tail (`:96`), the ZIP64 locator (`:132`), the ZIP64
+  record (`:53`), and the whole central directory (`:149`). Only per-entry reads pass a length. The
+  built-in sources spell the semantics as `const end = length ? offset + length : undefined`. A source
+  written to the two-parameter declaration alone fails on the very first read.
+- **`Open.custom` accepts a second `options` argument the types omit.** It is forwarded straight to
+  the directory parser, which reads `options.tailSize` — default **80 bytes**. 80 bytes cannot reach
+  the EOCD of any container with a trailing ZIP comment, so `tailSize` must be passed explicitly for
+  EPUBs.
+
+Declare the true shapes locally and assign: `unzipper.Open.custom as OpenCustom` type-checks (a
+function with fewer parameters is assignable to one with more), so no `as any` is needed and
+`@typescript-eslint/no-explicit-any` stays satisfied. See `ZipPositionalSource` / `OpenCustom` in
+`src/core/epub/zip-source.ts`; the one-argument shape is pinned in `zip-source.test.ts` under 'the
+stream() contract', and the 80-byte default is pinned by asserting `Open.file()` rejects every
+long-comment fixture that our `tailSize`-pinned path opens.
+
+**3. Spying on which entries were read (#1989).** unzipper builds each central-directory member's
+`stream`/`buffer` as an **own function property** on the member object
+(`unzipper@0.12.3/lib/Open/directory.js:222-232`), not on a prototype. So a `vi.mock('unzipper')`
+factory that delegates to the real `Open.custom` can wrap them in place —
+`` const original = file.stream.bind(file); file.stream = (...args) => { seen.push(file.path); return original(...args); } `` —
+and record exactly which members were inflated, in order, while the test stays a genuine end-to-end
+run against a real archive on disk. Use this whenever the assertion is about *which* entries a
+pipeline read (`validate.test.ts` pins that the ZIP-encryption-bit scan decides before any entry
+stream opens, and that `validateEpub` never touches the cover). Type the wrapper against a local
+structural alias, not `@types/unzipper`'s `CentralDirectory`/`File` — those need an
+`as unknown as` double cast and misdeclare the source contract anyway. Exception: when the point is to
+*inject* a failing stream rather than observe a real one, the fully-synthetic
+`mockResolvedValueOnce({ files: [...] })` shape remains the right tool.
+
+**Staleness note:** all three facts are pinned to specific versions. On a `cheerio` / `unzipper` /
+`@types/unzipper` bump, re-verify rather than assuming.
+
+## htmlparser2-no-attribute-normalisation
+
+**source:** #1990
+**added:** 2026-07-28
+**files:** src/core/epub/xml.ts, src/core/epub/extract.ts
+**tags:** cheerio, htmlparser2, xml, attribute-values, token-lists, epub
+
+---
+
+XML 1.0 §3.3.3 requires an XML processor to replace tab (#x9), LF (#xA), and CR (#xD) inside an
+attribute value with a space before the application sees it. **htmlparser2 — the parser behind
+`cheerio.load(..., { xmlMode: true })` — does not do this**; it stores the raw source text. Measured
+on the pinned stack: `<nav epub:type="toc\tlandmarks" properties="nav\nscripted"/>` yields
+`attribs['epub:type'] === 'toc\tlandmarks'` and `attribs.properties === 'nav\nscripted'`, separators
+intact.
+
+Two consequences for whitespace-separated token attributes (`properties`, `epub:type`, `rel`, `class`):
+
+1. **Split on the full XML whitespace class, never on a single space.** `value.split(' ')` looks
+   correct against most real documents and silently drops conforming tab- or newline-separated tokens.
+   `hasToken` in `src/core/epub/extract.ts` splits on `/[\t\n\f\r ]+/` and is the one home for that
+   decision across all three of its call sites.
+2. **The behaviour is observable end-to-end**, so pin it with an integration test rather than only a
+   unit test of the predicate — a conforming parser would have folded the separator and made it
+   untestable from outside. `extract.test.ts` carries a tab/LF/CR/FF table that fails on every row if
+   the split is narrowed.
+
+More generally: **this parser is deliberately lenient and skips several conformance behaviours the XML
+spec mandates — measure a spec-derived assumption against the parser before building code or tests on
+it.** The same leniency is already load-bearing elsewhere: htmlparser2 never throws on malformed input,
+silently repairing unclosed and mismatched tags, which is why `malformed_xml` in
+`src/core/epub/xml.ts:218-243` is defined as "no usable document" rather than "not well-formed".
+
+## migrated-db-assertions-through-drizzle
+
+**source:** #1957
+**added:** 2026-07-28
+**files:** src/db/**/*.integration.test.ts
+**tags:** drizzle, libsql, sqlite, migrations, integration-tests, error-handling
+
+---
+
+An integration test that runs against a real migrated database *looks* like schema-level coverage.
+Two Drizzle behaviours mean it often isn't.
+
+**1. The constraint message is on `.cause`, not `.message` (#1957).** Drizzle (drizzle-orm@0.45.2,
+`@libsql/client`) wraps every driver failure in a `DrizzleQueryError` whose own `.message` is only
+`Failed query: <sql>\nparams: <bound values>`. The SQLite message — `CHECK constraint failed: <name>`,
+`NOT NULL constraint failed: <table>.<col>`, `UNIQUE constraint failed: …`,
+`FOREIGN KEY constraint failed` — is on `.cause`. So
+`await expect(db.run(...)).rejects.toThrow(/CHECK constraint failed/)` silently never matches, and a
+suite written that way fails wholesale even when the constraints work perfectly. Flatten the chain:
+
+```ts
+let current: unknown = caught;
+const parts: string[] = [];
+while (current instanceof Error) { parts.push(current.message); current = current.cause; }
+return parts.join(' | ');
+```
+
+(`rejectionMessage()` in `src/db/companion-ebooks-schema.integration.test.ts`.) The one-level shorthand
+`String((err as Error).cause ?? err)` is also in use at
+`src/server/services/book.service.dedup.integration.test.ts:475`; production does the same via
+`error.cause?.message` in `src/server/services/book-dedup.ts:26-27` and
+`src/server/jobs/enrichment.ts:76-77`.
+
+**2. Drizzle INLINES schema-level column defaults into the INSERT (#1957).** It names the column and
+binds the default value rather than omitting the column and letting the database apply its DDL
+default. So `db.insert(t).values({ /* column omitted */ })` followed by `expect(stored.col).toBe(v)`
+does NOT pin the migration's `DEFAULT v`. Measured on `companion_ebooks.candidate_count`: deleting
+its `DEFAULT 0` from the generated migration left that test green and failed only the raw-SQL test
+(1 failed | 61 passed). Pin the two halves separately:
+
+- **ORM half** — typed insert omitting the column, asserting the stored value; plus
+  `t.col.hasDefault === true` and an `$inferInsert` object literal omitting the field (removing
+  `.default()` from `schema.ts` then makes the column required and fails `pnpm typecheck`).
+- **DB half** — raw SQL naming neither the column nor a value:
+  `` db.run(sql`INSERT INTO companion_ebooks (book_id, status) VALUES (${bookId}, 'none')`) ``, then
+  assert the read-back.
+
+`` sql`(unixepoch())` `` defaults have the same blind spot, so `created_at`/`updated_at` tests that only
+go through the ORM don't pin the DDL default either.
+
+**The general rule:** when validating any schema contract against a migrated DB, ask whether the ORM
+could have satisfied the assertion on its own before the statement reached SQLite. The cheap way to
+find out is to break the contract in the generated migration and confirm the test actually goes red.
+Related: `drizzle-sqlite-text-enum-no-db-check` (which constraints Drizzle does and doesn't emit),
+`vacuous-assertion-observation-points` (the same counterfactual discipline, other media).
+
+## libsql-transactions-serialized-at-the-connection
+
+**source:** #1959
+**added:** 2026-07-28
+**files:** src/db/client.ts, src/db/serial-transactions.ts, src/server/services/**
+**tags:** libsql, drizzle, transactions, concurrency, sqlite-busy
+
+---
+
+**The fact.** A single `@libsql/client` connection — which is what `createDb` (`src/db/client.ts`)
+hands out, one per process — permits only ONE transaction at a time. Two overlapping raw
+`db.transaction(...)` calls on the shared handle do not queue: the later one rejects with
+`LibsqlError: SQLITE_BUSY: database is locked`. This is a connection-level constraint rather than lock
+contention, so no `busy_timeout` or retry-on-busy setting avoids it. Verified empirically on
+@libsql/client 0.17.3 / libsql 0.5.29 / drizzle-orm 0.45.2: four concurrent `db.transaction` calls
+each doing select → await → insert yield 1 fulfilled and 3 `SQLITE_BUSY` rejections.
+
+**What to do about it — do NOT hand-roll a serialization lane.** `createDb` monkey-patches
+`db.transaction` to route through `runSerializedTransaction` (`src/db/serial-transactions.ts:85`), so
+**the exclusion is enforced by the connection itself, automatically, for every service** — concurrent
+per-item passes queue with no caller opt-in, and so does any other service's transaction. The
+reconciler documents exactly this at `companion-ebook-reconciler.ts:626` ("Nothing here serializes the
+transaction, deliberately"). A per-service promise-chain lane on top of that is redundant.
+
+Two things that follow:
+
+- **Nesting throws.** Opening `db.transaction` while a transaction is already open on that connection
+  rejects with `NestedTransactionError` — use the `tx` handle the callback receives, or
+  `tx.transaction()` for a savepoint. The tracking is a per-context Map of connection → mutable
+  open-marker (#2008), not a single value, because a transaction on connection A may legitimately
+  contain one on connection B.
+- **Keep the surrounding work outside the transaction.** Serialization applies to the transaction
+  only; discovery, validation, and pre-scan reads stay concurrent under whatever `Semaphore` bound the
+  service uses. Widening the transaction throws away the concurrency the bound exists to provide.
+
+**Diagnosis note (still useful for any un-serialized path).** A `SQLITE_BUSY` rejection is raised
+inside the losing task, so a service that catches per-item errors reports it as an ordinary item
+failure. The symptom presents as nondeterministic missing writes, not an obvious driver error — reach
+for this explanation whenever a newly-concurrent write path starts dropping records. Related:
+`libsql-foreign-keys-on-by-default`, `guarded-transition-needs-returning-in-tx-mocks`.
+
+## filehandle-stream-close-ownership
+
+**source:** #1974
+**added:** 2026-07-28
+**files:** src/server/utils/companion-ebook-stream.ts, src/server/routes/companion-ebook.ts
+**tags:** node-fs, filehandle, streams, fastify
+
+---
+
+A FileHandle-backed `fs.ReadStream` (from `filehandle.createReadStream()`) subscribes to the
+FileHandle's own `close` event, and `ReadStream._destroy` closes the handle unconditionally — it is
+**not** gated on `autoClose`. So an application-owned `handle.close()` destroys the stream, which
+closes the handle a SECOND time. Measured on Node v24.18.0: `handle.close()` as the closer → 2
+`close()` calls on both the `end` and the abort path; `stream.destroy()` as the closer → exactly 1 on
+both, fd released.
+
+When you need exactly-once cleanup for a streamed FileHandle, create the stream with
+`autoClose: false` (so nothing tears down implicitly and teardown happens iff your closer runs) and
+make the idempotent closer call `stream.destroy()`, NOT `handle.close()`. Reference implementation and
+tests: `streamCompanionEbook` in `src/server/utils/companion-ebook-stream.ts`, pinned by
+`companion-ebook.test.ts` ('closes the handle exactly once on success') and the real-socket
+`companion-ebook-stream.test.ts` (client abort, post-headers read failure).
+
+## rate-limit-gate-fails-open-on-nan-window
+
+**source:** #1944
+**added:** 2026-07-28
+**files:** src/server/services/metadata.service.ts, src/core/metadata/**
+**tags:** rate-limiting, retry-after, metadata-providers, rfc-9110, falsy-guard
+
+---
+
+A backoff/deadline value derived from an external header must be normalized to a FINITE, non-negative
+number **at the adapter boundary**, because the consumer's guard fails OPEN on a non-finite one.
+
+`MetadataService.setRateLimited` stores `Date.now() + durationMs` in `rateLimitUntil`. `isRateLimited`
+starts with `const until = this.rateLimitUntil.get(name); if (!until) return false;`. **`NaN` is
+falsy**, so a NaN window short-circuits right there — the gate is **dead, not mis-timed**, and the
+provider is retried on every subsequent call after it asked us to stop. The mirror case is `Infinity`,
+which yields a deadline that never expires and suppresses the provider for the life of the process. So
+the finiteness check belongs on the arithmetic PRODUCT, not the operand: `1e306` written out in digits
+is a perfectly finite Number that overflows only after `× 1000`.
+
+The usual source of a NaN window is `Retry-After`. **RFC 9110 permits BOTH delay-seconds and an
+HTTP-date**, so `parseInt(header, 10) * 1000` yields NaN for the date form — which real servers send.
+`parseInt` also silently accepts trailing garbage (`'120abc'` → `120000`); prefer an all-digit test
+(`/^[+-]?\d+$/`) plus a `Date.parse` fallback, with a finite default for everything else.
+
+**Don't rely on the log to catch this:** `setRateLimited` warns `{ provider, retryAfterMs }` and pino
+serialises NaN to `null`, so the one operator-visible signal reads as a *missing* field rather than a
+broken one.
+
+Reference implementation: `parseRetryAfterMs` in `src/core/metadata/retry-after.ts` — the single
+Retry-After interpretation home for the provider side; Audnexus's three 429 arms (#1944) and
+Audible's two (#1948) all route through it. (The client's `parseRetryAfterMs` in
+`src/client/lib/api/client.ts` is deliberately separate — it answers "may the UI show a retry hint"
+with `number | undefined`, not "close the gate with a finite window"; don't couple them.) Tests:
+`audnexus.test.ts` '429 retry-window normalization across both helper paths', `audible.test.ts` '429
+retry-window normalization across both request paths'; service-side pins in
+`metadata.service.test.ts` (finite closes the gate / NaN leaves it open). For HTTP-date assertions
+freeze only `Date` (`vi.useFakeTimers({ toFake: ['Date'] })`) — full fake timers stall MSW and the
+native `AbortSignal.timeout` inside `fetchWithTimeout` (see
+`abortsignal-timeout-native-timer-retry-tests`).
+
+**Scope note:** this is about deadline/threshold values reaching a falsy-guarded gate. It is NOT a
+mandate to sweep every external numeric field through a Zod NaN guard — that was proposed in #1940
+and closed not-planned.
+
+## identity-reads-use-book-identifiers
+
+**source:** #1916
+**added:** 2026-07-28
+**files:** src/client/hooks/useLibrary.ts, src/client/lib/helpers.ts
+**tags:** react-query, pagination, duplicate-detection, api-contract
+
+---
+
+**Never use `GET /api/books` as a client-side ownership or duplicate-detection source.** The route
+applies `limit ?? DEFAULT_LIMITS.books` (120) ordered created-at-descending, so on a library larger
+than one page the oldest rows — the ones most likely to be the owned incumbent — are invisible to the
+check. **The bug never reproduces on a small dev library**, which is what makes it worth an entry
+rather than a code comment.
+
+**As of #1951 the `api.getBooks()` wrapper no longer exists** — it was deleted once it had no client
+callers left, so the capped endpoint is not reachable from `src/client` at all and the guard is now
+structural. `src/client/lib/api/books.ts` carries a comment on `booksApi` explaining why it is absent.
+**Do not re-add it.** The server route stays live because it is part of the v1 API contract; that is
+not a reason to reintroduce a client wrapper for it.
+
+The canonical client ownership source is `useBookIdentifiers()` (`src/client/hooks/useLibrary.ts`) →
+`GET /api/books/identifiers` → `BookListService.getIdentifiers()`: no `where`, no `limit`, no
+`ORDER BY`, projecting `{ id, asin, title, authorName, authorSlug }`. Every ownership surface reads it
+(SearchResults, AuthorPage, BookEditModal, ManualImportPage) and matches via
+`findLibraryMatch`/`isBookInLibrary` in `src/client/lib/helpers.ts`.
+
+Two notes when extending it:
+
+- **`BookIdentifier.id` is REQUIRED, not optional.** Consumers that render a link to the owned book
+  read `match.entry.id`; an optional field would let that degrade to `null` with no type error. Adding
+  a required field ripples into every hand-built typed fixture — run `pnpm typecheck` to enumerate,
+  don't grep (untyped `vi.fn()` fixtures will NOT fail, so their passing is not evidence the change
+  landed).
+- **Do NOT add an `ORDER BY` to `getIdentifiers()`.** `findLibraryMatch` is order-independent by
+  construction (exact-ASIN scan precedes the title-identity fallback), and an ordering would imply a
+  guarantee the matcher must not depend on.
+
+Ownership loading/failure is deliberately fail-open (undefined → Add shown); the server's
+409-with-incumbent verdict is the real duplicate backstop, so a missing hint can never create a
+duplicate.
+
+## shared-test-double-defaults-ripple
+
+**source:** #1960, #1975
+**added:** 2026-07-28
+**files:** src/server/__tests__/helpers.ts
+**tags:** vitest, test-helpers, fastify-routes, fire-and-forget, mocking
+
+---
+
+This repo's shared server-test doubles have defaults that bite suites which did not change.
+
+**1. `createMockServices` defaults every unconfigured method to a REJECTING `vi.fn()` (#1960).**
+`createMockServices` / `resetMockServices` (`src/server/__tests__/helpers.ts:348-417`) give every
+unconfigured service method `vi.fn().mockRejectedValue(new Error('mock not configured: <svc>.<method>'))`.
+That default is deliberate and good — an awaited-but-unconfigured method fails loudly instead of
+returning `undefined`. But it means **adding a new service call to a SHARED route retroactively changes
+the behaviour of every pre-existing test in that route's suite**, in one of two ways:
+
+- **Awaited read → unexplained 500.** Adding `await settingsService.get('library')` ahead of the write
+  in `PUT /api/settings` made every existing PUT test return 500. Fix: add a category-resolving default
+  in `beforeEach`, AFTER `resetMockServices(services)` (which re-applies the rejecting default):
+  `(services.settings.get as Mock).mockImplementation((cat: string) => Promise.resolve(mockSettings[cat as keyof typeof mockSettings]))`.
+- **Fire-and-forget call → an extra `warn` record.** `fireAndForget`
+  (`src/server/utils/fire-and-forget.ts:9-10`) catches the rejection and logs it at `warn`. Any test
+  asserting `expect(mockLog.spies.warn).toHaveBeenCalledTimes(1)` — the route-boundary-record
+  convention — now sees 2. Fix: `mockResolvedValue(undefined)` for the new method in `beforeEach`;
+  keep the rejection opt-in for the isolation test that actually wants it.
+
+Mode 2 is the harder diagnosis: the failing assertion is about a completely unrelated log record, and
+the error message says nothing about the new call. **Checklist when adding a service call to a shared
+route:** grep that route's suite for (a) warn/error call-count assertions and (b) tests asserting a 2xx
+without configuring the new dependency.
+
+**2. `createMockDb`'s single `select` stub must be split by PROJECTION, not call order (#1975).** When
+a route issues two `db.select` calls per request, discriminate them by the projection argument:
+`resolveByPublicId` (`src/server/utils/public-id.ts:47`) calls `db.select({ id: t.id })` with a
+projection; repository free functions like `findCompanionEbook` call `x.select()` with none.
+
+```ts
+db.select.mockImplementation((projection?: unknown) =>
+  projection === undefined ? mockDbChain([observationRow]) : mockDbChain([{ id: rowid }]),
+);
+```
+
+This is stateless, so it holds however many requests a single test issues. Both order-based
+alternatives break in practice: `mockReturnValueOnce` queues survive `vi.clearAllMocks()` and leak into
+the next test (`vitest-clearallmocks-once-queue`), and a call-index counter desynchronises the moment a
+test sends a second request — which is every concurrency/saturation test. Reference: `setDb()` in
+`src/server/routes/v1/companion-ebook.test.ts`, used by tests issuing up to 5 concurrent requests.
+Applies to any v1 route that resolves a publicId and then reads a second table.
+
+## createtestapp-omits-auth-plugin
+
+**source:** #2034  
+**added:** 2026-07-30  
+**files:** src/server/__tests__/helpers.ts  
+**tags:** fastify, csrf, test-helpers, auth, vitest
+
+---
+
+`createTestApp` (`src/server/__tests__/helpers.ts:74-85`) registers only `errorHandlerPlugin` and `registerRoutes` — NOT `authPlugin` (its doc comment now warns about exactly this). So through the shared route-test app, `request.user` is never set, the `/api/*` authentication hook never runs, and `enforceCsrf` (`src/server/plugins/auth.ts:34-40`) never runs. A non-safe method missing `X-Requested-With: XMLHttpRequest` returns its normal 2xx, not 403.
+
+**The trap:** a CSRF assertion written against `createTestApp` in the loose form (`expect(res.statusCode).not.toBe(403)`) passes vacuously — the gate it claims to exercise is not installed. Only the strict form (`expect(res.statusCode).toBe(403)`) fails loudly enough to reveal the gap. `enforceCsrf` is reached solely from `auth.ts:254`, gated on `status.mode === 'basic'` AND `request.user` being populated by `handleBasicAuth`, so both the plugin and a credentialed request are required.
+
+**The recipe** for auth/CSRF cases in a route suite: use the shared `createAuthTestApp` / `stubAuthService` helpers (`src/server/__tests__/helpers.ts:109-206`, added by #2053) — they install the real `authPlugin` over the same scaffolding, and the registration order they encode (cookie → errorHandler → authPlugin → routes) is load-bearing. Do NOT hand-roll the instance; the three suites that used to are all migrated to the helper.
+
+Because `BASE_PUBLIC_ROUTES` (`auth.ts:17-23`) is module-private, "this route is not public" is assertable only as a 401 on an uncredentialed request. Worked references: `src/server/routes/system.test.ts:1067-1109`, `src/server/routes/auth.test.ts:820`, `src/server/routes/companion-ebook.test.ts:1803-1856`.
+
+Related: [[vacuous-assertion-observation-points]] — a distinct mechanism (the harness omits the middleware entirely, rather than the observation point being unable to see a wired property), so it may belong as a further section of that entry.

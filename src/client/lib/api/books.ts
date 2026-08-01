@@ -1,6 +1,6 @@
-import type { BookStatus, EnrichmentStatus, LibraryFilterBucket, RetagExcludableField } from '../../../shared/schemas.js';
-import type { LibraryBookListItem, LibraryBookListResponse } from '../../../shared/schemas/library-book.js';
-import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '../../../core/metadata/types.js';
+import type { BookStatus, EnrichmentStatus, LibraryFilterBucket, RetagExcludableField } from '@shared/schemas.js';
+import type { LibraryBookListItem, LibraryBookListResponse } from '@shared/schemas/library-book.js';
+import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '@core/metadata/types.js';
 import { ApiError, fetchApi, fetchMultipart } from './client.js';
 import type { BookSeriesCardData, RefreshBookSeriesResponse, HardcoverSeriesCandidate } from './book-series.js';
 
@@ -82,11 +82,31 @@ export interface CreateBookPayload {
 
 
 export interface BookIdentifier {
+  // Required, not optional (#1916): consumers that render a link to the owned
+  // book (the Add-Book search card) read `entry.id` off the match. An optional
+  // `id` would let that silently fall back to null with no type error.
+  id: number;
   asin: string | null;
   title: string;
   authorName: string | null;
   authorSlug: string | null;
 }
+
+/**
+ * The one ownership-input contract for "is this search result already in the
+ * library?" — the narrow unpaginated `/api/books/identifiers` row or a full
+ * book row, whichever a surface happens to already hold.
+ *
+ * Canonical and exported (#1916 review F2): every ownership surface — the
+ * search page/card, the author page's series sections, the metadata pickers,
+ * and the bulk-add hook — takes THIS type rather than restating the union, and
+ * `findLibraryMatch` / `isBookInLibrary` in `@/lib/helpers` constrain against
+ * it. Both branches carry `id`, `asin`, `title`, and an author name, which is
+ * the whole matching surface; widening the concept is a one-line edit here
+ * instead of eight manually synchronized declarations that can drift apart
+ * while still compiling.
+ */
+export type LibraryEntry = BookIdentifier | BookWithAuthor;
 
 export interface BookFile {
   name: string;
@@ -298,9 +318,15 @@ function buildLibraryBookListQuery(params?: LibraryBookListParams): string {
   return base;
 }
 
+// No `getBooks` wrapper here on purpose. The server's `GET /api/books` route is still
+// live (it is part of the v1 API contract), but no client code may read it: the route
+// applies a default limit of 120 ordered created-at-descending, so on a real library the
+// oldest rows — the likely owned incumbent — are invisible to an ownership or duplicate
+// check, and the bug never reproduces on a small dev library (#1916). The library list
+// uses `listLibraryBooks`; every ownership surface uses `getBookIdentifiers`, which is
+// unlimited and unordered. The wrapper was removed in #1951 once it had no callers left,
+// so the wrong choice is no longer reachable from the client.
 export const booksApi = {
-  getBooks: (params?: BookListParams) =>
-    fetchApi<{ data: BookWithAuthor[]; total: number }>(`/books${buildBookListQuery(params)}`),
   listLibraryBooks: (params?: LibraryBookListParams) =>
     fetchApi<LibraryBookListResponse>(`/library/books${buildLibraryBookListQuery(params)}`),
   getBookStats: () =>

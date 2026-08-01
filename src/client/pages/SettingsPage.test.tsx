@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent, configure } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SettingsLayout } from '@/pages/settings';
 
@@ -69,7 +69,7 @@ function renderSettingsPage(route = '/settings/indexers') {
     defaultOptions: { queries: { retry: false } },
   });
 
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[route]}>
         <Routes>
@@ -78,6 +78,26 @@ function renderSettingsPage(route = '/settings/indexers') {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, queryClient };
+}
+
+/**
+ * #2033 — wait until the settings query has actually HYDRATED the forms. The mocked
+ * settings equal the defaults, so the input's value is identical before and after the
+ * query lands and nothing in the DOM distinguishes "form populated from the query" from
+ * "form still on defaults" — which made the pre-hydration window invisible to every
+ * anchor these tests could use, and un-waitable. Query state is the observable the DOM
+ * cannot provide (the react-query-error-after-retry-ladder idiom, success-side).
+ *
+ * PRECISION: this observes CACHE success, which precedes the hydrate effect's form flush by
+ * one act cycle. A caller asserting anything about hydration's EFFECT must follow this with
+ * its own waitFor over the DOM (see the #2033 regression pin) — success alone is necessary,
+ * not sufficient.
+ */
+async function settingsHydrated(queryClient: QueryClient): Promise<void> {
+  await waitFor(() => {
+    expect(queryClient.getQueryState(['settings'])?.status).toBe('success');
+  });
 }
 
 describe('SettingsPage - Indexer form test button', () => {
@@ -563,10 +583,11 @@ describe('SettingsPage - {edition} auto-behavior preview (#1774, real @core/util
   });
 
   it('in-place branch: {edition} renders at its position with no double suffix; baseline row stays edition-free', async () => {
-    renderSettingsPage('/settings');
+    const { queryClient } = renderSettingsPage('/settings');
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
+    await settingsHydrated(queryClient); // #2033 — same exposure class as the edition tests
     const folderInput = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
     fireEvent.change(folderInput, { target: { value: '{author}/{title}/{edition}' } });
 
@@ -583,10 +604,11 @@ describe('SettingsPage - {edition} auto-behavior preview (#1774, real @core/util
   });
 
   it('baseline file rows stay edition-free even when the file format places {edition}', async () => {
-    renderSettingsPage('/settings');
+    const { queryClient } = renderSettingsPage('/settings');
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
+    await settingsHydrated(queryClient); // #2033 — same exposure class as the edition tests
     const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
     fireEvent.change(fileInput, { target: { value: '{author} - {title} ({edition})' } });
 
@@ -619,10 +641,11 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
   });
 
   it('conditional {edition} form renders the full sample filename including the .m4b suffix (AC1)', async () => {
-    renderSettingsPage('/settings');
+    const { queryClient } = renderSettingsPage('/settings');
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
+    await settingsHydrated(queryClient); // #2033 — close every pre-hydration window before typing
     // The conditional `{ (?edition?)}` wrapper is exactly what the naive section-test mock cannot
     // exercise — the real renderFilename must produce the parenthesized label in place. Pin the whole
     // string so a renderer regression is loud.
@@ -635,11 +658,53 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
     });
   });
 
-  it('row live-updates as the file format is edited (real renderer)', async () => {
-    renderSettingsPage('/settings');
+  // #2033 — the permanent order-pin for the hydrate-clobber class. useSettingsForm's hydrate
+  // effect resets the form from the fetched settings ONLY while !isDirtyRef.current; this test
+  // pins that a keystroke landing BEFORE the query resolves is never clobbered by the reset.
+  // (The controlled deferred pins the ORDER — the original flake investigation's 300ms delay
+  // shifted both events together and proved nothing.)
+  it('a keystroke made before the settings query resolves survives hydration (#2033)', async () => {
+    let resolveSettings!: (v: typeof mockSettings) => void;
+    vi.mocked(api.getSettings).mockImplementation(
+      () => new Promise((resolve) => { resolveSettings = resolve; }),
+    );
+    const { queryClient } = renderSettingsPage('/settings');
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
+    // The preview row renders from DEFAULTS before the query lands - anchor on the hint.
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-file-edition').textContent).toMatch(/Add \{edition\}/);
+    });
+    const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { value: '{title}{ (?edition?)}' } });
+    // NOW let the settings query resolve, with the form dirty.
+    resolveSettings(mockSettings);
+    // THE LOAD-BEARING SEQUENCING (found by the pre-push assessment's own mutation run): the
+    // clobber, when the guard is absent, flushes to the DOM one act cycle AFTER the query
+    // reaches success. Asserting immediately after resolve() lands in that gap and passes
+    // even with the guard deleted — the vacuous-observation-point class, again. So: wait for
+    // cache success, let the hydrate effect flush, and only THEN assert survival. Verified
+    // red-under-mutation: making useSettingsForm's hydrate reset unconditional fails BOTH
+    // assertions below with the preview reverted to the hint.
+    await settingsHydrated(queryClient);
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-file-edition').textContent).toBe('The Way of Kings (Full Cast).m4b');
+      expect(fileInput.value).toBe('{title}{ (?edition?)}');
+    });
+    // One more settled pass so a one-cycle-late reset cannot slip behind the first green read.
+    await waitFor(() => {
+      expect(fileInput.value).toBe('{title}{ (?edition?)}');
+      expect(screen.getByTestId('preview-file-edition').textContent).toBe('The Way of Kings (Full Cast).m4b');
+    });
+  });
+
+  it('row live-updates as the file format is edited (real renderer)', async () => {
+    const { queryClient } = renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    await settingsHydrated(queryClient); // #2033 — close every pre-hydration window before typing
     const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
     // Default template has no {edition} → the capability hint is shown, not a render.
     await waitFor(() => {
@@ -658,10 +723,11 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
   });
 
   it('no {edition} token: file edition row shows the capability affordance, not a With-series duplicate (AC2)', async () => {
-    renderSettingsPage('/settings');
+    const { queryClient } = renderSettingsPage('/settings');
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
+    await settingsHydrated(queryClient); // #2033 — close every pre-hydration window before typing
     const row = await screen.findByTestId('preview-file-edition');
     expect(row.textContent).toMatch(/Add \{edition\} to include the edition label in filenames/);
     // The default file format is `{author} - {title}` → With-series file row is index 1.
@@ -670,10 +736,11 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
   });
 
   it('row shape: exactly one file edition row (file) and one multiple-editions row (folder)', async () => {
-    renderSettingsPage('/settings');
+    const { queryClient } = renderSettingsPage('/settings');
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
+    await settingsHydrated(queryClient); // #2033 — close every pre-hydration window before typing
     expect(screen.getAllByTestId('preview-file-edition')).toHaveLength(1);
     expect(screen.getAllByTestId('preview-multi-edition')).toHaveLength(1);
   });
@@ -683,10 +750,11 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
   // real rendered filename. SAMPLE_TOKENS has no trackNumber, so no ordinal renders.
   it('selecting the Detailed preset flips the file edition row from the hint to a rendered filename (#1829)', async () => {
     const user = userEvent.setup();
-    renderSettingsPage('/settings');
+    const { queryClient } = renderSettingsPage('/settings');
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
+    await settingsHydrated(queryClient); // #2033 — close every pre-hydration window before typing
     await waitFor(() => {
       expect(screen.getByTestId('preview-file-edition').textContent).toMatch(/Add \{edition\}/);
     });

@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { AuthService } from './services/auth.service.js';
-import type { AuthMode } from '../shared/schemas.js';
+import type { AuthMode } from '@shared/schemas.js';
 
 /**
  * Emit a warn-level boot log when AUTH_BYPASS=true AND a user account exists.

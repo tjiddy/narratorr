@@ -11,7 +11,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { BYTES_PER_GB } from '../../shared/constants.js';
+import { BYTES_PER_GB } from '@shared/constants.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
   ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),

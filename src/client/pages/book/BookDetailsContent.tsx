@@ -4,6 +4,7 @@ import { SeriesCard } from '@/components/SeriesCard';
 import { api, type BookWithAuthor } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { BookDescription } from './BookDescription.js';
+import { CompanionEbookSection } from './CompanionEbookSection.js';
 import { BookLocationSection } from './BookLocationSection.js';
 import { FileList } from './FileList.js';
 
@@ -72,6 +73,10 @@ export function BookDetailsContent({ libraryBook, merged }: {
               </div>
             </div>
           )}
+
+          {/* Immediately before Location, with no section between them: the `none` copy reads
+              "shown under Location below", so the placement is load-bearing, not cosmetic. */}
+          {hasPath && <CompanionEbookSection bookId={libraryBook.id} />}
 
           {hasPath && <BookLocationSection path={libraryBook.path!} />}
 

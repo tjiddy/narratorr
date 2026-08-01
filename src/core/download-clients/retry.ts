@@ -1,5 +1,5 @@
 import { DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 
 export interface RetryConfig {
   clientName: string;

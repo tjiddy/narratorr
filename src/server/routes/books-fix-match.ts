@@ -1,13 +1,15 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
+import { didRenameChangeAnything } from '../services/rename.service.js';
+import { triggerCompanionReconcile } from '../services/companion-ebook-trigger.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { idParamSchema, fixMatchRequestSchema, type FixMatchRequest } from '../../shared/schemas.js';
-import type { BookMetadata } from '../../core/index.js';
+import { idParamSchema, fixMatchRequestSchema, type FixMatchRequest } from '@shared/schemas.js';
+import type { BookMetadata } from '@core/index.js';
 import type { BookRouteDeps } from './books.js';
 import type { FixMatchReplacement } from '../services/book.service.js';
 import { refreshOpfForBook } from '../utils/opf-refresh.js';
 import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
-import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 import { type z } from 'zod';
 
 type IdParam = z.infer<typeof idParamSchema>;
@@ -70,14 +72,23 @@ async function runPostCommitRenameRetag(
   bookId: number,
   hasPath: boolean,
   body: FixMatchRequest,
-  log: { warn: (obj: unknown, msg: string) => void },
+  log: FastifyBaseLogger,
 ): Promise<{ retagged: boolean }> {
   if (!hasPath) return { retagged: false };
   if (body.renameFiles) {
+    // #1960 AC20/AC22 — caller 2 of three, gated on `renameFiles`. It fires whether the rename
+    // succeeded materially OR the `catch` below swallowed a failure (the path write lands
+    // before the file rename can throw, so the EPUB may have travelled). The one case that
+    // does NOT fire is a clean "Already organized" — nothing moved.
+    const reconcile = (): void => triggerCompanionReconcile(
+      deps.companionEbook, bookId, log, 'Companion ebook reconcile failed after Fix Match rename',
+    );
     try {
-      await deps.renameService.renameBook(bookId);
+      const result = await deps.renameService.renameBook(bookId);
+      if (didRenameChangeAnything(result)) reconcile();
     } catch (error: unknown) {
       log.warn({ id: bookId, error: serializeError(error) }, 'Fix Match: post-commit rename failed');
+      reconcile();
     }
   }
   let retagged = false;

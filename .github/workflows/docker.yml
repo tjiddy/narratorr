@@ -87,7 +87,11 @@ jobs:
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             echo "git_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
-            echo "git_tag=develop-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            # 8 must match SHORT_SHA_LENGTH in src/server/utils/version.ts — that
+            # file explains why the width is a constant rather than derived from
+            # git (this job checks out shallow, so `git rev-parse --short` here
+            # would compute 7 from a one-commit clone). Keep the two in step.
+            echo "git_tag=develop-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Docker metadata (tag matrix)

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigate, useNavigationType } from 'react-router';
 import React from 'react';
 import { useCrudSettings } from './useCrudSettings';
 import { ApiError, type TestResult } from '@/lib/api';

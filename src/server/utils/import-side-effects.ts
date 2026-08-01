@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { DownloadStatus } from '../../shared/schemas/activity.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { DownloadStatus } from '@shared/schemas/activity.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import type { NotifierService } from '../services/notifier.service.js';
 import type { EventHistoryService } from '../services/event-history.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';

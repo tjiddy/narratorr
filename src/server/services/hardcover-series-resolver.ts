@@ -1,5 +1,5 @@
-import type { HardcoverClient, HardcoverSearchCandidate, HardcoverSeriesData } from '../../core/metadata/hardcover.js';
-import { diceCoefficient } from '../../core/utils/similarity.js';
+import type { HardcoverClient, HardcoverSearchCandidate, HardcoverSeriesData } from '@core/metadata/hardcover.js';
+import { diceCoefficient } from '@core/utils/similarity.js';
 
 export const AUTHOR_OVERLAP_WEIGHT = 0.6;
 export const NAME_SIM_WEIGHT = 0.4;

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { importListTypeSchema, type ImportListSettings } from '../../shared/schemas/import-list.js';
+import { importListTypeSchema, type ImportListSettings } from '@shared/schemas/import-list.js';
 
 function makeMockProvider() {
   return { type: 'mock', name: 'Mock', fetchItems: vi.fn(), test: vi.fn() };

@@ -10,9 +10,9 @@ import {
   submissionAttentionQuerySchema,
   clientSubmissionIdSchema,
   SUBMISSION_ERROR_CODES,
-} from '../../core/import-staging/schemas.js';
+} from '@core/import-staging/schemas.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { idParamSchema } from '../../shared/schemas/common.js';
+import { idParamSchema } from '@shared/schemas/common.js';
 
 /** Positive-integer :id path param — the canonical shared contract (F46, DRY-2/ZOD-2). */
 const submissionIdParamSchema = idParamSchema;

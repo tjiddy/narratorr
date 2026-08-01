@@ -1,23 +1,19 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { z } from 'zod';
-import type { Db } from '../../../db/index.js';
-import { downloads } from '../../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { downloads } from '@db/schema.js';
 import type { DownloadService } from '../../services/download.service.js';
 import {
   downloadV1Schema,
   downloadV1ListQuerySchema,
   toDownloadV1,
-} from '../../../shared/schemas/v1/downloads.js';
-import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+} from '@shared/schemas/v1/downloads.js';
+import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 
 export interface V1DownloadsRouteDeps {
   downloadService: DownloadService;
 }
-
-/** `:publicId` path param. `.strict()` per the v1 owned-schema convention. */
-const publicIdParamSchema = z.object({ publicId: z.string().min(1) }).strict();
 
 /**
  * Native public API v1 — Downloads / activity (read). Registers
@@ -64,7 +60,7 @@ export async function v1DownloadsRoutes(app: FastifyInstance, deps: V1DownloadsR
         '/downloads/:publicId',
         {
           schema: {
-            params: publicIdParamSchema,
+            params: v1PublicIdParamSchema,
             response: { 200: downloadV1Schema, 400: v1ErrorEnvelopeSchema, 404: v1ErrorEnvelopeSchema },
           },
         },

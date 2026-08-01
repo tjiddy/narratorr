@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent, renderHook, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { useDirtyFormsState, _resetForTesting } from '@/hooks/dirty-forms';

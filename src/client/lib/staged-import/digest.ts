@@ -1,4 +1,4 @@
-import { serializeSubmissionForDigest, type SubmissionDigestInput } from '../../../core/import-staging/schemas.js';
+import { serializeSubmissionForDigest, type SubmissionDigestInput } from '@core/import-staging/schemas.js';
 import { sha256Hex } from './sha256.js';
 
 /**

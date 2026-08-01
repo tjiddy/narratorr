@@ -1,4 +1,4 @@
-import { clientSubmissionIdSchema } from '../../../core/import-staging/schemas.js';
+import { clientSubmissionIdSchema } from '@core/import-staging/schemas.js';
 
 /**
  * Generate a `clientSubmissionId` that is valid on BOTH secure and plain-HTTP

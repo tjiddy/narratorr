@@ -4,7 +4,7 @@ import { join, extname, basename } from 'node:path';
 import { promisify } from 'node:util';
 import { collectSortedAudioFiles, compareAudioNames, disambiguateStems } from './collect-audio-files.js';
 import { dotPrefixBasename } from './hidden-staging.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import type { ChapterSource } from './chapter-resolver.js';
 import { renderFilename } from './naming.js';

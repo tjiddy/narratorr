@@ -1,8 +1,8 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/index.js';
-import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/index.js';
+import type { DiscoveredBook } from '@shared/schemas/library-scan.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 

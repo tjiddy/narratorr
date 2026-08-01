@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { importConfirmItemSchema, importModeSchema, importSkipReasonSchema } from '../../shared/schemas/library-scan.js';
-import type { ImportMode } from '../../shared/schemas/library-scan.js';
+import { importConfirmItemSchema, importModeSchema, importSkipReasonSchema } from '@shared/schemas/library-scan.js';
+import type { ImportMode } from '@shared/schemas/library-scan.js';
 import { AuthorRefSchema, SeriesRefSchema, BookMetadataSchema } from '../metadata/schemas.js';
 
 // ============================================================================

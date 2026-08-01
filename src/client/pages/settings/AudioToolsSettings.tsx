@@ -5,8 +5,8 @@ import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { NumberField } from '@/components/settings/NumberField';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { FORMAT_LABELS, MERGE_LABELS } from '@/lib/constants';
-import { outputFormatSchema, mergeBehaviorSchema, bitrateField, maxConcurrentProcessingField, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { FORMAT_LABELS } from '@/lib/constants';
+import { outputFormatSchema, bitrateField, maxConcurrentProcessingField, DEFAULT_SETTINGS, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 
@@ -20,7 +20,6 @@ const audioToolsSchema = z.object({
   outputFormat: outputFormatSchema,
   keepOriginalBitrate: z.boolean(),
   bitrate: bitrateField,
-  mergeBehavior: mergeBehaviorSchema,
   maxConcurrentProcessing: maxConcurrentProcessingField,
 });
 type AudioToolsFormData = z.infer<typeof audioToolsSchema>;
@@ -30,7 +29,6 @@ function toFormData(s: AppSettings): AudioToolsFormData {
     outputFormat: s.processing.outputFormat,
     keepOriginalBitrate: s.processing.keepOriginalBitrate,
     bitrate: s.processing.bitrate,
-    mergeBehavior: s.processing.mergeBehavior,
     maxConcurrentProcessing: s.processing.maxConcurrentProcessing,
   };
 }
@@ -99,7 +97,7 @@ export function AudioToolsSettings() {
     <SettingsSection
       icon={<HeadphonesIcon className="w-5 h-5 text-primary" />}
       title={CARD_LABEL}
-      description="Applies wherever audio is merged or converted — the Merge and Bulk Convert buttons, and auto-merge downloads."
+      description="Applies wherever audio is merged or converted — the Merge button and auto-merge downloads."
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <FfmpegStatusRow />
@@ -132,16 +130,6 @@ export function AudioToolsSettings() {
             />
           </SettingsRow>
 
-          <SettingsRow htmlFor="mergeBehavior" label="Merge behavior" description="When multiple audio files get combined into one chaptered file.">
-            <div className="w-56">
-              <SelectWithChevron id="mergeBehavior" {...register('mergeBehavior')}>
-                {mergeBehaviorSchema.options.map((b) => (
-                  <option key={b} value={b}>{MERGE_LABELS[b] ?? b}</option>
-                ))}
-              </SelectWithChevron>
-            </div>
-          </SettingsRow>
-
           <SettingsRow htmlFor="maxConcurrentProcessing" label="Max concurrent jobs" description="Manual and auto-merge share this cap. Higher uses more CPU and disk I/O.">
             <NumberField
               id="maxConcurrentProcessing"
@@ -155,8 +143,7 @@ export function AudioToolsSettings() {
         </SettingsTable>
 
         <p className="text-sm text-muted-foreground">
-          Used by the <span className="font-medium text-foreground">Merge</span> button,{' '}
-          <span className="font-medium text-foreground">Bulk Convert</span>, and{' '}
+          Used by the <span className="font-medium text-foreground">Merge</span> button and{' '}
           <span className="font-medium text-foreground">auto-merge downloads</span>.
         </p>
 

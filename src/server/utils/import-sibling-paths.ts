@@ -19,7 +19,7 @@ import {
   LEGACY_STAGING_SUFFIX,
   LEGACY_BACKUP_SUFFIX,
   MARKER_SUFFIX,
-} from '../../core/utils/import-sibling-suffixes.js';
+} from '@core/utils/import-sibling-suffixes.js';
 
 export interface ImportSiblings {
   /** Active born-hidden staging dir: `<dir>/.<base>.import-staging`. */

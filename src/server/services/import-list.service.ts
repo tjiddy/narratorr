@@ -1,25 +1,25 @@
 import { eq, and, lte } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { importLists, bookEvents } from '../../db/schema.js';
-import { IMPORT_LIST_ADAPTER_FACTORIES } from '../../core/import-lists/index.js';
-import type { ImportListItem } from '../../core/import-lists/index.js';
+import { importLists, bookEvents } from '@db/schema.js';
+import { IMPORT_LIST_ADAPTER_FACTORIES } from '@core/import-lists/index.js';
+import type { ImportListItem } from '@core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
-import type { BookMetadata } from '../../core/metadata/types.js';
-import { normalizeProductionType } from '../../core/metadata/production-type.js';
-import type { ProductionType } from '../../shared/schemas/book.js';
-import { RateLimitError, TransientError } from '../../core/index.js';
+import type { BookMetadata } from '@core/metadata/types.js';
+import { normalizeProductionType } from '@core/metadata/production-type.js';
+import type { ProductionType } from '@shared/schemas/book.js';
+import { RateLimitError, TransientError } from '@core/index.js';
 import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { OwnedRecordingError, type BookService, type BookWithAuthor } from './book.service.js';
-import type { ImportListType } from '../../shared/import-list-registry.js';
-import { importListSettingsSchemas, type ImportListSettings } from '../../shared/schemas/import-list.js';
+import type { ImportListType } from '@shared/import-list-registry.js';
+import { importListSettingsSchemas, type ImportListSettings } from '@shared/schemas/import-list.js';
 import type { ImportListRow } from './types.js';
 import { triggerImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
-import type { AppSettings } from '../../shared/schemas.js';
-import type { RecordingReviewReason } from '../../shared/schemas/recording-verdict.js';
-import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
+import type { AppSettings } from '@shared/schemas.js';
+import type { RecordingReviewReason } from '@shared/schemas/recording-verdict.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 type QualitySettings = AppSettings['quality'];
 

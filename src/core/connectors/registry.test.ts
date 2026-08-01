@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { ADAPTER_FACTORIES } from './registry.js';
-import { connectorTypeSchema, connectorSettingsSchemas, type ConnectorSettings } from '../../shared/schemas/connector.js';
-import { CONNECTOR_REGISTRY, CONNECTOR_TYPES } from '../../shared/connector-registry.js';
-import { connectors } from '../../db/schema.js';
+import { connectorTypeSchema, connectorSettingsSchemas, type ConnectorSettings } from '@shared/schemas/connector.js';
+import { CONNECTOR_REGISTRY, CONNECTOR_TYPES } from '@shared/connector-registry.js';
+import { connectors } from '@db/schema.js';
 
 describe('Connector ADAPTER_FACTORIES', () => {
   const types = connectorTypeSchema.options;

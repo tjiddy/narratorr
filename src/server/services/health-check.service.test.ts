@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { HealthCheckService } from './health-check.service.js';
 import { getUpdateStatus, checkForUpdate } from '../jobs/version-check.js';
-import { HardcoverClient } from '../../core/metadata/hardcover.js';
-import { RateLimitError, TransientError, MetadataError } from '../../core/metadata/errors.js';
+import { HardcoverClient } from '@core/metadata/hardcover.js';
+import { RateLimitError, TransientError, MetadataError } from '@core/metadata/errors.js';
 import { inject, createMockLogger, createMockSettingsService } from '../__tests__/helpers.js';
-import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
+import { DEFAULT_SETTINGS } from '@shared/schemas/settings/registry.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 
 vi.mock('../jobs/version-check.js', () => ({
   getUpdateStatus: vi.fn(),
@@ -20,8 +20,8 @@ vi.mock('../jobs/version-check.js', () => ({
 // ffmpeg is auto-detected now; checkFfmpeg calls resolveFfmpegPath(). Plain-arrow mock over a
 // hoisted toggle (survives vi.clearAllMocks); default detected, flip false for the not-found path.
 const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
-vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../core/utils/audio-processor.js')>();
+vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
 });
 

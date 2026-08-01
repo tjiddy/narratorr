@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { UseFormWatch, UseFormSetValue } from 'react-hook-form';
-import type { CreateIndexerFormData } from '../../../../shared/schemas.js';
+import type { CreateIndexerFormData } from '@shared/schemas.js';
 
 import { api } from '@/lib/api';
 import { SelectWithChevron } from '../SelectWithChevron';

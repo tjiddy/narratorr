@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
-import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
+import Fastify, { type FastifyServerOptions } from 'fastify';
 import cookie from '@fastify/cookie';
 import {
   serializerCompiler,
   validatorCompiler,
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
-import { createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { createAuthTestApp, createMockServices, resetMockServices, type ZodTestApp } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import { authRoutes } from './auth.js';
 import { settingsRoutes } from './settings.js';
@@ -21,8 +21,15 @@ vi.mock('../config.js', () => ({
 import { config } from '../config.js';
 import { AuthService, UserExistsError, AuthConfigError, IncorrectPasswordError, NoCredentialsError } from '../services/auth.service.js';
 
-/** Creates a test app with @fastify/cookie + auth routes + a hook that sets request.user. */
-async function createAuthTestApp(
+/**
+ * Creates a test app with @fastify/cookie + auth routes + a hook that sets request.user.
+ *
+ * Installs NO auth plugin — auth is faked by unconditionally decorating `request.user`, so
+ * every case built on this app reaches its handler authenticated and neither the `/api/*`
+ * auth hook nor `enforceCsrf` ever runs. For real auth/CSRF behaviour use the shared
+ * `createAuthTestApp` from `../__tests__/helpers.js` (see the two blocks below).
+ */
+async function createFakeAuthTestApp(
   services: Services,
   fastifyOpts: FastifyServerOptions = {},
 ) {
@@ -48,12 +55,12 @@ async function createAuthTestApp(
 }
 
 describe('auth routes', () => {
-  let app: Awaited<ReturnType<typeof createAuthTestApp>>;
+  let app: Awaited<ReturnType<typeof createFakeAuthTestApp>>;
   let services: Services;
 
   beforeAll(async () => {
     services = createMockServices();
-    app = await createAuthTestApp(services);
+    app = await createFakeAuthTestApp(services);
   });
 
   afterAll(async () => {
@@ -279,7 +286,7 @@ describe('auth routes', () => {
     it('login and logout cookies do not include Secure flag in dev mode', async () => {
       // isDev=true (default) — Secure must never be set even with trustProxy + X-Forwarded-Proto: https
       const devServices = createMockServices();
-      const devApp = await createAuthTestApp(devServices, { trustProxy: true });
+      const devApp = await createFakeAuthTestApp(devServices, { trustProxy: true });
 
       try {
         (devServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
@@ -553,7 +560,7 @@ describe('auth routes', () => {
   describe('GET /api/auth/admin-status — bypassActive with trustProxy', () => {
     it('with trustProxy + private socket peer + public XFF → bypassActive: false', async () => {
       const trustedServices = createMockServices();
-      const trustedApp = await createAuthTestApp(trustedServices, { trustProxy: ['10.0.0.0/8'] });
+      const trustedApp = await createFakeAuthTestApp(trustedServices, { trustProxy: ['10.0.0.0/8'] });
       try {
         (trustedServices.auth.getStatus as Mock).mockResolvedValue({
           mode: 'forms', hasUser: true, localBypass: true,
@@ -573,7 +580,7 @@ describe('auth routes', () => {
 
     it('with trustProxy + private socket peer + no XFF → bypassActive: true', async () => {
       const trustedServices = createMockServices();
-      const trustedApp = await createAuthTestApp(trustedServices, { trustProxy: ['10.0.0.0/8'] });
+      const trustedApp = await createFakeAuthTestApp(trustedServices, { trustProxy: ['10.0.0.0/8'] });
       try {
         (trustedServices.auth.getStatus as Mock).mockResolvedValue({
           mode: 'forms', hasUser: true, localBypass: true,
@@ -644,7 +651,7 @@ describe('auth routes', () => {
     async function setupProdApp(trustProxy: boolean) {
       (config as { isDev: boolean }).isDev = false;
       const prodServices = createMockServices();
-      const prodApp = await createAuthTestApp(prodServices, trustProxy ? { trustProxy: true } : {});
+      const prodApp = await createFakeAuthTestApp(prodServices, trustProxy ? { trustProxy: true } : {});
       (prodServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
       (prodServices.auth.getSessionSecret as Mock).mockResolvedValue('secret');
       (prodServices.auth.createSessionCookie as Mock).mockReturnValue('cookie-val');
@@ -728,7 +735,7 @@ describe('auth routes', () => {
 
     it('dev mode → never Secure regardless of X-Forwarded-Proto', async () => {
       const devServices = createMockServices();
-      const devApp = await createAuthTestApp(devServices, { trustProxy: true });
+      const devApp = await createFakeAuthTestApp(devServices, { trustProxy: true });
       (devServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
       (devServices.auth.getSessionSecret as Mock).mockResolvedValue('secret');
       (devServices.auth.createSessionCookie as Mock).mockReturnValue('cookie-val');
@@ -757,7 +764,7 @@ describe('auth routes', () => {
     it('URL_BASE=/narratorr → login and logout Set-Cookie use Path=/narratorr', async () => {
       (config as { urlBase?: string }).urlBase = '/narratorr';
       const urlBaseServices = createMockServices();
-      const urlBaseApp = await createAuthTestApp(urlBaseServices);
+      const urlBaseApp = await createFakeAuthTestApp(urlBaseServices);
       try {
         (urlBaseServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
         (urlBaseServices.auth.getSessionSecret as Mock).mockResolvedValue('secret');
@@ -811,26 +818,15 @@ describe('auth routes', () => {
   });
 
   describe('CSRF protection — basic-auth mode', () => {
-    let csrfApp: FastifyInstance;
+    let csrfApp: ZodTestApp;
     let csrfServices: Services;
-    const basicAuthHeader = `Basic ${Buffer.from('admin:password123').toString('base64')}`;
+    let basicAuthHeader: string;
 
     beforeAll(async () => {
       csrfServices = createMockServices();
-      const authSvc = csrfServices.auth as unknown as Record<string, Mock>;
-      authSvc.getStatus = vi.fn().mockResolvedValue({ mode: 'basic', hasUser: true, localBypass: false });
-      authSvc.verifyCredentials = vi.fn().mockResolvedValue({ username: 'admin' });
-      authSvc.validateApiKey = vi.fn().mockResolvedValue(false);
-
-      csrfApp = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
-      csrfApp.setValidatorCompiler(validatorCompiler);
-      csrfApp.setSerializerCompiler(serializerCompiler);
-      await csrfApp.register(cookie);
-      const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
-      await csrfApp.register(errorHandlerPlugin);
-      await csrfApp.register(authPlugin, { authService: csrfServices.auth as unknown as AuthService });
-      await authRoutes(csrfApp, csrfServices.auth as Parameters<typeof authRoutes>[1]);
-      await csrfApp.ready();
+      ({ app: csrfApp, authHeader: basicAuthHeader } = await createAuthTestApp(csrfServices, {
+        routes: (app, services) => authRoutes(app, services.auth as Parameters<typeof authRoutes>[1]),
+      }));
     });
 
     afterAll(async () => { await csrfApp.close(); });
@@ -1035,7 +1031,7 @@ describe('auth routes', () => {
   });
 
   describe('PUT /api/auth/password — forms-mode session reissue (real authPlugin)', () => {
-    let formsApp: FastifyInstance;
+    let formsApp: ZodTestApp;
     let formsServices: Services;
     let crypto: AuthService;
     let currentSecret: string;
@@ -1047,9 +1043,14 @@ describe('auth routes', () => {
       crypto = new AuthService(undefined as never, noopLog as never);
 
       formsServices = createMockServices();
+      ({ app: formsApp } = await createAuthTestApp(formsServices, {
+        mode: 'forms',
+        routes: (app, services) => authRoutes(app, services.auth as Parameters<typeof authRoutes>[1]),
+      }));
+
+      // The auth hook resolves authService methods per REQUEST, so swapping the helper's
+      // sentinel-cookie profile for the real HMAC helpers after the build takes effect.
       const authSvc = formsServices.auth as unknown as Record<string, Mock>;
-      authSvc.getStatus = vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
-      authSvc.validateApiKey = vi.fn().mockResolvedValue(false);
       authSvc.getSessionSecret = vi.fn().mockImplementation(async () => currentSecret);
       authSvc.createSessionCookie = vi.fn().mockImplementation((u: string, s: string) => crypto.createSessionCookie(u, s));
       authSvc.verifySessionCookie = vi.fn().mockImplementation((c: string, s: string) => crypto.verifySessionCookie(c, s));
@@ -1059,16 +1060,6 @@ describe('auth routes', () => {
         return newUsername ?? 'admin';
       });
       authSvc.getConfig = vi.fn().mockResolvedValue({ mode: 'forms', apiKey: 'k', localBypass: false });
-
-      formsApp = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
-      formsApp.setValidatorCompiler(validatorCompiler);
-      formsApp.setSerializerCompiler(serializerCompiler);
-      await formsApp.register(cookie);
-      const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
-      await formsApp.register(errorHandlerPlugin);
-      await formsApp.register(authPlugin, { authService: formsServices.auth as unknown as AuthService });
-      await authRoutes(formsApp, formsServices.auth as Parameters<typeof authRoutes>[1]);
-      await formsApp.ready();
     });
 
     afterAll(async () => { await formsApp.close(); });

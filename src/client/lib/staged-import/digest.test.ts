@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { serializeSubmissionForDigest, type StagedImportItem, type SubmissionDigestInput } from '../../../core/import-staging/schemas.js';
+import { serializeSubmissionForDigest, type StagedImportItem, type SubmissionDigestInput } from '@core/import-staging/schemas.js';
 import { sha256Hex } from './sha256.js';
 import { computeSubmissionDigest } from './digest.js';
 

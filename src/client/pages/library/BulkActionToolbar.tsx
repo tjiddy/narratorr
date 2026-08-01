@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { TrashIcon, SearchIcon, ChevronDownIcon } from '@/components/icons';
 import { DeleteBookModal } from '@/components/DeleteBookModal';
 import { useClickOutside } from '@/hooks/useClickOutside';
-import type { BookStatus } from '../../../shared/schemas.js';
+import type { BookStatus } from '@shared/schemas.js';
 
 export function BulkActionToolbar({
   selectedCount,

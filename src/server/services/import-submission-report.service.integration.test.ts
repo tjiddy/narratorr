@@ -3,13 +3,13 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { eq } from 'drizzle-orm';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
-import { importSubmissions, importSubmissionItems, books } from '../../db/schema.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
+import { importSubmissions, importSubmissionItems, books } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { ImportSubmissionReportService, reportItemProjection } from './import-submission-report.service.js';
 import { ABANDONED_UPLOAD_GRACE_MS, ImportStagingService } from './import-staging.service.js';
 import { REPORT_ITEM_COLUMNS } from './import-submission-dto.js';
-import type { ItemDisposition, StagedImportItem, SubmissionSource, SubmissionStatus } from '../../core/import-staging/schemas.js';
+import type { ItemDisposition, StagedImportItem, SubmissionSource, SubmissionStatus } from '@core/import-staging/schemas.js';
 import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 

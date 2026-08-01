@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route } from 'react-router';
 import { render } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMockBook, createMockAuthor } from '@/__tests__/factories';
 import { AuthorPage } from './AuthorPage';
@@ -114,7 +114,7 @@ describe('AuthorPage', () => {
     vi.clearAllMocks();
     vi.mocked(api.getAuthor).mockResolvedValue(mockAuthor);
     vi.mocked(api.getAuthorBooks).mockResolvedValue(mockBooks);
-    vi.mocked(api.getBookIdentifiers).mockResolvedValue(mockLibraryBooks.map((b) => ({ asin: b.asin ?? null, title: b.title, authorName: b.authors[0]?.name ?? null, authorSlug: null })));
+    vi.mocked(api.getBookIdentifiers).mockResolvedValue(mockLibraryBooks.map((b) => ({ id: b.id, asin: b.asin ?? null, title: b.title, authorName: b.authors[0]?.name ?? null, authorSlug: null })));
     vi.mocked(api.getSettings).mockResolvedValue({
       quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, rejectWords: '', requiredWords: '' },
     } as never);
@@ -264,7 +264,7 @@ describe('AuthorPage', () => {
 
   it('shows check icon for books already in library', async () => {
     vi.mocked(api.getBookIdentifiers).mockResolvedValue([
-      { asin: 'B001', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: null },
+      { id: 1, asin: 'B001', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: null },
     ]);
 
     renderAuthorPage();

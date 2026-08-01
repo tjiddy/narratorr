@@ -1,4 +1,4 @@
-import type { BookMetadata } from '../../core/metadata/index.js';
+import type { BookMetadata } from '@core/metadata/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 interface SearchOptions {

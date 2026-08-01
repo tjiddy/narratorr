@@ -1,6 +1,6 @@
 export { ApiError } from './client.js';
 
-export type { Author, BookWithAuthor, BookIdentifier, CreateBookPayload, UpdateBookPayload, RenameResult, RenamePreviewResult, RetagResult, RetagExcludableField, RetagPlan, RetagPlanFile, RetagPlanFileDiff, RetagMode, RetagOverrides, SingleBookSearchResult, BookMetadata, AuthorMetadata, MetadataSearchResults, BookFile, BookListParams, LibraryBookListParams, BookStats, BookSeriesCardData, BookSeriesMemberCard, RefreshBookSeriesResponse, HardcoverSeriesCandidate, FixMatchPayload, LibraryBookListItem, LibraryBookListResponse } from './books.js';
+export type { Author, BookWithAuthor, BookIdentifier, LibraryEntry, CreateBookPayload, UpdateBookPayload, RenameResult, RenamePreviewResult, RetagResult, RetagExcludableField, RetagPlan, RetagPlanFile, RetagPlanFileDiff, RetagMode, RetagOverrides, SingleBookSearchResult, BookMetadata, AuthorMetadata, MetadataSearchResults, BookFile, BookListParams, LibraryBookListParams, BookStats, BookSeriesCardData, BookSeriesMemberCard, RefreshBookSeriesResponse, HardcoverSeriesCandidate, FixMatchPayload, LibraryBookListItem, LibraryBookListResponse } from './books.js';
 export { RenameConflictError, RetagFfmpegNotConfiguredError } from './books.js';
 export type { SearchResult, SearchResponse } from './search.js';
 export type { Download, ActivityCounts, QualityGateData, ActivityListParams } from './activity.js';
@@ -11,7 +11,7 @@ export type { Connector, ConnectorTarget, ConnectorTestResult, ConnectorTargetsR
 export type { BlacklistEntry } from './blacklist.js';
 export type { Settings, TestResult, ProxyTestResult, HardcoverTestResult } from './settings.js';
 export type { AuthStatus, AuthConfig, StreamToken } from './auth.js';
-export type { DiscoveredBook, ScanResult, ImportConfirmItem, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus, RescanResult, HeldReviewItem } from './library-scan.js';
+export type { DiscoveredBook, ScanResult, ImportConfirmItem, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus, RescanResult, HeldReviewItem, DurationCorroborationResult } from './library-scan.js';
 export type { BrowseResult } from './filesystem.js';
 export type { RemotePathMapping } from './remote-path-mappings.js';
 export type { BookEvent, EventHistoryParams } from './event-history.js';
@@ -21,6 +21,7 @@ export type { ImportList, ImportListItem, ImportListPreview } from './import-lis
 export type { SuggestionRow, MarkAddedResult, RefreshResult } from './discover.js';
 export type { BulkOpType, BulkJobStatus, BulkRenamePreview, BulkRenamePreviewItem } from './bulk-operations.js';
 export type { ImportJobWithBook, ImportJobBook, ImportJobsParams } from './import-jobs.js';
+export type { CompanionEbookState, CompanionEbookCandidate, CompanionEbookMetadata } from './companion-ebook.js';
 export type { ImportSubmissionListParams, AttentionResponse, AttentionSubmission, SubmissionAttention, CreateSubmissionBody, PutItemsBody, PutItemRow, SubmissionListResponse, SubmissionResponse, SubmissionSummary, StagedItemResultDto, StagedImportItem, SubmissionAggregates } from './submissions.js';
 
 export { formatBytes } from '@core/utils/parse.js';
@@ -48,6 +49,7 @@ import { discoverApi } from './discover.js';
 import { bulkOperationsApi } from './bulk-operations.js';
 import { importJobsApi } from './import-jobs.js';
 import { submissionsApi } from './submissions.js';
+import { companionEbookApi } from './companion-ebook.js';
 
 /**
  * Single source of truth for the API barrel. Both the runtime `api` object and
@@ -79,6 +81,7 @@ export const apiModules = [
   { name: 'bulkOperationsApi', api: bulkOperationsApi },
   { name: 'importJobsApi', api: importJobsApi },
   { name: 'submissionsApi', api: submissionsApi },
+  { name: 'companionEbookApi', api: companionEbookApi },
 ];
 
 type UnionToIntersection<U> = (U extends unknown ? (arg: U) => void : never) extends (

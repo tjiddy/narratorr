@@ -5,7 +5,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockLibraryBook, createMockAuthor } from '@/__tests__/factories';
 import { LibraryPage } from './LibraryPage';
-import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
+import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 
 // Mock api
 vi.mock('@/lib/api', async () => {
@@ -14,7 +14,6 @@ vi.mock('@/lib/api', async () => {
     ...actual,
     api: {
       ...(actual as { api: object }).api,
-      getBooks: vi.fn(),
       listLibraryBooks: vi.fn(),
       getBookStats: vi.fn(),
       getSettings: vi.fn(),
@@ -51,8 +50,8 @@ vi.mock('sonner', () => ({
 
 // Spy on useNavigate for navigation assertions
 const mockNavigate = vi.fn();
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+vi.mock('react-router', async () => {
+  const actual = await vi.importActual<typeof import('react-router')>('react-router');
   return { ...actual, useNavigate: () => mockNavigate };
 });
 

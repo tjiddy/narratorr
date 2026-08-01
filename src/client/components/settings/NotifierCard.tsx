@@ -5,12 +5,12 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import type { Notifier, TestResult } from '@/lib/api';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
 import { NotifierCardForm } from './NotifierCardForm';
-import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from '../../../shared/notifier-registry.js';
-import { EVENT_LABELS, NOTIFICATION_EVENTS, type NotificationEvent } from '../../../shared/notification-events.js';
+import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from '@shared/notifier-registry.js';
+import { EVENT_LABELS, NOTIFICATION_EVENTS, type NotificationEvent } from '@shared/notification-events.js';
 import {
   createNotifierFormSchema,
   type CreateNotifierFormData,
-} from '../../../shared/schemas.js';
+} from '@shared/schemas.js';
 
 interface NotifierCardProps {
   notifier?: Notifier;

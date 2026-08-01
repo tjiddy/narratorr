@@ -1,16 +1,16 @@
 import { eq, and, desc, sql, inArray, lt } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { suggestions, books, authors, bookAuthors, bookNarrators, narrators } from '../../db/schema.js';
+import { suggestions, books, authors, bookAuthors, bookNarrators, narrators } from '@db/schema.js';
 import { chunkArray } from '../utils/batch.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
-import type { SuggestionReason } from '../../shared/schemas/discovery.js';
+import type { SuggestionReason } from '@shared/schemas/discovery.js';
 import type { SuggestionRow, SuggestionRowWithLibraryBookId } from './types.js';
-import { buildTitleShape, titlesMatchForDedup, type TitleShape } from '../../shared/dedup.js';
-import { slugify } from '../../shared/utils.js';
+import { buildTitleShape, titlesMatchForDedup, type TitleShape } from '@shared/dedup.js';
+import { slugify } from '@shared/utils.js';
 import { extractSignals } from './discovery-signals.js';
 import { computeWeightMultipliers, DEFAULT_MULTIPLIERS, type DismissalStats, type WeightMultipliers } from './discovery-weights.js';
 import {

@@ -12,6 +12,16 @@ export const queryKeys = {
   bookIdentifiers: () => ['books', 'identifiers'] as const,
   book: (id: number) => ['books', id] as const,
   bookFiles: (id: number) => ['books', id, 'files'] as const,
+  // Prefix-child of `book(id)` (the `bookFiles` convention), so `invalidateBookQueries()`
+  // in useBookActions cascades to the Ebook panel with no new invalidate call (#1963 AC29).
+  companionEbook: (id: number) => ['books', id, 'companion-epub'] as const,
+  // Prefix-child of `companionEbook(id)` (#2022), so the #2034 forced-refresh invalidation,
+  // `invalidateBookQueries()`, and Refresh & Scan all cascade to it with no new invalidate call.
+  // The filename is an INDEX, never evidence: it records which `/state` row the panel expected
+  // when it issued the request, and promises nothing about when a request happens or which file
+  // the stored response actually describes. Only the `filename` inside the response is compared.
+  companionEbookMetadata: (id: number, filename: string) =>
+    ['books', id, 'companion-epub', 'metadata', filename] as const,
   // Singular `book` namespace (distinct from the plural `books` list namespace above).
   bookSeries: (id: number) => ['book', id, 'series'] as const,
   // Prefix-extension of bookSeries(id) so invalidating the base key cascades to the

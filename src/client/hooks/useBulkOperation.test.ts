@@ -12,7 +12,6 @@ const mockGetActiveBulkJob = vi.fn();
 const mockGetBulkJob = vi.fn();
 const mockStartBulkRename = vi.fn();
 const mockStartBulkRetag = vi.fn();
-const mockStartBulkConvert = vi.fn();
 const mockStartBulkWriteMetadataSidecars = vi.fn();
 
 vi.mock('@/lib/api', () => ({
@@ -21,7 +20,6 @@ vi.mock('@/lib/api', () => ({
     getBulkJob: (...args: unknown[]) => mockGetBulkJob(...args),
     startBulkRename: (...args: unknown[]) => mockStartBulkRename(...args),
     startBulkRetag: (...args: unknown[]) => mockStartBulkRetag(...args),
-    startBulkConvert: (...args: unknown[]) => mockStartBulkConvert(...args),
     startBulkWriteMetadataSidecars: (...args: unknown[]) => mockStartBulkWriteMetadataSidecars(...args),
   },
 }));
@@ -64,7 +62,6 @@ describe('useBulkOperation', () => {
     mockGetBulkJob.mockResolvedValue(makeRunningJob());
     mockStartBulkRename.mockResolvedValue({ jobId: 'job-1' });
     mockStartBulkRetag.mockResolvedValue({ jobId: 'job-2' });
-    mockStartBulkConvert.mockResolvedValue({ jobId: 'job-3' });
     mockStartBulkWriteMetadataSidecars.mockResolvedValue({ jobId: 'job-4' });
   });
 
@@ -126,9 +123,51 @@ describe('useBulkOperation', () => {
 
     expect(mockStartBulkWriteMetadataSidecars).toHaveBeenCalledTimes(1);
     expect(mockStartBulkRename).not.toHaveBeenCalled();
-    expect(mockStartBulkConvert).not.toHaveBeenCalled();
+    expect(mockStartBulkRetag).not.toHaveBeenCalled();
     expect(result.current.isRunning).toBe(true);
     expect(result.current.jobType).toBe('write_metadata_sidecars');
+  });
+
+  // #2056 — startJob used to end in an unguarded default arm pointing at the retired re-encode
+  // endpoint, so one surviving type was routed by fallthrough rather than by name. It is now a
+  // Record keyed on BulkOpType. These cases pin every arm to its OWN endpoint AND the silence of
+  // the other two, which is what a misroute (or a re-added default arm) would break; break one
+  // arm of START_FNS and only its case goes red.
+  describe('startJob routes every BulkOpType by name', () => {
+    const CASES = [
+      { type: 'rename', mock: () => mockStartBulkRename },
+      { type: 'retag', mock: () => mockStartBulkRetag },
+      { type: 'write_metadata_sidecars', mock: () => mockStartBulkWriteMetadataSidecars },
+    ] as const;
+
+    it.each(CASES)('$type calls only its own start function', async ({ type, mock }) => {
+      mockGetActiveBulkJob.mockResolvedValue(null);
+      const { result } = renderHook(() => useBulkOperation());
+      await act(async () => {}); // flush mount
+
+      await act(async () => {
+        await result.current.startJob(type);
+      });
+
+      expect(mock()).toHaveBeenCalledTimes(1);
+      for (const other of CASES.filter((c) => c.type !== type)) {
+        expect(other.mock()).not.toHaveBeenCalled();
+      }
+      expect(result.current.jobType).toBe(type);
+    });
+
+    it('polls the jobId returned by the type’s own endpoint', async () => {
+      mockGetActiveBulkJob.mockResolvedValue(null);
+      const { result } = renderHook(() => useBulkOperation());
+      await act(async () => {}); // flush mount
+
+      await act(async () => {
+        await result.current.startJob('retag');
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+
+      expect(mockGetBulkJob).toHaveBeenCalledWith('job-2');
+    });
   });
 
   it('increments progress as poll results update completed count', async () => {

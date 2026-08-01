@@ -1,5 +1,5 @@
 import type { BookMetadata } from '@/lib/api';
-import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 export function getInitials(name: string): string {
   return name

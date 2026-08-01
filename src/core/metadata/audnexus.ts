@@ -2,9 +2,12 @@ import { z } from 'zod';
 import { BookMetadataSchema, AuthorMetadataSchema } from './schemas.js';
 import { MetadataError, RateLimitError, TransientError } from './errors.js';
 import { normalizeGenres } from './genres.js';
+// All three 429 arms (chapters, book, author) route through the shared normalizer —
+// no path may hand the service a window it cannot honor. See retry-after.ts (#1944).
+import { parseRetryAfterMs } from './retry-after.js';
 import { AUDNEXUS_TIMEOUT_MS } from '../utils/constants.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 import type {
   MetadataEnrichmentProvider,
   BookMetadata,
@@ -61,41 +64,6 @@ const audnexusChaptersSchema = z.object({
   isAccurate: z.boolean().nullish(),
   chapters: z.array(z.unknown()).nullish(),
 }).passthrough();
-
-const DEFAULT_RETRY_AFTER_MS = 60_000;
-
-/**
- * A backoff window is only usable if it is finite and non-negative — every arm of
- * `parseRetryAfterMs` funnels its arithmetic RESULT through here so no branch can
- * return a window the caller cannot honor.
- *
- * The finiteness check must be on the product, not the operand: `1e306` written
- * out in digits is a perfectly finite Number, but `× 1000` overflows to
- * `Infinity`, and `setRateLimited(Date.now() + Infinity)` is a deadline that never
- * expires — a malformed-but-numeric upstream header would then suppress every
- * Audnexus lookup for the life of the process.
- */
-function finiteWindowMs(candidateMs: number): number {
-  return Number.isFinite(candidateMs) && candidateMs >= 0 ? candidateMs : DEFAULT_RETRY_AFTER_MS;
-}
-
-/**
- * Normalize a `Retry-After` header to a FINITE, non-negative millisecond window.
- *
- * RFC 9110 permits both delay-seconds and an HTTP-date; the book path's
- * `parseInt(header, 10) * 1000` yields `NaN` for the latter, and a `NaN` window
- * makes the service's `setRateLimited(Date.now() + NaN)` backoff gate a silent
- * no-op. Absent, unparseable, negative, and overflowing values all fall back to
- * the same 60s default the absent-header case has always used.
- */
-export function parseRetryAfterMs(header: string | null): number {
-  const raw = header?.trim();
-  if (!raw) return DEFAULT_RETRY_AFTER_MS;
-  if (/^[+-]?\d+$/.test(raw)) return finiteWindowMs(Number(raw) * 1000);
-  const dateMs = Date.parse(raw);
-  if (Number.isNaN(dateMs)) return DEFAULT_RETRY_AFTER_MS;
-  return finiteWindowMs(dateMs - Date.now());
-}
 
 const audnexusAuthorSchema = z.object({
   asin: z.string().nullish(),
@@ -228,9 +196,7 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
     try {
       const response = await fetchWithTimeout(`${BASE_URL}${path}`, {}, REQUEST_TIMEOUT_MS);
       if (response.status === 429) {
-        const retryAfter = response.headers.get('Retry-After');
-        const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;
-        throw new RateLimitError(waitMs, 'Audnexus');
+        throw new RateLimitError(parseRetryAfterMs(response.headers.get('Retry-After')), 'Audnexus');
       }
       if (response.status >= 500) {
         throw new TransientError('Audnexus', `HTTP ${response.status} ${response.statusText}`);
@@ -272,9 +238,7 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
       return { kind: 'transient_failure', message: getErrorMessage(error) };
     }
     if (response.status === 429) {
-      const retryAfter = response.headers.get('Retry-After');
-      const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;
-      return { kind: 'rate_limited', retryAfterMs };
+      return { kind: 'rate_limited', retryAfterMs: parseRetryAfterMs(response.headers.get('Retry-After')) };
     }
     if (response.status >= 500) {
       return { kind: 'transient_failure', message: `HTTP ${response.status} ${response.statusText}` };

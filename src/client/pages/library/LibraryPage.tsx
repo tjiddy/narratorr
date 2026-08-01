@@ -10,7 +10,7 @@ import { NoMatchState } from './NoMatchState.js';
 import { LibraryHeader } from './LibraryHeader.js';
 import { LibraryActionsMenu } from './LibraryActionsMenu.js';
 import { Pagination } from '@/components/Pagination';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { ImportAttentionBanner } from '@/components/import-report/ImportAttentionBanner';
 import { useLibraryPageState } from './useLibraryPageState.js';
 

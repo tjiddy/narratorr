@@ -5,7 +5,7 @@ import {
   type ManualImportJobPayload,
   type AutoImportJobPayload,
 } from './types.js';
-import type { BookMetadata } from '../../../core/metadata/index.js';
+import type { BookMetadata } from '@core/metadata/index.js';
 
 describe('manualImportJobPayloadSchema', () => {
   it('accepts a minimal valid payload', () => {

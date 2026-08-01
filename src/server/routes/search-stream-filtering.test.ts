@@ -17,10 +17,10 @@ import type { IndexerService } from '../services/indexer.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SettingsService } from '../services/settings.service.js';
 import type { AuthService } from '../services/auth.service.js';
-import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
+import { DEFAULT_SETTINGS } from '@shared/schemas/settings/registry.js';
 import authPlugin from '../plugins/auth.js';
 import { searchStreamRoutes } from './search-stream.js';
-import type { SearchResult } from '../../core/index.js';
+import type { SearchResult } from '@core/index.js';
 import { fetchSseEvents } from '../__tests__/sse-helpers.js';
 
 type SearchCompleteData = {

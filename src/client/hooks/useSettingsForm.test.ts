@@ -3,7 +3,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { z } from 'zod';
-import type { AppSettings } from '../../shared/schemas.js';
+import type { AppSettings } from '@shared/schemas.js';
 import { useDirtyFormsState, _resetForTesting } from './dirty-forms.js';
 
 vi.mock('sonner', () => ({
@@ -45,7 +45,7 @@ const fullSettings = {
   search: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' },
   general: { logLevel: 'info', housekeepingRetentionDays: 90, welcomeSeen: false },
   metadata: { audibleRegion: 'us', languages: ['english'] },
-  processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+  processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
   tagging: { enabled: false, mode: 'populate_missing', embedCover: false },
   quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 1, searchImmediately: false, rejectWords: '', requiredWords: '' },
   network: { proxyUrl: '' },

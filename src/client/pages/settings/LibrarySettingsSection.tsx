@@ -14,7 +14,7 @@ import { FolderIcon } from '@/components/icons';
 import { PathInput } from '@/components/PathInput';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
-import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const libraryPathSchema = z.object({

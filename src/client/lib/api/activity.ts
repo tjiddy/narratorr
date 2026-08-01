@@ -1,6 +1,6 @@
 import { fetchApi } from './client.js';
-import type { DownloadProtocol } from '../../../core/indexers/types.js';
-import type { ClientStatus, DownloadStatus, PipelineStage, QualityGateReason } from '../../../shared/schemas.js';
+import type { DownloadProtocol } from '@core/indexers/types.js';
+import type { ClientStatus, DownloadStatus, PipelineStage, QualityGateReason } from '@shared/schemas.js';
 
 export interface Download {
   id: number;

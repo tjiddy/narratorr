@@ -93,10 +93,16 @@ describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
       expect(wf).toMatch(/type=raw,value=develop,enable=\$\{\{\s*github\.ref_type\s*!=\s*'tag'/);
     });
 
-    it('stamps GIT_TAG build-arg (real tag on release, develop-<sha> on dev)', () => {
+    it('stamps GIT_TAG build-arg (real tag on release, develop-<sha> on dev)', async () => {
       const wf = load();
       expect(wf).toContain('GIT_TAG=${{ steps.vars.outputs.git_tag }}');
-      expect(wf).toContain('git_tag=develop-${GITHUB_SHA::7}');
+
+      // The abbreviation width is a fourth copy of SHORT_SHA_LENGTH living in bash,
+      // outside TypeScript's reach — and the dev tag is what the UI renders as the
+      // version, so a drift here is user-visible. Derived, not literal, so this
+      // asserts agreement rather than re-stating the number.
+      const { SHORT_SHA_LENGTH } = await import('../src/server/utils/version.js');
+      expect(wf).toContain('git_tag=develop-${GITHUB_SHA::' + SHORT_SHA_LENGTH + '}');
     });
   });
 

@@ -2,19 +2,19 @@ import { execFile } from 'node:child_process';
 import { readdir, rename, unlink, stat } from 'node:fs/promises';
 import { join, extname, basename, dirname } from 'node:path';
 import { promisify } from 'node:util';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { TagMode, RetagExcludableField } from '../../shared/schemas.js';
+import type { TagMode, RetagExcludableField } from '@shared/schemas.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
 import type { BookRefreshItem } from '../utils/enqueue-book-refresh.js';
-import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
-import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
-import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
-import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
+import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
+import { collectSortedAudioFiles } from '@core/utils/collect-audio-files.js';
+import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 // Imported by path, not via the core/utils barrel (Node-only; barrel feeds the Vite client build).
-import { sanitizedEnv } from '../../core/utils/sanitized-env.js';
-import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
+import { sanitizedEnv } from '@core/utils/sanitized-env.js';
+import { COVER_FILE_REGEX } from '@core/utils/cover-regex.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import {
   readExistingTags,

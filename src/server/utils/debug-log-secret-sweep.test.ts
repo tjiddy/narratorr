@@ -9,9 +9,9 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import type { SearchResult } from '../../core/index.js';
+import type { SearchResult } from '@core/index.js';
 import { filterAndRankResults, filterBlacklistedResults } from '../services/search-pipeline.js';
-import { filterMultiPartUsenet } from '../../core/utils/index.js';
+import { filterMultiPartUsenet } from '@core/utils/index.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { serializeError } from './serialize-error.js';
 

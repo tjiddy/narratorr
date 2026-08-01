@@ -12,7 +12,7 @@
 // up from hand-authored, pre-ordered fixtures instead — see the LibraryPage
 // test files.
 import type { StatusFilter } from '@/pages/library/helpers';
-import { LIBRARY_FILTER_BUCKETS } from '../../shared/schemas/book.js';
+import { LIBRARY_FILTER_BUCKETS } from '@shared/schemas/book.js';
 
 /** Does a book status fall in the given filter bucket? Mirrors the server's stat buckets. */
 export function simulateStatusFilter(status: string, filter: StatusFilter): boolean {

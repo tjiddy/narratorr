@@ -2,19 +2,19 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockLogger, createMockDb, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { MergeService, clampConcurrency } from './merge.service.js';
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { processAudioFiles } from '@core/utils/audio-processor.js';
+import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { readdir, mkdir, cp, unlink, stat, rm, rename } from 'node:fs/promises';
 import { join } from 'node:path';
-import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
+import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -32,14 +32,14 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
-vi.mock('../../core/utils/audio-processor.js', () => ({
+vi.mock('@core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn(),
   // Plain arrow over a hoisted toggle so vi.clearAllMocks() never wipes it; flip false for the
   // not-detected gate test. Default detected — merge gates on a resolvable ffmpeg path.
   resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null),
 }));
 
-vi.mock('../../core/utils/audio-scanner.js', () => ({
+vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn(),
 }));
 
@@ -78,7 +78,6 @@ const processingOverrides = {
     outputFormat: 'm4b' as const,
     bitrate: 128,
     keepOriginalBitrate: false,
-    mergeBehavior: 'multi-file-only' as const,
     maxConcurrentProcessing: 1,
     postProcessingScript: '',
     postProcessingScriptTimeout: 300,
@@ -98,7 +97,7 @@ const SCAN_RESULT = {
   hasCoverArt: false,
 };
 
-function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService; connector?: { notifyRefresh: ReturnType<typeof vi.fn> }; processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; mergeBehavior: 'always' | 'multi-file-only' | 'never'; bitrate: number; keepOriginalBitrate: boolean; maxConcurrentProcessing: number }> }) {
+function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService; connector?: { notifyRefresh: ReturnType<typeof vi.fn> }; processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; bitrate: number; keepOriginalBitrate: boolean; maxConcurrentProcessing: number }> }) {
   const db = createMockDb();
   const bookService = {
     getById: vi.fn().mockResolvedValue(mockBook),
@@ -378,23 +377,6 @@ describe('MergeService', () => {
       expect(rename).toHaveBeenCalledWith(
         join(STAGING_DIR, 'The Way of Kings.mp3'),
         join(BOOK_PATH, 'The Way of Kings.mp3'),
-      );
-    });
-
-    it('always merges (mergeBehavior: always) even when the settings fixture says never', async () => {
-      setupHappyPath();
-      const { service } = createService({ processing: { mergeBehavior: 'never' } });
-
-      await service.enqueueMerge(42);
-      await settle();
-
-      // Manual Merge ignores the mergeBehavior setting by design (decision (a)).
-      expect(processAudioFiles).toHaveBeenCalledWith(
-        STAGING_DIR,
-        expect.objectContaining({ mergeBehavior: 'always' }),
-        expect.any(Object),
-        expect.any(Object),
-        expect.any(AbortSignal),
       );
     });
 

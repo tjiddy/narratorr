@@ -25,6 +25,23 @@ describe('queryKeys.libraryBooks (#1132)', () => {
     expect(qc.getQueryState(libraryKey)?.isInvalidated).toBe(true);
   });
 
+  // #1916 — the Add-Book search page derives ownership from the identifiers
+  // cache, and SearchBookCard only ever invalidates `['books']` after an add.
+  // If `bookIdentifiers()` ever drifted outside that prefix, ownership would
+  // stop refreshing while the card's own invalidation assertion stayed green.
+  it('invalidating the books prefix also invalidates book-identifiers (#1916)', async () => {
+    const qc = new QueryClient();
+    const identifiersKey = queryKeys.bookIdentifiers();
+
+    expect(identifiersKey).toEqual(['books', 'identifiers']);
+    qc.setQueryData(identifiersKey, []);
+    expect(qc.getQueryState(identifiersKey)?.isInvalidated).toBe(false);
+
+    await qc.invalidateQueries({ queryKey: queryKeys.books() });
+
+    expect(qc.getQueryState(identifiersKey)?.isInvalidated).toBe(true);
+  });
+
   it('library-books cache is NOT touched when invalidating an unrelated namespace', async () => {
     const qc = new QueryClient();
     const libraryKey = queryKeys.libraryBooks({ limit: 100 });

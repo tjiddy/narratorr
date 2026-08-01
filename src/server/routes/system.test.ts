@@ -2,13 +2,13 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, type Mock } 
 import fsp from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import multipart from '@fastify/multipart';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
-import type { Db } from '../../db/index.js';
-import { createTestApp, createMockServices, installMockAppLog, resetMockServices, inject } from '../__tests__/helpers.js';
-import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
+import type { Db } from '@db/index.js';
+import { createTestApp, createAuthTestApp, createMockServices, installMockAppLog, resetMockServices, inject, type ZodTestApp } from '../__tests__/helpers.js';
+import { DEFAULT_SETTINGS } from '@shared/schemas/settings/registry.js';
 import { registerRoutes, type Services } from './index.js';
 import { TaskRegistry, TaskRegistryError } from '../services/task-registry.js';
 import { config } from '../config.js';
@@ -806,7 +806,7 @@ describe('system routes', () => {
 /** Create a zip Buffer using archiver. Resolves when the archive is finalized. */
 function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const archive = archiver('zip', { zlib: { level: 0 } });
+    const archive = new ZipArchive({ zlib: { level: 0 } });
     const chunks: Buffer[] = [];
     archive.on('data', (chunk: Buffer) => chunks.push(chunk));
     archive.on('end', () => resolve(Buffer.concat(chunks)));
@@ -1065,36 +1065,22 @@ describe('POST /api/system/restore', () => {
   });
 
   describe('CSRF protection — basic-auth mode', () => {
-    let csrfApp: Awaited<ReturnType<typeof Fastify>>;
+    let csrfApp: ZodTestApp;
     let csrfServices: Services;
-    const basicAuthHeader = `Basic ${Buffer.from('admin:password123').toString('base64')}`;
+    let basicAuthHeader: string;
 
     beforeAll(async () => {
-      const { default: cookie } = await import('@fastify/cookie');
-      const { default: authPlugin } = await import('../plugins/auth.js');
       const { systemRoutes } = await import('./system.js');
       const { bookFilesRoute } = await import('./book-files.js');
 
       csrfServices = createMockServices();
-      const authSvc = csrfServices.auth as unknown as Record<string, Mock>;
-      authSvc.getStatus = vi.fn().mockResolvedValue({ mode: 'basic', hasUser: true, localBypass: false });
-      authSvc.verifyCredentials = vi.fn().mockResolvedValue({ username: 'admin' });
-      authSvc.validateApiKey = vi.fn().mockResolvedValue(false);
-
-      csrfApp = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
-      csrfApp.setValidatorCompiler(validatorCompiler);
-      csrfApp.setSerializerCompiler(serializerCompiler);
-      await csrfApp.register(cookie);
-      await csrfApp.register(multipart);
-      const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
-      await csrfApp.register(errorHandlerPlugin);
-      // Cast service shape for plugin parameter
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await csrfApp.register(authPlugin, { authService: csrfServices.auth as any });
-      const mockDb = inject<Db>({ run: vi.fn().mockResolvedValue(undefined) });
-      await systemRoutes(csrfApp, csrfServices, mockDb);
-      await bookFilesRoute(csrfApp, csrfServices.book, csrfServices.settings);
-      await csrfApp.ready();
+      ({ app: csrfApp, authHeader: basicAuthHeader } = await createAuthTestApp(csrfServices, {
+        register: async (app) => { await app.register(multipart); },
+        routes: async (app, services, db) => {
+          await systemRoutes(app, services, db);
+          await bookFilesRoute(app, services.book, services.settings);
+        },
+      }));
     });
 
     afterAll(async () => { await csrfApp.close(); });
@@ -1181,16 +1167,10 @@ describe('POST /api/system/restore', () => {
       expect(res.headers['www-authenticate']).toBe('Basic realm="Narratorr"');
     });
 
-    it('valid X-Api-Key + POST without X-Requested-With → not blocked by CSRF', async () => {
-      (csrfServices.auth.validateApiKey as Mock).mockResolvedValue(true);
-      const res = await csrfApp.inject({
-        method: 'POST',
-        url: '/api/system/tasks/search',
-        headers: { 'x-api-key': 'valid-key' },
-      });
-      // Should NOT be 403 (CSRF) — api-key clients are exempt
-      expect(res.statusCode).not.toBe(403);
-      (csrfServices.auth.validateApiKey as Mock).mockResolvedValue(false);
-    });
+    // The api-key CSRF exemption is NOT testable on this suite's routes: system routes
+    // live outside `/api/v*`, so a presented key is rejected out-of-scope (#1453) before
+    // `validateApiKey` or the CSRF gate ever runs. The contract is pinned where it is
+    // observable — auth.plugin.test.ts covers the in-scope key CSRF bypass and the
+    // non-v* out-of-scope 401 (#2054).
   });
 });

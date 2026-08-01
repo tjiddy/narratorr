@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "3f30fec5-4b97-4cc1-9535-5a20d67c5b9e",
+  "id": "da2e0e86-9129-415d-8fb9-fdda6efd33a2",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "authors": {
@@ -816,6 +816,151 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "companion_ebooks": {
+      "name": "companion_ebooks",
+      "columns": {
+        "book_id": {
+          "name": "book_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "filename": {
+          "name": "filename",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "size_bytes": {
+          "name": "size_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "mtime_ms": {
+          "name": "mtime_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "ctime_ms": {
+          "name": "ctime_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "validation_code": {
+          "name": "validation_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "candidate_count": {
+          "name": "candidate_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "selected_filename": {
+          "name": "selected_filename",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "companion_ebooks_book_id_unique": {
+          "name": "companion_ebooks_book_id_unique",
+          "columns": [
+            "book_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "companion_ebooks_book_id_books_id_fk": {
+          "name": "companion_ebooks_book_id_books_id_fk",
+          "tableFrom": "companion_ebooks",
+          "tableTo": "books",
+          "columnsFrom": [
+            "book_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "ck_companion_ebooks_status_domain": {
+          "name": "ck_companion_ebooks_status_domain",
+          "value": "\"companion_ebooks\".\"status\" IN ('available', 'none', 'ambiguous', 'invalid', 'drm_protected')"
+        },
+        "ck_companion_ebooks_file_present": {
+          "name": "ck_companion_ebooks_file_present",
+          "value": "\"companion_ebooks\".\"status\" NOT IN ('available', 'invalid', 'drm_protected') OR (\"companion_ebooks\".\"filename\" IS NOT NULL AND \"companion_ebooks\".\"size_bytes\" IS NOT NULL AND \"companion_ebooks\".\"mtime_ms\" IS NOT NULL AND \"companion_ebooks\".\"ctime_ms\" IS NOT NULL)"
+        },
+        "ck_companion_ebooks_file_absent": {
+          "name": "ck_companion_ebooks_file_absent",
+          "value": "\"companion_ebooks\".\"status\" NOT IN ('none', 'ambiguous') OR (\"companion_ebooks\".\"filename\" IS NULL AND \"companion_ebooks\".\"size_bytes\" IS NULL AND \"companion_ebooks\".\"mtime_ms\" IS NULL AND \"companion_ebooks\".\"ctime_ms\" IS NULL)"
+        },
+        "ck_companion_ebooks_validation_code": {
+          "name": "ck_companion_ebooks_validation_code",
+          "value": "(\"companion_ebooks\".\"status\" <> 'invalid' OR \"companion_ebooks\".\"validation_code\" IS NOT NULL) AND (\"companion_ebooks\".\"status\" = 'invalid' OR \"companion_ebooks\".\"validation_code\" IS NULL)"
+        },
+        "ck_companion_ebooks_candidate_count": {
+          "name": "ck_companion_ebooks_candidate_count",
+          "value": "typeof(\"companion_ebooks\".\"candidate_count\") = 'integer' AND \"companion_ebooks\".\"candidate_count\" >= 0 AND (\"companion_ebooks\".\"status\" <> 'none' OR \"companion_ebooks\".\"candidate_count\" = 0) AND (\"companion_ebooks\".\"status\" <> 'ambiguous' OR \"companion_ebooks\".\"candidate_count\" >= 2) AND (\"companion_ebooks\".\"status\" NOT IN ('available', 'invalid', 'drm_protected') OR \"companion_ebooks\".\"candidate_count\" >= 1)"
+        },
+        "ck_companion_ebooks_selection": {
+          "name": "ck_companion_ebooks_selection",
+          "value": "\"companion_ebooks\".\"selected_filename\" IS NULL OR (\"companion_ebooks\".\"status\" IN ('available', 'invalid', 'drm_protected') AND \"companion_ebooks\".\"filename\" IS NOT NULL AND \"companion_ebooks\".\"selected_filename\" = \"companion_ebooks\".\"filename\")"
+        },
+        "ck_companion_ebooks_multi_candidate_selection": {
+          "name": "ck_companion_ebooks_multi_candidate_selection",
+          "value": "\"companion_ebooks\".\"status\" NOT IN ('available', 'invalid', 'drm_protected') OR \"companion_ebooks\".\"candidate_count\" < 2 OR \"companion_ebooks\".\"selected_filename\" IS NOT NULL"
+        },
+        "ck_companion_ebooks_fingerprint": {
+          "name": "ck_companion_ebooks_fingerprint",
+          "value": "(\"companion_ebooks\".\"size_bytes\" IS NULL OR (typeof(\"companion_ebooks\".\"size_bytes\") = 'integer' AND \"companion_ebooks\".\"size_bytes\" >= 0)) AND (\"companion_ebooks\".\"mtime_ms\" IS NULL OR typeof(\"companion_ebooks\".\"mtime_ms\") = 'integer') AND (\"companion_ebooks\".\"ctime_ms\" IS NULL OR typeof(\"companion_ebooks\".\"ctime_ms\") = 'integer')"
+        }
+      }
     },
     "connectors": {
       "name": "connectors",

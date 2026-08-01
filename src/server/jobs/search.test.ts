@@ -8,9 +8,9 @@ import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { EventHistoryService } from '../services/event-history.service.js';
-import type { SearchResult } from '../../core/index.js';
+import type { SearchResult } from '@core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
-import { BYTES_PER_GB } from '../../shared/constants.js';
+import { BYTES_PER_GB } from '@shared/constants.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
   ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),

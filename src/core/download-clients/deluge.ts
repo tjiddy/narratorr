@@ -4,7 +4,7 @@ import { fetchWithTimeout } from '../utils/network-service.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
 import { requestWithRetry } from './retry.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 import {
   delugeRpcResponseSchema,
   delugeTorrentStatusSchema,

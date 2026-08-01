@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { deleteManagedBookFiles } from './delete-managed-files.js';
 import { PathOutsideLibraryError } from './paths.js';
-import { NARRATORR_OPF_MARKER } from '../../core/utils/opf-regex.js';
+import { NARRATORR_OPF_MARKER } from '@core/utils/opf-regex.js';
 
 /** A `metadata.opf` body narratorr authored (carries the provenance marker → managed). */
 const MARKED_OPF = `<?xml version="1.0"?><package><metadata>${NARRATORR_OPF_MARKER}<dc:title>X</dc:title></metadata></package>`;

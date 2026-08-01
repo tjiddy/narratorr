@@ -511,7 +511,7 @@ describe('AudnexusProvider', () => {
       expect((error as RateLimitError).retryAfterMs).toBe(60000);
     });
 
-    it('429 with non-numeric Retry-After header produces NaN retryAfterMs (documents existing behavior)', async () => {
+    it('429 with a non-numeric Retry-After header falls back to the finite 60000ms default', async () => {
       server.use(
         http.get('https://api.audnex.us/books/:asin', () => {
           return new HttpResponse(null, {
@@ -523,7 +523,8 @@ describe('AudnexusProvider', () => {
 
       const error = await provider.getBook('B0030DL4GK').catch((e: unknown) => e);
       expect(error).toBeInstanceOf(RateLimitError);
-      expect((error as RateLimitError).retryAfterMs).toBeNaN();
+      expect((error as RateLimitError).retryAfterMs).toBe(60000);
+      expect((error as RateLimitError).retryAfterMs).not.toBeNaN();
     });
 
     it('429 with zero Retry-After header produces retryAfterMs = 0', async () => {
@@ -539,6 +540,136 @@ describe('AudnexusProvider', () => {
       const error = await provider.getBook('B0030DL4GK').catch((e: unknown) => e);
       expect(error).toBeInstanceOf(RateLimitError);
       expect((error as RateLimitError).retryAfterMs).toBe(0);
+    });
+  });
+
+  /**
+   * #1944 — both uncached helpers (`fetchJson` for the author path, `fetchJsonDetailed`
+   * for the book path) used to interpret `Retry-After` with an inline
+   * `parseInt(header, 10) * 1000`, which yields `NaN` for the HTTP-date form RFC 9110
+   * equally permits. A `NaN` window is FALSY at the service's `isRateLimited` gate, so
+   * the backoff never engages and a rate-limited Audnexus keeps getting hammered.
+   *
+   * Both arms now route through the same `parseRetryAfterMs` the chapters path uses.
+   * A fix to one helper does not exercise the other, so the whole matrix runs against
+   * every public surface that can surface a 429.
+   */
+  describe('429 retry-window normalization across both helper paths (#1944)', () => {
+    function response429(header?: string) {
+      return new HttpResponse(null, {
+        status: 429,
+        ...(header !== undefined && { headers: { 'Retry-After': header } }),
+      });
+    }
+
+    /** `getBook` → `fetchJsonDetailed`, projected back out as a thrown `RateLimitError`. */
+    async function bookWindow(header?: string): Promise<number> {
+      server.use(http.get('https://api.audnex.us/books/:asin', () => response429(header)));
+      const error = await provider.getBook('B0030DL4GK').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RateLimitError);
+      return (error as RateLimitError).retryAfterMs;
+    }
+
+    /** `getBookDetailed` → `fetchJsonDetailed`, as the typed `rate_limited` outcome. */
+    async function bookDetailedWindow(header?: string): Promise<number> {
+      server.use(http.get('https://api.audnex.us/books/:asin', () => response429(header)));
+      const result = await provider.getBookDetailed('B0030DL4GK');
+      expect(result.kind).toBe('rate_limited');
+      return (result as Extract<typeof result, { kind: 'rate_limited' }>).retryAfterMs;
+    }
+
+    /** `getAuthor` → `fetchJson`, the throwing helper. */
+    async function authorWindow(header?: string): Promise<number> {
+      server.use(http.get('https://api.audnex.us/authors/:asin', () => response429(header)));
+      const error = await provider.getAuthor('B001H6UJO8').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RateLimitError);
+      return (error as RateLimitError).retryAfterMs;
+    }
+
+    const SURFACES: [string, (header?: string) => Promise<number>][] = [
+      ['getBook (fetchJsonDetailed → thrown RateLimitError)', bookWindow],
+      ['getBookDetailed (fetchJsonDetailed → rate_limited outcome)', bookDetailedWindow],
+      ['getAuthor (fetchJson → thrown RateLimitError)', authorWindow],
+    ];
+
+    describe.each(SURFACES)('%s', (_surface, windowFor) => {
+      // The clock is frozen (Date only — `toFake: ['Date']` leaves MSW's and
+      // `AbortSignal.timeout`'s real timers alone) so the HTTP-date arm asserts an
+      // EXACT window instead of a range: production reads `Date.now()` at a different
+      // instant than the test builds the header, and an ambient-clock range assertion
+      // cannot distinguish a correct window from a lucky one.
+      describe('HTTP-date arm, frozen clock', () => {
+        const NOW = Date.parse('2026-07-25T12:00:00.000Z');
+
+        beforeEach(() => {
+          vi.useFakeTimers({ toFake: ['Date'] });
+          vi.setSystemTime(NOW);
+        });
+        afterEach(() => { vi.useRealTimers(); });
+
+        it('a FUTURE HTTP-date → exactly the delta to that instant', async () => {
+          expect(await windowFor(new Date(NOW + 120_000).toUTCString())).toBe(120_000);
+        });
+
+        it('an HTTP-date exactly NOW → a finite 0ms window', async () => {
+          expect(await windowFor(new Date(NOW).toUTCString())).toBe(0);
+        });
+
+        it('a PAST HTTP-date → the finite 60000ms default, never a negative window', async () => {
+          expect(await windowFor(new Date(NOW - 120_000).toUTCString())).toBe(60_000);
+        });
+      });
+
+      it.each([
+        ['absent', undefined],
+        ['empty', ''],
+        ['non-numeric', 'not-a-number'],
+        ['prose', 'later'],
+        ['negative', '-30'],
+        // Deliberate divergence from `parseInt`, which tolerated trailing garbage and
+        // read this as 120000. `parseRetryAfterMs` requires an all-digit token or a
+        // parseable date — the stricter reading is the intended one, not a regression.
+        ['trailing-garbage', '120abc'],
+        // The finiteness guard applies to the PRODUCT, not the operand: `1e306` in
+        // digits is a finite Number that overflows to `Infinity` only after `× 1000`,
+        // and `Date.now() + Infinity` is a deadline that never expires — the arm that
+        // would otherwise pin the backoff gate open for the life of the process.
+        ['all-digit overflow after ×1000', `1${'0'.repeat(306)}`],
+      ])('Retry-After %s → the finite 60000ms default', async (_label, header) => {
+        const retryAfterMs = await windowFor(header);
+        expect(retryAfterMs).toBe(60_000);
+        expect(Number.isFinite(retryAfterMs)).toBe(true);
+      });
+
+      it('Retry-After delay-seconds → seconds × 1000', async () => {
+        expect(await windowFor('30')).toBe(30_000);
+      });
+
+      it('Retry-After of 0 seconds → a finite 0ms window, not the fallback', async () => {
+        expect(await windowFor('0')).toBe(0);
+      });
+
+      it('every Retry-After form yields a window MetadataService can honor (finite, non-negative)', async () => {
+        // The contract the provider-wide backoff gate depends on, asserted across the
+        // whole input space in one place.
+        const now = Date.now();
+        const headers = [
+          undefined,
+          '',
+          '0',
+          '30',
+          '-30',
+          'not-a-number',
+          `1${'0'.repeat(306)}`,
+          new Date(now + 120_000).toUTCString(),
+          new Date(now - 120_000).toUTCString(),
+        ];
+        for (const header of headers) {
+          const retryAfterMs = await windowFor(header);
+          expect(Number.isFinite(retryAfterMs)).toBe(true);
+          expect(retryAfterMs).toBeGreaterThanOrEqual(0);
+        }
+      });
     });
   });
 

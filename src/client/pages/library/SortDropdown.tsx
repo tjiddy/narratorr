@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { ChevronDownIcon } from '@/components/icons';
 import { FilterPill } from '@/components/FilterPill.js';
 import { ToolbarDropdown } from '@/components/ToolbarDropdown';
-import { requireDefined } from '../../../shared/utils/assert.js';
+import { requireDefined } from '@shared/utils/assert.js';
 import type { SortField, SortDirection } from './helpers.js';
 
 export interface SortProps {

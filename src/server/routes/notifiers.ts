@@ -1,6 +1,6 @@
 import { type FastifyInstance } from 'fastify';
 import { type NotifierService } from '../services';
-import { createNotifierSchema, updateNotifierSchema } from '../../shared/schemas.js';
+import { createNotifierSchema, updateNotifierSchema } from '@shared/schemas.js';
 import { registerCrudRoutes } from './crud-routes.js';
 
 export async function notifiersRoutes(app: FastifyInstance, notifierService: NotifierService) {

@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { phaseHistorySchema, type PhaseHistoryEntry } from '../../shared/schemas/import-job.js';
+import { phaseHistorySchema, type PhaseHistoryEntry } from '@shared/schemas/import-job.js';
 import { serializeError } from './serialize-error.js';
 
 /**

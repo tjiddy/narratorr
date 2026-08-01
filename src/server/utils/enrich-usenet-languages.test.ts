@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import type { SearchResult } from '../../core/indexers/types.js';
-import type * as NetworkServiceModule from '../../core/utils/network-service.js';
+import type { SearchResult } from '@core/indexers/types.js';
+import type * as NetworkServiceModule from '@core/utils/network-service.js';
 import { enrichUsenetLanguages } from './enrich-usenet-languages.js';
 
 const mockDispatcher = { close: vi.fn().mockResolvedValue(undefined) };
 
-vi.mock('../../core/utils/network-service.js', async (importActual) => {
+vi.mock('@core/utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   return {
     ...actual,
@@ -15,7 +15,7 @@ vi.mock('../../core/utils/network-service.js', async (importActual) => {
   };
 });
 
-import { fetchWithSsrfRedirect, createSsrfSafeDispatcher } from '../../core/utils/network-service.js';
+import { fetchWithSsrfRedirect, createSsrfSafeDispatcher } from '@core/utils/network-service.js';
 import { enrichmentCache } from './enrichment-cache.js';
 const mockFetchWithSsrfRedirect = vi.mocked(fetchWithSsrfRedirect);
 const mockCreateSsrfSafeDispatcher = vi.mocked(createSsrfSafeDispatcher);

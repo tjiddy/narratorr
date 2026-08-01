@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { submissionResponseSchema } from '@core/import-staging/schemas.js';
 import { api, ApiError, type SubmissionResponse } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -11,7 +11,7 @@ import { detailToSummary } from '@/lib/import-report/detailToSummary';
 import { patchImportHistoryCache } from '@/lib/import-report/cache';
 import { Pagination } from '@/components/Pagination';
 import { LoadingSpinner } from '@/components/icons';
-import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
+import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 import { ImportHistoryCard } from './ImportHistoryCard';
 
 /** Positive-integer deep-link `run` param, else null (invalid/non-positive → ignored). */

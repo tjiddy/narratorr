@@ -1,8 +1,8 @@
 import { formatDurationMinutes, formatYear } from '@/lib/format';
 import { bookStatusConfig } from '@/lib/status';
 import type { BookWithAuthor } from '@/lib/api';
-import { requireDefined } from '../../../shared/utils/assert.js';
-import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
+import { requireDefined } from '@shared/utils/assert.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 export interface MetadataBook {
   subtitle?: string | undefined;

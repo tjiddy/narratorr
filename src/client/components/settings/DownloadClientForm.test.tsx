@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockDownloadClient } from '@/__tests__/factories';
 import { foreignRegistryKeys } from '@/__tests__/registry-foreign-keys';
-import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from '../../../shared/download-client-registry.js';
+import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from '@shared/download-client-registry.js';
 import { DownloadClientForm } from './DownloadClientForm';
 
 vi.mock('@/lib/api', async (importOriginal) => {

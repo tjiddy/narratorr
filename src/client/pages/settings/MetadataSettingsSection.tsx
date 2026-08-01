@@ -10,7 +10,7 @@ import { inputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { api } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
-import { audibleRegionSchema, metadataFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { audibleRegionSchema, metadataFormSchema, DEFAULT_SETTINGS, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const REGION_LABELS: Record<string, string> = {

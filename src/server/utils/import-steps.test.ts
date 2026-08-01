@@ -6,8 +6,8 @@ import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
 // embedTagsForImport auto-detects ffmpeg now (resolveFfmpegPath). Plain-arrow toggle mock
 // (survives vi.clearAllMocks); default detected, flip false for the not-detected test.
 const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
-vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../core/utils/audio-processor.js')>();
+vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
 });
 

@@ -1,7 +1,7 @@
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { BookStatus } from '../../shared/schemas/book.js';
-import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
+import type { BookStatus } from '@shared/schemas/book.js';
+import { deriveDisplayStatus } from '@shared/download-status-registry.js';
 import { guardedRevertBookStatus } from '../utils/book-status.js';
 import { emitDownloadStatusChange, emitBookStatusChange, recordDownloadFailedEvent } from '../utils/download-side-effects.js';
 import { serializeError } from '../utils/serialize-error.js';

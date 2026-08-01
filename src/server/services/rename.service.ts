@@ -2,8 +2,8 @@ import { mkdir, rename, cp, rm, stat } from 'node:fs/promises';
 import { dirname, normalize, resolve } from 'node:path';
 import { and, eq, ne } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
-import { books } from '../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { books } from '@db/schema.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -11,7 +11,7 @@ import type { ConnectorService } from './connector.service.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { assertRealPathInsideLibrary, cleanEmptyParents, planFileRenames, renameFilesWithTemplate } from '../utils/paths.js';
-import { toNamingOptions } from '../../core/utils/naming.js';
+import { toNamingOptions } from '@core/utils/naming.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -22,6 +22,20 @@ export interface RenameResult {
   newPath: string;
   message: string;
   filesRenamed: number;
+}
+
+/**
+ * Did this rename actually move the folder or rewrite a filename? The ONE home for that
+ * question (#1960 AC22) — both rename callers that care import it rather than re-spelling the
+ * comparison, so a future change to `RenameResult` has a single site to follow.
+ *
+ * `renameBook` returns `newPath === oldPath && filesRenamed === 0` UNIQUELY for the
+ * "Already organized" early return; every other success path either moved the folder or
+ * renamed at least one file. The decision is structural on purpose — never on the `message`
+ * string, which is display text and free to change.
+ */
+export function didRenameChangeAnything(result: RenameResult): boolean {
+  return result.newPath !== result.oldPath || result.filesRenamed > 0;
 }
 
 export interface RenamePlan {

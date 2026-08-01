@@ -5,12 +5,14 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 import { vi, type Mock } from 'vitest';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
+import { config } from '../config.js';
 import { registerRoutes } from '../routes/index.js';
+import type { AuthService } from '../services/auth.service.js';
 import { SERVICE_KEYS, type Services } from '../services/di.js';
 import { RetryBudget } from '../services/retry-budget.js';
-import { createMockSettings, type DeepPartial } from '../../shared/schemas/settings/create-mock-settings.fixtures.js';
-import type { AppSettings, SettingsCategory } from '../../shared/schemas/settings/registry.js';
+import { createMockSettings, type DeepPartial } from '@shared/schemas/settings/create-mock-settings.fixtures.js';
+import type { AppSettings, SettingsCategory } from '@shared/schemas/settings/registry.js';
 import type { SettingsService } from '../services/settings.service.js';
 
 /**
@@ -31,13 +33,12 @@ import type { SettingsService } from '../services/settings.service.js';
 export function inject<T>(mock: unknown): T { return mock as any; }
 
 /**
- * Creates a Fastify instance with Zod type provider and all routes registered.
- * No CORS, no static files, no jobs — pure route testing via `app.inject()`.
- *
- * Accepts an optional mock DB for routes that need it (e.g., health check probe).
- * Defaults to a mock with a successful `run()` stub.
+ * The bare Fastify instance both test-app helpers build on: Zod type provider plus
+ * `routerOptions.maxParamLength: 2048`, matching `src/server/fastify-options.ts`.
+ * Fastify 5 caps a dynamic path segment at 100 chars by default, and the cap is
+ * per-instance — a signed token or content hash in the path silently 404s without it.
  */
-export async function createTestApp(services: Services, db?: Db) {
+function buildBareTestApp() {
   const app = Fastify({
     logger: false,
     routerOptions: { maxParamLength: 2048 },
@@ -45,6 +46,33 @@ export async function createTestApp(services: Services, db?: Db) {
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+  return app;
+}
+
+/** The Fastify instance type both `createTestApp` and `createAuthTestApp` hand back. */
+export type ZodTestApp = ReturnType<typeof buildBareTestApp>;
+
+/**
+ * Creates a Fastify instance with Zod type provider and all routes registered.
+ * No CORS, no static files, no jobs — pure route testing via `app.inject()`.
+ *
+ * Accepts an optional mock DB for routes that need it (e.g., health check probe).
+ * Defaults to a mock with a successful `run()` stub.
+ *
+ * ⚠️ **No auth. Do NOT assert auth or CSRF behaviour against this app.** It registers
+ * `errorHandlerPlugin` and the routes, but NOT `authPlugin` — so `request.user` is never
+ * set, the `/api/*` `onRequest` hook never runs, and `enforceCsrf`
+ * (`src/server/plugins/auth.ts`) never runs. A non-safe method missing
+ * `X-Requested-With: XMLHttpRequest` gets its normal 2xx here, so the loose form of a CSRF
+ * assertion (`expect(res.statusCode).not.toBe(403)`) passes **vacuously** — the gate it
+ * claims to exercise is not installed. Same for "this route is protected": an
+ * uncredentialed request reaches the handler.
+ *
+ * Use {@link createAuthTestApp} for any auth/CSRF case. It installs the real `authPlugin`
+ * over the same scaffolding.
+ */
+export async function createTestApp(services: Services, db?: Db) {
+  const app = buildBareTestApp();
 
   const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
   await app.register(errorHandlerPlugin);
@@ -54,6 +82,127 @@ export async function createTestApp(services: Services, db?: Db) {
   await app.ready();
 
   return app;
+}
+
+/** The one basic-auth credential every helper-built basic-mode app accepts. */
+export const BASIC_AUTH_HEADER = `Basic ${Buffer.from('admin:password123').toString('base64')}`;
+
+/** The one session-cookie value a helper-built `mode: 'forms'` app accepts. */
+export const FORMS_SESSION_COOKIE = 'valid-session-cookie';
+
+/** The auth modes {@link createAuthTestApp} models. `none`/local-bypass/URL_BASE live in `auth.plugin.test.ts`. */
+export type AuthTestMode = 'basic' | 'forms';
+
+/**
+ * Stub `services.auth` with one internally-consistent profile for `mode`.
+ *
+ * `getStatus().hasUser` and `hasUser()` are the same production fact read through two
+ * methods, so both are hard-wired to `true` and cannot desynchronise. A suite that wants
+ * the no-user setup path (or `mode: 'none'`, or local bypass) overrides the relevant stub
+ * itself after the app is built — see {@link createAuthTestApp}'s note on post-build overrides.
+ *
+ * **Exported separately on purpose.** `resetMockServices` re-applies the rejecting canonical
+ * default to every stub, so a suite that builds its app in `beforeAll` and resets in
+ * `beforeEach` must be able to re-arm the auth stubs in one line:
+ * `beforeEach(() => { resetMockServices(services); stubAuthService(services); })`.
+ */
+export function stubAuthService(services: Services, mode: AuthTestMode = 'basic'): void {
+  const authSvc = services.auth as unknown as Record<string, Mock>;
+  authSvc.getStatus = vi.fn().mockResolvedValue({ mode, hasUser: true, localBypass: false });
+  authSvc.hasUser = vi.fn().mockResolvedValue(true);
+  authSvc.validateApiKey = vi.fn().mockResolvedValue(false);
+
+  if (mode === 'basic') {
+    // Accepts any password, matching every hand-rolled copy this helper replaces. A suite
+    // wanting a 401-on-bad-password case overrides verifyCredentials itself.
+    authSvc.verifyCredentials = vi.fn().mockResolvedValue({ username: 'admin' });
+    return;
+  }
+
+  authSvc.getSessionSecret = vi.fn().mockResolvedValue('test-secret');
+  authSvc.createSessionCookie = vi.fn().mockReturnValue(FORMS_SESSION_COOKIE);
+  authSvc.verifySessionCookie = vi.fn().mockImplementation((cookie: string) => {
+    if (cookie !== FORMS_SESSION_COOKIE) return null;
+    const now = Date.now();
+    return {
+      payload: { username: 'admin', kind: 'session', issuedAt: now, expiresAt: now + 3_600_000 },
+      shouldRenew: false,
+    };
+  });
+}
+
+export interface CreateAuthTestAppOptions {
+  /**
+   * Auth mode — the single source of truth for the profile. Defaults to `'basic'`.
+   * There is deliberately no second override channel.
+   */
+  mode?: AuthTestMode;
+  /**
+   * Register the route factory (or factories) under test on the root instance, no prefix.
+   * A callback rather than a factory reference because the four adopting factories have
+   * four different signatures — the callback adapts.
+   */
+  routes: (app: ZodTestApp, services: Services, db: Db) => void | Promise<void>;
+  /** Extra plugins (e.g. `@fastify/multipart`). Runs BEFORE `routes`, so route registration sees them. */
+  register?: (app: ZodTestApp) => void | Promise<void>;
+  /** Db handed to `routes`. Defaults to the same `{ run: … }` stub `createTestApp` uses. */
+  db?: Db;
+}
+
+/**
+ * Creates a Fastify instance with the **real** `authPlugin` installed, for auth and CSRF
+ * cases that {@link createTestApp} cannot express (it registers no auth plugin at all).
+ *
+ * Registration order is fixed and load-bearing: Zod compilers → `@fastify/cookie` →
+ * `opts.register` → `errorHandlerPlugin` → `authPlugin` → `opts.routes` → `ready()`.
+ * `@fastify/cookie` is a declared dependency of `authPlugin`, so getting it out of order
+ * fails `app.ready()` outright rather than degrading at request time.
+ *
+ * The caller owns the returned app — this helper never closes it.
+ *
+ * **Post-build stub overrides take effect.** `authPlugin`'s `onRequest` hook resolves
+ * `authService` methods per REQUEST, not at registration, so overriding any auth stub after
+ * this returns changes the next request's outcome. That is the escape hatch for the
+ * service-controlled variants this helper deliberately does not model — `mode: 'none'`,
+ * `localBypass`, `hasUser: false` — and it is what makes a real-crypto forms harness
+ * expressible (re-stub `getSessionSecret`/`createSessionCookie`/`verifySessionCookie`
+ * afterwards).
+ *
+ * It reaches **request-time facts only.** `urlBase` is captured when `authPlugin` is
+ * registered and is not an `AuthService` fact, so no stub override can supply it. A
+ * URL_BASE-aware harness must keep hand-building its instance with
+ * `authPlugin({ authService, urlBase })` and matching prefixed route registration coupled
+ * together; do not route such a suite through this helper.
+ */
+export async function createAuthTestApp(services: Services, opts: CreateAuthTestAppOptions) {
+  if (config.authBypass) {
+    throw new Error(
+      'createAuthTestApp: AUTH_BYPASS is enabled. The auth hook returns before any mode branch, ' +
+      'so every auth and CSRF assertion built on this helper would pass vacuously. ' +
+      'Unset AUTH_BYPASS (only the literal string "true" enables it) before building an auth test app.',
+    );
+  }
+
+  stubAuthService(services, opts.mode ?? 'basic');
+
+  const app = buildBareTestApp();
+
+  const { default: cookie } = await import('@fastify/cookie');
+  await app.register(cookie);
+
+  await opts.register?.(app);
+
+  const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+  await app.register(errorHandlerPlugin);
+
+  const { default: authPlugin } = await import('../plugins/auth.js');
+  await app.register(authPlugin, { authService: inject<AuthService>(services.auth) });
+
+  const db = opts.db ?? inject<Db>({ run: vi.fn().mockResolvedValue(undefined) });
+  await opts.routes(app, services, db);
+  await app.ready();
+
+  return { app, services, authHeader: BASIC_AUTH_HEADER };
 }
 
 /**

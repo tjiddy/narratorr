@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { submissionSummarySchema } from '@core/import-staging/schemas.js';
 import { useLatestImport } from '@/hooks/useImportReport';
 import { useDtoValid } from '@/lib/import-report/useDtoWarn';

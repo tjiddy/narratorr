@@ -4,6 +4,7 @@ import {
   v1ErrorEnvelopeSchema,
   v1PaginationParamsSchema,
   v1ListResponseSchema,
+  v1PublicIdParamSchema,
 } from './common.js';
 import * as barrel from '../../schemas.js';
 
@@ -16,6 +17,7 @@ describe('shared schemas barrel re-export', () => {
     expect(barrel.v1ErrorEnvelopeSchema).toBe(v1ErrorEnvelopeSchema);
     expect(barrel.v1PaginationParamsSchema).toBe(v1PaginationParamsSchema);
     expect(barrel.v1ListResponseSchema).toBe(v1ListResponseSchema);
+    expect(barrel.v1PublicIdParamSchema).toBe(v1PublicIdParamSchema);
   });
 });
 
@@ -126,5 +128,40 @@ describe('v1ListResponseSchema', () => {
   it('rejects items that do not match the item schema', () => {
     const result = schema.safeParse({ data: [{ id: 'x' }], total: 1 });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('v1PublicIdParamSchema', () => {
+  it('accepts a well-formed opaque public id', () => {
+    const result = v1PublicIdParamSchema.safeParse({ publicId: 'bk_kQ8vT2nS' });
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual({ publicId: 'bk_kQ8vT2nS' });
+  });
+
+  // The ZOD-1 trim-before-min rule (#1983 F1). Without `.trim()` these reach
+  // `resolveByPublicId` and answer with a route's not-found body instead of the
+  // v1 `400 BAD_REQUEST` the contract promises for malformed input.
+  it.each(['', ' ', '   ', '\t', '\n', ' \t\n '])('rejects the blank publicId %j', (publicId) => {
+    expect(v1PublicIdParamSchema.safeParse({ publicId }).success).toBe(false);
+  });
+
+  it('trims surrounding whitespace off an otherwise valid id', () => {
+    const result = v1PublicIdParamSchema.safeParse({ publicId: '  bk_kQ8vT2nS  ' });
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual({ publicId: 'bk_kQ8vT2nS' });
+  });
+
+  it('requires the publicId key', () => {
+    expect(v1PublicIdParamSchema.safeParse({}).success).toBe(false);
+  });
+
+  // `.strict()` per the v1 owned-schema convention — an extra path key is a
+  // 400, never silently stripped.
+  it('rejects an unknown extra key', () => {
+    expect(v1PublicIdParamSchema.safeParse({ publicId: 'bk_a', extra: 'x' }).success).toBe(false);
+  });
+
+  it('rejects a non-string publicId', () => {
+    expect(v1PublicIdParamSchema.safeParse({ publicId: 42 }).success).toBe(false);
   });
 });

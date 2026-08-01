@@ -5,9 +5,9 @@ import { FlushResolutionError, type PendingFlush, type ResolvedFlush } from './c
 import { mockDbChain, createMockDb, createMockLogger } from '../__tests__/helpers.js';
 import { initializeKey, _resetKey, encrypt, isEncrypted, maskFields, makeTestSchema } from '../utils/secret-codec.js';
 import { createMockDbConnector } from '../__tests__/factories.js';
-import { connectorTypeSchema, connectorTargetsSettingsSchemas } from '../../shared/schemas/connector.js';
-import { ConnectorRequestError, type ConnectorAdapter, type ConnectorImportBatch } from '../../core/connectors/index.js';
-import { CONNECTOR_TIMEOUT_MS } from '../../core/utils/constants.js';
+import { connectorTypeSchema, connectorTargetsSettingsSchemas } from '@shared/schemas/connector.js';
+import { ConnectorRequestError, type ConnectorAdapter, type ConnectorImportBatch } from '@core/connectors/index.js';
+import { CONNECTOR_TIMEOUT_MS } from '@core/utils/constants.js';
 import type { ConnectorRow } from './types.js';
 
 // Mock the network boundary only (the adapters' single transport call) so the
@@ -15,10 +15,10 @@ import type { ConnectorRow } from './types.js';
 // path runs in the listTargetsConfig regression test below (#1523 F1). The
 // adapters are the only callers of fetchWithTimeout in this file's scope, so a
 // module-level mock here doesn't touch the stubbed-adapter queue tests.
-vi.mock('../../core/utils/network-service.js', () => ({
+vi.mock('@core/utils/network-service.js', () => ({
   fetchWithTimeout: vi.fn(),
 }));
-import { fetchWithTimeout } from '../../core/utils/network-service.js';
+import { fetchWithTimeout } from '@core/utils/network-service.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 

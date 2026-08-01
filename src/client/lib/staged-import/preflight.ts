@@ -1,4 +1,4 @@
-import { EXPECTED_COUNT_MAX, MAX_SUBMISSION_BYTES, type StagedImportItem } from '../../../core/import-staging/schemas.js';
+import { EXPECTED_COUNT_MAX, MAX_SUBMISSION_BYTES, type StagedImportItem } from '@core/import-staging/schemas.js';
 
 /**
  * Post-exclusion preflight gates (#1902, F30/F31/F39/F41).

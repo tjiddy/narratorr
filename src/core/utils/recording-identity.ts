@@ -19,10 +19,10 @@
  */
 
 import { normalizeNarrator, tokenizeNarrators, NARRATOR_PLACEHOLDERS } from './similarity.js';
-import { matchesLibraryIdentity } from '../../shared/dedup.js';
-import { canonicalizeAsin } from '../../shared/asin.js';
-import { withinDurationTolerance } from '../../shared/duration-tolerance.js';
-import type { RecordingVerdict, RecordingReviewReason } from '../../shared/schemas/recording-verdict.js';
+import { matchesLibraryIdentity } from '@shared/dedup.js';
+import { canonicalizeAsin } from '@shared/asin.js';
+import { withinDurationTolerance } from '@shared/duration-tolerance.js';
+import type { RecordingVerdict, RecordingReviewReason } from '@shared/schemas/recording-verdict.js';
 
 /**
  * 3-way recording-identity verdict (#1741). Canonical source is the shared
@@ -32,7 +32,7 @@ import type { RecordingVerdict, RecordingReviewReason } from '../../shared/schem
  * Existing consumers (`book-dedup.ts`, `match-job.helpers.ts`) keep importing
  * `RecordingVerdict` from here unchanged.
  */
-export type { RecordingVerdict, RecordingReviewReason } from '../../shared/schemas/recording-verdict.js';
+export type { RecordingVerdict, RecordingReviewReason } from '@shared/schemas/recording-verdict.js';
 
 /** Narrator-set comparison verdict. Duration is NOT an input — the resolver applies it separately. */
 export type NarratorEquality = 'equal' | 'not-equal' | 'no-signal';

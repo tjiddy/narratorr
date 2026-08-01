@@ -4,7 +4,7 @@ import type {
   MetadataEnrichmentProvider,
   BookMetadata,
   ProviderLookupResult,
-} from '../../core/index.js';
+} from '@core/index.js';
 
 /**
  * Outcome of `lookupForFixMatch`. Audible failure modes surface directly;

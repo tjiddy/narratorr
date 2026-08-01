@@ -13,7 +13,7 @@ import {
   EyeIcon,
   TrashIcon,
 } from '@/components/icons';
-import { IMPORT_LIST_REGISTRY } from '../../../shared/import-list-registry.js';
+import { IMPORT_LIST_REGISTRY } from '@shared/import-list-registry.js';
 import { ProviderSettings } from '../../pages/settings/ImportListProviderSettings.js';
 import type { IdTestResult } from './SettingsCardShell';
 

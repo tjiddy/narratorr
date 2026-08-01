@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { refreshOpfForBook } from './opf-refresh.js';
-import { OPF_FILENAME, NARRATORR_OPF_MARKER, hasNarratorrMarker } from '../../core/utils/opf-regex.js';
+import { OPF_FILENAME, NARRATORR_OPF_MARKER, hasNarratorrMarker } from '@core/utils/opf-regex.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
 import type { SettingsService } from '../services/settings.service.js';
 

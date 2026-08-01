@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback, type ReactNode, type RefObject, type KeyboardEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { toast } from 'sonner';
 import {
   ChevronDownIcon,
@@ -39,7 +39,6 @@ function runningVerb(jobType: BulkOpType | null): string {
     case 'rename': return 'Renaming';
     case 'retag': return 'Re-tagging';
     case 'write_metadata_sidecars': return 'Writing sidecars';
-    case 'convert': return 'Converting';
     default: return 'Running';
   }
 }

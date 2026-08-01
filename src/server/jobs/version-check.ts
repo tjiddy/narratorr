@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
-import { getVersion, getCommit, isNewerVersion } from '../utils/version.js';
+import { getVersion, getCommit, isNewerVersion, SHORT_SHA_LENGTH } from '../utils/version.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -176,12 +176,17 @@ async function checkDevelopUpdate(log: FastifyBaseLogger, currentCommit: string)
  * The compare API lists `commits` oldest-first; the last entry is `develop`
  * HEAD. Return its short sha (bare, no `v` prefix — the develop copy supplies
  * its own wording). Falls back to `develop` if the shape is unexpectedly thin.
+ *
+ * Abbreviated to the same width as `getCommit()` so the two read as a pair in
+ * the UI ("on X, develop is at Y"). This is presentation only — nothing compares
+ * the two strings; `ahead_by` is what decides whether an update exists — so the
+ * width here is free to change without affecting update detection.
  */
 function developHeadSha(data: { commits?: unknown }): string {
   const commits = data.commits;
   if (Array.isArray(commits) && commits.length > 0) {
     const head = commits[commits.length - 1];
-    if (head && typeof head.sha === 'string') return head.sha.slice(0, 7);
+    if (head && typeof head.sha === 'string') return head.sha.slice(0, SHORT_SHA_LENGTH);
   }
   return 'develop';
 }

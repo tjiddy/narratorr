@@ -4,7 +4,7 @@ import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { NumberField } from '@/components/settings/NumberField';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { DEFAULT_SETTINGS, importSettingsSchema, stripDefaults, type AppSettings } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, importSettingsSchema, stripDefaults, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const importFormSchema = stripDefaults(importSettingsSchema);

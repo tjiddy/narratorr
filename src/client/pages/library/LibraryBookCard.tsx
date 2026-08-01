@@ -7,7 +7,7 @@ import { resolveCoverUrl } from '@/lib/url-utils';
 import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon, AlertTriangleIcon } from '@/components/icons';
 import { useRetryImportAvailable } from '@/hooks/useRetryImportAvailable.js';
 import { BookContextMenu } from './BookContextMenu.js';
-import { requireDefined } from '../../../shared/utils/assert.js';
+import { requireDefined } from '@shared/utils/assert.js';
 
 // eslint-disable-next-line complexity -- card has inherent conditional rendering: cover, missing chip, collapsed badge, status bar, menu, hover expand
 export const LibraryBookCard = memo(function LibraryBookCard({

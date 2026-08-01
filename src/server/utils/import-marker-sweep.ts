@@ -11,7 +11,7 @@ import {
   MARKER_SUFFIX,
   LEGACY_SCRATCH_SUFFIXES,
   ACTIVE_SCRATCH_SUFFIXES,
-} from '../../core/utils/import-sibling-suffixes.js';
+} from '@core/utils/import-sibling-suffixes.js';
 import { prepareImportSiblings, BackupAmbiguityError } from './import-staging.js';
 import { serializeError } from './serialize-error.js';
 import { assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';

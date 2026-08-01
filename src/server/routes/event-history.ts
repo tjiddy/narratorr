@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { EventHistoryService } from '../services';
-import { idParamSchema, eventHistoryQuerySchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
+import { idParamSchema, eventHistoryQuerySchema, paginationParamsSchema, DEFAULT_LIMITS } from '@shared/schemas.js';
 import { z } from 'zod';
 
 type IdParam = z.infer<typeof idParamSchema>;

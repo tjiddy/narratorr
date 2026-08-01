@@ -4,7 +4,7 @@ import { cleanupDeferredRejections, type DeferredCleanupDeps } from './quality-g
 import type { QualityGateService } from './quality-gate.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import { inject, createMockDb, createMockLogger, createMockSettingsService } from '../__tests__/helpers.js';
 
 function createDeps(overrides?: {

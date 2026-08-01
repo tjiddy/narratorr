@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createMockDb, mockDbChain, createMockLogger, inject } from '../__tests__/helpers.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { indexers } from '../../db/schema.js';
+import { indexers } from '@db/schema.js';
 import { encrypt, isEncrypted } from './secret-codec.js';
 import { migrateSecretsToEncrypted } from './secret-migration.js';
 

@@ -1,7 +1,7 @@
 import { Cron } from 'croner';
 import { sql, inArray } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
-import { downloads } from '../../db/schema.js';
+import type { Db } from '@db/index.js';
+import { downloads } from '@db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Services } from '../services/di.js';
 import type { TaskRegistry } from '../services/task-registry.js';
@@ -18,6 +18,7 @@ import { runSeriesRefreshJob } from './series-refresh.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { LibraryPathError, ScanInProgressError } from '../services/library-scan.service.js';
+import { rescanLibraryWithCompanionSweep } from '../services/library-rescan-sweep.js';
 
 
 interface CronJob {
@@ -138,7 +139,9 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger): J
     { name: 'series-refresh', type: 'cron', schedule: '0 3 * * 0', callback: () => runSeriesRefreshJob(services.seriesCard, log) },
     { name: 'library-rescan', type: 'cron', schedule: '0 */6 * * *', callback: async () => {
       try {
-        await services.libraryScan.rescanLibrary();
+        // #1960 AC9 — the SAME wrapper the `POST /api/library/rescan` route uses. The
+        // warn-and-swallow below is unchanged: the wrapper rethrows every error as-is (AC12).
+        await rescanLibraryWithCompanionSweep({ libraryScan: services.libraryScan, companionEbook: services.companionEbook, log });
       } catch (error: unknown) {
         if (error instanceof LibraryPathError || error instanceof ScanInProgressError) {
           log.warn({ error: serializeError(error) }, 'Scheduled library rescan skipped');

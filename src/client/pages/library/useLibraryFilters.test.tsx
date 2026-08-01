@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useEffect } from 'react';
-import { MemoryRouter, useSearchParams } from 'react-router-dom';
+import { MemoryRouter, useSearchParams } from 'react-router';
 import { useLibraryFilters, applyClientFilters } from './useLibraryFilters';
 import type { LibraryBookListItem } from '@/lib/api';
 import { createMockLibraryBook } from '@/__tests__/factories';
-import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
+import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 
 /** Wrapper that provides Router context with optional initial URL */
 function createWrapper(route = '/library') {

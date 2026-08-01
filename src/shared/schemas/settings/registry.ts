@@ -11,6 +11,7 @@ import { networkSettingsSchema } from './network.js';
 import { rssSettingsSchema } from './rss.js';
 import { systemSettingsSchema } from './system.js';
 import { discoverySettingsSchema } from './discovery.js';
+import { companionEpubSettingsSchema } from './companion-epub.js';
 
 // ---------------------------------------------------------------------------
 // Registry entry helper — enforces defaults match schema at compile time
@@ -56,7 +57,6 @@ export const settingsRegistry = {
       outputFormat: 'm4b' as const,
       keepOriginalBitrate: true,
       bitrate: 128,
-      mergeBehavior: 'multi-file-only' as const,
       maxConcurrentProcessing: 1,
       autoMergeDownloads: false,
       postProcessingScript: '',
@@ -96,6 +96,10 @@ export const settingsRegistry = {
   discovery: defineCategory({
     schema: discoverySettingsSchema,
     defaults: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90 },
+  }),
+  companionEpub: defineCategory({
+    schema: companionEpubSettingsSchema,
+    defaults: { enabled: false },
   }),
 };
 

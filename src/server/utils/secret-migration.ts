@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { indexers, downloadClients, notifiers, settings } from '../../db/schema.js';
+import { indexers, downloadClients, notifiers, settings } from '@db/schema.js';
 import { isEncrypted, encryptFields, getSecretFieldNames, type SecretEntity } from './secret-codec.js';
 import { SECRET_SETTINGS_CATEGORIES } from './secret-category-map.js';
 

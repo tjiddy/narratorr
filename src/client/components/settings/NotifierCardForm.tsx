@@ -5,13 +5,13 @@ import { FormField } from './FormField';
 import { SettingsFormActions } from './SettingsFormActions';
 import { SelectWithChevron } from './SelectWithChevron';
 import { NotifierFields } from './NotifierFields';
-import { NOTIFIER_REGISTRY, type NotifierType } from '../../../shared/notifier-registry.js';
-import { EVENT_LABELS, type NotificationEvent } from '../../../shared/notification-events.js';
+import { NOTIFIER_REGISTRY, type NotifierType } from '@shared/notifier-registry.js';
+import { EVENT_LABELS, type NotificationEvent } from '@shared/notification-events.js';
 import {
   notifierTypeSchema,
   notificationEventSchema,
   type CreateNotifierFormData,
-} from '../../../shared/schemas.js';
+} from '@shared/schemas.js';
 
 interface NotifierCardFormProps {
   form: UseFormReturn<CreateNotifierFormData>;

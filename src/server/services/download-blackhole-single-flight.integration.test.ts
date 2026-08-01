@@ -3,7 +3,7 @@ import type { Mock } from 'vitest';
 import { DownloadService } from './download.service.js';
 import { DownloadOrchestrator } from './download-orchestrator.js';
 import { createMockDb, mockDbChain, createMockLogger, inject } from '../__tests__/helpers.js';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { FastifyBaseLogger } from 'fastify';

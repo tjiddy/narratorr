@@ -1,6 +1,6 @@
-import type { AppSettings, UpdateSettingsInput } from '../../../shared/schemas.js';
+import type { AppSettings, UpdateSettingsInput } from '@shared/schemas.js';
 import { fetchApi } from './client.js';
-import type { IndexerTestResult } from '../../../core/indexers/types.js';
+import type { IndexerTestResult } from '@core/indexers/types.js';
 
 export type Settings = AppSettings;
 export type TestResult = IndexerTestResult;

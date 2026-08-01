@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NotifierService } from './notifier.service.js';
 import { mockDbChain, createMockDb, createMockLogger } from '../__tests__/helpers.js';
 import { initializeKey, _resetKey, encrypt, isEncrypted } from '../utils/secret-codec.js';
-import { ADAPTER_FACTORIES, type NotifierAdapter } from '../../core/index.js';
+import { ADAPTER_FACTORIES, type NotifierAdapter } from '@core/index.js';
 
 import { createMockDbNotifier } from '../__tests__/factories.js';
 

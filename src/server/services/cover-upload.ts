@@ -1,7 +1,7 @@
 import { writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Db } from '../../db/index.js';
+import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { mimeToExt } from '../utils/mime.js';
 import { finalizeCoverWrite, type CoverWriteOutcome } from './cover-write.js';

@@ -1,7 +1,7 @@
 import { type FastifyInstance } from 'fastify';
 import { type z } from 'zod';
 import { type MetadataService } from '../services/metadata.service.js';
-import { metadataSearchQuerySchema, providerIdParamSchema, type MetadataSearchQuery } from '../../shared/schemas.js';
+import { metadataSearchQuerySchema, providerIdParamSchema, type MetadataSearchQuery } from '@shared/schemas.js';
 
 type ProviderIdParam = z.infer<typeof providerIdParamSchema>;
 

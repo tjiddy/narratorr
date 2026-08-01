@@ -1,4 +1,4 @@
-import { stagedImportItemSchema, type StagedImportItem } from '../../../core/import-staging/schemas.js';
+import { stagedImportItemSchema, type StagedImportItem } from '@core/import-staging/schemas.js';
 import type { ImportConfirmItem } from '@/lib/api';
 import { MAX_SINGLE_ITEM_BYTES } from '@/lib/confirm-chunks.js';
 

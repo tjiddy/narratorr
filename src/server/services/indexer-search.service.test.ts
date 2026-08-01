@@ -4,8 +4,8 @@ import { createMockDbIndexer } from '../__tests__/factories.js';
 import { IndexerService } from './indexer.service.js';
 import { IndexerSearchService } from './indexer-search.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
-import type { SearchResult } from '../../core/index.js';
+import type { Db } from '@db/index.js';
+import type { SearchResult } from '@core/index.js';
 import type { SettingsService } from './settings.service.js';
 import { initializeKey, _resetKey } from '../utils/secret-codec.js';
 
@@ -510,7 +510,7 @@ describe('IndexerSearchService', () => {
     });
 
     it('searchAll catches ProxyError and continues with other indexers', async () => {
-      const { ProxyError } = await import('../../core/indexers/errors.js');
+      const { ProxyError } = await import('@core/indexers/errors.js');
       const indexer1 = createMockDbIndexer({
         id: 1,
         settings: { hostname: 'audiobookbay.lu', pageLimit: 2, useProxy: true },

@@ -3,7 +3,7 @@ import { formatDurationMinutes } from '@/lib/format';
 import { resolveUrl } from '@/lib/url-utils';
 import { AddBookPopover } from '@/components/AddBookPopover';
 import { BookOpenIcon, CheckIcon } from '@/components/icons';
-import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 export function BookRow({
   book,

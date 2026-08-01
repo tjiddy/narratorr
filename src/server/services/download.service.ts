@@ -1,10 +1,10 @@
 import { eq, desc, and, or, count, sql } from 'drizzle-orm';
-import { type Db } from '../../db/index.js';
+import { type Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books, indexers } from '../../db/schema.js';
-import type { DownloadProtocol } from '../../core/index.js';
-import type { DownloadArtifact } from '../../core/download-clients/types.js';
-import { isTerminalState, deriveDisplayStatus } from '../../shared/download-status-registry.js';
+import { downloads, books, indexers } from '@db/schema.js';
+import type { DownloadProtocol } from '@core/index.js';
+import type { DownloadArtifact } from '@core/download-clients/types.js';
+import { isTerminalState, deriveDisplayStatus } from '@shared/download-status-registry.js';
 import {
   inProgressDownloadCondition,
   terminalDownloadCondition,
@@ -12,7 +12,7 @@ import {
   displayStatusCondition,
   transitionDownloadState,
 } from '../utils/download-state.js';
-import type { ClientStatus, DownloadStatus } from '../../shared/schemas/activity.js';
+import type { ClientStatus, DownloadStatus } from '@shared/schemas/activity.js';
 import { type DownloadClientService } from './download-client.service.js';
 import type { IndexerService } from './indexer.service.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
@@ -24,7 +24,7 @@ import { resolveArtifact, insertDownloadRecordOrCompensate } from './download-re
 import { gatherBookBlockers, classifyBlockers } from './download-blockers.js';
 
 import type { BookRow, DownloadRow } from './types.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { DownloadError, DuplicateDownloadError } from './download-errors.js';
 

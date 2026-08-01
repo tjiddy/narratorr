@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { ZodError } from 'zod';
 import { useMswServer } from '../__tests__/msw/server.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 import { fetchWithProxy } from './fetch.js';
 
 const TARGET_URL = 'https://indexer.test/api?q=test';

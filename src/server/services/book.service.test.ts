@@ -5,12 +5,12 @@ import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js'
 import { BookService, CoverUploadError } from './book.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
-import type { ProductionType } from '../../shared/schemas/book.js';
+import type { ProductionType } from '@shared/schemas/book.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import { eq } from 'drizzle-orm';
-import { authors, books } from '../../db/schema.js';
+import { authors, books } from '@db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db, DbOrTx } from '../../db/index.js';
+import type { Db, DbOrTx } from '@db/index.js';
 import type { MetadataService } from './metadata.service.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -109,14 +109,19 @@ describe('BookService', () => {
   });
 
   describe('findLibraryStatusByAsins', () => {
-    it('returns a Map keyed by UPPERCASED asin with { bookId: publicId, status } values', async () => {
+    // #1961 — `companionEnabled` is a REQUIRED caller-supplied option (BookService
+    // takes no SettingsService). Disabled is the base case: no companion query is
+    // issued at all, so the mocked `db.select` is consumed by the books select only.
+    const disabled = { companionEnabled: false };
+
+    it('returns a Map keyed by UPPERCASED asin with { bookId: publicId, status, companionEbook } values', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
-        { bookId: 'bk_abc123', status: 'imported', asin: 'B00ASIN' },
+        { id: 1, bookId: 'bk_abc123', status: 'imported', asin: 'B00ASIN' },
       ]));
 
-      const map = await service.findLibraryStatusByAsins(['B00ASIN']);
+      const map = await service.findLibraryStatusByAsins(['B00ASIN'], disabled);
 
-      expect(map.get('B00ASIN')).toEqual({ bookId: 'bk_abc123', status: 'imported' });
+      expect(map.get('B00ASIN')).toEqual({ bookId: 'bk_abc123', status: 'imported', companionEbook: null });
       // bookId is the bk_ publicId, NOT the internal numeric id.
       expect(map.get('B00ASIN')!.bookId).toMatch(/^bk_/);
     });
@@ -129,17 +134,17 @@ describe('BookService', () => {
     // `book.service.find-library-status.integration.test.ts` (#1537 PR-review F1).
     it('keys the map by the UPPERCASED asin even when the stored row is lowercase', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
-        { bookId: 'bk_drift', status: 'imported', asin: 'b00asin' },
+        { id: 1, bookId: 'bk_drift', status: 'imported', asin: 'b00asin' },
       ]));
 
-      const map = await service.findLibraryStatusByAsins(['B00ASIN']);
+      const map = await service.findLibraryStatusByAsins(['B00ASIN'], disabled);
 
       expect(map.has('B00ASIN')).toBe(true);
-      expect(map.get('B00ASIN')).toEqual({ bookId: 'bk_drift', status: 'imported' });
+      expect(map.get('B00ASIN')).toEqual({ bookId: 'bk_drift', status: 'imported', companionEbook: null });
     });
 
     it('returns an empty map WITHOUT issuing a query for an empty input array (no IN ())', async () => {
-      const map = await service.findLibraryStatusByAsins([]);
+      const map = await service.findLibraryStatusByAsins([], { companionEnabled: true });
 
       expect(map.size).toBe(0);
       expect(db.select).not.toHaveBeenCalled();
@@ -147,25 +152,105 @@ describe('BookService', () => {
 
     it('skips a null-asin row (partial index excludes null-asin owned books)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
-        { bookId: 'bk_null', status: 'wanted', asin: null },
+        { id: 1, bookId: 'bk_null', status: 'wanted', asin: null },
       ]));
 
-      const map = await service.findLibraryStatusByAsins(['B00ASIN']);
+      const map = await service.findLibraryStatusByAsins(['B00ASIN'], disabled);
 
       expect(map.size).toBe(0);
     });
 
     it('resolves multiple asins in a single batch lookup (one query, not N)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
-        { bookId: 'bk_a', status: 'imported', asin: 'B00AAA' },
-        { bookId: 'bk_b', status: 'downloading', asin: 'B00BBB' },
+        { id: 1, bookId: 'bk_a', status: 'imported', asin: 'B00AAA' },
+        { id: 2, bookId: 'bk_b', status: 'downloading', asin: 'B00BBB' },
       ]));
 
-      const map = await service.findLibraryStatusByAsins(['B00AAA', 'B00BBB']);
+      const map = await service.findLibraryStatusByAsins(['B00AAA', 'B00BBB'], disabled);
 
       expect(db.select).toHaveBeenCalledTimes(1);
-      expect(map.get('B00AAA')).toEqual({ bookId: 'bk_a', status: 'imported' });
-      expect(map.get('B00BBB')).toEqual({ bookId: 'bk_b', status: 'downloading' });
+      expect(map.get('B00AAA')).toEqual({ bookId: 'bk_a', status: 'imported', companionEbook: null });
+      expect(map.get('B00BBB')).toEqual({ bookId: 'bk_b', status: 'downloading', companionEbook: null });
+    });
+
+    // #1961 — the companion annotation. The DB-backed exposure/chunking proof
+    // lives in `book.service.find-library-status.integration.test.ts`; these pin
+    // the query posture and that the value comes through the shared mapper.
+    describe('companion ebooks (#1961)', () => {
+      it('maps an available observation on an imported book through toCompanionEbookV1', async () => {
+        db.select
+          .mockReturnValueOnce(mockDbChain([{ id: 7, bookId: 'bk_have', status: 'imported', asin: 'B00ASIN' }]))
+          .mockReturnValueOnce(mockDbChain([{ bookId: 7, status: 'available', sizeBytes: 123456 }]));
+
+        const map = await service.findLibraryStatusByAsins(['B00ASIN'], { companionEnabled: true });
+
+        expect(map.get('B00ASIN')).toEqual({
+          bookId: 'bk_have',
+          status: 'imported',
+          companionEbook: { format: 'epub', sizeBytes: 123456 },
+        });
+      });
+
+      it('issues exactly TWO selects when enabled (books + one companion chunk)', async () => {
+        db.select
+          .mockReturnValueOnce(mockDbChain([{ id: 7, bookId: 'bk_have', status: 'imported', asin: 'B00ASIN' }]))
+          .mockReturnValueOnce(mockDbChain([{ bookId: 7, status: 'available', sizeBytes: 1 }]));
+
+        await service.findLibraryStatusByAsins(['B00ASIN'], { companionEnabled: true });
+
+        expect(db.select).toHaveBeenCalledTimes(2);
+      });
+
+      it('issues NO companion query when disabled — one select, every value null (AC 15)', async () => {
+        db.select.mockReturnValueOnce(mockDbChain([
+          { id: 7, bookId: 'bk_have', status: 'imported', asin: 'B00ASIN' },
+        ]));
+
+        const map = await service.findLibraryStatusByAsins(['B00ASIN'], disabled);
+
+        expect(db.select).toHaveBeenCalledTimes(1);
+        expect(map.get('B00ASIN')!.companionEbook).toBeNull();
+      });
+
+      it('carries companionEbook: null (key present) for a matched book with no observation row', async () => {
+        db.select
+          .mockReturnValueOnce(mockDbChain([{ id: 7, bookId: 'bk_have', status: 'imported', asin: 'B00ASIN' }]))
+          .mockReturnValueOnce(mockDbChain([]));
+
+        const map = await service.findLibraryStatusByAsins(['B00ASIN'], { companionEnabled: true });
+
+        expect(map.get('B00ASIN')!.companionEbook).toBeNull();
+        expect(Object.keys(map.get('B00ASIN')!)).toContain('companionEbook');
+      });
+
+      // The nested producer's sizeBytes boundaries (F7). The DB cannot seed
+      // `available` + null size (ck_companion_ebooks_file_present rejects it), so
+      // the typed-but-unreachable case is only provable through a mock.
+      it('round-trips sizeBytes: 0 as 0, and maps a null sizeBytes to null (AC 27/28)', async () => {
+        db.select
+          .mockReturnValueOnce(mockDbChain([{ id: 7, bookId: 'bk_zero', status: 'imported', asin: 'B00ZERO' }]))
+          .mockReturnValueOnce(mockDbChain([{ bookId: 7, status: 'available', sizeBytes: 0 }]));
+
+        const zero = await service.findLibraryStatusByAsins(['B00ZERO'], { companionEnabled: true });
+        expect(zero.get('B00ZERO')!.companionEbook).toEqual({ format: 'epub', sizeBytes: 0 });
+
+        db.select
+          .mockReturnValueOnce(mockDbChain([{ id: 8, bookId: 'bk_nosize', status: 'imported', asin: 'B00NULL' }]))
+          .mockReturnValueOnce(mockDbChain([{ bookId: 8, status: 'available', sizeBytes: null }]));
+
+        const nullSize = await service.findLibraryStatusByAsins(['B00NULL'], { companionEnabled: true });
+        expect(nullSize.get('B00NULL')!.companionEbook).toBeNull();
+      });
+
+      it('yields null for a stale available observation on a non-imported book (AC 22)', async () => {
+        db.select
+          .mockReturnValueOnce(mockDbChain([{ id: 9, bookId: 'bk_gone', status: 'missing', asin: 'B00GONE' }]))
+          .mockReturnValueOnce(mockDbChain([{ bookId: 9, status: 'available', sizeBytes: 5 }]));
+
+        const map = await service.findLibraryStatusByAsins(['B00GONE'], { companionEnabled: true });
+
+        expect(map.get('B00GONE')!.companionEbook).toBeNull();
+      });
     });
   });
 
@@ -758,6 +843,26 @@ describe('BookService', () => {
       );
     });
 
+    it('logs the provider-resolved ASIN on the success line, not the caller\'s absent one (#1898/AC1)', async () => {
+      const infoLog = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(infoLog), inject<MetadataService>(mockMetadata));
+      mockMetadata.getBook.mockResolvedValueOnce({ title: 'Book', authors: [], asin: 'B_ENRICHED' });
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: 'B_ENRICHED' }, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await svc.create({ title: 'Test', authors: [], providerId: 'hc-123' });
+
+      // The whole point of this breadcrumb is to record the ASIN the row was
+      // added with; reading `data.asin` here logs `undefined` on the enrich path.
+      expect(infoLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: 'B_ENRICHED' }),
+        'Book added to library',
+      );
+    });
+
     it('uses provided ASIN and skips enrichment', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
@@ -789,6 +894,11 @@ describe('BookService', () => {
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
       const infoMock = infoLog.info as Mock;
       expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
+      // #1898/AC4 — the success line reports the persisted absence explicitly.
+      expect(infoLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: null }),
+        'Book added to library',
+      );
     });
 
     it('creates book when getBook throws', async () => {
@@ -823,6 +933,11 @@ describe('BookService', () => {
         'ASIN enrichment failed',
       );
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
+      // #1898/AC4 — a swallowed provider failure still logs the persisted null.
+      expect(warnLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: null }),
+        'Book added to library',
+      );
     });
 
     it('inserts null asin when getBook resolves metadata with an ABSENT asin, and emits no enrichment-success log (AC4/F9)', async () => {
@@ -842,6 +957,11 @@ describe('BookService', () => {
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
       const infoMock = infoLog.info as Mock;
       expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
+      // #1898/AC4 — an ASIN-less provider detail logs the persisted null.
+      expect(infoLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: null }),
+        'Book added to library',
+      );
     });
 
     // #1893 — the extracted `resolveCreateInput` primitive that the staged-import
@@ -892,6 +1012,11 @@ describe('BookService', () => {
       // F3 — the empty-string boundary must not emit the enrichment-success log.
       const infoMock = infoLog.info as Mock;
       expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
+      // #1898/AC4 — an empty provider ASIN logs the persisted null, not `''`.
+      expect(infoLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: null }),
+        'Book added to library',
+      );
     });
   });
 
@@ -1742,6 +1867,50 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ authors: ['Brandon Sanderson'], asin: 'B003P2WO5E' }),
+        'Book added to library',
+      );
+    });
+
+    it('create log carries the canonical ASIN that was persisted, not the caller\'s casing (#1898/AC2)', async () => {
+      const log = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: 'B003P2WO5E' }, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      await svc.create({ title: 'The Way of Kings', authors: [], asin: 'b003p2wo5e' });
+
+      // Asserting the pair in one test is what pins log-equals-persisted rather
+      // than log-happens-to-be-uppercase.
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: 'B003P2WO5E' }));
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: 'B003P2WO5E' }),
+        'Book added to library',
+      );
+    });
+
+    it('create log reports null for a whitespace-only caller ASIN, matching the persisted column (#1898/AC2)', async () => {
+      const log = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: null }, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      await svc.create({ title: 'Blank ASIN', authors: [], asin: '   ' });
+
+      // The falsy/coercion trap: `'   '` is truthy, so a raw passthrough would
+      // log whitespace against a row that stored null.
+      expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: null }),
         'Book added to library',
       );
     });

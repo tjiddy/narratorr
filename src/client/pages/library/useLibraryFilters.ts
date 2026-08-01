@@ -1,9 +1,9 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import type { LibraryBookListParams, LibraryBookListItem } from '@/lib/api';
 import { type StatusFilter, type SortField, type SortDirection, type DisplayBook, filterTabs } from './helpers.js';
-import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
-import { LIBRARY_FILTER_VALUES } from '../../../shared/schemas/book.js';
+import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
+import { LIBRARY_FILTER_VALUES } from '@shared/schemas/book.js';
 import { usePagination } from '@/hooks/usePagination';
 
 const VALID_STATUS_FILTERS = new Set<string>(LIBRARY_FILTER_VALUES);

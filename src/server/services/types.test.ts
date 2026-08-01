@@ -10,18 +10,18 @@ import type {
   SuggestionRow,
   SuggestionStatus,
 } from './types.js';
-import type { IndexerType } from '../../shared/indexer-registry.js';
-import type { DownloadClientType } from '../../shared/download-client-registry.js';
-import type { NotifierType } from '../../shared/notifier-registry.js';
-import type { ImportListType } from '../../shared/import-list-registry.js';
-import type { EventSource, EventType } from '../../shared/schemas/event-history.js';
-import type { BlacklistReason, BlacklistType } from '../../shared/schemas/blacklist.js';
-import type { SuggestionReason } from '../../shared/schemas/discovery.js';
+import type { IndexerType } from '@shared/indexer-registry.js';
+import type { DownloadClientType } from '@shared/download-client-registry.js';
+import type { NotifierType } from '@shared/notifier-registry.js';
+import type { ImportListType } from '@shared/import-list-registry.js';
+import type { EventSource, EventType } from '@shared/schemas/event-history.js';
+import type { BlacklistReason, BlacklistType } from '@shared/schemas/blacklist.js';
+import type { SuggestionReason } from '@shared/schemas/discovery.js';
 import type {
   ImportJobPhase,
   ImportJobStatus,
   ImportJobType,
-} from '../../shared/schemas/import-job.js';
+} from '@shared/schemas/import-job.js';
 
 describe('canonical row type narrowing', () => {
   it('narrows enum columns to their registry/schema types', () => {

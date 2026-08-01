@@ -18,7 +18,7 @@ import { Badge } from '@/components/Badge';
 import { Modal } from '@/components/Modal';
 import { MetadataResultList } from '@/components/book/MetadataResultList';
 import type { BookEditState } from './types.js';
-import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
+import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 export type { BookEditState } from './types.js';
 
 interface BookEditModalProps {

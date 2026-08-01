@@ -1,10 +1,10 @@
 import { and, asc, eq, inArray, isNotNull, lt } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db, DbOrTx } from '../../db/index.js';
-import { bookAuthors, authors as authorsTable, books, series, seriesMembers } from '../../db/schema.js';
+import type { Db, DbOrTx } from '@db/index.js';
+import { bookAuthors, authors as authorsTable, books, series, seriesMembers } from '@db/schema.js';
 import type { SeriesRow } from './types.js';
 import type { SettingsService } from './settings.service.js';
-import { HardcoverClient, type HardcoverSearchCandidate, type HardcoverSeriesData } from '../../core/metadata/hardcover.js';
+import { HardcoverClient, type HardcoverSearchCandidate, type HardcoverSeriesData } from '@core/metadata/hardcover.js';
 import { resolveSeriesViaHardcover } from './hardcover-series-resolver.js';
 import { findInLibraryMatch, normalizeMemberTitleForMatch, type LibraryBookSummary } from './series-title-match.js';
 import { relinkBookToBoundSeries } from './book-series-link.js';

@@ -6,8 +6,8 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { BlacklistService } from './blacklist.service.js';
-import { blacklist, books } from '../../db/schema.js';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
+import { blacklist, books } from '@db/schema.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 
 // Serialize a Drizzle SQL expression to a raw SQL string + bound params for

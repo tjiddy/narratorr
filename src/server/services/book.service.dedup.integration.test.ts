@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { createDb, runMigrations, type Db } from '../../db/index.js';
-import { books, authors, narrators, bookAuthors, bookNarrators, series, seriesMembers, unmatchedGenres } from '../../db/schema.js';
+import { createDb, runMigrations, type Db } from '@db/index.js';
+import { books, authors, narrators, bookAuthors, bookNarrators, series, seriesMembers, unmatchedGenres } from '@db/schema.js';
 import { BookService, OwnedRecordingError } from './book.service.js';
-import { isUniqueViolation } from '../../shared/error-message.js';
+import { isUniqueViolation } from '@shared/error-message.js';
 import { ASIN_UNIQUE_VIOLATION } from './book-dedup.js';
-import { matchesLibraryIdentity, type DedupIdentity } from '../../shared/dedup.js';
-import { slugify } from '../../core/index.js';
-import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording } from '../../core/utils/recording-identity.js';
+import { matchesLibraryIdentity, type DedupIdentity } from '@shared/dedup.js';
+import { slugify } from '@core/index.js';
+import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording } from '@core/utils/recording-identity.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 // DB-backed coverage for the three-way, multi-incumbent `findDuplicate`, the

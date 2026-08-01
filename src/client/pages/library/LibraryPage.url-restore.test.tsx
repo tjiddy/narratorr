@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LibraryPage } from './LibraryPage';
 import { createMockLibraryBook, createMockAuthor, createMockSettings } from '@/__tests__/factories';
@@ -25,7 +25,6 @@ vi.mock('@/lib/api', async () => {
     ...actual,
     api: {
       ...(actual as { api: object }).api,
-      getBooks: vi.fn(),
       listLibraryBooks: vi.fn(),
       getBookStats: vi.fn(),
       getSettings: vi.fn(),

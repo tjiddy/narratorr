@@ -69,6 +69,31 @@ export const v1ErrorEnvelopeSchema = z
 export type V1ErrorEnvelope = z.infer<typeof v1ErrorEnvelopeSchema>;
 
 // ----------------------------------------------------------------------------
+// Path parameters — the opaque public id
+// ----------------------------------------------------------------------------
+
+/**
+ * The canonical `:publicId` path-param validator, shared by every native v1
+ * detail route (#1983 F2). It previously existed as seven byte-identical
+ * private copies (books, authors, narrators, series, downloads, actions,
+ * companion-ebook), which let the public-id input contract drift per route the
+ * moment any one of them was fixed. There is exactly ONE opaque-key format
+ * (`src/server/utils/public-id.ts`), so there is exactly one validator.
+ *
+ * `.trim()` BEFORE `.min(1)`: without it, a percent-encoded whitespace-only
+ * parameter (`/api/v1/books/%20`) is accepted as valid input, reaches
+ * `resolveByPublicId`, and answers with the route's not-found body instead of
+ * the v1 `400 BAD_REQUEST` validation envelope the contract promises for
+ * malformed input. Same rule the metadata `q` param already follows.
+ *
+ * `.strict()` per the v1 owned-schema convention above — an extra path key is
+ * a `400`, never silently stripped.
+ */
+export const v1PublicIdParamSchema = z.object({ publicId: z.string().trim().min(1) }).strict();
+
+export type V1PublicIdParam = z.infer<typeof v1PublicIdParamSchema>;
+
+// ----------------------------------------------------------------------------
 // Pagination — reuse, do not fork
 // ----------------------------------------------------------------------------
 
