@@ -5,10 +5,11 @@ import { join } from 'path';
 import { eq, sql } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from './index.js';
-import { books, series, seriesMembers, unmatchedGenres } from './schema.js';
+import { books, bookNarrators, series, seriesMembers, unmatchedGenres } from './schema.js';
 import { generatePublicId } from '../server/utils/public-id.js';
 import { BookService } from '../server/services/book.service.js';
 import { runEnrichment } from '../server/jobs/enrichment.js';
+import { applyAudnexusEnrichment } from '../server/services/enrichment-orchestration.helpers.js';
 import type { MetadataService } from '../server/services/metadata.service.js';
 
 // Real-DB coverage for `books.user_cleared_fields` (#2069). These cases CANNOT be
@@ -370,6 +371,103 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
       expect(detail!.userClearedFields).toEqual(['seriesName']);
       const [row] = await db.select().from(books).where(eq(books.id, bookId));
       expect(row!.userClearedFields).toBe('["seriesName"]');
+    });
+  });
+
+  // ─── AC11 / F14: post-import atomicity, against a REAL migrated DB ───
+  //
+  // This proof cannot live in `enrichment-orchestration.helpers.test.ts`: there the
+  // root `db` and the transaction handle are the SAME mock object, so a regression
+  // that moved the scalar write BEFORE `db.transaction` produces identical
+  // observations (same update chain, one transaction call, same rejected promise).
+  // Only committed state distinguishes the two shapes — so the observation point is
+  // the row itself after the failure.
+  describe('AC11 / F14 — post-import atomicity, against a real DB', () => {
+    const providerData = { subtitle: 'A Cosmere Novel', publisher: 'Dragonsteel', genres: ['Fantasy'], narrators: ['Michael Kramer'] };
+
+    function enrichmentDeps(bookId: number, failOnGenres: boolean) {
+      const metadataService = {
+        enrichBook: vi.fn().mockResolvedValue(providerData),
+        resolveBook: vi.fn().mockResolvedValue(null),
+      } as unknown as MetadataService;
+
+      // Fail the GENRES write specifically — after the scalar write has been issued
+      // and after the narrator write has succeeded, so the failure lands squarely in
+      // the window the atomicity claim is about.
+      const realUpdate = bookService.update.bind(bookService);
+      vi.spyOn(bookService, 'update').mockImplementation(async (id, data, options) => {
+        if (failOnGenres && data && 'genres' in data) throw new Error('genre write boom');
+        return realUpdate(id, data, options);
+      });
+      void bookId;
+      return { db, log, bookService, metadataService };
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('leaves the row NOT enriched when the array write fails after the scalar write', async () => {
+      const bookId = await seedBook({ asin: 'B0BATOMIC1' });
+
+      await applyAudnexusEnrichment(
+        bookId,
+        { primaryAsin: 'B0BATOMIC1', existingNarrator: null, existingGenres: null, existingSubtitle: null, existingPublisher: null },
+        enrichmentDeps(bookId, true),
+      );
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      // The whole transaction rolled back: status did NOT advance, and neither did
+      // the scalar fills that were issued inside it. A row left at `enriched` with
+      // the later write missing would be permanently outside the scheduled
+      // candidate selector (which only picks pending/skipped/retryable-failed).
+      expect(row!.enrichmentStatus).toBe('pending');
+      expect(row!.subtitle).toBeNull();
+      expect(row!.publisher).toBeNull();
+      expect(row!.genres).toBeNull();
+      // The narrator write that SUCCEEDED inside the same transaction rolled back too.
+      const narratorLinks = await db.select().from(bookNarrators).where(eq(bookNarrators.bookId, bookId));
+      expect(narratorLinks).toHaveLength(0);
+    });
+
+    it('negative control: with no failure the same call commits everything', async () => {
+      const bookId = await seedBook({ asin: 'B0BATOMIC2' });
+
+      await applyAudnexusEnrichment(
+        bookId,
+        { primaryAsin: 'B0BATOMIC2', existingNarrator: null, existingGenres: null, existingSubtitle: null, existingPublisher: null },
+        enrichmentDeps(bookId, false),
+      );
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.enrichmentStatus).toBe('enriched');
+      expect(row!.subtitle).toBe('A Cosmere Novel');
+      expect(row!.publisher).toBe('Dragonsteel');
+      expect(row!.genres).toEqual(['Fantasy']);
+      const narratorLinks = await db.select().from(bookNarrators).where(eq(bookNarrators.bookId, bookId));
+      expect(narratorLinks).toHaveLength(1);
+    });
+
+    it('COUNTERFACTUAL: the same two writes in SEPARATE transactions strand an enriched row', async () => {
+      // The pre-#2069 shape, executed against this same DB so the defect is
+      // demonstrated rather than asserted about. If the production code ever
+      // regresses to two transactions, the first test above flips to this outcome.
+      const bookId = await seedBook({ asin: 'B0BSPLIT' });
+
+      await db.transaction(async (tx) => {
+        await tx.update(books)
+          .set({ enrichmentStatus: 'enriched', subtitle: 'A Cosmere Novel', updatedAt: new Date() })
+          .where(eq(books.id, bookId));
+      });
+      await expect(
+        db.transaction(async () => { throw new Error('genre write boom'); }),
+      ).rejects.toThrow('genre write boom');
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      // Exactly the stranding the single-transaction shape prevents: `enriched` with
+      // the later write missing, and now invisible to the scheduled selector.
+      expect(row!.enrichmentStatus).toBe('enriched');
+      expect(row!.genres).toBeNull();
     });
   });
 

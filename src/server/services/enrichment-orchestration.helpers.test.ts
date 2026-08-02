@@ -784,28 +784,14 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
     }
   });
 
-  it('F14: a failing array write rolls the scalar write back — no orphaned enriched status', async () => {
-    const { db, updateChain } = dbWithUpdateChain();
-    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
-    // Fail AFTER the scalar `.set(...)` has been issued.
-    (deps.bookService.update as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('genre write boom'));
-
-    // The ASIN-recovery loop swallows non-rate-limit failures by design, so this
-    // does not throw out of the helper — the rollback is observed on the
-    // transaction itself.
-    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
-
-    // The scalar write WAS issued carrying `enriched` (so the ordering this pins
-    // really happened) — but it was issued INSIDE the transaction whose callback
-    // then rejected, so nothing commits. With the two writes in separate
-    // transactions (the pre-#2069 shape) that status would survive and put the row
-    // permanently outside the scheduled candidate selector.
-    const txMock = (db as unknown as { transaction: ReturnType<typeof vi.fn> }).transaction;
-    expect((updateChain.set.mock.calls[0]![0] as Record<string, unknown>).enrichmentStatus).toBe('enriched');
-    expect(txMock).toHaveBeenCalledTimes(1);
-    await expect(txMock.mock.results[0]!.value).rejects.toThrow('genre write boom');
-    expect(deps.log.info).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment applied');
-  });
+  // The F14 rollback proof deliberately does NOT live here. This suite's `db` and
+  // its transaction handle are the SAME object, so a regression that moved the
+  // scalar write before `db.transaction` would produce identical observations
+  // (same update chain, one transaction call, same rejected promise) — the test
+  // could not tell in-transaction from pre-transaction. It lives against a real
+  // migrated DB instead, with the split-transaction counterfactual executed
+  // alongside it: see `src/db/user-cleared-fields-schema.integration.test.ts`,
+  // 'AC11 / F14 — post-import atomicity, against a real DB'.
 
   it('F15: a Fix Match committed during the provider fetch aborts the write, tombstones held constant', async () => {
     // The pre-fetch capture reads 'B001'; the in-transaction re-read sees the

@@ -16,6 +16,33 @@ function createMockLogger(): FastifyBaseLogger {
   } as unknown as FastifyBaseLogger;
 }
 
+/**
+ * The longest run of `raw` that V8's `JSON.parse` SyntaxError message quotes back.
+ * The engine echoes a bounded window around the failure point (roughly ten
+ * characters, elided with `...`), so tests assert against the fragment it actually
+ * leaked instead of a hand-picked sentinel that may fall outside that window.
+ * Returns `''` when the message is purely positional.
+ */
+function longestEchoedFragment(raw: string): string {
+  let message = '';
+  try {
+    JSON.parse(raw);
+  } catch (error: unknown) {
+    message = (error as Error).message;
+  }
+  let longest = '';
+  for (let start = 0; start < raw.length; start++) {
+    for (let end = raw.length; end > start + longest.length; end--) {
+      const candidate = raw.slice(start, end);
+      if (message.includes(candidate)) {
+        longest = candidate;
+        break;
+      }
+    }
+  }
+  return longest;
+}
+
 describe('parseClearedFields', () => {
   it('parses SQL NULL and a legacy "[]" to the empty set without warning', () => {
     const log = createMockLogger();
@@ -39,11 +66,55 @@ describe('parseClearedFields', () => {
     expect(JSON.stringify(payload)).not.toContain('{oops');
   });
 
-  it('degrades a JSON object to the empty set with one warn', () => {
+  // AC4's no-raw rule is ABSOLUTE, and `{oops` is the one shape that cannot catch a
+  // violation: V8 reports it positionally ("Expected property name or '}' in JSON at
+  // position 1") and never echoes the source. Most malformed input DOES echo a
+  // window of it — `JSON.parse('{"a": bad}')` yields
+  // `Unexpected token 'b', "{"a": bad}" is not valid JSON` — so a
+  // `serializeError(err)` payload reproduces persisted content verbatim in logs.
+  it.each([
+    ['object with a bare token', '{"seriesName": bad}'],
+    ['array with a bare token', '["seriesName", bad]'],
+    ['bare identifier', 'notjson-sentinel-abc123'],
+    ['single-quoted string', "'quoted-sentinel'"],
+    ['array with a dangling comma', '["seriesName",]'],
+    ['long value truncated to V8\'s echo window', '{"seriesName": operator-typed-secret-value-here}'],
+  ])('never reproduces the stored value in the warn payload (%s)', (_label, raw) => {
+    // Derive the fragment V8 ACTUALLY echoed rather than guessing one: the engine
+    // quotes a bounded window around the failure point, so a hard-coded sentinel
+    // longer than that window makes the test pass for the wrong reason.
+    const echoed = longestEchoedFragment(raw);
+    // Premise guard — if V8 ever stops echoing, this case proves nothing and should
+    // say so loudly rather than going quietly green.
+    expect(echoed.length).toBeGreaterThanOrEqual(4);
+
     const log = createMockLogger();
-    expect(parseClearedFields('{"seriesName":true}', log, 7)).toEqual([]);
+    expect(parseClearedFields(raw, log, 7)).toEqual([]);
+
     expect(log.warn).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(log.warn).mock.calls[0]![0]).toEqual(expect.objectContaining({ bookId: 7 }));
+    const [payload, message] = vi.mocked(log.warn).mock.calls[0] as [Record<string, unknown>, string];
+    // Assert on the WHOLE serialized payload, not just known keys — a nested
+    // `error.message`/`error.stack` is exactly how the value used to escape.
+    expect(JSON.stringify(payload)).not.toContain(echoed);
+    expect(message).not.toContain(echoed);
+    expect(payload).toEqual({ bookId: 7 });
+  });
+
+  it('carries no error object at all on the unparseable arm', () => {
+    const log = createMockLogger();
+    parseClearedFields('{"a": bad}', log, 3);
+    const [payload] = vi.mocked(log.warn).mock.calls[0] as [Record<string, unknown>, string];
+    expect(payload).not.toHaveProperty('error');
+    expect(Object.keys(payload)).toEqual(['bookId']);
+  });
+
+  it('degrades a JSON object to the empty set with one warn carrying only bookId', () => {
+    const log = createMockLogger();
+    expect(parseClearedFields('{"seriesName":true,"leaked":"SHAPE_SENTINEL"}', log, 7)).toEqual([]);
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    const [payload] = vi.mocked(log.warn).mock.calls[0] as [Record<string, unknown>, string];
+    expect(payload).toEqual({ bookId: 7 });
+    expect(JSON.stringify(payload)).not.toContain('SHAPE_SENTINEL');
   });
 
   it('degrades an array of numbers to the empty set with one warn', () => {

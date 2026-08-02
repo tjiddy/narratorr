@@ -37,7 +37,7 @@ describe('parsePhaseHistory', () => {
     const result = parsePhaseHistory('not-json', log, 42);
     expect(result).toEqual([]);
     expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ jobId: 42, error: expect.any(Object) }),
+      { jobId: 42 },
       expect.stringContaining('Unparseable phaseHistory'),
     );
   });
@@ -47,8 +47,28 @@ describe('parsePhaseHistory', () => {
     const result = parsePhaseHistory('[{"foo":"bar"}]', log, 42);
     expect(result).toEqual([]);
     expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ jobId: 42, error: expect.any(Object) }),
+      expect.objectContaining({ jobId: 42, issuePaths: expect.any(Array) }),
       expect.stringContaining('Malformed phaseHistory'),
     );
+  });
+
+  // Sibling of #2069 F2: this parser had the identical `JSON.parse` catch →
+  // `serializeError` shape, and both of its warn payloads could reproduce the
+  // persisted column. V8's SyntaxError quotes a window of the offending source, and
+  // a ZodError message renders the `received` values.
+  it('reproduces neither the raw column nor persisted values in either warn payload', () => {
+    const log = createMockLogger();
+
+    parsePhaseHistory('{"phase": leaked-phase-token}', log, 1);
+    expect(JSON.stringify(vi.mocked(log.warn).mock.calls[0]![0])).not.toContain('leaked-phase');
+    expect(vi.mocked(log.warn).mock.calls[0]![0]).toEqual({ jobId: 1 });
+
+    vi.mocked(log.warn).mockClear();
+    parsePhaseHistory('[{"phase":"SENSITIVE_PHASE_VALUE","startedAt":"not-a-number"}]', log, 2);
+    const [payload] = vi.mocked(log.warn).mock.calls[0] as [Record<string, unknown>, string];
+    expect(JSON.stringify(payload)).not.toContain('SENSITIVE_PHASE_VALUE');
+    expect(JSON.stringify(payload)).not.toContain('not-a-number');
+    // Paths stay — they are the diagnostic, and they carry no values (#1404).
+    expect(payload.issuePaths).toEqual(expect.arrayContaining([expect.any(String)]));
   });
 });

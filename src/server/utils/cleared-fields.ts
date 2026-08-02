@@ -4,7 +4,6 @@ import {
   clearedFieldsSchema,
   type ClearableBookField,
 } from '@shared/schemas/book.js';
-import { serializeError } from './serialize-error.js';
 
 /**
  * Operator-asserted absences ("tombstones") for `books.user_cleared_fields` (#2069).
@@ -37,7 +36,19 @@ const CLEARABLE_SET: ReadonlySet<string> = new Set<string>(CLEARABLE_BOOK_FIELDS
  *  - unknown names → dropped, recognized names kept, one `log.warn` naming the drops;
  *  - SQL NULL and a legacy `'[]'` both parse to the empty set with no warning.
  *
- * The raw column value is NEVER logged — only `bookId` and the dropped names.
+ * **The raw column value is NEVER logged** — only `bookId`, and the dropped names
+ * once they are known to be recognized-shaped strings. In particular the
+ * unparseable arm logs NO error object: V8's `SyntaxError.message` embeds a
+ * snippet of the offending source (`JSON.parse('{"a": bad}')` →
+ * `Unexpected token 'b', "{"a": bad}" is not valid JSON`), and `serializeError`
+ * copies `message` and `stack` while redacting only URLs — so passing the parse
+ * exception through would reproduce persisted content in logs and break AC4's
+ * absolute no-raw rule. The `{oops` shape happens NOT to echo, which is exactly why
+ * a single-input test could not catch this. `bookId` is the whole diagnostic need:
+ * it identifies the row to inspect out of band.
+ *
+ * This mirrors the quality-gate reason parser, which logs Zod issue PATHS and never
+ * the field values (`quality-gate.service.ts`, #1404).
  */
 export function parseClearedFields(
   raw: string | null,
@@ -49,8 +60,8 @@ export function parseClearedFields(
   let decoded: unknown;
   try {
     decoded = JSON.parse(raw);
-  } catch (error: unknown) {
-    log.warn({ bookId, error: serializeError(error) }, 'Unparseable userClearedFields JSON; treating as no tombstones');
+  } catch {
+    log.warn({ bookId }, 'Unparseable userClearedFields JSON; treating as no tombstones');
     return [];
   }
 

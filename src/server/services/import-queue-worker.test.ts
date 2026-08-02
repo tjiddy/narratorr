@@ -1092,9 +1092,11 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
-      // Warn was emitted by parsePhaseHistory for the malformed JSON.
+      // Warn was emitted by parsePhaseHistory for the malformed JSON. The payload is
+      // `{ jobId }` ONLY — the parse error used to ride along, and V8 quotes a window
+      // of the offending source into its message (#2069 F2 sibling).
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ jobId: 42, error: expect.any(Object) }),
+        { jobId: 42 },
         expect.stringContaining('Unparseable phaseHistory'),
       );
 
@@ -1144,8 +1146,10 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
+      // Issue PATHS, not the ZodError — its message renders the `received` values,
+      // which for this column is persisted content (#2069 F2 sibling, #1404 rule).
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ jobId: 43, error: expect.any(Object) }),
+        expect.objectContaining({ jobId: 43, issuePaths: expect.any(Array) }),
         expect.stringContaining('Malformed phaseHistory'),
       );
 
