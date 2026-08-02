@@ -2079,7 +2079,7 @@ describe('BookService — transaction atomicity (#214)', () => {
       vi.mocked(unlink).mockReset();
       const preWriteBook = createMockDbBook({ id: 1, path: '/library/book', coverUrl: null });
       const getByIdSpy = vi.spyOn(service, 'getById')
-        .mockResolvedValueOnce(preWriteBook as Awaited<ReturnType<BookService['getById']>>) // initial existence/path check
+        .mockResolvedValueOnce(preWriteBook as unknown as Awaited<ReturnType<BookService['getById']>>) // initial existence/path check
         .mockRejectedValueOnce(new Error('libSQL read failed')); // post-write reload throws
       (writeFile as Mock).mockResolvedValue(undefined);
       (rename as Mock).mockResolvedValue(undefined);

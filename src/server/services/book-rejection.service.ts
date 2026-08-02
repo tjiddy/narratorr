@@ -13,7 +13,7 @@ import { triggerCompanionReconcile, type CompanionBookReconcileTrigger } from '.
 import { preserveBookCover } from '../utils/cover-cache.js';
 import { config } from '../config.js';
 import { serializeError } from '../utils/serialize-error.js';
-import type { BookRow } from './types.js';
+import type { BookRowPublic } from './types.js';
 
 export class BookRejectionService {
   constructor(
@@ -113,7 +113,7 @@ export class BookRejectionService {
     this.log.info({ bookId, title: book.title }, 'Book rejected as wrong release');
   }
 
-  private recordWrongReleaseEvent(book: BookRow): void {
+  private recordWrongReleaseEvent(book: BookRowPublic): void {
     if (!this.eventHistory) return;
 
     this.eventHistory.create({

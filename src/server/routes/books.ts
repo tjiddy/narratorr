@@ -321,7 +321,11 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       const { id } = request.params;
       const body = request.body;
 
-      const book = await bookService.update(id, body);
+      // `userAsserted` is the ONLY path that adds a tombstone (#2069 AC5): this is
+      // the operator-facing edit route, so a blanked clearable field is a deliberate
+      // removal rather than "no value yet". Internal callers of `update()` pass
+      // `null`s of their own and deliberately do NOT opt in.
+      const book = await bookService.update(id, body, { userAsserted: true });
 
       if (!book) {
         return reply.status(404).send({ error: 'Book not found' });

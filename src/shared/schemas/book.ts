@@ -148,13 +148,39 @@ export const createBookBodySchema = z.object({
   searchImmediately: z.boolean().optional(),
 }).strict();
 
+/**
+ * The nullable scalar fields an operator can explicitly CLEAR through
+ * `PUT /api/books/:id`, and therefore the only names that may appear in
+ * `books.user_cleared_fields` (#2069).
+ *
+ * `seriesPosition` is deliberately absent: it is never tombstoned independently,
+ * the `seriesName` tombstone suppresses the pair (#1927 AC10's single-source pair
+ * rule). `coverUrl` (the #1634 Audnexus overwrite carve-out), `title`/`authors`
+ * (not clearable — `.min(1)` below), `narrators` (rewritten unconditionally by
+ * `refreshScanBook`), and `duration` (not clearable through the modal) are out of
+ * scope.
+ *
+ * SQLite text columns emit no DB CHECK, so `clearedFieldsSchema.parse` at the
+ * service write boundary is the ONLY enforcement — mirroring the
+ * `productionTypeSchema.parse` precedent in `BookService.update`.
+ */
+export const CLEARABLE_BOOK_FIELDS = ['seriesName', 'subtitle', 'description', 'publisher', 'publishedDate', 'genres'] as const;
+export const clearableBookFieldSchema = z.enum(CLEARABLE_BOOK_FIELDS);
+export type ClearableBookField = z.infer<typeof clearableBookFieldSchema>;
+export const clearedFieldsSchema = z.array(clearableBookFieldSchema);
+
 export const updateBookBodySchema = z.object({
   title: z.string().trim().min(1, 'Title cannot be empty').optional(),
   authors: z.array(bookAuthorInputSchema).min(1).optional(),
   narrators: z.array(z.string()).optional(),
-  // `.nullable()` so an emptied field can send `null` to CLEAR the stored column
-  // (the detail page then falls back to the merged provider value). `undefined`/
-  // omitted = unchanged, `null` = clear, value = set — matching `seriesName` below.
+  // `.nullable()` so an emptied field can send `null` to CLEAR the stored column.
+  // `undefined`/omitted = unchanged, `null` = clear, value = set — matching
+  // `seriesName` below. On the operator-facing route the clear is ALSO recorded as
+  // a tombstone in `books.user_cleared_fields` (#2069), so the detail header and
+  // fill-empty enrichment stop resurrecting the provider value; the field stays
+  // cleared until the operator sets a new one. Books that were never given a value
+  // keep the provider fallback. The request shape is unchanged — the tombstone is
+  // DERIVED from these values, there is no client-supplied key for it.
   subtitle: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
   publisher: z.string().nullable().optional(),

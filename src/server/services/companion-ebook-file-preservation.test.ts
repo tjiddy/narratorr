@@ -7,7 +7,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook } from '../__tests__/factories.js';
-import { BookService, type BookWithAuthor } from './book.service.js';
+import { BookService, type BookDetail } from './book.service.js';
 import { BookRejectionService } from './book-rejection.service.js';
 import { RenameService } from './rename.service.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -84,7 +84,7 @@ describe('companion .epub survives every file-cleanup path (#1960 AC32/AC33)', (
       lastGrabGuid: 'guid-abc',
       lastGrabInfoHash: 'hash-123',
     };
-    vi.spyOn(bookService, 'getById').mockResolvedValue(book as unknown as BookWithAuthor);
+    vi.spyOn(bookService, 'getById').mockResolvedValue({ ...book, userClearedFields: [] } as unknown as BookDetail);
     const db = createMockDb();
     db.update.mockReturnValue(mockDbChain());
     const service = new BookRejectionService(

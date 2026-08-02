@@ -7,9 +7,9 @@ import type { SettingsService } from './settings.service.js';
 import { HardcoverClient, type HardcoverSearchCandidate, type HardcoverSeriesData } from '@core/metadata/hardcover.js';
 import { resolveSeriesViaHardcover } from './hardcover-series-resolver.js';
 import { findInLibraryMatch, normalizeMemberTitleForMatch, type LibraryBookSummary } from './series-title-match.js';
-import { relinkBookToBoundSeries } from './book-series-link.js';
+import { relinkBookToBoundSeries, removeSeriesNameTombstone } from './book-series-link.js';
+import { upsertHardcoverSeries } from './hardcover-series-upsert.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
-import { generatePublicId } from '../utils/public-id.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 /** Scheduled sweep threshold — rows older than this are re-fetched. */
@@ -389,6 +389,24 @@ export class SeriesCardService {
     const priorSeriesName = book.seriesName;
 
     const persistedRow = await this.db.transaction(async (tx) => {
+      // Binding is a deliberate operator assertion that THIS book belongs to that
+      // series, so it removes the initiating book's `seriesName` tombstone (#2069
+      // AC24) — otherwise a stored series would coexist with a live tombstone,
+      // the exact divergence AC7 exists to prevent. Only that one entry is
+      // removed: binding asserts nothing about subtitle/description/publisher/
+      // publishedDate/genres, so those tombstones survive.
+      //
+      // The set is re-read INSIDE this transaction, never carried from the
+      // pre-fetch `loadBook` above: `fetchById` is a network round-trip, so a PUT
+      // can add an unrelated tombstone while it is in flight, and writing back a
+      // pre-fetch snapshot would silently erase that concurrent clear
+      // (`src/db/serial-transactions.ts` — re-read preconditions inside the
+      // transaction). Matched SIBLINGS are never un-tombstoned, and need no guard:
+      // `loadLibraryBooksForSeriesNames` selects `WHERE series_name IN (…)` and a
+      // `seriesName`-tombstoned book has `series_name = NULL`, which SQL `IN` never
+      // matches — such a book is structurally absent from the sibling pool.
+      const boundClearedFields = await removeSeriesNameTombstone(tx, this.log, bookId);
+
       // Match the whole series at once, including books still on the pre-bind
       // name, so siblings are matched and synced alongside the initiating book.
       const extraNames = priorSeriesName ? [priorSeriesName] : [];
@@ -399,7 +417,12 @@ export class SeriesCardService {
         syncedIds.add(match.bookId);
         await tx
           .update(books)
-          .set({ seriesName: resolved.name, seriesPosition: match.position, updatedAt: new Date() })
+          .set({
+            seriesName: resolved.name,
+            seriesPosition: match.position,
+            ...(match.bookId === bookId ? { userClearedFields: boundClearedFields } : {}),
+            updatedAt: new Date(),
+          })
           .where(eq(books.id, match.bookId));
       }
 
@@ -409,7 +432,7 @@ export class SeriesCardService {
         syncedIds.add(bookId);
         await tx
           .update(books)
-          .set({ seriesName: resolved.name, seriesPosition: book.seriesPosition, updatedAt: new Date() })
+          .set({ seriesName: resolved.name, seriesPosition: book.seriesPosition, userClearedFields: boundClearedFields, updatedAt: new Date() })
           .where(eq(books.id, bookId));
       }
 
@@ -451,65 +474,6 @@ export class SeriesCardService {
       .where(inArray(books.seriesName, unique));
     return rows;
   }
-}
-
-async function upsertHardcoverSeries(
-  tx: DbOrTx,
-  resolved: HardcoverSeriesData,
-  normalized: string,
-): Promise<SeriesRow> {
-  const byHardcoverId = await tx
-    .select()
-    .from(series)
-    .where(eq(series.hardcoverSeriesId, resolved.id))
-    .limit(1);
-  if (byHardcoverId.length > 0) {
-    const existing = byHardcoverId[0]!;
-    const updated = await tx
-      .update(series)
-      .set({
-        name: resolved.name,
-        normalizedName: normalized,
-        authorName: resolved.authorName,
-        lastFetchedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(series.id, existing.id))
-      .returning();
-    return updated[0]!;
-  }
-  const byName = await tx
-    .select()
-    .from(series)
-    .where(eq(series.normalizedName, normalized))
-    .limit(1);
-  if (byName.length > 0) {
-    const existing = byName[0]!;
-    const updated = await tx
-      .update(series)
-      .set({
-        hardcoverSeriesId: resolved.id,
-        name: resolved.name,
-        authorName: resolved.authorName,
-        lastFetchedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(series.id, existing.id))
-      .returning();
-    return updated[0]!;
-  }
-  const inserted = await tx
-    .insert(series)
-    .values({
-      publicId: generatePublicId('sr'),
-      hardcoverSeriesId: resolved.id,
-      name: resolved.name,
-      normalizedName: normalized,
-      authorName: resolved.authorName,
-      lastFetchedAt: new Date(),
-    })
-    .returning();
-  return inserted[0]!;
 }
 
 /**
