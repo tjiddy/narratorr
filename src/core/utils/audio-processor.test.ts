@@ -32,6 +32,16 @@ vi.mock('./chapter-resolver.js', () => ({
   resolveChapterTitle: vi.fn(),
 }));
 
+// Passthrough spy on the encode-strategy seam — real behavior by default, so only the test
+// that pins "the caller does not re-derive resolver predicates" overrides it.
+vi.mock('./encode-strategy.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    resolveCodecArgs: vi.fn().mockImplementation(actual.resolveCodecArgs as (...args: unknown[]) => unknown),
+  };
+});
+
 // Spy on naming.js — passthrough to real implementation
 vi.mock('./naming.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -45,6 +55,12 @@ import { execFile, spawn } from 'node:child_process';
 import { readdir, rename, unlink, writeFile, rm, stat } from 'node:fs/promises';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import { renderFilename } from './naming.js';
+import { resolveCodecArgs } from './encode-strategy.js';
+
+// The real implementation, re-installed on the spy in beforeEach. `vi.clearAllMocks()` clears
+// call history but neither drains `*Once()` queues nor restores implementations, so an
+// override in one test would otherwise leak into every test after it.
+const actualEncodeStrategy = await vi.importActual<typeof import('./encode-strategy.js')>('./encode-strategy.js');
 
 // execFile is callback-based; mock the promisified version (used by probeFfmpeg, detectFfmpegPath, getFileDurations)
 const mockExecFile = vi.mocked(execFile);
@@ -200,6 +216,7 @@ function encodeSpawnArgs(index = 0): string[] {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(resolveCodecArgs).mockImplementation(actualEncodeStrategy.resolveCodecArgs);
   streamInfoByFile = {};
   mockUnlink.mockResolvedValue(undefined);
   mockRename.mockResolvedValue(undefined);
@@ -2628,5 +2645,24 @@ describe('#2068 invariant — an encoder token never appears without -b:a (AC5)'
         expect(parsed).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+describe('#2068 the caller delivers the resolver notices verbatim (AC14)', () => {
+  it('surfaces exactly the notices the resolver produced, re-deriving no predicate', async () => {
+    setupMergeSet(['01.mp3', '02.mp3']);
+    mockSpawnSuccess();
+
+    const stubbed = ['first stubbed notice', 'second stubbed notice'];
+    vi.mocked(resolveCodecArgs).mockImplementation(async (_config, _paths, warnings) => {
+      warnings.push(...stubbed);
+      return ['-c:a', 'aac', '-b:a', '96k'];
+    });
+
+    const result = await processAudioFiles('/lib/book', MERGE_ALWAYS, defaultContext);
+
+    expect(result.success).toBe(true);
+    expect(result.warnings).toEqual(stubbed);
+    expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe('96k');
   });
 });
