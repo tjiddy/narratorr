@@ -708,3 +708,133 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.productionType).toBe('unknown');
   });
 });
+
+// ─── #2069 AC10/AC11: the post-import fill surface honors tombstones ───
+//
+// This is the SECOND fill-empty writer. It writes no series field, so only
+// `subtitle`, `publisher` and `genres` are guardable here — that asymmetry with the
+// scheduled job (AC9) is deliberate. Its scalar write and its array writes now also
+// share ONE transaction, and re-read the row identity inside it.
+describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
+  let deps: ReturnType<typeof createMockDeps>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    deps = createMockDeps();
+  });
+
+  const providerData = { subtitle: 'Provider Subtitle', publisher: 'Provider Publisher', genres: ['Fantasy'], narrators: ['Michael Kramer'] };
+
+  it('mixed state: a subtitle tombstone is omitted from the scalar set while publisher still fills', async () => {
+    const { db, updateChain } = dbWithUpdateChain({ userClearedFields: '["subtitle"]' });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: null, existingPublisher: null }, { ...deps, db });
+
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).not.toHaveProperty('subtitle');
+    expect(setArg.publisher).toBe('Provider Publisher');
+    expect(setArg.enrichmentStatus).toBe('enriched');
+  });
+
+  it('a publisher tombstone is omitted while subtitle still fills', async () => {
+    const { db, updateChain } = dbWithUpdateChain({ userClearedFields: '["publisher"]' });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: null, existingPublisher: null }, { ...deps, db });
+
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).not.toHaveProperty('publisher');
+    expect(setArg.subtitle).toBe('Provider Subtitle');
+  });
+
+  it('a genres tombstone skips the genres fill while the narrator fill in the same helper still runs', async () => {
+    const { db } = dbWithUpdateChain({ userClearedFields: '["genres"]' });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+    const calls = (deps.bookService.update as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.map((c) => Object.keys(c[1] as object)[0])).toEqual(['narrators']);
+  });
+
+  it('AC10 scope: a seriesName-only tombstone leaves this path byte-identical to today', async () => {
+    const { db, updateChain } = dbWithUpdateChain({ userClearedFields: '["seriesName"]' });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: null, existingPublisher: null, existingGenres: null, existingNarrator: null }, { ...deps, db });
+
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg.subtitle).toBe('Provider Subtitle');
+    expect(setArg.publisher).toBe('Provider Publisher');
+    expect(setArg).not.toHaveProperty('seriesName');
+    const calls = (deps.bookService.update as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.map((c) => Object.keys(c[1] as object)[0])).toEqual(['narrators', 'genres']);
+  });
+
+  it('both writes share one transaction, and the array writes run on its handle', async () => {
+    const { db } = dbWithUpdateChain();
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+    expect((db as unknown as { transaction: ReturnType<typeof vi.fn> }).transaction).toHaveBeenCalledTimes(1);
+    for (const call of (deps.bookService.update as ReturnType<typeof vi.fn>).mock.calls) {
+      expect(call[2]).toEqual({ tx: expect.anything() });
+    }
+  });
+
+  it('F14: a failing array write rolls the scalar write back — no orphaned enriched status', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+    // Fail AFTER the scalar `.set(...)` has been issued.
+    (deps.bookService.update as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('genre write boom'));
+
+    // The ASIN-recovery loop swallows non-rate-limit failures by design, so this
+    // does not throw out of the helper — the rollback is observed on the
+    // transaction itself.
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+    // The scalar write WAS issued carrying `enriched` (so the ordering this pins
+    // really happened) — but it was issued INSIDE the transaction whose callback
+    // then rejected, so nothing commits. With the two writes in separate
+    // transactions (the pre-#2069 shape) that status would survive and put the row
+    // permanently outside the scheduled candidate selector.
+    const txMock = (db as unknown as { transaction: ReturnType<typeof vi.fn> }).transaction;
+    expect((updateChain.set.mock.calls[0]![0] as Record<string, unknown>).enrichmentStatus).toBe('enriched');
+    expect(txMock).toHaveBeenCalledTimes(1);
+    await expect(txMock.mock.results[0]!.value).rejects.toThrow('genre write boom');
+    expect(deps.log.info).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment applied');
+  });
+
+  it('F15: a Fix Match committed during the provider fetch aborts the write, tombstones held constant', async () => {
+    // The pre-fetch capture reads 'B001'; the in-transaction re-read sees the
+    // re-identified row. The tombstone column is NULL on both sides, so a
+    // tombstone-only guard could not catch this.
+    const updateChain = mockDbChain();
+    const db = {
+      update: vi.fn().mockReturnValue(updateChain),
+      select: vi.fn()
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B001' }]))                                  // pre-fetch capture
+        .mockReturnValue(mockDbChain([{ asin: 'B999_REIDENTIFIED', userClearedFields: null }])), // in-tx re-read
+    } as unknown as Db & { transaction: unknown };
+    db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db as Db));
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db: db as Db });
+
+    expect(updateChain.set).not.toHaveBeenCalled();
+    expect(deps.bookService.update).not.toHaveBeenCalled();
+    expect(deps.log.info).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment applied');
+  });
+
+  it('negative control: with the identity unchanged the write lands and logs success', async () => {
+    const { db, updateChain } = dbWithUpdateChain({ asin: 'B001' });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+    expect(updateChain.set).toHaveBeenCalled();
+    expect(deps.log.info).toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment applied');
+  });
+});

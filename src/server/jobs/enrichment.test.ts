@@ -1594,3 +1594,191 @@ describe('enrichment job', () => {
   });
 
 });
+
+// ─── #2069: scheduled enrichment honors the operator's explicit clears ───
+//
+// Every case below observes the `.set(...)` argument the write transaction
+// ACTUALLY issued, not the payload built beforehand — the suppression happens
+// inside the transaction, after the tombstone re-read, so an assertion on the
+// pre-transaction object would pass against an implementation that never
+// suppressed anything.
+describe('enrichment job — user-cleared fields (#2069)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let metadataService: { resolveBook: ReturnType<typeof vi.fn> };
+  let bookService: { update: ReturnType<typeof vi.fn>; findAsinCollision: ReturnType<typeof vi.fn> };
+  let log: ReturnType<typeof createMockLogger>;
+  let updateChain: ReturnType<typeof mockDbChain>;
+
+  /** Every clearable scalar empty, so each fill is reachable. */
+  const emptyExisting = {
+    duration: null, genres: null, title: 'Tress of the Emerald Sea', subtitle: null,
+    description: null, publisher: null, coverUrl: null, publishedDate: null,
+    seriesName: null, seriesPosition: null,
+  };
+
+  /** A provider result that fills every clearable field plus the carve-outs. */
+  const fullResult = {
+    title: 'Tress of the Emerald Sea',
+    authors: [{ name: 'Brandon Sanderson' }],
+    subtitle: 'A Cosmere Novel',
+    description: 'Provider description',
+    publisher: 'Dragonsteel',
+    publishedDate: '2023-01-10',
+    coverUrl: 'https://example.test/cover.jpg',
+    duration: 600,
+    genres: ['Fantasy'],
+    seriesPrimary: { name: 'Secret Projects', position: 1 },
+  };
+
+  /**
+   * Drive one candidate through the pass with the given stored tombstone column.
+   * Returns the `.set(...)` payload the scalar UPDATE was issued with.
+   */
+  async function runWithTombstones(raw: string | null, existing = emptyExisting): Promise<Record<string, unknown>> {
+    db.select
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_CLEARED' }]))            // candidates
+      .mockReturnValueOnce(mockDbChain([existing]))                                // existing fill-empty inputs
+      .mockReturnValueOnce(mockDbChain([{ asin: 'B_CLEARED', userClearedFields: raw }])); // in-tx precondition re-read
+    metadataService.resolveBook.mockResolvedValueOnce(fullResult);
+
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+    return updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+  }
+
+  beforeEach(() => {
+    db = createMockDb();
+    metadataService = { resolveBook: vi.fn().mockResolvedValue(null) };
+    bookService = { update: vi.fn().mockResolvedValue(null), findAsinCollision: vi.fn().mockResolvedValue(null) };
+    log = createMockLogger();
+    updateChain = mockDbChain([{ id: 1 }]);
+    db.update.mockReturnValue(updateChain);
+  });
+
+  it('a seriesName tombstone writes NEITHER seriesName nor seriesPosition (the pair rule)', async () => {
+    const set = await runWithTombstones('["seriesName"]');
+
+    expect(set).not.toHaveProperty('seriesName');
+    expect(set).not.toHaveProperty('seriesPosition');
+    expect(set.enrichmentStatus).toBe('enriched');
+  });
+
+  it('suppresses only the tombstoned scalars while untombstoned siblings still fill in the same pass', async () => {
+    const set = await runWithTombstones('["description","publisher"]');
+
+    expect(set).not.toHaveProperty('description');
+    expect(set).not.toHaveProperty('publisher');
+    // The over-broad-filter guard: these are in the same fill list and must land.
+    expect(set.subtitle).toBe('A Cosmere Novel');
+    expect(set.publishedDate).toBe('2023-01-10');
+    expect(set.seriesName).toBe('Secret Projects');
+  });
+
+  it('suppresses subtitle and publishedDate independently', async () => {
+    const set = await runWithTombstones('["publishedDate","subtitle"]');
+
+    expect(set).not.toHaveProperty('subtitle');
+    expect(set).not.toHaveProperty('publishedDate');
+    expect(set.description).toBe('Provider description');
+    expect(set.publisher).toBe('Dragonsteel');
+  });
+
+  it('a genres tombstone skips the genres write entirely', async () => {
+    await runWithTombstones('["genres"]');
+
+    expect(bookService.update).not.toHaveBeenCalled();
+  });
+
+  it('keeps the coverUrl overwrite and the duration fill for a seriesName-tombstoned book (carve-outs intact)', async () => {
+    const set = await runWithTombstones('["seriesName"]');
+
+    expect(set.coverUrl).toBe('https://example.test/cover.jpg');
+    expect(set.duration).toBe(600);
+    expect(set.title).toBeUndefined(); // not ALL CAPS, so no title rewrite — unchanged behavior
+  });
+
+  it('a malformed persisted set degrades to "no tombstones" and the pass fills normally', async () => {
+    const set = await runWithTombstones('{oops');
+
+    expect(set.seriesName).toBe('Secret Projects');
+    expect(set.publisher).toBe('Dragonsteel');
+    expect(bookService.update).toHaveBeenCalledWith(1, { genres: ['Fantasy'] }, { tx: expect.anything() });
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      expect.stringContaining('Unparseable userClearedFields'),
+    );
+  });
+
+  it('a recognized-plus-unknown set suppresses the recognized field and still lands the rest (AC4)', async () => {
+    const set = await runWithTombstones('["genres","futureField"]');
+
+    expect(bookService.update).not.toHaveBeenCalled();
+    expect(set.enrichmentStatus).toBe('enriched');
+    expect(set.publisher).toBe('Dragonsteel');
+  });
+
+  it('AC12: a book with no tombstones fills exactly as today', async () => {
+    const set = await runWithTombstones(null);
+
+    expect(set.seriesName).toBe('Secret Projects');
+    expect(set.seriesPosition).toBe(1);
+    expect(set.subtitle).toBe('A Cosmere Novel');
+    expect(bookService.update).toHaveBeenCalledWith(1, { genres: ['Fantasy'] }, { tx: expect.anything() });
+  });
+
+  it('a suppressed fill is a DECISION, not a failure — the candidate is still counted enriched', async () => {
+    await runWithTombstones('["description","genres","publisher","publishedDate","seriesName","subtitle"]');
+
+    expect(log.info).toHaveBeenCalledWith(
+      { bookId: 1, asin: 'B_CLEARED' },
+      'Book enriched successfully',
+    );
+    // …and a suppressed fill is not REPORTED as filled.
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ enrichedCount: 1, filledGenres: 0, filledDescription: 0 }),
+      'Enrichment batch completed',
+    );
+  });
+
+  describe('AC11 — the tombstone read and the writes share one transaction', () => {
+    it('sees a clear that commits after the provider fetch but before the write transaction opens', async () => {
+      // The pre-transaction `existing` read still shows an empty series; the clear
+      // lands as the transaction opens. Reading the set before the transaction (or
+      // reusing the `existing` row) would write the provider series back.
+      let stored: string | null = null;
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_RACE' }]))
+        .mockReturnValueOnce(mockDbChain([emptyExisting]))
+        .mockImplementation(() => mockDbChain([{ asin: 'B_RACE', userClearedFields: stored }]));
+      db.transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        stored = '["seriesName"]';
+        return cb(db);
+      });
+      metadataService.resolveBook.mockResolvedValueOnce(fullResult);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      const set = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(set).not.toHaveProperty('seriesName');
+      expect(set).not.toHaveProperty('seriesPosition');
+      // A suppressed field is a decision, not a failure — the status still advances.
+      expect(set.enrichmentStatus).toBe('enriched');
+    });
+
+    it('the genres write runs on the transaction handle, never opening a nested one', async () => {
+      await runWithTombstones(null);
+
+      const [, , options] = bookService.update.mock.calls[0] as [number, unknown, { tx: unknown }];
+      expect(options.tx).toBeDefined();
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('negative control: with nothing committing in the window the write lands normally', async () => {
+      const set = await runWithTombstones('["subtitle"]');
+
+      expect(set).not.toHaveProperty('subtitle');
+      expect(set.description).toBe('Provider description');
+      expect(set.enrichmentStatus).toBe('enriched');
+    });
+  });
+});
