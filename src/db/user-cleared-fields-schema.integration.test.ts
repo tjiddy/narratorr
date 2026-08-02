@@ -5,7 +5,7 @@ import { join } from 'path';
 import { eq, sql } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from './index.js';
-import { books, series, seriesMembers } from './schema.js';
+import { books, series, seriesMembers, unmatchedGenres } from './schema.js';
 import { generatePublicId } from '../server/utils/public-id.js';
 import { BookService } from '../server/services/book.service.js';
 import { runEnrichment } from '../server/jobs/enrichment.js';
@@ -318,6 +318,58 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
       expect(row!.userClearedFields).toBeNull();
       const remaining = await db.select().from(seriesMembers).where(eq(seriesMembers.id, memberId));
       expect(remaining).toHaveLength(1);
+    });
+  });
+
+  describe('AC11 / F20 / F21 — the caller-owned transaction arm, against a real DB', () => {
+    it('runs on the caller handle, reads its own uncommitted write, and commits with the owner', async () => {
+      const bookId = await seedBook({ publisher: 'Tor' });
+      const offHandleSelect = vi.spyOn(db, 'select');
+
+      const detail = await db.transaction(async (tx) => {
+        const inside = await bookService.update(bookId, { publisher: null }, { userAsserted: true, tx });
+        // The hydration read is ON the handle, so it observes the still-uncommitted
+        // write — a `this.db` read could not, and `db.transaction` nesting throws.
+        expect(inside!.publisher).toBeNull();
+        expect(inside!.userClearedFields).toEqual(['publisher']);
+        return inside;
+      });
+
+      expect(detail).not.toBeNull();
+      expect(offHandleSelect).not.toHaveBeenCalled();
+      offHandleSelect.mockRestore();
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.publisher).toBeNull();
+      expect(row!.userClearedFields).toBe('["publisher"]');
+    });
+
+    it('F21: an owner rollback strands no write, no success log, and no genre telemetry', async () => {
+      const bookId = await seedBook({ publisher: 'Tor' });
+
+      await expect(
+        db.transaction(async (tx) => {
+          await bookService.update(bookId, { publisher: null, genres: ['Zzzz Unmatched Genre'] }, { userAsserted: true, tx });
+          throw new Error('owner rolled back');
+        }),
+      ).rejects.toThrow('owner rolled back');
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.publisher).toBe('Tor');
+      expect(row!.userClearedFields).toBeNull();
+      expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Book updated');
+      const tracked = await db.select().from(unmatchedGenres);
+      expect(tracked).toHaveLength(0);
+    });
+
+    it('the self-managed arm still returns the COMMITTED parsed detail', async () => {
+      const bookId = await seedBook();
+
+      const detail = await bookService.update(bookId, { seriesName: null }, { userAsserted: true });
+
+      expect(detail!.userClearedFields).toEqual(['seriesName']);
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.userClearedFields).toBe('["seriesName"]');
     });
   });
 
