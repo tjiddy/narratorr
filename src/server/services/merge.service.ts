@@ -12,6 +12,7 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
 import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
 import { processAudioFiles, resolveFfmpegPath } from '@core/utils/audio-processor.js';
+import type { ProcessingResult } from '@core/utils/audio-processor.js';
 import { buildNamingContext, type RenameableBook } from '../utils/paths.js';
 import { toNamingOptions, type NamingOptions } from '@core/utils/naming.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
@@ -19,7 +20,7 @@ import { enrichBookFromAudio } from './enrichment-utils.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
-import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
+import { toSourceBitrateKbps } from '../utils/audio-bitrate.js';
 import { Semaphore, type SemaphoreRelease } from '../utils/semaphore.js';
 import type { MergePhase, MergeFailedReason } from '@shared/schemas/sse-events.js';
 import type { EventSource } from '@shared/schemas/event-history.js';
@@ -349,7 +350,7 @@ export class MergeService {
       }
 
       this.emitMergeProgress(bookId, book.title, 'staging');
-      const stagedOutput = await this.runStaging(
+      const { stagedOutput, warnings: processingWarnings } = await this.runStaging(
         stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, { ...processingSettings, ffmpegPath },
         bookId, book.title, librarySettings.fileFormat, toNamingOptions(librarySettings), controller.signal,
       );
@@ -371,7 +372,12 @@ export class MergeService {
       }
 
       this.log.info({ bookId, outputPath, filesReplaced: topLevelAudioFiles.length }, 'Book merged');
-      const message = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedOutput)}`;
+      // Fold the processing notices into the operator-visible completion message — the
+      // existing `message` string, so the merge_complete event contract stays untouched.
+      const mergedSummary = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedOutput)}`;
+      const message = processingWarnings.length > 0
+        ? `${mergedSummary} (${processingWarnings.join('; ')})`
+        : mergedSummary;
       this.emitMergeComplete(bookId, book.title, message, enrichmentWarning);
       return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, ...(enrichmentWarning !== undefined && { enrichmentWarning }) };
     } catch (error: unknown) {
@@ -386,7 +392,26 @@ export class MergeService {
     }
   }
 
-  /** Steps 1-5: copy to staging, process, verify. Returns the staged output filename (extension follows outputFormat). */
+  /**
+   * Surface the encode-strategy notices (and cover-art degradations) at warn on BOTH outcomes.
+   *
+   * The stderr deduplicator logs at debug, which the shipped default log level hides, and a run
+   * that adjusted a bitrate and then failed for an unrelated reason must still report the
+   * adjustment — which is why the failure variant carries `warnings` too.
+   */
+  private reportProcessingWarnings(bookId: number, result: ProcessingResult): string[] {
+    const warnings = result.warnings ?? [];
+    for (const warning of warnings) {
+      this.log.warn({ bookId }, warning);
+    }
+    return warnings;
+  }
+
+  /**
+   * Steps 1-5: copy to staging, process, verify. Returns the staged output filename (extension
+   * follows outputFormat) plus the processing warnings, which the caller folds into the
+   * operator-visible completion message.
+   */
   private async runStaging(
     stagingDir: string,
     book: RenameableBook & { path: string; authors?: Array<{ name: string }> | null; audioBitrate?: number | null },
@@ -397,7 +422,7 @@ export class MergeService {
     fileFormat: string,
     namingOptions: NamingOptions,
     signal?: AbortSignal,
-  ): Promise<string> {
+  ): Promise<{ stagedOutput: string; warnings: string[] }> {
     // Reset the deterministic staging dir to empty before copying (Change 4 / F25). A prior kill
     // can leave stale (non-dot) audio inside this exact path; the owning merge reopens it by
     // identity and would otherwise fold that residue into the result. A failure to empty it throws
@@ -413,7 +438,6 @@ export class MergeService {
     const authorName = book.authors?.[0]?.name ?? '';
     const sourceBitrateKbps = toSourceBitrateKbps(book.audioBitrate);
     const targetBitrateKbps = processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate;
-    logBitrateCapping(sourceBitrateKbps, targetBitrateKbps, this.log);
 
     // Build stderr deduplicator for logging
     const stderrDedup = createStderrDeduplicator(this.log);
@@ -446,6 +470,8 @@ export class MergeService {
 
     stderrDedup.flush();
 
+    const warnings = this.reportProcessingWarnings(bookId, processingResult);
+
     if (!processingResult.success) {
       throw new Error(`Audio processing failed: ${processingResult.error}`);
     }
@@ -469,7 +495,7 @@ export class MergeService {
       throw new Error('Staged output not found after processing');
     }
 
-    return stagedOutput;
+    return { stagedOutput, warnings };
   }
 
   /** Step 7: move the staged output to book.path, update DB size, delete originals, clean staging. */

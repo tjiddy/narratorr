@@ -39,6 +39,33 @@ describe('AudioToolsSettings', () => {
     mockApi.getFfmpegStatus.mockResolvedValue({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' });
   });
 
+  // #2068 — these two strings are the only place a run-time guarantee is paraphrased for
+  // humans, and loose restatements have twice shipped inaccurate copy ("caps at 320 kbps",
+  // then "nearest legal rate"). Exact-match, not substring, so the wording is a reviewed
+  // artifact rather than prose that drifts.
+  const KEEP_ORIGINAL_DESCRIPTION =
+    'Copies the audio when the parts are compatible. Otherwise re-encodes using the source '
+    + 'bitrate where it is known, or a conservative default where it is not, adjusted to a '
+    + 'value the output format accepts.';
+  const TARGET_BITRATE_DESCRIPTION =
+    'The bitrate to encode to \u2014 active only when Keep original is off. MP3 output rounds '
+    + 'down to the next supported rate \u2014 or up to the minimum, if lower \u2014 and its '
+    + 'maximum depends on the source sample rate.';
+
+  it('describes the bitrate controls in the exact pinned wording', async () => {
+    renderWithProviders(<AudioToolsSettings />);
+    await waitFor(() => expect(screen.getByText('Merge & Convert')).toBeInTheDocument());
+
+    expect(screen.getByText(KEEP_ORIGINAL_DESCRIPTION)).toBeInTheDocument();
+    expect(screen.getByText(TARGET_BITRATE_DESCRIPTION)).toBeInTheDocument();
+
+    // AC8 snaps DOWN, so no proximity word is true of it: 251 kbps evidence at 44.1 kHz
+    // emits 224 even though 256 is legal and nearer.
+    for (const copy of [KEEP_ORIGINAL_DESCRIPTION, TARGET_BITRATE_DESCRIPTION]) {
+      expect(copy).not.toMatch(/close|closest|nearest/i);
+    }
+  });
+
   it('renders the Merge & Convert engine fields', async () => {
     renderWithProviders(<AudioToolsSettings />);
     await waitFor(() => expect(screen.getByText('Merge & Convert')).toBeInTheDocument());
