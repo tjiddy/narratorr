@@ -3,6 +3,8 @@ import type { BookWithAuthor, UpdateBookPayload } from '@/lib/api';
 import { XIcon } from '@/components/icons';
 import { Modal } from '@/components/Modal';
 import { MetadataEditFields } from '@/components/book/MetadataEditFields';
+import type { DisplayedFields } from '@/pages/book/helpers.js';
+import { useBaselinedFields } from '@/components/book/useBaselinedFields.js';
 
 interface BookMetadataModalProps {
   book: BookWithAuthor;
@@ -10,6 +12,31 @@ interface BookMetadataModalProps {
   onClose: () => void;
   isSaving: boolean;
   isOpen?: boolean;
+  /**
+   * What the operator SEES for each clearable field — `resolveDisplayedFields`
+   * output, the same call the header's meta line derives from (#2069 AC18/AC25).
+   * Both the initial input value and the diff baseline come from it, so blanking a
+   * value that exists only as a provider fallback produces a real `null` diff and
+   * a tombstone, and reopening after a clear shows the field BLANK rather than
+   * resurrecting what was just removed.
+   *
+   * OPTIONAL: with the prop absent the baseline is the stored value and behavior is
+   * byte-identical to before.
+   */
+  displayed?: DisplayedFields;
+}
+
+/** The stored-value baseline used when no resolved `displayed` prop is supplied. */
+function storedBaseline(book: BookWithAuthor): DisplayedFields {
+  return {
+    seriesName: book.seriesName ?? undefined,
+    seriesPosition: book.seriesPosition ?? undefined,
+    subtitle: book.subtitle ?? undefined,
+    description: book.description ?? undefined,
+    publisher: book.publisher ?? undefined,
+    publishedDate: book.publishedDate ?? undefined,
+    genres: book.genres ?? undefined,
+  };
 }
 
 /** Parse a comma-separated input into a trimmed, non-empty list (narrators/authors/genres). */
@@ -50,25 +77,32 @@ function diffSeriesPosition(input: string, stored: number | null | undefined): {
 }
 
 /**
- * Edit Metadata is a pure MANUAL field editor (#1609). It diffs each stored,
- * author-supplied column against its pre-filled value and sends only what changed:
- * `undefined`/omitted = unchanged, `null` = clear (detail page falls back to the
- * merged provider value), a value = set. Re-pointing a book to a different provider
- * match is Fix Match's job — there is intentionally no embedded search-and-apply
- * here (it previously produced inconsistent "Frankenbook" metadata).
+ * Edit Metadata is a pure MANUAL field editor (#1609). It diffs each clearable
+ * field against its pre-filled value and sends only what changed:
+ * `undefined`/omitted = unchanged, `null` = clear, a value = set. Re-pointing a
+ * book to a different provider match is Fix Match's job — there is intentionally
+ * no embedded search-and-apply here (it previously produced inconsistent
+ * "Frankenbook" metadata).
+ *
+ * The pre-filled value and the diff baseline are what the operator SEES — the
+ * `displayed` prop (#2069 AC25), not the stored column. That matters because a
+ * post-import book sits at `enrichmentStatus: 'enriched'` with `series_name = NULL`
+ * indefinitely: its series exists only as a provider fallback, so a stored-value
+ * baseline renders the input empty and blanking it produces no diff — the clear is
+ * inexpressible for the most common book in the library. It also means a field the
+ * operator just cleared reopens BLANK instead of showing the value again.
+ *
+ * A clear sends only `null` for the field; the server derives and persists the
+ * tombstone. Nothing tombstone-shaped is sent from here.
  */
-export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = true }: BookMetadataModalProps) {
+export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = true, displayed }: BookMetadataModalProps) {
+  const baseline = displayed ?? storedBaseline(book);
+  const { values, setField } = useBaselinedFields(baseline);
   const [title, setTitle] = useState(book.title);
-  const [subtitle, setSubtitle] = useState(book.subtitle ?? '');
   const [author, setAuthor] = useState(book.authors.map((a) => a.name).join(', '));
-  const [seriesName, setSeriesName] = useState(book.seriesName ?? '');
-  const [seriesPosition, setSeriesPosition] = useState(book.seriesPosition?.toString() ?? '');
   const [narrator, setNarrator] = useState(book.narrators.map((n) => n.name).join(', '));
-  const [description, setDescription] = useState(book.description ?? '');
-  const [publishedDate, setPublishedDate] = useState(book.publishedDate ?? '');
-  const [genres, setGenres] = useState((book.genres ?? []).join(', '));
-  const [publisher, setPublisher] = useState(book.publisher ?? '');
   const [renameFiles, setRenameFiles] = useState(false);
+  const { subtitle, seriesName, seriesPosition, description, publishedDate, genres, publisher } = values;
 
   if (!isOpen) return null;
 
@@ -85,7 +119,11 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
 
     if (title.trim() !== book.title) data.title = title.trim();
 
-    const sub = diffTrimmedNullable(subtitle, book.subtitle);
+    // Every clearable field diffs against `baseline` — the DISPLAYED value — so an
+    // untouched field sends nothing (a provider value is never silently promoted
+    // into the DB by an unrelated edit), a blanked one sends `null` even when the
+    // stored column was already NULL, and a replaced one sends the new value.
+    const sub = diffTrimmedNullable(subtitle, baseline.subtitle);
     if (sub !== undefined) data.subtitle = sub;
 
     // authors.min(1) — when the field is blanked, omit `authors` entirely rather
@@ -96,25 +134,28 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
       if (names.length > 0) data.authors = names.map((name) => ({ name }));
     }
 
-    if (seriesName.trim() !== (book.seriesName ?? '')) data.seriesName = seriesName.trim() || null;
+    if (seriesName.trim() !== (baseline.seriesName ?? '')) data.seriesName = seriesName.trim() || null;
 
-    const pos = diffSeriesPosition(seriesPosition, book.seriesPosition);
+    // `seriesPosition` follows `seriesName` (the pair rule) — it is never baselined
+    // against the provider independently, so it inherits whatever the resolver
+    // decided for the pair.
+    const pos = diffSeriesPosition(seriesPosition, baseline.seriesPosition);
     if (pos) data.seriesPosition = pos.value;
 
     const existingNarrator = book.narrators.map((n) => n.name).join(', ');
     if (narrator.trim() !== existingNarrator) data.narrators = parseList(narrator);
 
     // Nullable fields — `undefined` = unchanged (omitted), `null` = clear, value = set.
-    const desc = diffDescription(description, book.description);
+    const desc = diffDescription(description, baseline.description);
     if (desc !== undefined) data.description = desc;
 
-    const pubDate = diffTrimmedNullable(publishedDate, book.publishedDate);
+    const pubDate = diffTrimmedNullable(publishedDate, baseline.publishedDate);
     if (pubDate !== undefined) data.publishedDate = pubDate;
 
-    const newGenres = diffGenres(genres, book.genres);
+    const newGenres = diffGenres(genres, baseline.genres);
     if (newGenres !== undefined) data.genres = newGenres;
 
-    const pub = diffTrimmedNullable(publisher, book.publisher);
+    const pub = diffTrimmedNullable(publisher, baseline.publisher);
     if (pub !== undefined) data.publisher = pub;
 
     onSave(data, renameFiles);
@@ -149,24 +190,24 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
           title={title}
           onTitleChange={setTitle}
           subtitle={subtitle}
-          onSubtitleChange={setSubtitle}
+          onSubtitleChange={(v) => setField('subtitle', v)}
           author={author}
           onAuthorChange={setAuthor}
           seriesName={seriesName}
-          onSeriesNameChange={setSeriesName}
+          onSeriesNameChange={(v) => setField('seriesName', v)}
           seriesPosition={seriesPosition}
-          onSeriesPositionChange={setSeriesPosition}
+          onSeriesPositionChange={(v) => setField('seriesPosition', v)}
           positionError={positionError}
           narrator={narrator}
           onNarratorChange={setNarrator}
           description={description}
-          onDescriptionChange={setDescription}
+          onDescriptionChange={(v) => setField('description', v)}
           publishedDate={publishedDate}
-          onPublishedDateChange={setPublishedDate}
+          onPublishedDateChange={(v) => setField('publishedDate', v)}
           genres={genres}
-          onGenresChange={setGenres}
+          onGenresChange={(v) => setField('genres', v)}
           publisher={publisher}
-          onPublisherChange={setPublisher}
+          onPublisherChange={(v) => setField('publisher', v)}
           renameFiles={renameFiles}
           onRenameFilesChange={setRenameFiles}
           hasPath={hasPath}

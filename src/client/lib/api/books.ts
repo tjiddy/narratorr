@@ -1,4 +1,4 @@
-import type { BookStatus, EnrichmentStatus, LibraryFilterBucket, RetagExcludableField } from '@shared/schemas.js';
+import type { BookStatus, ClearableBookField, EnrichmentStatus, LibraryFilterBucket, RetagExcludableField } from '@shared/schemas.js';
 import type { LibraryBookListItem, LibraryBookListResponse } from '@shared/schemas/library-book.js';
 import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '@core/metadata/types.js';
 import { ApiError, fetchApi, fetchMultipart } from './client.js';
@@ -42,6 +42,13 @@ export interface BookWithAuthor {
   path?: string | null;
   size?: number | null;
   enrichmentStatus?: EnrichmentStatus | null;
+  /**
+   * The operator's explicit clears (#2069), PARSED — only ever received from a
+   * hydrated DETAIL response (`GET /api/books/:id`, and the PUT/Fix-Match/create
+   * echoes). Never a raw JSON string: the server projects the raw column out of
+   * every list and activity response. Absent on list rows.
+   */
+  userClearedFields?: ClearableBookField[];
   // Audio technical info
   audioCodec?: string | null;
   audioBitrate?: number | null;

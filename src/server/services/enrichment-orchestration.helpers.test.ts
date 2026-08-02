@@ -23,11 +23,25 @@ import { orchestrateBookEnrichment, applyAudnexusEnrichment } from './enrichment
 import { mockDbChain } from '../__tests__/helpers.js';
 import { RateLimitError, TransientError } from '@core/index.js';
 
-/** A db whose `update().set().where()` chain resolves; returns the captured chain for assertions. */
-function dbWithUpdateChain() {
+/**
+ * A db whose `update().set().where()` chain resolves; returns the captured chain
+ * for assertions.
+ *
+ * Also carries the two seams #2069 AC11 added to this path: a `select` (the
+ * pre-fetch ASIN capture AND the in-transaction re-read of
+ * `{ asin, user_cleared_fields }`) and a `transaction` that runs its callback on
+ * the same handle. Both reads hit the same stub, so the identity guard holds by
+ * construction unless a test deliberately varies the row between them.
+ */
+function dbWithUpdateChain(row?: { asin?: string | null; userClearedFields?: string | null }) {
   const updateChain = mockDbChain();
-  const db = { update: vi.fn().mockReturnValue(updateChain) } as unknown as Db;
-  return { db, updateChain };
+  const selectRow = { asin: row?.asin ?? null, userClearedFields: row?.userClearedFields ?? null };
+  const db = {
+    update: vi.fn().mockReturnValue(updateChain),
+    select: vi.fn().mockReturnValue(mockDbChain([selectRow])),
+  } as unknown as Db & { transaction: unknown };
+  db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db));
+  return { db: db as Db, updateChain };
 }
 
 const mockEnrichBookFromAudio = vi.mocked(enrichBookFromAudio);
@@ -35,7 +49,7 @@ const mockResolveFfprobePath = vi.mocked(resolveFfprobePathFromSettings);
 
 function createMockDeps() {
   return {
-    db: {} as Db,
+    db: dbWithUpdateChain().db,
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as FastifyBaseLogger,
     settingsService: { get: vi.fn().mockResolvedValue({ }) } as unknown as SettingsService,
     bookService: { update: vi.fn(), findAsinCollision: vi.fn().mockResolvedValue(null) } as unknown as BookService,
@@ -193,8 +207,7 @@ describe('applyAudnexusEnrichment', () => {
   });
 
   it('fills blank subtitle/publisher from the enrichment data (#1614)', async () => {
-    const updateChain = mockDbChain();
-    const db = { update: vi.fn().mockReturnValue(updateChain) } as unknown as Db;
+    const { db, updateChain } = dbWithUpdateChain();
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ subtitle: 'Filled Subtitle', publisher: 'Filled Publisher' });
 
     await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: null, existingPublisher: null }, { ...deps, db });
@@ -205,8 +218,7 @@ describe('applyAudnexusEnrichment', () => {
   });
 
   it('does NOT overwrite an existing subtitle/publisher (#1614)', async () => {
-    const updateChain = mockDbChain();
-    const db = { update: vi.fn().mockReturnValue(updateChain) } as unknown as Db;
+    const { db, updateChain } = dbWithUpdateChain();
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ subtitle: 'Provider Subtitle', publisher: 'Provider Publisher' });
 
     await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: 'Kept Subtitle', existingPublisher: 'Kept Publisher' }, { ...deps, db });

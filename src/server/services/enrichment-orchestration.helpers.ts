@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { eq } from 'drizzle-orm';
-import type { Db } from '@db/index.js';
+import type { Db, DbOrTx } from '@db/index.js';
 import { books } from '@db/schema.js';
 import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
@@ -16,6 +16,8 @@ import { canonicalizeAsin } from '@shared/asin.js';
 import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 import { resolveImportSeries } from './resolve-import-series.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { parseClearedFields } from '../utils/cleared-fields.js';
+import type { ClearableBookField } from '@shared/schemas/book.js';
 
 
 // ─── Shared types ───────────────────────────────────────────────────────
@@ -93,12 +95,19 @@ export async function applyAudnexusEnrichment(
   // Nothing to resolve from: no ASIN to look up AND no title to search.
   if (asinsToTry.length === 0 && !title) return;
 
+  // The row's ASIN as of BEFORE the provider fetch (#2069 AC11). `resolveAsinWriteback`
+  // is not an identity guard: it canonicalizes the FETCHED asin, compares it to the
+  // caller-supplied `primaryAsin`, and checks cross-row collision — it never reads the
+  // row's current ASIN, so a Fix Match committed during the fetch is invisible to it.
+  // The write transaction re-reads and compares against this captured value instead.
+  const capturedAsin = await readBookAsin(deps.db, bookId);
+
   // ASIN recovery loop — precise identity fast path; first hit wins.
   for (const asin of asinsToTry) {
     try {
       const data = await deps.metadataService.enrichBook(asin);
       if (data) {
-        await applyEnrichmentData(bookId, asin, data, opts, deps);
+        await applyEnrichmentData(bookId, asin, data, opts, deps, capturedAsin);
         return;
       }
     } catch (error: unknown) {
@@ -127,8 +136,14 @@ export async function applyAudnexusEnrichment(
     return;
   }
   if (resolved) {
-    await applyEnrichmentData(bookId, resolved.asin, resolved, opts, deps);
+    await applyEnrichmentData(bookId, resolved.asin, resolved, opts, deps, capturedAsin);
   }
+}
+
+/** The row's current ASIN, canonicalized — the identity value AC11's write transaction re-checks. */
+async function readBookAsin(db: Db, bookId: number): Promise<string | null> {
+  const rows = await db.select({ asin: books.asin }).from(books).where(eq(books.id, bookId)).limit(1);
+  return canonicalizeAsin(rows[0]?.asin);
 }
 
 /**
@@ -161,48 +176,103 @@ async function resolveAsinWriteback(
   return canonical;
 }
 
+/**
+ * Persist one Audnexus result. This is the SECOND fill-empty writer, so it honors
+ * the same tombstones as the scheduled job, independently per field (#2069 AC10):
+ * `subtitle` and `publisher` are dropped from the scalar payload when tombstoned,
+ * and the genres fill is skipped when `genres` is. It writes NO series field, so
+ * `seriesName`/`publishedDate` need no guard here — that asymmetry with AC9 is
+ * deliberate, not an omission.
+ *
+ * Both writes now live in ONE transaction (AC11). They used to commit separately,
+ * so `enrichmentStatus: 'enriched'` could land while a later write did not — and
+ * the row is then permanently outside the scheduled candidate selector, which only
+ * picks `pending`/`skipped`/retryable `failed`. Completion status and the field
+ * writes now commit or roll back together.
+ *
+ * The tombstone set that drives the three suppressions is read INSIDE that
+ * transaction, not from the caller's pre-fetch `db.select({ genres, subtitle,
+ * publisher })`: that earlier read still supplies the `existing*` fill-empty
+ * inputs, but it happens before a provider fetch a clear can commit during.
+ *
+ * `resolveAsinWriteback` stays OUTSIDE the transaction — it issues a collision
+ * query on `this.db`, which must not run on (or alongside) the open handle.
+ */
 async function applyEnrichmentData(
   bookId: number,
   resolvedAsin: string | null | undefined,
   data: { duration?: number | undefined; narrators?: string[] | undefined; genres?: string[] | undefined; subtitle?: string | undefined; publisher?: string | undefined },
   opts: { primaryAsin?: string | null | undefined; existingNarrator?: string | null | undefined; existingDuration?: number | null | undefined; existingGenres?: string[] | null | undefined; existingSubtitle?: string | null | undefined; existingPublisher?: string | null | undefined },
   deps: Pick<EnrichmentDeps, 'db' | 'log' | 'bookService'>,
+  capturedAsin: string | null,
 ): Promise<void> {
-  const updates: Partial<{ enrichmentStatus: EnrichmentStatus; asin: string; duration: number; subtitle: string; publisher: string; updatedAt: Date }> = {
-    enrichmentStatus: 'enriched',
-    updatedAt: new Date(),
-  };
   const asinToWrite = await resolveAsinWriteback(bookId, resolvedAsin, opts.primaryAsin, deps);
-  if (asinToWrite) updates.asin = asinToWrite;
-  if (!opts.existingDuration && data.duration) {
-    updates.duration = data.duration;
+
+  const applied = await deps.db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ asin: books.asin, userClearedFields: books.userClearedFields })
+      .from(books)
+      .where(eq(books.id, bookId))
+      .limit(1);
+    const row = rows[0];
+    // Identity guard: a Fix Match committed during the provider fetch re-pointed
+    // this row, so the payload no longer describes it. A missing row is the same
+    // outcome — there is nothing to enrich.
+    if (!row || canonicalizeAsin(row.asin) !== capturedAsin) return false;
+
+    const cleared = new Set(parseClearedFields(row.userClearedFields, deps.log, bookId));
+
+    const updates: Partial<{ enrichmentStatus: EnrichmentStatus; asin: string; duration: number; subtitle: string; publisher: string; updatedAt: Date }> = {
+      enrichmentStatus: 'enriched',
+      updatedAt: new Date(),
+    };
+    if (asinToWrite) updates.asin = asinToWrite;
+    if (!opts.existingDuration && data.duration) {
+      updates.duration = data.duration;
+    }
+    if (!opts.existingSubtitle && data.subtitle && !cleared.has('subtitle')) {
+      updates.subtitle = data.subtitle;
+    }
+    if (!opts.existingPublisher && data.publisher && !cleared.has('publisher')) {
+      updates.publisher = data.publisher;
+    }
+    await tx.update(books).set(updates).where(eq(books.id, bookId));
+    await applyEnrichmentArrayFields(bookId, data, opts, deps, cleared, tx);
+    return true;
+  });
+
+  // A stale drop is not a success — do not log one.
+  if (!applied) {
+    deps.log.debug({ bookId, asin: capturedAsin }, 'stale post-import enrichment dropped (identity re-read)');
+    return;
   }
-  if (!opts.existingSubtitle && data.subtitle) {
-    updates.subtitle = data.subtitle;
-  }
-  if (!opts.existingPublisher && data.publisher) {
-    updates.publisher = data.publisher;
-  }
-  await deps.db.update(books).set(updates).where(eq(books.id, bookId));
-  await applyEnrichmentArrayFields(bookId, data, opts, deps);
+
   deps.log.info(
     { bookId, asin: resolvedAsin ?? null, wasAlternate: !!resolvedAsin && resolvedAsin !== opts.primaryAsin },
     'Audnexus enrichment applied',
   );
 }
 
-/** Fill-guarded narrator/genre writes (separate rows, so they bypass the scalar `updates` set). */
+/**
+ * Fill-guarded narrator/genre writes (separate rows, so they bypass the scalar
+ * `updates` set). Runs on the caller's transaction handle — `bookService.update`
+ * must not open a second one, since nesting `db.transaction` throws
+ * `NestedTransactionError`. `narrators` is not clearable, so only the genres fill
+ * consults the tombstone set.
+ */
 async function applyEnrichmentArrayFields(
   bookId: number,
   data: { narrators?: string[] | undefined; genres?: string[] | undefined },
   opts: { existingNarrator?: string | null | undefined; existingGenres?: string[] | null | undefined },
   deps: Pick<EnrichmentDeps, 'bookService'>,
+  cleared: ReadonlySet<ClearableBookField>,
+  tx: DbOrTx,
 ): Promise<void> {
   if (!opts.existingNarrator && data.narrators?.length) {
-    await deps.bookService.update(bookId, { narrators: data.narrators });
+    await deps.bookService.update(bookId, { narrators: data.narrators }, { tx });
   }
-  if (data.genres?.length && !opts.existingGenres?.length) {
-    await deps.bookService.update(bookId, { genres: data.genres });
+  if (data.genres?.length && !opts.existingGenres?.length && !cleared.has('genres')) {
+    await deps.bookService.update(bookId, { genres: data.genres }, { tx });
   }
 }
 
