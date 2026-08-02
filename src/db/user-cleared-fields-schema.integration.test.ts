@@ -471,6 +471,149 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     });
   });
 
+  // ─── F21 / F5: the DEFERRED unmatched-genre telemetry, against a real DB ───
+  //
+  // `bookService.update`'s caller-owned-tx arm emits no post-commit side effects,
+  // so a rollback cannot strand them — which makes running the telemetry the
+  // OWNER's job, after its own commit. Before #2069 both genre-fill paths used the
+  // self-managed arm and recorded unmatched genres; the deferred hand-back restores
+  // that. `unmatched_genres` is the observation point, so these see the committed
+  // effect rather than a call on a mock.
+  describe('F21 / F5 — enrichment owners resume genre telemetry after commit', () => {
+    /** Survives `normalizeGenres` and is in no synonym/known list, so it lands. */
+    const UNMATCHED = 'Zzzz Unmatched Genre';
+
+    async function readTrackedGenres(): Promise<string[]> {
+      return (await db.select().from(unmatchedGenres)).map((r) => r.genre);
+    }
+
+    /** A scheduled pass whose provider result carries the unmatched genre. */
+    async function runScheduledPass(): Promise<void> {
+      const metadataService = {
+        resolveBook: vi.fn().mockResolvedValue({
+          title: 'Tress of the Emerald Sea',
+          authors: [{ name: 'Brandon Sanderson' }],
+          genres: [UNMATCHED],
+        }),
+      } as unknown as MetadataService;
+      await runEnrichment(db, metadataService, bookService, log);
+    }
+
+    async function runPostImportPass(bookId: number, asin: string): Promise<void> {
+      const metadataService = {
+        enrichBook: vi.fn().mockResolvedValue({ genres: [UNMATCHED] }),
+        resolveBook: vi.fn().mockResolvedValue(null),
+      } as unknown as MetadataService;
+      await applyAudnexusEnrichment(
+        bookId,
+        { primaryAsin: asin, existingNarrator: 'Someone', existingGenres: null },
+        { db, log, bookService, metadataService },
+      );
+    }
+
+    it('scheduled: a committed genre fill records the unmatched genre', async () => {
+      const bookId = await seedBook({ asin: 'B0BGENRE01' });
+
+      await runScheduledPass();
+
+      expect(await readTrackedGenres()).toEqual([UNMATCHED]);
+      // The write it is telemetry FOR actually landed — so this is not recording a
+      // fill that never happened.
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.genres).toEqual([UNMATCHED]);
+    });
+
+    it('scheduled: a TOMBSTONED genre fill is suppressed, so nothing is recorded', async () => {
+      const bookId = await seedBook({ asin: 'B0BGENRE02' });
+      await writeRawColumn(bookId, '["genres"]');
+
+      await runScheduledPass();
+
+      expect(await readTrackedGenres()).toEqual([]);
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.genres).toBeNull();
+      // …while the pass itself still succeeded, so the empty table is about the
+      // suppressed write, not a failed run.
+      expect(row!.enrichmentStatus).toBe('enriched');
+    });
+
+    it('scheduled: a stale-dropped candidate records nothing', async () => {
+      const bookId = await seedBook({ asin: 'B0BGENRE03' });
+      // A Fix Match commits during the provider fetch, so the write transaction
+      // aborts on its identity re-read.
+      const metadataService = {
+        resolveBook: vi.fn().mockImplementation(async () => {
+          await db.update(books).set({ asin: 'B0BREIDENT' }).where(eq(books.id, bookId));
+          return { title: 'Tress of the Emerald Sea', authors: [], genres: [UNMATCHED] };
+        }),
+      } as unknown as MetadataService;
+
+      await runEnrichment(db, metadataService, bookService, log);
+
+      expect(await readTrackedGenres()).toEqual([]);
+    });
+
+    it('post-import: a committed genre fill records the unmatched genre', async () => {
+      const bookId = await seedBook({ asin: 'B0BGENRE04' });
+
+      await runPostImportPass(bookId, 'B0BGENRE04');
+
+      expect(await readTrackedGenres()).toEqual([UNMATCHED]);
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.genres).toEqual([UNMATCHED]);
+    });
+
+    it('post-import: a TOMBSTONED genre fill is suppressed, so nothing is recorded', async () => {
+      const bookId = await seedBook({ asin: 'B0BGENRE05' });
+      await writeRawColumn(bookId, '["genres"]');
+
+      await runPostImportPass(bookId, 'B0BGENRE05');
+
+      expect(await readTrackedGenres()).toEqual([]);
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.genres).toBeNull();
+      expect(row!.enrichmentStatus).toBe('enriched');
+    });
+
+    it('post-import: a rolled-back transaction records nothing (the effect is DEFERRED, not pre-commit)', async () => {
+      const bookId = await seedBook({ asin: 'B0BGENRE06' });
+      // Fail the narrators write, which runs BEFORE the genres write inside the same
+      // transaction — so the genre write is issued-then-rolled-back rather than never
+      // attempted, which is the case a pre-commit effect would leak on.
+      const realUpdate = bookService.update.bind(bookService);
+      vi.spyOn(bookService, 'update').mockImplementation(async (id, data, options) => {
+        if (data && 'narrators' in data) throw new Error('narrator write boom');
+        return realUpdate(id, data, options);
+      });
+
+      const metadataService = {
+        enrichBook: vi.fn().mockResolvedValue({ genres: [UNMATCHED], narrators: ['Michael Kramer'] }),
+        resolveBook: vi.fn().mockResolvedValue(null),
+      } as unknown as MetadataService;
+      await applyAudnexusEnrichment(
+        bookId,
+        { primaryAsin: 'B0BGENRE06', existingNarrator: null, existingGenres: null },
+        { db, log, bookService, metadataService },
+      );
+      vi.restoreAllMocks();
+
+      expect(await readTrackedGenres()).toEqual([]);
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.enrichmentStatus).toBe('pending');
+      expect(row!.genres).toBeNull();
+    });
+
+    it('the operator-facing self-managed PUT arm still records genres itself', async () => {
+      // The wrapper keeps owning its own post-commit effects — the deferred hand-back
+      // is only for callers that supply a transaction.
+      const bookId = await seedBook();
+
+      await bookService.update(bookId, { genres: [UNMATCHED] }, { userAsserted: true });
+
+      expect(await readTrackedGenres()).toEqual([UNMATCHED]);
+    });
+  });
+
   describe('AC16 — the hydrated detail exposes the parsed set', () => {
     it('returns [] for a NULL column and the parsed array for a populated one', async () => {
       const emptyId = await seedBook();

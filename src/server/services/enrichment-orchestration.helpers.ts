@@ -208,7 +208,7 @@ async function applyEnrichmentData(
 ): Promise<void> {
   const asinToWrite = await resolveAsinWriteback(bookId, resolvedAsin, opts.primaryAsin, deps);
 
-  const applied = await deps.db.transaction(async (tx) => {
+  const committed = await deps.db.transaction(async (tx) => {
     const rows = await tx
       .select({ asin: books.asin, userClearedFields: books.userClearedFields })
       .from(books)
@@ -218,7 +218,7 @@ async function applyEnrichmentData(
     // Identity guard: a Fix Match committed during the provider fetch re-pointed
     // this row, so the payload no longer describes it. A missing row is the same
     // outcome — there is nothing to enrich.
-    if (!row || canonicalizeAsin(row.asin) !== capturedAsin) return false;
+    if (!row || canonicalizeAsin(row.asin) !== capturedAsin) return { applied: false, genresWritten: null };
 
     const cleared = new Set(parseClearedFields(row.userClearedFields, deps.log, bookId));
 
@@ -237,14 +237,26 @@ async function applyEnrichmentData(
       updates.publisher = data.publisher;
     }
     await tx.update(books).set(updates).where(eq(books.id, bookId));
-    await applyEnrichmentArrayFields(bookId, data, opts, deps, cleared, tx);
-    return true;
+    const genresWritten = await applyEnrichmentArrayFields(bookId, data, opts, deps, cleared, tx);
+    return { applied: true, genresWritten };
   });
 
   // A stale drop is not a success — do not log one.
-  if (!applied) {
+  if (!committed.applied) {
     deps.log.debug({ bookId, asin: capturedAsin }, 'stale post-import enrichment dropped (identity re-read)');
     return;
+  }
+
+  // Deferred effect, run only now that the write transaction has COMMITTED (#2069
+  // F21/F5). `bookService.update`'s caller-owned-tx arm deliberately emits no
+  // post-commit side effects — a rollback the owner may still perform would strand
+  // them — so this owner runs the telemetry itself, after its own commit. Awaited
+  // rather than fire-and-forget so the import cannot outlive its own telemetry;
+  // still non-fatal, matching the `update()` wrapper.
+  if (committed.genresWritten) {
+    await deps.bookService.trackUnmatchedGenres(committed.genresWritten).catch((error: unknown) => {
+      deps.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres');
+    });
   }
 
   deps.log.info(
@@ -259,6 +271,10 @@ async function applyEnrichmentData(
  * must not open a second one, since nesting `db.transaction` throws
  * `NestedTransactionError`. `narrators` is not clearable, so only the genres fill
  * consults the tombstone set.
+ *
+ * Returns the genre payload that actually landed, or `null` — the caller runs the
+ * unmatched-genre telemetry for it AFTER the owning transaction commits (#2069
+ * F21/F5). Narrators carry no telemetry, so only the genre arm reports back.
  */
 async function applyEnrichmentArrayFields(
   bookId: number,
@@ -267,13 +283,15 @@ async function applyEnrichmentArrayFields(
   deps: Pick<EnrichmentDeps, 'bookService'>,
   cleared: ReadonlySet<ClearableBookField>,
   tx: DbOrTx,
-): Promise<void> {
+): Promise<string[] | null> {
   if (!opts.existingNarrator && data.narrators?.length) {
     await deps.bookService.update(bookId, { narrators: data.narrators }, { tx });
   }
   if (data.genres?.length && !opts.existingGenres?.length && !cleared.has('genres')) {
     await deps.bookService.update(bookId, { genres: data.genres }, { tx });
+    return data.genres;
   }
+  return null;
 }
 
 // ─── Book creation payload ──────────────────────────────────────────────

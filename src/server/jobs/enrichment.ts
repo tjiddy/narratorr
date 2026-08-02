@@ -156,6 +156,13 @@ type EnrichmentWriteOutcome = 'applied' | 'stale' | 'unique-conflict';
  * of the write proceeds and `enrichmentStatus` advances normally. Only an identity
  * mismatch yields `'stale'`, and the caller then emits no success counters or log.
  *
+ * `genresWritten` carries the genre payload back OUT as a DEFERRED EFFECT (#2069
+ * F21/F5): `bookService.update`'s caller-owned-tx arm deliberately emits no
+ * post-commit side effects, because a rollback the owner may still perform would
+ * strand them — so the owner is the one that must run the unmatched-genre telemetry,
+ * and only after this transaction has committed. It is `null` whenever no genre
+ * write landed (nothing to fill, or the field is tombstoned).
+ *
  * On a UNIQUE violation — a concurrent writer took the resolved ASIN between
  * `findAsinCollision` and this write — the throw rolls the transaction back and the
  * guarded recovery write marks the candidate `failed` OUTSIDE it, so the rest of
@@ -170,7 +177,7 @@ async function applyEnrichmentWrites(
   updates: Record<string, unknown>,
   resolvedAsin: string | null,
   genresToFill: string[] | null,
-): Promise<{ outcome: EnrichmentWriteOutcome; filledGenres: number }> {
+): Promise<{ outcome: EnrichmentWriteOutcome; filledGenres: number; genresWritten: string[] | null }> {
   try {
     return await db.transaction(async (tx) => {
       const rows = await tx
@@ -185,7 +192,7 @@ async function applyEnrichmentWrites(
       // its own: it cannot satisfy that predicate either, so it drops below.
       if (row && (row.asin ?? null) !== capturedAsin) {
         log.debug({ bookId, asin: capturedAsin }, 'stale enrichment dropped (identity re-read)');
-        return { outcome: 'stale' as const, filledGenres: 0 };
+        return { outcome: 'stale' as const, filledGenres: 0, genresWritten: null };
       }
 
       const cleared = new Set(parseClearedFields(row?.userClearedFields ?? null, log, bookId));
@@ -199,7 +206,7 @@ async function applyEnrichmentWrites(
 
       if (scalarResult.length === 0) {
         log.debug({ bookId, asin: capturedAsin }, 'stale enrichment dropped (scalar update)');
-        return { outcome: 'stale' as const, filledGenres: 0 };
+        return { outcome: 'stale' as const, filledGenres: 0, genresWritten: null };
       }
 
       // The genres write commits through `bookService.update`, which has no
@@ -207,9 +214,9 @@ async function applyEnrichmentWrites(
       // runs on the handle so it does not open a second (nested) transaction.
       if (genresToFill && !cleared.has('genres')) {
         await bookService.update(bookId, { genres: genresToFill }, { tx });
-        return { outcome: 'applied' as const, filledGenres: 1 };
+        return { outcome: 'applied' as const, filledGenres: 1, genresWritten: genresToFill };
       }
-      return { outcome: 'applied' as const, filledGenres: 0 };
+      return { outcome: 'applied' as const, filledGenres: 0, genresWritten: null };
     });
   } catch (error: unknown) {
     if (!isUniqueViolation(error, ASIN_UNIQUE_VIOLATION)) throw error;
@@ -218,7 +225,7 @@ async function applyEnrichmentWrites(
       'Resolved ASIN hit a unique-constraint race — marking failed',
     );
     await markFailedGuarded(db, log, bookId, capturedAsin, 'unique recovery');
-    return { outcome: 'unique-conflict', filledGenres: 0 };
+    return { outcome: 'unique-conflict', filledGenres: 0, genresWritten: null };
   }
 }
 
@@ -486,6 +493,18 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
       if ('title' in updates) filledTitle++;
       if ('description' in updates) filledDescription++;
       filledGenres += written.filledGenres;
+
+      // Deferred effect, run only now that the write transaction has COMMITTED
+      // (#2069 F21/F5). The genres write goes through `bookService.update`'s
+      // caller-owned-tx arm, which emits no post-commit side effects of its own
+      // precisely so a rollback cannot strand them — which makes running this the
+      // owner's job. Awaited rather than fire-and-forget so a batch cannot outlive
+      // its own telemetry; still non-fatal, matching the `update()` wrapper.
+      if (written.genresWritten) {
+        await bookService.trackUnmatchedGenres(written.genresWritten).catch((error: unknown) => {
+          log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres');
+        });
+      }
 
       enrichedCount++;
       log.info({ bookId: candidate.id, asin: resolvedAsin ?? capturedAsin }, 'Book enriched successfully');
