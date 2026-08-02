@@ -14,7 +14,7 @@ import type { BookWithAuthor } from '@/lib/api';
 import { BookHero } from './BookHero.js';
 import { BookDetailsContent } from './BookDetailsContent.js';
 import { BookEventHistory } from './BookEventHistory.js';
-import { mergeBookData, type MetadataBook } from './helpers.js';
+import { mergeBookData, resolveDisplayedFields, type DisplayedFields, type MetadataBook } from './helpers.js';
 import { useBookActions } from './useBookActions.js';
 import { useMergeProgress, type MergeProgress } from '@/hooks/useMergeProgress.js';
 import { useBookModals } from '@/hooks/useBookModals.js';
@@ -44,6 +44,10 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [tab, setTab] = useState<'details' | 'history'>('details');
 
   const merged = mergeBookData(libraryBook, metadataBook);
+  // The modal's pre-fill and diff baseline come from the SAME resolver call the
+  // header's meta line does (#2069 AC18/AC25), so what the header hides and what
+  // the modal pre-fills cannot drift apart.
+  const displayed = resolveDisplayedFields(libraryBook, metadataBook);
   const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, wrongReleaseMutation, retryImportMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id);
 
@@ -143,6 +147,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
 
       <BookDetailsModals
         libraryBook={libraryBook}
+        displayed={displayed}
         modals={modals}
         close={close}
         isSaving={isSaving}
@@ -164,6 +169,7 @@ type BookActions = ReturnType<typeof useBookActions>;
 
 function BookDetailsModals({
   libraryBook,
+  displayed,
   modals,
   close,
   isSaving,
@@ -176,6 +182,7 @@ function BookDetailsModals({
   navigate,
 }: {
   libraryBook: BookWithAuthor;
+  displayed: DisplayedFields;
   modals: BookModalsState;
   close: CloseFn;
   isSaving: boolean;
@@ -198,6 +205,7 @@ function BookDetailsModals({
       {modals.edit && (
         <BookMetadataModal
           book={libraryBook}
+          displayed={displayed}
           onSave={(data, renameFiles) => handleSave(data, renameFiles, () => close('edit'))}
           onClose={() => close('edit')}
           isSaving={isSaving}

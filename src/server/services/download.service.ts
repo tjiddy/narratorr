@@ -23,7 +23,8 @@ import { resolveAdapterDownloadUrl } from './download-resolve-adapter-url.js';
 import { resolveArtifact, insertDownloadRecordOrCompensate } from './download-record.js';
 import { gatherBookBlockers, classifyBlockers } from './download-blockers.js';
 
-import type { BookRow, DownloadRow } from './types.js';
+import type { BookRowPublic, DownloadRow } from './types.js';
+import { stripClearedFields } from './book-row-public.js';
 import type { BookStatus } from '@shared/schemas/book.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { DownloadError, DuplicateDownloadError } from './download-errors.js';
@@ -31,7 +32,16 @@ import { DownloadError, DuplicateDownloadError } from './download-errors.js';
 export interface DownloadWithBook extends DownloadRow {
   /** Derived legacy display status — the REST/SSE/client compatibility seam (#1445). */
   status: DownloadStatus;
-  book?: BookRow;
+  /**
+   * `BookRowPublic`, not `BookRow` (#2069 AC16). Every builder below copies the
+   * joined row wholesale into a response that has NO response schema to strip
+   * extra keys — `GET /api/activity`, `/activity/active`, `/activity/:id`, the
+   * `retried` arm of `POST /api/activity/:id/retry`, and `POST /api/search/grab`
+   * (which serializes `grabInternal`'s `DownloadWithBook` directly). Stripping the
+   * raw `user_cleared_fields` text once in the shared row mapping is what keeps it
+   * out of all five.
+   */
+  book?: BookRowPublic;
   indexerName: string | null;
 }
 
@@ -113,7 +123,7 @@ export class DownloadService {
     const data = results.map((r) => ({
       ...r.download,
       status: deriveDisplayStatus(r.download.clientStatus, r.download.pipelineStage),
-      ...(r.book && { book: r.book }),
+      ...(r.book && { book: stripClearedFields(r.book) }),
       indexerName: r.indexer?.name ?? null,
     }));
 
@@ -138,7 +148,7 @@ export class DownloadService {
     return {
       ...results[0]!.download,
       status: deriveDisplayStatus(results[0]!.download.clientStatus, results[0]!.download.pipelineStage),
-      ...(results[0]!.book && { book: results[0]!.book }),
+      ...(results[0]!.book && { book: stripClearedFields(results[0]!.book) }),
       indexerName: results[0]!.indexer?.name ?? null,
     };
   }
@@ -159,7 +169,7 @@ export class DownloadService {
     return results.map((r) => ({
       ...r.download,
       status: deriveDisplayStatus(r.download.clientStatus, r.download.pipelineStage),
-      ...(r.book && { book: r.book }),
+      ...(r.book && { book: stripClearedFields(r.book) }),
       indexerName: r.indexer?.name ?? null,
     }));
   }
@@ -206,7 +216,7 @@ export class DownloadService {
     return results.map((r) => ({
       ...r.download,
       status: deriveDisplayStatus(r.download.clientStatus, r.download.pipelineStage),
-      ...(r.book && { book: r.book }),
+      ...(r.book && { book: stripClearedFields(r.book) }),
       indexerName: r.indexer?.name ?? null,
     }));
   }

@@ -87,6 +87,20 @@ export const books = sqliteTable('books', {
   // candidate query can cap unresolvable rows (they rest as terminal `failed`,
   // recoverable via manual Fix Match which resets the row to `pending`).
   enrichmentAttempts: integer('enrichment_attempts').notNull().default(0),
+  // Operator-asserted absences (#2069) — a JSON-encoded array of the clearable
+  // field names the operator explicitly emptied through Edit Metadata, so
+  // fill-empty enrichment and the provider display fallback can tell "deliberately
+  // removed" from "never had a value". SQL NULL means "no tombstones".
+  //
+  // Declared PLAIN TEXT, deliberately NOT `{ mode: 'json' }`: Drizzle's JSON-mode
+  // mapper `JSON.parse`s unconditionally inside the driver, so one corrupt row
+  // would throw on EVERY whole-row `books` select (download/quality-gate/discovery
+  // included), not just the readers that care. Keeping the value inert until a
+  // reader opts in is the same shape `import_jobs.phase_history` uses; the only
+  // behavioral reader is `parseClearedFields` (src/server/utils/cleared-fields.ts),
+  // which warn-and-degrades. Every in-app write goes through
+  // `serializeClearedFields` (canonical: sorted, deduped, empty set → NULL).
+  userClearedFields: text('user_cleared_fields'),
   path: text('path'),
   size: integer('size'),
   // Audio technical info (populated by file-based enrichment)

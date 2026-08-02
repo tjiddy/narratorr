@@ -7,6 +7,7 @@ import type { LibraryBookListItem } from '@shared/schemas/library-book.js';
 import { sortCollapsedRows, collapseRows, buildFallbackCompare } from './book-list-collapse.js';
 import type { BookWithAuthor } from './book.service.js';
 import type { BookRow } from './types.js';
+import { stripClearedFields } from './book-row-public.js';
 
 /** Server-side row shape for the library list — same fields as the wire
  *  LibraryBookListItem but with Drizzle Date timestamps (Fastify serializes
@@ -209,7 +210,10 @@ export class BookListService {
         .map((n) => n.narrator);
 
       return {
-        ...r.book,
+        // Drop the raw `user_cleared_fields` text (#2069 AC16): this list spreads
+        // whole `books` rows and its declared `BookWithAuthor` return type omits
+        // the column, but the `as` cast below cannot enforce that at runtime.
+        ...stripClearedFields(r.book as BookRow),
         importListName: r.importListName ?? null,
         authors: sortedAuthors,
         narrators: sortedNarrators,

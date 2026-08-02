@@ -3,19 +3,26 @@ import { deleteManagedBookFiles, type DeleteManagedFilesResult } from '../utils/
 import { uploadBookCover, CoverUploadError } from './cover-upload.js';
 import type { CoverWriteOutcome } from './cover-write.js';
 import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
-import { eq, sql, inArray, and, isNotNull } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { Db, DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '@db/schema.js';
-import { slugify, findUnmatchedGenres, normalizeGenres } from '@core/index.js';
-import { replaceSeriesLink, upsertSeriesLink, type ReplaceSeriesLinkArgs } from './book-series-link.js';
+import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '@db/schema.js';
+import { slugify } from '@core/index.js';
+import { replaceSeriesLink, upsertSeriesLink, detachBookFromSeriesMembers, type ReplaceSeriesLinkArgs } from './book-series-link.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
-import type { BookRow, CompanionEbookRow } from './types.js';
-import { productionTypeSchema, type BookStatus } from '@shared/schemas/book.js';
-import { findCompanionEbooksByBookIds } from './companion-ebook.repository.js';
-import { toCompanionEbookV1, type CompanionEbookV1 } from '@shared/schemas/v1/companion-ebook.js';
+import type { BookRow, BookRowPublic } from './types.js';
+import { productionTypeSchema, type BookStatus, type ClearableBookField } from '@shared/schemas/book.js';
+import {
+  parseClearedFields,
+  serializeClearedFields,
+  normalizeClearedFieldsColumn,
+  recomputeClearedFields,
+} from '../utils/cleared-fields.js';
+import type { CompanionEbookV1 } from '@shared/schemas/v1/companion-ebook.js';
+import { findLibraryStatusByAsins } from './book-library-status.js';
+import { trackUnmatchedGenres } from './unmatched-genres.js';
 import { buildNewBookValues, type CreateBookInput, type ResolvedBookCreateInput } from './book-create.js';
 import { canonicalizeAsin } from '@shared/asin.js';
 import { isUniqueViolation } from '@shared/error-message.js';
@@ -82,6 +89,10 @@ function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof book
     duration: r.duration ?? null,
     publishedDate: r.publishedDate ?? null,
     genres: r.genres ?? null,
+    // Re-identifying a book is a NEW operator assertion (#2069 AC13): the prior
+    // clears described the old record, so the whole tombstone set is reset rather
+    // than honored. Written in the same transaction as the scalar replacement.
+    userClearedFields: null,
     enrichmentStatus: 'pending',
     enrichmentAttempts: 0,
     updatedAt: new Date(),
@@ -98,10 +109,58 @@ function buildReplaceSeriesLinkArgs(r: FixMatchReplacement): ReplaceSeriesLinkAr
   };
 }
 
-export interface BookWithAuthor extends BookRow {
+/**
+ * A hydrated book row for LIST responses. Extends `BookRowPublic`, not `BookRow`,
+ * so the raw `user_cleared_fields` text cannot ride along into `GET /api/books`
+ * (#2069 AC16) — the list has no consumer for tombstones.
+ */
+export interface BookWithAuthor extends BookRowPublic {
   authors: AuthorRow[];
   narrators: NarratorRow[];
   importListName?: string | null;
+}
+
+/**
+ * The hydrated DETAIL shape (#2069 AC16) — what `getById`, `update`, `fixMatch`,
+ * and the create paths return, and therefore what `GET /api/books/:id` serializes.
+ *
+ * `userClearedFields` is the PARSED set (`parseClearedFields` output), never the
+ * raw column string: a corrupt row degrades to `[]` instead of failing the request.
+ * No consumer may assume the field is parsed unless it came from here.
+ */
+export interface BookDetail extends BookWithAuthor {
+  userClearedFields: ClearableBookField[];
+}
+
+/**
+ * Options for {@link BookService.update} (#2069).
+ *
+ * Both flags are explicit OPT-INS — `update()` never infers operator intent from
+ * the values it is handed. The internal callers (`refresh-scan`, `rename`,
+ * scheduled enrichment, `enrichment-utils`, post-import enrichment) all pass
+ * `null`s of their own and must neither create nor remove a tombstone.
+ */
+export interface BookUpdateOptions {
+  /**
+   * The write is an operator assertion (`PUT /api/books/:id`): recompute the
+   * tombstone set from the body and normalize blank clearable values to NULL
+   * (AC5/AC6/AC7). Also reconciles `series_members` when `seriesName` is blanked
+   * (AC14), in the same transaction.
+   */
+  userAsserted?: boolean;
+  /**
+   * Caller-owned transaction handle (AC11). Every write runs on it and NO
+   * transaction is opened — `db.transaction` is serialized per connection and
+   * nesting throws `NestedTransactionError`.
+   *
+   * **Pre-commit return contract.** On this arm the returned `BookDetail` is read
+   * on the caller's handle and therefore describes the state INSIDE their still-open
+   * transaction; if the owner rolls back, that state never existed. The arm is also
+   * deliberately side-effect-free — no success log, no unmatched-genre telemetry —
+   * so a rollback cannot strand bookkeeping for data that never committed (the same
+   * split `create`/`createResolved` already makes).
+   */
+  tx?: DbOrTx;
 }
 
 /** One entry of `findLibraryStatusByAsins`'s map — the v1 metadata-search
@@ -119,8 +178,18 @@ export class BookService {
     private metadataService?: MetadataService,
   ) {}
 
-  async getById(id: number): Promise<BookWithAuthor | null> {
-    const bookResults = await this.db
+  /**
+   * Hydrate one book into the DETAIL shape.
+   *
+   * `executor` defaults to `this.db`; a caller that owns a transaction passes its
+   * handle so the read stays ON that handle and observes its own uncommitted
+   * writes (#2069 AC11) — a `this.db` read cannot see them.
+   *
+   * The spread's raw `userClearedFields` string is OVERRIDDEN with the parsed set
+   * (AC16), so the raw column never leaves this service.
+   */
+  async getById(id: number, executor: DbOrTx = this.db): Promise<BookDetail | null> {
+    const bookResults = await executor
       .select({ book: books, importListName: importLists.name })
       .from(books)
       .leftJoin(importLists, eq(books.importListId, importLists.id))
@@ -129,14 +198,14 @@ export class BookService {
 
     if (bookResults.length === 0) return null;
 
-    const authorResults = await this.db
+    const authorResults = await executor
       .select({ author: authors, position: bookAuthors.position })
       .from(bookAuthors)
       .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
       .where(eq(bookAuthors.bookId, id))
       .orderBy(bookAuthors.position);
 
-    const narratorResults = await this.db
+    const narratorResults = await executor
       .select({ narrator: narrators, position: bookNarrators.position })
       .from(bookNarrators)
       .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
@@ -145,6 +214,7 @@ export class BookService {
 
     return {
       ...bookResults[0]!.book,
+      userClearedFields: parseClearedFields(bookResults[0]!.book.userClearedFields, this.log, id),
       importListName: bookResults[0]!.importListName ?? null,
       authors: authorResults.sort((a, b) => a.position - b.position).map((r) => r.author),
       narrators: narratorResults.sort((a, b) => a.position - b.position).map((r) => r.narrator),
@@ -170,92 +240,14 @@ export class BookService {
 
   /**
    * Batch ASIN → library-status lookup for the v1 metadata-search cross-reference
-   * (#1537). Given the result ASINs of a metadata search, returns a Map keyed by
-   * the UPPERCASED ASIN with `{ bookId: <bk_ publicId>, status, companionEbook }`
-   * for each owned book — so the caller does a plain
-   * `.get(result.asin?.toUpperCase())`.
-   *
-   * Case-insensitive by design: ASINs are NOT globally normalized in narratorr
-   * (the parser uppercases, but API validators only `.trim()` and add-by-ASIN
-   * stores as-is), so an exact `IN` would silently miss a case-drifted stored
-   * ASIN and wrongly show every such book as "not owned". We match on
-   * `upper(asin)` — matching `idx_books_asin_unique`, which is
-   * `upper("asin") WHERE asin IS NOT NULL`, and matching what `:367` and `:484`
-   * already do. (An earlier revision used `lower(asin)` and cited a
-   * `book-list.service` precedent; that was the wrong precedent, and it made this
-   * query unable to use the index at all.)
-   *
-   * **`asin IS NOT NULL` in the predicate is NOT redundant.** SQLite will only use a
-   * PARTIAL index when the query restates its condition, even where the condition is
-   * logically implied. Measured with EXPLAIN QUERY PLAN against the real schema:
-   * `lower(asin) IN (…)` → `SCAN books`; `upper(asin) IN (…)` → **still** `SCAN books`;
-   * `upper(asin) IN (…) AND asin IS NOT NULL` → `SEARCH books USING INDEX
-   * idx_books_asin_unique`. Dropping either half silently returns this to a full scan
-   * of `books` on every metadata search.
-   *
-   * The query is bounded by the small search result set (currently ≤10), so no
-   * chunking is needed — but guard the empty list so we never emit `IN ()`.
-   *
-   * Null-ASIN owned books cannot match (the index is partial); that limitation is
-   * accepted and documented in #1537, so the added predicate encodes an existing
-   * invariant rather than changing behaviour.
-   *
-   * **Companion ebooks (#1961).** `companionEnabled` is supplied BY THE CALLER —
-   * this service takes no `SettingsService`, matching the convention
-   * `isCompanionEbookEligible` already sets. When it is false, or when no row
-   * matched, NO companion query is issued and every value carries
-   * `companionEbook: null`. Otherwise observations are batch-loaded by numeric
-   * `books.id` through `findCompanionEbooksByBookIds` (already chunked at 480),
-   * so the whole annotation costs one books select plus
-   * `ceil(matched / 480)` companion selects — never one per result.
-   *
-   * The select therefore also projects the numeric `books.id` (the companion FK).
-   * It does NOT project `books.path`: the exposure predicate takes exactly
-   * `{ enabled, bookStatus, observationStatus }` and must never grow a live/path
-   * term (see `src/shared/companion-ebook-exposure.ts`). The projection is built
-   * inside this method body, never as a module-level constant
-   * (`drizzle-schema-toplevel-deref-breaks-partial-mocks`).
+   * (#1537). Delegates to the free function in `book-library-status.ts` (keeps this
+   * file under the line cap); see there for the index-usage and companion notes.
    */
   async findLibraryStatusByAsins(
     asins: string[],
     options: { companionEnabled: boolean },
   ): Promise<Map<string, LibraryStatusByAsin>> {
-    const map = new Map<string, LibraryStatusByAsin>();
-    if (asins.length === 0) return map;
-
-    const uppered = asins.map((a) => a.toUpperCase());
-    const rows = await this.db
-      .select({ id: books.id, bookId: books.publicId, status: books.status, asin: books.asin })
-      .from(books)
-      // `upper()`, and the redundant-looking `asin IS NOT NULL`, are BOTH required to hit
-      // `idx_books_asin_unique` — see the note above the method. Measured with
-      // EXPLAIN QUERY PLAN: `lower(asin) IN (…)` and `upper(asin) IN (…)` both SCAN;
-      // only `upper(asin) IN (…) AND asin IS NOT NULL` produces
-      // `SEARCH books USING INDEX idx_books_asin_unique`.
-      .where(and(inArray(sql`upper(${books.asin})`, uppered), isNotNull(books.asin)));
-
-    const matchedIds = rows.filter((r) => r.asin != null).map((r) => r.id);
-    const companionByBookId: Map<number, CompanionEbookRow> =
-      options.companionEnabled && matchedIds.length > 0
-        ? await findCompanionEbooksByBookIds(this.db, matchedIds)
-        : new Map();
-
-    for (const row of rows) {
-      if (row.asin == null) continue;
-      const status = row.status as BookStatus;
-      map.set(row.asin.toUpperCase(), {
-        bookId: row.bookId,
-        status,
-        // The exposure→DTO decision lives in exactly one place (#1961 AC 10a) —
-        // no term, no size guard, and no `'epub'` literal is re-spelled here.
-        companionEbook: toCompanionEbookV1({
-          enabled: options.companionEnabled,
-          bookStatus: status,
-          observation: companionByBookId.get(row.id),
-        }),
-      });
-    }
-    return map;
+    return findLibraryStatusByAsins(this.db, asins, options);
   }
 
   /**
@@ -319,7 +311,7 @@ export class BookService {
    * hydrates to a `BookWithAuthor`. The post-commit side effects live here (not
    * in the primitive) so a future caller-owned-tx rollback can never strand them.
    */
-  async create(data: CreateBookInput): Promise<BookWithAuthor> {
+  async create(data: CreateBookInput): Promise<BookDetail> {
     const resolved = await this.resolveCreateInput(data);
     const bookId = await this.createResolved(resolved);
 
@@ -330,7 +322,7 @@ export class BookService {
     // explicit `null` rather than a leftover input string.
     this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: canonicalizeAsin(resolved.asin) }, 'Book added to library');
     this.trackUnmatchedGenres(data.genres).catch((error) => this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres'));
-    return this.getById(bookId) as Promise<BookWithAuthor>;
+    return this.getById(bookId) as Promise<BookDetail>;
   }
 
   /**
@@ -437,7 +429,11 @@ export class BookService {
     return id;
   }
 
-  async update(id: number, data: { [K in keyof NewBook]?: NewBook[K] | undefined } & { narrators?: string[] | undefined; authors?: { name: string; asin?: string | undefined }[] | undefined }): Promise<BookWithAuthor | null> {
+  async update(
+    id: number,
+    data: { [K in keyof NewBook]?: NewBook[K] | undefined } & { narrators?: string[] | undefined; authors?: { name: string; asin?: string | undefined }[] | undefined },
+    options?: BookUpdateOptions,
+  ): Promise<BookDetail | null> {
     const { narrators: narratorNames, authors: authorList, ...bookData } = data;
 
     // Canonicalize the ASIN at this service-internal write boundary (#1733). The
@@ -458,25 +454,26 @@ export class BookService {
       bookData.productionType = productionTypeSchema.parse(bookData.productionType);
     }
 
-    const updated = await this.db.transaction(async (tx) => {
-      const result = await tx
-        .update(books)
-        .set({ ...bookData, updatedAt: new Date() })
-        .where(eq(books.id, id))
-        .returning();
+    // Same write-boundary rule for the tombstone column (#2069 AC2) — SQLite text
+    // columns emit no DB CHECK either. A supplied raw value carrying an unknown
+    // field name throws HERE, before any transaction opens, so no `.set(...)` is
+    // ever issued for it.
+    if ('userClearedFields' in bookData) {
+      bookData.userClearedFields = normalizeClearedFieldsColumn(bookData.userClearedFields as string | null | undefined);
+    }
 
-      if (result.length === 0) return false;
+    // Caller owns the transaction: run every write on their handle, open none,
+    // and skip the post-commit side effects entirely (they'd be stranded by a
+    // rollback the owner may still perform). The hydration reads their handle so
+    // it observes the writes just made — see `BookUpdateOptions.tx`.
+    if (options?.tx) {
+      const applied = await this.runUpdate(options.tx, id, bookData, narratorNames, authorList, options);
+      return applied ? this.getById(id, options.tx) : null;
+    }
 
-      if (narratorNames !== undefined) {
-        await this.syncNarrators(tx, id, narratorNames);
-      }
-
-      if (authorList !== undefined) {
-        await this.syncAuthors(tx, id, authorList);
-      }
-
-      return true;
-    });
+    const updated = await this.db.transaction((tx) =>
+      this.runUpdate(tx, id, bookData, narratorNames, authorList, options),
+    );
 
     if (!updated) return null;
 
@@ -490,6 +487,68 @@ export class BookService {
     }
 
     return this.getById(id);
+  }
+
+  /**
+   * The in-transaction write sequence shared by both `update()` arms. Returns
+   * whether a row matched.
+   *
+   * On the `userAsserted` path the tombstone read-modify-write happens HERE, on
+   * the same handle as the scalar UPDATE (#2069 AC8): re-reading the stored set
+   * inside the transaction is what keeps two concurrent edits from interleaving
+   * into a stale set — an implementation that reads it before the transaction
+   * opens can silently drop the other edit's tombstone.
+   */
+  private async runUpdate(
+    tx: DbOrTx,
+    id: number,
+    bookData: Record<string, unknown>,
+    narratorNames: string[] | undefined,
+    authorList: { name: string; asin?: string | undefined }[] | undefined,
+    options: BookUpdateOptions | undefined,
+  ): Promise<boolean> {
+    const setValues: Record<string, unknown> = { ...bookData };
+    let blankedSeriesName = false;
+
+    if (options?.userAsserted) {
+      const existing = await tx
+        .select({ userClearedFields: books.userClearedFields })
+        .from(books)
+        .where(eq(books.id, id))
+        .limit(1);
+      if (existing.length === 0) return false;
+
+      const current = parseClearedFields(existing[0]!.userClearedFields, this.log, id);
+      const { cleared, normalized, blanked } = recomputeClearedFields(current, bookData);
+      Object.assign(setValues, normalized);
+      setValues.userClearedFields = serializeClearedFields(cleared);
+      blankedSeriesName = blanked.includes('seriesName');
+    }
+
+    const result = await tx
+      .update(books)
+      .set({ ...setValues, updatedAt: new Date() })
+      .where(eq(books.id, id))
+      .returning();
+
+    if (result.length === 0) return false;
+
+    if (narratorNames !== undefined) {
+      await this.syncNarrators(tx, id, narratorNames);
+    }
+
+    if (authorList !== undefined) {
+      await this.syncAuthors(tx, id, authorList);
+    }
+
+    // Series membership residue (#2069 AC14). Same transaction as the scalar
+    // write, so a reconcile failure rolls the clear back too rather than leaving
+    // exactly the stale residue this exists to remove.
+    if (blankedSeriesName) {
+      await detachBookFromSeriesMembers(tx, id);
+    }
+
+    return true;
   }
 
   /**
@@ -527,7 +586,7 @@ export class BookService {
    * `findAsinCollision`. Any non-collision DB failure bubbles up and rolls
    * back the entire transaction.
    */
-  async fixMatch(id: number, replacement: FixMatchReplacement): Promise<BookWithAuthor | null> {
+  async fixMatch(id: number, replacement: FixMatchReplacement): Promise<BookDetail | null> {
     const scalarUpdates = buildFixMatchScalarUpdates(replacement);
     const seriesArgs = buildReplaceSeriesLinkArgs(replacement);
 
@@ -551,7 +610,7 @@ export class BookService {
     return this.getById(id);
   }
 
-  async updateStatus(id: number, status: BookRow['status']): Promise<BookWithAuthor | null> {
+  async updateStatus(id: number, status: BookRow['status']): Promise<BookDetail | null> {
     this.log.info({ id, status }, 'Book status changed');
     return this.update(id, { status });
   }
@@ -602,7 +661,7 @@ export class BookService {
     bookId: number,
     buffer: Buffer,
     mimeType: string,
-  ): Promise<{ book: BookWithAuthor; coverOutcome: CoverWriteOutcome }> {
+  ): Promise<{ book: BookDetail; coverOutcome: CoverWriteOutcome }> {
     if (!SUPPORTED_COVER_MIMES.has(mimeType)) {
       throw new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME');
     }
@@ -620,27 +679,12 @@ export class BookService {
     // usable state and still fires its `'metadata'` refresh. `finalizeCoverWrite` deliberately keeps
     // `coverOutcome === 'written'` on a post-rename DB failure *so the refresh fires* — re-throwing
     // here on a reload miss would re-introduce the very failure point it avoids.
-    const reloaded = await this.getById(bookId).catch(() => book) as BookWithAuthor;
+    const reloaded = await this.getById(bookId).catch(() => book) as BookDetail;
     return { book: reloaded, coverOutcome };
   }
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */
   async trackUnmatchedGenres(genres: string[] | undefined): Promise<void> {
-    const unmatched = findUnmatchedGenres(normalizeGenres(genres));
-    if (unmatched.length === 0) return;
-
-    for (const genre of unmatched) {
-      await this.db
-        .insert(unmatchedGenres)
-        .values({ genre, count: 1 })
-        .onConflictDoUpdate({
-          target: unmatchedGenres.genre,
-          set: {
-            count: sql`${unmatchedGenres.count} + 1`,
-            lastSeen: sql`(unixepoch())`,
-          },
-        });
-    }
-    this.log.debug({ genres: unmatched }, 'Tracked unmatched genres');
+    return trackUnmatchedGenres(this.db, this.log, genres);
   }
 }

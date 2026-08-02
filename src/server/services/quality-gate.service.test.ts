@@ -43,7 +43,7 @@ const baseBook = {
   createdAt: new Date(), enrichmentStatus: 'pending' as const, productionType: 'unknown' as const, editionLabel: null, enrichmentAttempts: 0,
   audioBitrateMode: null, audioFileFormat: null, audioFileCount: null, topLevelAudioFileCount: null,
   seriesId: null, importListId: null,
-  lastGrabGuid: null, lastGrabInfoHash: null,
+  lastGrabGuid: null, lastGrabInfoHash: null, userClearedFields: null,
 };
 
 function makeScan(overrides?: Partial<{ totalSize: number; totalDuration: number; tagNarrator: string; channels: number; codec: string }>) {

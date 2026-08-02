@@ -39,6 +39,7 @@ export function createMockDbBook(overrides?: Record<string, unknown>) {
     productionType: 'unknown' as const,
     editionLabel: null as string | null,
     enrichmentAttempts: 0,
+    userClearedFields: null as string | null,
     path: null as string | null,
     size: null as number | null,
     audioCodec: null as string | null,

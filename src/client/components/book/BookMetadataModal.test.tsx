@@ -588,3 +588,220 @@ describe('BookMetadataModal', () => {
     });
   });
 });
+
+// ─── #2069 AC25: the modal diffs against what the operator SEES ───
+//
+// For a post-import book the series exists only as a provider fallback
+// (`series_name = NULL`, `enrichmentStatus: 'enriched'` forever), so a
+// stored-value baseline renders the input empty and blanking it produces no diff —
+// the clear would be inexpressible for the most common book in the library.
+describe('BookMetadataModal — displayed baseline (#2069 AC25)', () => {
+  /** A book at `enriched` whose clearable columns are all empty. */
+  const providerOnlyBook = createMockBook({
+    title: 'Tress of the Emerald Sea',
+    authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
+    narrators: [],
+    enrichmentStatus: 'enriched',
+    seriesName: null, seriesPosition: null, subtitle: null, description: null,
+    publisher: null, publishedDate: null, genres: null,
+    path: '/library/Brandon Sanderson/Tress of the Emerald Sea',
+    status: 'imported',
+  });
+
+  const providerDisplayed = {
+    seriesName: 'Secret Projects',
+    seriesPosition: 1,
+    subtitle: 'Provider Subtitle',
+    description: 'Provider description',
+    publisher: 'Dragonsteel',
+    publishedDate: '2023-01-10',
+    genres: ['Fantasy', 'Epic'],
+  };
+
+  /** The resolver output for a fully-tombstoned book — every field resolves to nothing. */
+  const clearedDisplayed = {
+    seriesName: undefined, seriesPosition: undefined, subtitle: undefined,
+    description: undefined, publisher: undefined, publishedDate: undefined, genres: undefined,
+  };
+
+  function renderProviderOnly(overrides = {}) {
+    return renderModal({ book: providerOnlyBook, displayed: providerDisplayed, ...overrides });
+  }
+
+  it('F11: renders the provider-only series and turns blanking it into a real null diff', async () => {
+    const onSave = vi.fn();
+    const user = userEvent.setup();
+    renderProviderOnly({ onSave });
+
+    expect(screen.getByLabelText(/series$/i)).toHaveValue('Secret Projects');
+
+    await user.clear(screen.getByLabelText(/series$/i));
+    await user.click(screen.getByText('Save'));
+
+    // Without the displayed baseline the payload is empty and no tombstone can
+    // ever exist for this book.
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ seriesName: null }), false);
+    });
+  });
+
+  it('does NOT promote a provider value into the DB on an unrelated edit', async () => {
+    const onSave = vi.fn();
+    const user = userEvent.setup();
+    renderProviderOnly({ onSave });
+
+    await user.clear(screen.getByLabelText(/^title/i));
+    await user.type(screen.getByLabelText(/^title/i), 'New Title');
+    await user.click(screen.getByText('Save'));
+
+    // This is the arm that makes the prefill change safe.
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const payload = onSave.mock.calls[0]![0] as Record<string, unknown>;
+    expect(payload.title).toBe('New Title');
+    for (const key of ['seriesName', 'subtitle', 'description', 'publisher', 'publishedDate', 'genres']) {
+      expect(payload).not.toHaveProperty(key);
+    }
+  });
+
+  it('replacing a provider-only value sends the typed value, not null', async () => {
+    const onSave = vi.fn();
+    const user = userEvent.setup();
+    renderProviderOnly({ onSave });
+
+    await user.clear(screen.getByLabelText(/series$/i));
+    await user.type(screen.getByLabelText(/series$/i), 'Cosmere');
+    await user.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ seriesName: 'Cosmere' }), false);
+    });
+  });
+
+  describe('F19 — reopening after a clear shows the field BLANK', () => {
+    it.each([
+      ['series', /series$/i],
+      ['subtitle', /subtitle/i],
+      ['description', /description/i],
+      ['publisher', /publisher/i],
+      ['published date', /published date/i],
+      ['genres', /genres/i],
+    ])('%s renders empty for a tombstoned book', (_label, labelMatcher) => {
+      renderModal({ book: providerOnlyBook, displayed: clearedDisplayed });
+
+      // An implementation that baselines on `stored ?? providerFallback` shows the
+      // value the operator just removed.
+      expect(screen.getByLabelText(labelMatcher)).toHaveValue('');
+    });
+
+    it('saving that reopened modal untouched sends no clearable key, so the tombstone survives', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ book: providerOnlyBook, displayed: clearedDisplayed, onSave });
+
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => expect(onSave).toHaveBeenCalled());
+      const payload = onSave.mock.calls[0]![0] as Record<string, unknown>;
+      for (const key of ['seriesName', 'seriesPosition', 'subtitle', 'description', 'publisher', 'publishedDate', 'genres']) {
+        expect(payload).not.toHaveProperty(key);
+      }
+    });
+  });
+
+  it('a stored empty string on a || field renders the provider value and IS clearable', async () => {
+    const onSave = vi.fn();
+    const user = userEvent.setup();
+    // The resolver already applied `'' || provider`; the modal consumes its output.
+    renderModal({
+      book: createMockBook({ ...providerOnlyBook, publisher: '' }),
+      displayed: providerDisplayed,
+      onSave,
+    });
+
+    expect(screen.getByLabelText(/publisher/i)).toHaveValue('Dragonsteel');
+    await user.clear(screen.getByLabelText(/publisher/i));
+    await user.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ publisher: null }), false);
+    });
+  });
+
+  it('a stored genres: [] renders blank — the ?? override means there is no provider list to clear', () => {
+    renderModal({
+      book: createMockBook({ ...providerOnlyBook, genres: [] }),
+      displayed: { ...providerDisplayed, genres: [] },
+    });
+
+    expect(screen.getByLabelText(/genres/i)).toHaveValue('');
+  });
+
+  it('seriesPosition is pre-filled from the resolved pair, not the stored column', () => {
+    renderModal({ book: providerOnlyBook, displayed: providerDisplayed });
+    expect(screen.getByLabelText(/position/i)).toHaveValue('1');
+  });
+
+  it('seriesPosition renders blank when the pair resolves to nothing', () => {
+    renderModal({ book: providerOnlyBook, displayed: clearedDisplayed });
+    expect(screen.getByLabelText(/position/i)).toHaveValue('');
+  });
+
+  describe('F22 — the baseline can settle AFTER the modal mounts', () => {
+    it('adopts a late-arriving provider baseline for untouched fields, without reopening', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      // Opened BEFORE the provider metadata query resolved.
+      const { rerender } = render(
+        <QueryClientProvider client={queryClient}>
+          <BookMetadataModal {...defaultProps} book={providerOnlyBook} onSave={onSave} />
+        </QueryClientProvider>,
+      );
+      expect(screen.getByLabelText(/series$/i)).toHaveValue('');
+
+      rerender(
+        <QueryClientProvider client={queryClient}>
+          <BookMetadataModal {...defaultProps} book={providerOnlyBook} displayed={providerDisplayed} onSave={onSave} />
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() => expect(screen.getByLabelText(/series$/i)).toHaveValue('Secret Projects'));
+
+      await user.clear(screen.getByLabelText(/series$/i));
+      await user.click(screen.getByText('Save'));
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ seriesName: null }), false);
+      });
+    });
+
+    it('never overwrites a field the operator has already typed into', async () => {
+      const user = userEvent.setup();
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const { rerender } = render(
+        <QueryClientProvider client={queryClient}>
+          <BookMetadataModal {...defaultProps} book={providerOnlyBook} />
+        </QueryClientProvider>,
+      );
+
+      await user.type(screen.getByLabelText(/series$/i), 'My Own Series');
+
+      rerender(
+        <QueryClientProvider client={queryClient}>
+          <BookMetadataModal {...defaultProps} book={providerOnlyBook} displayed={providerDisplayed} />
+        </QueryClientProvider>,
+      );
+
+      expect(screen.getByLabelText(/series$/i)).toHaveValue('My Own Series');
+      // …while an untouched sibling still adopts the settled baseline.
+      await waitFor(() => expect(screen.getByLabelText(/publisher/i)).toHaveValue('Dragonsteel'));
+    });
+  });
+
+  it('with the prop absent every existing behavior holds (optional-prop compatibility)', () => {
+    renderModal();
+
+    expect(screen.getByLabelText(/series$/i)).toHaveValue('The Stormlight Archive');
+    expect(screen.getByLabelText(/publisher/i)).toHaveValue('Macmillan Audio');
+    expect(screen.getByLabelText(/genres/i)).toHaveValue('Fantasy, Epic');
+  });
+});
