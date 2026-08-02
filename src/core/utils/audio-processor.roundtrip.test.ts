@@ -19,6 +19,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readdirSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { processAudioFiles, type ProcessingConfig, type ProcessingContext } from './audio-processor.js';
+import { MP3_BITRATES_MPEG2 } from './encode-strategy.js';
 
 const FFMPEG = 'ffmpeg';
 const FFPROBE = 'ffprobe';
@@ -174,25 +175,46 @@ describe.skipIf(!FFMPEG_PRESENT)('#2068 encode strategy round-trip (real ffmpeg)
     expect(Math.abs(out.bitRate - 128_000) / 128_000).toBeLessThan(0.1);
   });
 
-  it('keeps a 22.05 kHz source inside the MPEG-2 table, where a naive 320k fails', async () => {
+  it('reaches the real MPEG-2 encoder for a 22.05 kHz source, where a naive 320k is re-rated', async () => {
     const dir = caseDir();
-    ['01.mp3', '02.mp3'].forEach((name) =>
-      makePart(dir, name, { sampleRate: 22_050, codecArgs: ['-c:a', 'libmp3lame', '-b:a', '160k'] }));
-    const source = join(dir, '01.mp3');
+    // The sources must be INELIGIBLE for a stream copy, or this proves nothing about the
+    // encoder command: a homogeneous 22.05 kHz `.mp3`/mp3 set into mp3 output is copy-eligible,
+    // so it would take `-c:a copy` and the read-back would only observe the fixture's own rate.
+    // `.wav`/pcm_s16le can never copy into mp3, so the production call genuinely reaches
+    // libmp3lame — which is the boundary AC8a exists to defend.
+    ['01.wav', '02.wav'].forEach((name) =>
+      makePart(dir, name, { sampleRate: 22_050, codecArgs: ['-c:a', 'pcm_s16le'] }));
+    const source = join(dir, '01.wav');
 
-    // Counterfactual first, while the sources still exist: the naive MPEG-1 answer is not
-    // reachable at this sample rate — LAME re-rates it rather than honoring 320k.
+    // Counterfactual first, while the sources still exist: at 22.05 kHz LAME does not deliver
+    // the MPEG-1 answer. Observed on ffmpeg 6.0, it silently re-rates 320k down to 160k rather
+    // than failing — silent re-rating is exactly why the target is snapped before it is emitted.
     const naive = join(dir, 'naive.mp3');
-    execFileSync(FFMPEG, ['-y', '-v', 'quiet', '-i', source, '-c:a', 'libmp3lame', '-b:a', '320k', naive], { stdio: 'ignore' });
-    expect(probeStream(naive).bitRate).toBeLessThanOrEqual(160_000);
-    rmSync(naive);
+    let naiveRate: number | null;
+    try {
+      execFileSync(FFMPEG, ['-y', '-v', 'quiet', '-i', source, '-c:a', 'libmp3lame', '-b:a', '320k', naive], { stdio: 'ignore' });
+      naiveRate = probeStream(naive).bitRate;
+    } catch {
+      naiveRate = null; // an outright rejection is the other legal way for the naive path to break
+    }
+    expect(naiveRate).not.toBe(320_000);
+    rmSync(naive, { force: true });
 
     const result = await processAudioFiles(dir, keepOriginal('mp3'), CONTEXT);
     expect(result.success).toBe(true);
 
+    // Proves the ENCODE branch was taken, not the copy branch: only an encode records an
+    // `mp3-table` step, and 705 kbps is the PCM source rate snapped to the MPEG-2 maximum.
+    expect(result.warnings!.some((w) => w.includes('705') && w.includes('160'))).toBe(true);
+
     const out = probeStream(outputIn(dir, '.mp3'));
+    // A pcm_s16le source cannot yield an mp3 stream without a real encode.
     expect(out.codecName).toBe('mp3');
+    // Asserted against the constant table rather than a hand-typed literal, so a future edit
+    // to MP3_BITRATES_MPEG2 cannot silently make the "legal at this rate" claim false.
+    expect(MP3_BITRATES_MPEG2.map((k) => k * 1000)).toContain(out.bitRate);
     expect(out.bitRate).toBeLessThanOrEqual(160_000);
+    expect(out.sampleRate).toBe(22_050);
   });
 
   it('legalizes an explicit 512 kbps mp3 target down to 320 kbps at 44.1 kHz', async () => {
