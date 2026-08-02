@@ -27,13 +27,13 @@ function whereParams(expr: unknown): unknown[] {
 describe('enrichment job', () => {
   let db: ReturnType<typeof createMockDb>;
   let metadataService: { resolveBook: ReturnType<typeof vi.fn> };
-  let bookService: { update: ReturnType<typeof vi.fn>; findAsinCollision: ReturnType<typeof vi.fn> };
+  let bookService: { update: ReturnType<typeof vi.fn>; findAsinCollision: ReturnType<typeof vi.fn>; trackUnmatchedGenres: ReturnType<typeof vi.fn> };
   let log: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
     db = createMockDb();
     metadataService = { resolveBook: vi.fn().mockResolvedValue(null) };
-    bookService = { update: vi.fn().mockResolvedValue(null), findAsinCollision: vi.fn().mockResolvedValue(null) };
+    bookService = { update: vi.fn().mockResolvedValue(null), findAsinCollision: vi.fn().mockResolvedValue(null), trackUnmatchedGenres: vi.fn().mockResolvedValue(undefined) };
     log = createMockLogger();
   });
 
@@ -1605,7 +1605,7 @@ describe('enrichment job', () => {
 describe('enrichment job — user-cleared fields (#2069)', () => {
   let db: ReturnType<typeof createMockDb>;
   let metadataService: { resolveBook: ReturnType<typeof vi.fn> };
-  let bookService: { update: ReturnType<typeof vi.fn>; findAsinCollision: ReturnType<typeof vi.fn> };
+  let bookService: { update: ReturnType<typeof vi.fn>; findAsinCollision: ReturnType<typeof vi.fn>; trackUnmatchedGenres: ReturnType<typeof vi.fn> };
   let log: ReturnType<typeof createMockLogger>;
   let updateChain: ReturnType<typeof mockDbChain>;
 
@@ -1649,7 +1649,7 @@ describe('enrichment job — user-cleared fields (#2069)', () => {
   beforeEach(() => {
     db = createMockDb();
     metadataService = { resolveBook: vi.fn().mockResolvedValue(null) };
-    bookService = { update: vi.fn().mockResolvedValue(null), findAsinCollision: vi.fn().mockResolvedValue(null) };
+    bookService = { update: vi.fn().mockResolvedValue(null), findAsinCollision: vi.fn().mockResolvedValue(null), trackUnmatchedGenres: vi.fn().mockResolvedValue(undefined) };
     log = createMockLogger();
     updateChain = mockDbChain([{ id: 1 }]);
     db.update.mockReturnValue(updateChain);
@@ -1738,6 +1738,57 @@ describe('enrichment job — user-cleared fields (#2069)', () => {
       expect.objectContaining({ enrichedCount: 1, filledGenres: 0, filledDescription: 0 }),
       'Enrichment batch completed',
     );
+  });
+
+  describe('F21 / F5 — the genre telemetry is a DEFERRED post-commit effect', () => {
+    it('runs the telemetry with the written payload, AFTER the write transaction resolves', async () => {
+      const order: string[] = [];
+      db.transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        const result = await cb(db);
+        order.push('tx-committed');
+        return result;
+      });
+      bookService.trackUnmatchedGenres.mockImplementation(async () => { order.push('telemetry'); });
+
+      await runWithTombstones(null);
+
+      expect(bookService.trackUnmatchedGenres).toHaveBeenCalledWith(['Fantasy']);
+      // The ordering is the whole point: `update`'s caller-owned-tx arm emits no
+      // post-commit effects, so running this BEFORE the commit would strand it on a
+      // rollback. Observing the transaction's own resolution — not statement
+      // issuance — is what makes this assertion able to fail.
+      expect(order).toEqual(['tx-committed', 'telemetry']);
+    });
+
+    it('records nothing when the genre fill was suppressed by a tombstone', async () => {
+      await runWithTombstones('["genres"]');
+
+      expect(bookService.update).not.toHaveBeenCalled();
+      expect(bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+    });
+
+    it('records nothing when the candidate is stale-dropped', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_CLEARED' }]))
+        .mockReturnValueOnce(mockDbChain([emptyExisting]))
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B_REIDENTIFIED', userClearedFields: null }]));
+      metadataService.resolveBook.mockResolvedValueOnce(fullResult);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      expect(bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+    });
+
+    it('a telemetry failure is non-fatal — the candidate still counts as enriched', async () => {
+      bookService.trackUnmatchedGenres.mockRejectedValueOnce(new Error('telemetry boom'));
+
+      await runWithTombstones(null);
+
+      expect(log.info).toHaveBeenCalledWith(
+        { bookId: 1, asin: 'B_CLEARED' },
+        'Book enriched successfully',
+      );
+    });
   });
 
   describe('AC11 — the tombstone read and the writes share one transaction', () => {

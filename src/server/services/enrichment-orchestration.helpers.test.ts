@@ -52,7 +52,7 @@ function createMockDeps() {
     db: dbWithUpdateChain().db,
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as FastifyBaseLogger,
     settingsService: { get: vi.fn().mockResolvedValue({ }) } as unknown as SettingsService,
-    bookService: { update: vi.fn(), findAsinCollision: vi.fn().mockResolvedValue(null) } as unknown as BookService,
+    bookService: { update: vi.fn(), findAsinCollision: vi.fn().mockResolvedValue(null), trackUnmatchedGenres: vi.fn().mockResolvedValue(undefined) } as unknown as BookService,
     metadataService: { enrichBook: vi.fn(), resolveBook: vi.fn() } as unknown as MetadataService,
   };
 }
@@ -792,6 +792,76 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
   // migrated DB instead, with the split-transaction counterfactual executed
   // alongside it: see `src/db/user-cleared-fields-schema.integration.test.ts`,
   // 'AC11 / F14 — post-import atomicity, against a real DB'.
+
+  describe('F21 / F5 — the genre telemetry is a DEFERRED post-commit effect', () => {
+    it('runs the telemetry with the written payload, AFTER the write transaction resolves', async () => {
+      const order: string[] = [];
+      const { db } = dbWithUpdateChain();
+      const txMock = (db as unknown as { transaction: ReturnType<typeof vi.fn> }).transaction;
+      txMock.mockImplementation(async (cb: (tx: Db) => Promise<unknown>) => {
+        const result = await cb(db);
+        order.push('tx-committed');
+        return result;
+      });
+      (deps.bookService.trackUnmatchedGenres as ReturnType<typeof vi.fn>)
+        .mockImplementation(async () => { order.push('telemetry'); });
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      expect(deps.bookService.trackUnmatchedGenres).toHaveBeenCalledWith(['Fantasy']);
+      // Running this before the commit would strand it on a rollback — the tx arm of
+      // `update` emits no post-commit effects precisely so the owner can sequence it.
+      expect(order).toEqual(['tx-committed', 'telemetry']);
+    });
+
+    it('records nothing when the genre fill was suppressed by a tombstone', async () => {
+      const { db } = dbWithUpdateChain({ userClearedFields: '["genres"]' });
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+    });
+
+    it('records nothing when the write is stale-dropped on the identity re-read', async () => {
+      const updateChain = mockDbChain();
+      const db = {
+        update: vi.fn().mockReturnValue(updateChain),
+        select: vi.fn()
+          .mockReturnValueOnce(mockDbChain([{ asin: 'B001' }]))
+          .mockReturnValue(mockDbChain([{ asin: 'B999_REIDENTIFIED', userClearedFields: null }])),
+      } as unknown as Db & { transaction: unknown };
+      db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db as Db));
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db: db as Db });
+
+      expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+    });
+
+    it('does NOT record for a narrators-only write (narrators carry no telemetry)', async () => {
+      const { db } = dbWithUpdateChain();
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ narrators: ['Michael Kramer'] });
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      expect(deps.bookService.update).toHaveBeenCalledWith(42, { narrators: ['Michael Kramer'] }, { tx: expect.anything() });
+      expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+    });
+
+    it('a telemetry failure is non-fatal — the success log still fires', async () => {
+      const { db } = dbWithUpdateChain();
+      (deps.bookService.trackUnmatchedGenres as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(new Error('telemetry boom'));
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      expect(deps.log.info).toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment applied');
+    });
+  });
 
   it('F15: a Fix Match committed during the provider fetch aborts the write, tombstones held constant', async () => {
     // The pre-fetch capture reads 'B001'; the in-transaction re-read sees the
