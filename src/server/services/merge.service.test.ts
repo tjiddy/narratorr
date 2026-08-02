@@ -419,6 +419,17 @@ describe('MergeService', () => {
       );
     });
 
+    it('omits bitrate entirely when keepOriginalBitrate is set (128 must not leak)', async () => {
+      const { service } = createService({ processing: { keepOriginalBitrate: true, bitrate: 128 } });
+      setupHappyPath();
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      const config = vi.mocked(processAudioFiles).mock.calls[0]![1];
+      expect(config).not.toHaveProperty('bitrate');
+    });
+
     it('omits sourceBitrateKbps when book.audioBitrate is null', async () => {
       // mockBook has audioBitrate: null by default
       const { service } = createService();
@@ -433,25 +444,6 @@ describe('MergeService', () => {
       expect(processAudioFiles).toHaveBeenCalled();
       const config = vi.mocked(processAudioFiles).mock.calls[0]![1];
       expect(config).not.toHaveProperty('sourceBitrateKbps');
-    });
-
-    it('emits debug log when source bitrate is lower than target', async () => {
-      const bookWithBitrate = {
-        ...createMockDbBook({ id: 42, title: 'The Way of Kings', path: BOOK_PATH, status: 'imported', audioBitrate: 64000 }),
-        authors: [mockAuthor],
-        narrators: [],
-      };
-      const { service, bookService, log } = createService();
-      bookService.getById.mockResolvedValue(bookWithBitrate);
-      setupHappyPath();
-
-      await service.enqueueMerge(42);
-      await settle();
-
-      expect(log.debug).toHaveBeenCalledWith(
-        expect.objectContaining({ sourceBitrateKbps: 64, targetBitrateKbps: 128, effectiveBitrateKbps: 64 }),
-        expect.stringContaining('Capping target bitrate'),
-      );
     });
 
     it('does not delete the output file when an original shares the same basename as the staged M4B', async () => {
@@ -702,6 +694,62 @@ describe('MergeService', () => {
         book_title: 'The Way of Kings',
         success: true,
         message: 'Merged 2 files into The Way of Kings.m4b',
+      });
+    });
+
+    describe('#2068 processing notices reach the operator (AC14)', () => {
+      /**
+       * Observation point matters: the stderr deduplicator logs at debug, which the shipped
+       * default log level hides, so asserting there would pass while the operator sees
+       * nothing. These assert the structured `warnings` channel — log.warn and the
+       * merge-complete message.
+       */
+      function withWarnings(warnings: string[]): void {
+        setupHappyPath();
+        (processAudioFiles as Mock).mockResolvedValue({
+          success: true, outputFiles: [STAGING_DIR + '/The Way of Kings.m4b'], warnings,
+        });
+      }
+
+      it.each([
+        ['no-usable-evidence', 'No usable source bitrate evidence — requesting the 192 kbps default.', '192'],
+        ['an explicit target changed', 'Requested bitrate rounded down from 200 kbps to 192 kbps.', '200'],
+        ['hint-overrode-probes', 'Stored source bitrate 251 kbps exceeds every probed part (highest 64 kbps).', '251'],
+        ['unusable-target', 'Configured target bitrate "NaN" is not a usable kbps value.', 'NaN'],
+        ['a cover-art degradation', 'Cover art could not be reattached — continuing without it.', 'Cover art'],
+      ])('logs a %s notice at warn and appends it to the merge-complete message', async (_kind, warning, needle) => {
+        withWarnings([warning]);
+        const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+        const { service, log } = createService({ eventBroadcaster });
+
+        await service.enqueueMerge(42);
+        await settle();
+
+        expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ bookId: 42 }), warning);
+        const emitCalls = (eventBroadcaster.emit as Mock).mock.calls;
+        const complete = emitCalls.find((c: unknown[]) => c[0] === 'merge_complete');
+        expect((complete![1] as { message: string }).message).toContain(needle);
+      });
+
+      it('still logs the notices when the encode itself failed', async () => {
+        (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
+        (mkdir as Mock).mockResolvedValue(undefined);
+        (cp as Mock).mockResolvedValue(undefined);
+        (rm as Mock).mockResolvedValue(undefined);
+        (processAudioFiles as Mock).mockResolvedValue({
+          success: false,
+          error: 'ffmpeg exited with code 1',
+          warnings: ['Requested bitrate rounded down from 200 kbps to 192 kbps.'],
+        });
+
+        const { service, log } = createService();
+        await service.enqueueMerge(42);
+        await settle();
+
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 42 }),
+          'Requested bitrate rounded down from 200 kbps to 192 kbps.',
+        );
       });
     });
 
