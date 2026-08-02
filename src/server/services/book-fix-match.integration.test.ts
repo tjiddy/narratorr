@@ -186,6 +186,47 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     expect(members).toHaveLength(0);
   });
 
+  // #2069 AC13 — re-identifying a book is a NEW operator assertion, so the prior
+  // clears (which described the OLD record) are reset rather than honored.
+  it('resets user_cleared_fields to SQL NULL in the same transaction as the scalar replacement', async () => {
+    const svc = new BookService(db, log);
+    const bookId = await seedBookA(svc);
+    await db.update(books).set({ userClearedFields: '["genres","seriesName"]' }).where(eq(books.id, bookId));
+
+    await svc.fixMatch(bookId, {
+      asin: 'B_NEW',
+      title: 'New Title',
+      authors: [{ name: 'New Author' }],
+      seriesName: 'New Series',
+      seriesPosition: 3,
+    });
+
+    const [row] = await db.select().from(books).where(eq(books.id, bookId));
+    expect(row!.userClearedFields).toBeNull();
+    // Asserted from the same read as the replacement itself, so a reset that lands
+    // without the scalar rewrite (or vice versa) cannot pass.
+    expect(row!.seriesName).toBe('New Series');
+    expect(row!.enrichmentStatus).toBe('pending');
+  });
+
+  it('leaves the reset rolled back when the transaction fails', async () => {
+    const svc = new BookService(db, log);
+    const bookId = await seedBookA(svc);
+    await db.update(books).set({ userClearedFields: '["genres"]' }).where(eq(books.id, bookId));
+
+    const link = await import('./book-series-link.js');
+    const spy = vi.spyOn(link, 'replaceSeriesLink').mockRejectedValueOnce(new Error('link boom'));
+
+    await expect(
+      svc.fixMatch(bookId, { asin: 'B_NEW', title: 'New Title', authors: [{ name: 'New Author' }] }),
+    ).rejects.toThrow('link boom');
+    spy.mockRestore();
+
+    const [row] = await db.select().from(books).where(eq(books.id, bookId));
+    expect(row!.userClearedFields).toBe('["genres"]');
+    expect(row!.title).toBe('Old Title');
+  });
+
   it('returns null when the book id does not exist', async () => {
     const svc = new BookService(db, log);
     const result = await svc.fixMatch(99999, {
