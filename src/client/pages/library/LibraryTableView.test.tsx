@@ -12,6 +12,10 @@ vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...(actual as Record<string, unknown>),
+    api: {
+      ...(actual as { api: Record<string, unknown> }).api,
+      getImportJobs: vi.fn().mockResolvedValue([]),
+    },
     formatBytes: (bytes?: number) => {
       if (!bytes || bytes === 0) return '0 B';
       const k = 1024;

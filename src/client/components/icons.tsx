@@ -613,3 +613,14 @@ export function SparklesIcon({ className = '' }: IconProps) {
     </svg>
   );
 }
+
+export function HourglassIcon({ className = '' }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M6 2h12" />
+      <path d="M6 22h12" />
+      <path d="M7 2v4l5 5 5-5V2" />
+      <path d="M7 22v-4l5-5 5 5v4" />
+    </svg>
+  );
+}

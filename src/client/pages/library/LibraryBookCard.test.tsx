@@ -10,10 +10,12 @@ import * as ImageErrorModule from '@/hooks/useImageError';
 import { api } from '@/lib/api';
 import type { BookStatus } from '@shared/schemas.js';
 import { bookStatusConfig } from '@/lib/status';
+import { setMergeProgress, _resetForTesting } from '@/hooks/useMergeProgress.js';
 
 vi.mock('@/lib/api', () => ({
   api: {
     checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
+    getImportJobs: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -689,6 +691,51 @@ describe('React.memo (REACT-2 refactor)', () => {
       const narratorText = screen.getByText('Tim Gerard Reynolds');
       const expandSection = narratorText.closest('.overflow-hidden')!;
       expect(expandSection).toHaveClass('max-h-0', 'group-hover:max-h-16');
+    });
+  });
+  describe('activity indicator (#approved mock 2026-08-03)', () => {
+    afterEach(() => {
+      _resetForTesting();
+    });
+
+    it('working merge shows the spinner chip and swaps the status bar for a progress sliver', () => {
+      const book = createMockLibraryBook({ id: 4242 });
+      setMergeProgress(4242, { bookTitle: book.title, phase: 'processing', percentage: 60 });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
+
+      const chip = screen.getByTestId('activity-chip');
+      expect(chip).toHaveAccessibleName('Encoding — 60%');
+      expect(chip.querySelector('[data-testid="loading-spinner"]')).toBeInTheDocument();
+
+      const progress = screen.getByTestId('activity-progress');
+      expect((progress.firstElementChild as HTMLElement).style.width).toBe('60%');
+      expect(screen.queryByTestId('status-bar')).not.toBeInTheDocument();
+    });
+
+    it('queued merge shows the hourglass chip and keeps the normal status bar', () => {
+      const book = createMockLibraryBook({ id: 4243 });
+      setMergeProgress(4243, { bookTitle: book.title, phase: 'queued' });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
+
+      const chip = screen.getByTestId('activity-chip');
+      expect(chip).toHaveAccessibleName('Merge queued');
+      expect(chip.querySelector('[data-testid="loading-spinner"]')).not.toBeInTheDocument();
+      expect(screen.getByTestId('status-bar')).toBeInTheDocument();
+      expect(screen.queryByTestId('activity-progress')).not.toBeInTheDocument();
+    });
+
+    it('idle book renders no activity chip and the normal status bar', () => {
+      renderWithProviders(<LibraryBookCard {...defaultProps()} />);
+      expect(screen.queryByTestId('activity-chip')).not.toBeInTheDocument();
+      expect(screen.getByTestId('status-bar')).toBeInTheDocument();
+    });
+
+    it('activity chip stacks above the missing chip without displacing it', () => {
+      const book = createMockLibraryBook({ id: 4244, status: 'missing' });
+      setMergeProgress(4244, { bookTitle: book.title, phase: 'verifying' });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('activity-chip')).toBeInTheDocument();
+      expect(screen.getByTitle('Files missing from disk')).toBeInTheDocument();
     });
   });
 });
