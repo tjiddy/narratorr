@@ -1,6 +1,17 @@
-import { describe, it, expect } from 'vitest';
-import { findInLibraryMatch, normalizeMemberTitleForMatch } from './series-title-match.js';
+import { describe, it, expect, vi } from 'vitest';
+import { findInLibraryMatch, normalizeMemberTitleForMatch, VARIANT_CACHE_MAX } from './series-title-match.js';
 import { titleVariants } from '@core/utils/title-variants.js';
+
+// Spy-wrap the REAL generator so derivation counts are observable. A cache hit
+// and a cache miss return equal values, so the memo's two branches cannot be
+// seen through pairing results at all — only through how often the generator
+// actually ran. Behaviour is unchanged: the mock delegates to the real
+// implementation, and the module's other exports pass through untouched (the
+// matcher re-exports `normalizeTitleForVariantMatch` from here).
+vi.mock('@core/utils/title-variants.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/utils/title-variants.js')>();
+  return { ...actual, titleVariants: vi.fn(actual.titleVariants) };
+});
 
 describe('normalizeMemberTitleForMatch', () => {
   it('case-folds, drops punctuation, collapses whitespace', () => {
@@ -305,5 +316,76 @@ describe('findInLibraryMatch', () => {
       const match = findInLibraryMatch({ title: 'Different Title', position: 2 }, candidates);
       expect(match?.id).toBe(1);
     });
+  });
+});
+
+/**
+ * The memo exists because `findInLibraryMatch` runs once per member and derives
+ * every candidate's variants on each call — O(members × candidates) derivations,
+ * with the persist path holding a transaction open throughout. Variant
+ * generation costs strictly more than the scalar normalize it replaced, so both
+ * branches carry real weight and both are invisible to every pairing assertion:
+ * a hit and a miss return equal values. Derivation COUNT is the only observable
+ * that can see them, which is what the `titleVariants` spy provides.
+ *
+ * Titles here are uniquely prefixed so these cases never collide with the raw
+ * titles the pairing suites above have already warmed into the module-level map.
+ */
+describe('memoization', () => {
+  const spy = vi.mocked(titleVariants);
+
+  /** Run one title through the matcher, exercising exactly one member derivation. */
+  function derive(title: string): void {
+    findInLibraryMatch({ title, position: null }, []);
+  }
+
+  it('derives each distinct raw title exactly once across repeated calls', () => {
+    const member = { title: 'F2 member — the churn: an expanse novella', position: null };
+    const candidates = [{ id: 1, title: 'F2 candidate — the churn', seriesPosition: null }];
+
+    spy.mockClear();
+    findInLibraryMatch(member, candidates);
+    findInLibraryMatch(member, candidates);
+    findInLibraryMatch(member, candidates);
+
+    // Three matcher calls over two raw titles → exactly two derivations, one per
+    // distinct title. Delete the hit branch and this reads six.
+    expect(spy.mock.calls.map((call) => call[0])).toEqual([
+      'F2 member — the churn: an expanse novella',
+      'F2 candidate — the churn',
+    ]);
+  });
+
+  it('reuses the memo across DIFFERENT members that share a candidate title', () => {
+    const candidates = [{ id: 1, title: 'F2 shared candidate title', seriesPosition: null }];
+
+    spy.mockClear();
+    findInLibraryMatch({ title: 'F2 first member', position: null }, candidates);
+    findInLibraryMatch({ title: 'F2 second member', position: null }, candidates);
+
+    // The candidate is derived once even though two separate members scanned it —
+    // this is the O(members × candidates) collapse the memo is for.
+    expect(spy.mock.calls.filter((call) => call[0] === 'F2 shared candidate title')).toHaveLength(1);
+  });
+
+  it('clears the memo at VARIANT_CACHE_MAX so it cannot grow without bound', () => {
+    const warm = 'F3 warm title that must be evicted';
+
+    derive(warm);
+    spy.mockClear();
+    derive(warm);
+    // Precondition: `warm` is genuinely cached, so the re-derivation asserted
+    // below can only come from the clear — not from it never having been stored.
+    expect(spy).not.toHaveBeenCalled();
+
+    // Drive VARIANT_CACHE_MAX fresh titles. The map already holds `warm` (plus
+    // whatever the suites above warmed), so its size necessarily reaches the
+    // bound during this loop and the wholesale clear fires. `warm` is never
+    // re-inserted afterwards, so it must be gone.
+    for (let i = 0; i < VARIANT_CACHE_MAX; i++) derive(`F3 filler ${i}`);
+
+    spy.mockClear();
+    derive(warm);
+    expect(spy).toHaveBeenCalledWith(warm);
   });
 });

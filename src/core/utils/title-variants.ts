@@ -30,14 +30,29 @@
  * iterates — so the marker stays.
  */
 
-import type { Variant, VariantTag } from '@shared/schemas/series-title-variants.js';
+/**
+ * INTERNAL binding — everything this module constructs is typed through these
+ * aliases, never through the public names re-exported below. That separation is
+ * deliberate and load-bearing for the drift guards in
+ * `src/shared/schemas/series-title-variants.test.ts`: if the generator built its
+ * result through the PUBLIC `Variant` / `VariantTag` names, any divergence in
+ * those names would be caught by this module's own typecheck first, and the
+ * guards would never be the failing observation. Aliasing the internal use keeps
+ * the public re-export independently mutable, so each guard alone detects drift
+ * of its own exported name (verified by mutation — see that test file).
+ */
+import type {
+  Variant as SharedVariant,
+  VariantTag as SharedVariantTag,
+} from '@shared/schemas/series-title-variants.js';
 
 /**
- * The canonical variant contract lives in `src/shared` — `src/shared` may not
- * import `src/core`, so the type goes there and core consumes it, not the
- * reverse. Both declarations below are needed and neither is redundant: a
- * re-export-from does NOT create a local binding, so without the `import type`
- * above the `Variant[]` return annotation would not resolve.
+ * PUBLIC contract surface. The canonical variant contract lives in `src/shared`
+ * — `src/shared` may not import `src/core`, so the type goes there and core
+ * consumes it, not the reverse. This re-export is the documented consumption
+ * path for core-side consumers; server-side consumers take the type straight
+ * from shared, which is why the only thing binding these names today is the
+ * drift guard that exists to watch them.
  */
 export type { Variant, VariantTag } from '@shared/schemas/series-title-variants.js';
 
@@ -131,13 +146,13 @@ function colonSegments(base: string): string[] {
  * alphanumerics (`'[ ]'`, `'   '`) yields `[]` — never an empty-string entry that
  * could pair with another empty-string entry.
  */
-export function titleVariants(title: string): Variant[] {
-  const variants: Variant[] = [];
+export function titleVariants(title: string): SharedVariant[] {
+  const variants: SharedVariant[] = [];
   const seen = new Set<string>();
 
   // `raw` is already lowercased and whitespace-collapsed, so it IS the
   // case-insensitive collapsed key — no second derivation to drift.
-  const push = (text: string, tag: VariantTag, parensStripped: boolean): void => {
+  const push = (text: string, tag: SharedVariantTag, parensStripped: boolean): void => {
     const raw = normalizeTitleForVariantMatch(text);
     if (raw.length === 0 || seen.has(raw)) return;
     seen.add(raw);

@@ -100,15 +100,27 @@ describe('core ↔ shared type-contract drift guards (#2096)', () => {
   // `Equals<Variant, CoreVariant>` true and would compile clean against a
   // `Variant`-only guard.
   //
-  // Verified standing of these guards (mutation-checked, both directions):
-  // BOTH fire under their drift — but neither fires ALONE. `title-variants.ts`
-  // builds its result through a `push` helper whose `tag` parameter is the
-  // shared `VariantTag` and whose object literal lands in a shared `Variant[]`,
-  // so the module's own typecheck rejects every divergence first — narrower,
-  // wider, or field-dropping alike. These guards are therefore a backstop that
-  // becomes the sole observation point only if that internal bridge is ever
-  // refactored away; they are sound (they DO fail against the drifted code),
-  // just not currently the first thing to fail.
+  // These guards are CAUSALLY ISOLATED, and that property is designed for rather
+  // than incidental. `title-variants.ts` constructs its result through INTERNAL
+  // aliases (`SharedVariant` / `SharedVariantTag`), never through the public
+  // names it re-exports, and `series-title-match.ts` takes `Variant` straight
+  // from shared — so nothing but these two guards binds core's public exports.
+  // Without that separation the module's own typecheck would reject any drift
+  // first and these guards would never be the failing observation.
+  //
+  // Verified by mutation, both directions, all four required observations each:
+  //
+  //   VariantTag drift — drop it from core's re-export and hand-write
+  //   `'full' | 'first+last' | 'prefix(1)' | 'suffix(1)'`:
+  //     title-variants.ts typechecks clean · ONLY the VariantTag guard fails
+  //     (TS2322) · the Variant guard stays green · deleting the VariantTag guard
+  //     leaves NO error anywhere.
+  //
+  //   Variant drift — drop it from core's re-export and hand-write
+  //   `{ raw: string; tag: SharedVariantTag }`, losing `parensStripped`:
+  //     title-variants.ts typechecks clean · ONLY the Variant guard fails
+  //     (TS2322) · the VariantTag guard stays green · deleting the Variant guard
+  //     leaves NO error anywhere.
   it('core Variant is still the shared Variant', () => {
     const aligned: Equals<Variant, CoreVariant> = true;
     expect(aligned).toBe(true);

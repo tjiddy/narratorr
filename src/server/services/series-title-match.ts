@@ -1,5 +1,11 @@
 import { titleVariants } from '@core/utils/title-variants.js';
-import type { Variant } from '@core/utils/title-variants.js';
+// The TYPE comes straight from its canonical shared home, not through core's
+// re-export. `src/server/**` may import `src/shared/**`, and taking the type
+// from the source keeps core's public `Variant` / `VariantTag` re-export free of
+// production consumers — which is what lets the drift guards in
+// `series-title-variants.test.ts` be the SOLE failing observation when one of
+// those exported names drifts (they would otherwise be masked by an error here).
+import type { Variant } from '@shared/schemas/series-title-variants.js';
 
 /** Floating-point tolerance for matching series_position values across sources. */
 export const POSITION_MATCH_EPSILON = 1e-9;
@@ -44,8 +50,22 @@ export interface HardcoverMemberSummary {
  * observationally identical. The cache is cleared wholesale rather than evicted
  * one key at a time — a library's title set is small and bounded, the reset is
  * O(1), and no call depends on a prior entry surviving.
+ *
+ * Two independently breakable branches, each with its own test in
+ * `series-title-match.test.ts` ("memoization"): the HIT branch (delete it and
+ * matching silently regresses to O(members × candidates) derivations inside the
+ * persistence transaction) and the BOUND branch (delete it and the module-level
+ * map grows without limit for the process lifetime). Neither is observable
+ * through pairing results — a cache hit and a miss return equal values — so both
+ * are observed by counting derivations through a spy on `titleVariants`.
  */
-const VARIANT_CACHE_MAX = 4096;
+
+/**
+ * Entry ceiling: the memo is cleared wholesale on the insertion that would take
+ * it past this. Exported as the bounded-cache contract so the reset test can
+ * drive the transition without hard-coding the number in two places.
+ */
+export const VARIANT_CACHE_MAX = 4096;
 const variantCache = new Map<string, Variant[]>();
 
 function cachedTitleVariants(title: string): Variant[] {
