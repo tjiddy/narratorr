@@ -80,6 +80,29 @@ function createService(overrides?: {
   return { service, indexer, downloadClient, settings, notifier, log, db };
 }
 
+/**
+ * The `health` payload of every `on_health_issue` notify call, in dispatch order,
+ * optionally narrowed to one `checkName`. Filtering by check rather than counting
+ * all calls keeps an assertion honest when a pass legitimately changes more than
+ * one check (#2090).
+ */
+function healthNotifications(
+  notifier: { notify: unknown },
+  checkName?: string,
+): Array<{ checkName: string; previousState: string; currentState: string; message?: string }> {
+  return (notifier.notify as ReturnType<typeof vi.fn>).mock.calls
+    .filter((call: unknown[]) => call[0] === 'on_health_issue')
+    .map((call: unknown[]) => (call[1] as {
+      health: { checkName: string; previousState: string; currentState: string; message?: string };
+    }).health)
+    .filter((health) => checkName === undefined || health.checkName === checkName);
+}
+
+/** Drive `n` consecutive full health passes. */
+async function runPasses(service: HealthCheckService, n: number): Promise<void> {
+  for (let i = 0; i < n; i += 1) await service.runAllChecks();
+}
+
 describe('HealthCheckService', () => {
   describe('checkIndexers', () => {
     it('calls test() on each enabled indexer and returns healthy on success', async () => {
@@ -1361,6 +1384,504 @@ describe('HealthCheckService', () => {
       // Exactly one trailing rerun: pass #1 + one rerun = 2 full passes (getAll
       // called once per pass) — the overlap coalesced, it did not spawn a loop.
       expect(getAll).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // #2090 — notification dispatch waits for a network-backed check's new state to
+  // hold three consecutive passes. Detection, the health card and every API
+  // response stay instant; only the notifier is debounced. Local checks keep
+  // firing on pass 1.
+  //
+  // Most assertions below are "zero notifications were sent", which is exactly the
+  // shape that passes against broken production code, so each names the mutation
+  // that must turn it red (see the `vacuous-assertion-observation-points` learning).
+  describe('#2090 — notification confirmation window', () => {
+    const FAILED = { success: false, message: 'down' };
+    const OK = { success: true };
+    const oneIndexer = [{ id: 1, name: 'NZB', enabled: true }];
+
+    beforeEach(() => {
+      // version-update is a local check: a cached update leaked from an earlier
+      // block would add an unrelated pass-1 notification to these totals.
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+      vi.mocked(checkForUpdate).mockResolvedValue(undefined);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.mocked(getUpdateStatus).mockReset();
+      vi.mocked(checkForUpdate).mockReset();
+    });
+
+    describe('window suppression (AC 3, 8, 9)', () => {
+      it('sends nothing when a network-backed check fails a single pass', async () => {
+        const { service, notifier } = createService({
+          indexer: { getAll: vi.fn().mockResolvedValue(oneIndexer), test: vi.fn().mockResolvedValue(FAILED) },
+        });
+
+        await service.runAllChecks();
+
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+      });
+
+      it('sends nothing at all for a blip that self-heals inside the window — no orphaned resolve', async () => {
+        // The issue's live specimen: a ~7s upstream failure straddling two ticks.
+        const { service, notifier } = createService({
+          indexer: {
+            getAll: vi.fn().mockResolvedValue(oneIndexer),
+            test: vi.fn().mockResolvedValueOnce(FAILED).mockResolvedValueOnce(FAILED).mockResolvedValue(OK),
+          },
+        });
+
+        await service.runAllChecks();
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+        await service.runAllChecks();
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+        await service.runAllChecks();
+
+        // Neither the failure nor the recovery is announced: the failure was never
+        // confirmed, so there is no announced episode for a resolve to close.
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+      });
+
+      it('fires exactly one error notification, on the third failing pass and not the fourth', async () => {
+        const { service, notifier } = createService({
+          indexer: { getAll: vi.fn().mockResolvedValue(oneIndexer), test: vi.fn().mockResolvedValue(FAILED) },
+        });
+
+        await runPasses(service, 2);
+        // Observation point 1: still silent after two confirming passes.
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+
+        await service.runAllChecks();
+        // Observation point 2: the third pass is the one that dispatches.
+        expect(healthNotifications(notifier, 'indexer:NZB')).toEqual([
+          { checkName: 'indexer:NZB', previousState: 'healthy', currentState: 'error', message: 'down' },
+        ]);
+      });
+
+      it('does not re-fire while the confirmed error is sustained', async () => {
+        const { service, notifier } = createService({
+          indexer: { getAll: vi.fn().mockResolvedValue(oneIndexer), test: vi.fn().mockResolvedValue(FAILED) },
+        });
+
+        await runPasses(service, 5);
+
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(1);
+      });
+    });
+
+    describe('symmetric resolve (AC 10)', () => {
+      it('announces the resolve on the third healthy pass, not the first', async () => {
+        const { service, notifier } = createService({
+          indexer: {
+            getAll: vi.fn().mockResolvedValue(oneIndexer),
+            test: vi.fn()
+              .mockResolvedValueOnce(FAILED).mockResolvedValueOnce(FAILED).mockResolvedValueOnce(FAILED)
+              .mockResolvedValue(OK),
+          },
+        });
+
+        await runPasses(service, 5); // error x3 (notified) + healthy x2
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(1);
+
+        await service.runAllChecks(); // third healthy pass
+        const calls = healthNotifications(notifier, 'indexer:NZB');
+        expect(calls).toHaveLength(2);
+        expect(calls[1]).toMatchObject({ previousState: 'error', currentState: 'healthy' });
+      });
+
+      it('sends nothing further when a dependency flaps after an announced episode', async () => {
+        const { service, notifier } = createService({
+          indexer: {
+            getAll: vi.fn().mockResolvedValue(oneIndexer),
+            test: vi.fn()
+              .mockResolvedValueOnce(FAILED).mockResolvedValueOnce(FAILED).mockResolvedValueOnce(FAILED)
+              .mockResolvedValueOnce(OK).mockResolvedValueOnce(FAILED)
+              .mockResolvedValueOnce(OK).mockResolvedValueOnce(FAILED),
+          },
+        });
+
+        await runPasses(service, 7);
+
+        // At most one pair per sustained episode — never one per flap.
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(1);
+      });
+    });
+
+    describe('tri-state confirmation (AC 4)', () => {
+      it('restarts the run when the observed state changes value, not just healthy/unhealthy', async () => {
+        const { service, notifier } = createService({
+          indexer: {
+            getAll: vi.fn().mockResolvedValue(oneIndexer),
+            test: vi.fn()
+              .mockResolvedValueOnce(FAILED).mockResolvedValueOnce(FAILED)
+              .mockResolvedValue({ success: true, warning: 'degraded' }),
+          },
+        });
+
+        await runPasses(service, 4); // error, error, warning, warning
+        // A healthy/unhealthy boolean would have confirmed `error` on pass 3.
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+
+        await service.runAllChecks(); // third consecutive warning
+        expect(healthNotifications(notifier, 'indexer:NZB')).toEqual([
+          { checkName: 'indexer:NZB', previousState: 'healthy', currentState: 'warning', message: 'degraded' },
+        ]);
+      });
+    });
+
+    describe('per-check classification (AC 2, 11)', () => {
+      it('debounces hardcover', async () => {
+        vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockRejectedValue(new Error('hardcover down'));
+        const { service, notifier } = createService({
+          settings: createMockSettingsService({ metadata: { hardcoverApiKey: 'valid-key' } }),
+        });
+
+        await service.runAllChecks();
+        expect(healthNotifications(notifier, 'hardcover')).toHaveLength(0);
+
+        await runPasses(service, 2);
+        expect(healthNotifications(notifier, 'hardcover')).toHaveLength(1);
+      });
+
+      it('debounces download clients', async () => {
+        const { service, notifier } = createService({
+          downloadClient: {
+            getAll: vi.fn().mockResolvedValue([{ id: 1, name: 'qbit', enabled: true }]),
+            test: vi.fn().mockResolvedValue(FAILED),
+          },
+        });
+
+        await service.runAllChecks();
+        expect(healthNotifications(notifier, 'download-client:qbit')).toHaveLength(0);
+
+        await runPasses(service, 2);
+        expect(healthNotifications(notifier, 'download-client:qbit')).toHaveLength(1);
+      });
+
+      it('notifies library-root on the first pass (local, immediate)', async () => {
+        const { service, notifier } = createService({
+          fsAccess: vi.fn().mockRejectedValue(Object.assign(new Error('nope'), { code: 'ENOENT' })),
+        });
+
+        await service.runAllChecks();
+
+        expect(healthNotifications(notifier, 'library-root')).toHaveLength(1);
+      });
+
+      it('notifies disk-space on the first pass (local, immediate)', async () => {
+        const twoGB = 2 * 1024 * 1024 * 1024;
+        const { service, notifier } = createService({
+          fsStatfs: vi.fn().mockResolvedValue({ bavail: twoGB / 4096, bsize: 4096 }),
+        });
+
+        await service.runAllChecks();
+
+        expect(healthNotifications(notifier, 'disk-space')).toMatchObject([{ currentState: 'warning' }]);
+      });
+
+      it('dispatches only the local check when a local and a network check fail in the same pass', async () => {
+        const { service, notifier } = createService({
+          indexer: { getAll: vi.fn().mockResolvedValue(oneIndexer), test: vi.fn().mockResolvedValue(FAILED) },
+          fsAccess: vi.fn().mockRejectedValue(Object.assign(new Error('nope'), { code: 'ENOENT' })),
+        });
+
+        await service.runAllChecks();
+
+        expect(healthNotifications(notifier).map((h) => h.checkName)).toEqual(['library-root']);
+      });
+    });
+
+    // AC 2.1-2.5 — `checkName` classifies, the tracking key identifies. Connector
+    // names are neither unique nor immutable, so every scenario below is one the
+    // pre-#2090 `checkName`-keyed map gets wrong.
+    describe('tracking identity (AC 2.1-2.5)', () => {
+      const twoSameNamedIndexers = [
+        { id: 1, name: 'NZB', enabled: true },
+        { id: 2, name: 'NZB', enabled: true },
+      ];
+
+      it('tracks two same-named indexers as two independent entities', async () => {
+        const { service, notifier } = createService({
+          indexer: { getAll: vi.fn().mockResolvedValue(twoSameNamedIndexers), test: vi.fn().mockResolvedValue(FAILED) },
+        });
+
+        await runPasses(service, 2);
+        // Mutation: key by `checkName` and both results land on one entry, which
+        // reaches 3 during pass 2 and notifies a whole pass early.
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+
+        await service.runAllChecks();
+        // One confirmation apiece — a single pass contributes at most one
+        // observation to any one tracking key (AC 2.2).
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(2);
+      });
+
+      it('does not let two same-named indexers in divergent states reset each other', async () => {
+        const { service, notifier } = createService({
+          indexer: {
+            getAll: vi.fn().mockResolvedValue(twoSameNamedIndexers),
+            test: vi.fn().mockImplementation((id: number) => Promise.resolve(id === 1 ? FAILED : OK)),
+          },
+        });
+
+        await runPasses(service, 3);
+
+        // Mutation: key by `checkName` and the error/healthy pair restarts the run
+        // every pass — zero notifications ever fire.
+        expect(healthNotifications(notifier, 'indexer:NZB')).toEqual([
+          { checkName: 'indexer:NZB', previousState: 'healthy', currentState: 'error', message: 'down' },
+        ]);
+      });
+
+      it('tracks two same-named download clients as two independent entities', async () => {
+        const { service, notifier } = createService({
+          downloadClient: {
+            getAll: vi.fn().mockResolvedValue([
+              { id: 1, name: 'qbit', enabled: true },
+              { id: 2, name: 'qbit', enabled: true },
+            ]),
+            test: vi.fn().mockResolvedValue(FAILED),
+          },
+        });
+
+        await runPasses(service, 2);
+        // Mutation: drop the `download-client` arm from the tracking key and this
+        // falls back to `checkName`, confirming a pass early — the indexer tests
+        // above cannot observe that arm.
+        expect(healthNotifications(notifier, 'download-client:qbit')).toHaveLength(0);
+
+        await service.runAllChecks();
+        expect(healthNotifications(notifier, 'download-client:qbit')).toHaveLength(2);
+      });
+
+      it('preserves a pending run across a rename and reports the confirming pass name', async () => {
+        const { service, notifier } = createService({
+          indexer: {
+            getAll: vi.fn()
+              .mockResolvedValueOnce([{ id: 1, name: 'A', enabled: true }])
+              .mockResolvedValueOnce([{ id: 1, name: 'A', enabled: true }])
+              .mockResolvedValue([{ id: 1, name: 'B', enabled: true }]),
+            test: vi.fn().mockResolvedValue(FAILED),
+          },
+        });
+
+        await runPasses(service, 2);
+        expect(healthNotifications(notifier)).toHaveLength(0);
+
+        await service.runAllChecks();
+        // Mutation: key by `checkName` and the rename restarts the run — nothing
+        // fires on pass 3.
+        expect(healthNotifications(notifier)).toEqual([
+          { checkName: 'indexer:B', previousState: 'healthy', currentState: 'error', message: 'down' },
+        ]);
+      });
+
+      it('does not emit a second error after a rename mid-episode', async () => {
+        const { service, notifier } = createService({
+          indexer: {
+            getAll: vi.fn()
+              .mockResolvedValueOnce([{ id: 1, name: 'A', enabled: true }])
+              .mockResolvedValueOnce([{ id: 1, name: 'A', enabled: true }])
+              .mockResolvedValueOnce([{ id: 1, name: 'A', enabled: true }])
+              .mockResolvedValue([{ id: 1, name: 'B', enabled: true }]),
+            test: vi.fn().mockResolvedValue(FAILED),
+          },
+        });
+
+        await runPasses(service, 6);
+
+        expect(healthNotifications(notifier)).toEqual([
+          { checkName: 'indexer:A', previousState: 'healthy', currentState: 'error', message: 'down' },
+        ]);
+      });
+
+      it('does not let a recreated connector inherit a deleted one\'s notified episode', async () => {
+        const deleted = [{ id: 1, name: 'A', enabled: true }];
+        const { service, notifier } = createService({
+          indexer: {
+            getAll: vi.fn()
+              .mockResolvedValueOnce(deleted).mockResolvedValueOnce(deleted).mockResolvedValueOnce(deleted)
+              .mockResolvedValue([{ id: 2, name: 'A', enabled: true }]),
+            test: vi.fn().mockImplementation((id: number) => Promise.resolve(id === 1 ? FAILED : OK)),
+          },
+        });
+
+        await runPasses(service, 3);
+        expect(healthNotifications(notifier)).toHaveLength(1);
+
+        await runPasses(service, 3);
+        // AC 2.4: AUTOINCREMENT never reissues an id, so id 2 starts from a fresh
+        // default-healthy entry. Mutation: key by `checkName` and the reused name
+        // inherits id 1's notified `error`, emitting a spurious resolve on pass 6.
+        expect(healthNotifications(notifier)).toHaveLength(1);
+      });
+
+      it('keeps library-root and disk-space independent despite their shared route target', async () => {
+        // Both carry `{ kind: 'route', path: '/settings' }` — the client's cardKey
+        // arm. Driving them to the SAME state in the same pass is what makes the
+        // bad key observable: with distinct states a merged entry still produces
+        // two transitions (healthy->error, error->warning) and looks correct.
+        const { service, notifier } = createService({
+          fsAccess: vi.fn().mockRejectedValue(Object.assign(new Error('nope'), { code: 'ENOENT' })),
+          fsStatfs: vi.fn().mockResolvedValue({ bavail: 0, bsize: 4096 }), // freeBytes === 0 -> error
+        });
+
+        await service.runAllChecks();
+
+        expect(healthNotifications(notifier, 'library-root')).toMatchObject([{ currentState: 'error' }]);
+        expect(healthNotifications(notifier, 'disk-space')).toMatchObject([{ currentState: 'error' }]);
+      });
+    });
+
+    describe('absent checks freeze the run (AC 16)', () => {
+      it('preserves rather than resets a pending run while the check is absent', async () => {
+        const settingsState = { hardcoverApiKey: 'valid-key' };
+        const backing = createMockSettingsService({ metadata: { hardcoverApiKey: 'valid-key' } });
+        const settings = inject<SettingsService>({
+          ...backing,
+          get: vi.fn().mockImplementation(async (category: string) => {
+            const value = await backing.get(category as 'metadata');
+            return category === 'metadata'
+              ? { ...(value as object), hardcoverApiKey: settingsState.hardcoverApiKey }
+              : value;
+          }),
+        });
+        vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockRejectedValue(new Error('hardcover down'));
+        const { service, notifier } = createService({ settings });
+
+        await runPasses(service, 2); // two failing observations
+
+        settingsState.hardcoverApiKey = ''; // key removed -> checkHardcover returns []
+        await runPasses(service, 2);
+        expect(healthNotifications(notifier, 'hardcover')).toHaveLength(0);
+
+        settingsState.hardcoverApiKey = 'valid-key';
+        await service.runAllChecks();
+        // The third *appearing* error observation confirms. Asserting only "zero
+        // during the absent passes" is satisfied by an incorrect reset-on-absence
+        // too; this is the assertion that separates freeze from reset. Mutation:
+        // delete the pending entry on absence and the notification slips to pass 7.
+        expect(healthNotifications(notifier, 'hardcover')).toHaveLength(1);
+      });
+    });
+
+    describe('payload provenance (AC 7)', () => {
+      it('carries the confirming pass\'s message, not an earlier observation\'s', async () => {
+        const { service, notifier } = createService({
+          indexer: {
+            getAll: vi.fn().mockResolvedValue(oneIndexer),
+            test: vi.fn()
+              .mockResolvedValueOnce({ success: false, message: 'down 1' })
+              .mockResolvedValueOnce({ success: false, message: 'down 2' })
+              .mockResolvedValue({ success: false, message: 'down 3' }),
+          },
+        });
+
+        await runPasses(service, 3);
+
+        // Mutation: retain and emit the first observation's message and this reads
+        // 'down 1' — a stale diagnostic that satisfies every state assertion above.
+        expect(healthNotifications(notifier, 'indexer:NZB')).toEqual([
+          { checkName: 'indexer:NZB', previousState: 'healthy', currentState: 'error', message: 'down 3' },
+        ]);
+      });
+    });
+
+    describe('_reset() clears both maps (AC 17)', () => {
+      it('starts a fresh run and a fresh notified state after a reset', async () => {
+        const { service, notifier } = createService({
+          indexer: { getAll: vi.fn().mockResolvedValue(oneIndexer), test: vi.fn().mockResolvedValue(FAILED) },
+        });
+
+        await runPasses(service, 3);
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(1);
+
+        service._reset();
+        (notifier.notify as ReturnType<typeof vi.fn>).mockClear();
+
+        await runPasses(service, 2);
+        // A stale pending map would notify here on the first post-reset pass.
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+
+        await service.runAllChecks();
+        // A stale notified map would suppress this entirely (still `error`) — and
+        // `previousState: 'healthy'` is what proves it was cleared, not merely
+        // flipped. Both maps are observed through public behavior only.
+        expect(healthNotifications(notifier, 'indexer:NZB')).toEqual([
+          { checkName: 'indexer:NZB', previousState: 'healthy', currentState: 'error', message: 'down' },
+        ]);
+      });
+    });
+
+    // AC 15 — the unit of accounting is one `runChecksOnce` execution, not a
+    // wall-clock interval and not only the scheduled cron. Every pass is a real
+    // live probe, so three failing passes is three real observations of failure.
+    describe('pass accounting (AC 15)', () => {
+      it('counts manual "Run Now" passes, so three back-to-back runs confirm', async () => {
+        const { service, notifier, log } = createService({
+          indexer: { getAll: vi.fn().mockResolvedValue(oneIndexer), test: vi.fn().mockResolvedValue(FAILED) },
+        });
+
+        // No timers advance between these three calls: the counter is driven by
+        // passes, not elapsed time.
+        await service.runManualChecks(log as unknown as FastifyBaseLogger);
+        await service.runManualChecks(log as unknown as FastifyBaseLogger);
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+
+        await service.runManualChecks(log as unknown as FastifyBaseLogger);
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(1);
+      });
+
+      it('counts the coalesced trailing rerun as a pass', async () => {
+        let releaseFirstPass!: () => void;
+        const getAll = vi.fn()
+          .mockReturnValueOnce(new Promise<unknown[]>((r) => { releaseFirstPass = () => r(oneIndexer); }))
+          .mockResolvedValue(oneIndexer);
+        const { service, notifier } = createService({
+          indexer: { getAll, test: vi.fn().mockResolvedValue(FAILED) },
+        });
+
+        const first = service.runAllChecks();
+        const nudge = service.runAllChecks(); // coalesces -> guarantees a trailing rerun
+        releaseFirstPass();
+        await Promise.all([first, nudge]);
+
+        expect(getAll).toHaveBeenCalledTimes(2); // two real passes ran
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+
+        await service.runAllChecks();
+        // If the trailing rerun had not counted, this third call would be
+        // observation 2 and nothing would fire.
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(1);
+      });
+    });
+
+    describe('untouched surfaces (AC 13, 14)', () => {
+      it('reports the raw current state immediately even while dispatch is debounced', async () => {
+        const { service, notifier } = createService({
+          indexer: { getAll: vi.fn().mockResolvedValue(oneIndexer), test: vi.fn().mockResolvedValue(FAILED) },
+        });
+
+        const results = await service.runAllChecks();
+
+        expect(results.find((r) => r.checkName === 'indexer:NZB')).toMatchObject({ state: 'error' });
+        expect(service.getCachedResults().find((r) => r.checkName === 'indexer:NZB')).toMatchObject({ state: 'error' });
+        expect(service.getAggregateState()).toBe('error');
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+      });
+
+      it('returns the live report from runManualChecks on the first failing pass', async () => {
+        const { service, notifier, log } = createService({
+          indexer: { getAll: vi.fn().mockResolvedValue(oneIndexer), test: vi.fn().mockResolvedValue(FAILED) },
+        });
+
+        const results = await service.runManualChecks(log as unknown as FastifyBaseLogger);
+
+        expect(results.find((r) => r.checkName === 'indexer:NZB')).toMatchObject({ state: 'error', message: 'down' });
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+      });
     });
   });
 });
