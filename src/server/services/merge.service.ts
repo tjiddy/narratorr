@@ -10,7 +10,8 @@ import type { AppSettings } from '@shared/schemas/settings/registry.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
-import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
+import type { TaggingService } from './tagging.service.js';
+import { enqueueBookRefresh, enqueueRetagRefresh } from '../utils/enqueue-book-refresh.js';
 import { processAudioFiles, resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import type { ProcessingResult } from '@core/utils/audio-processor.js';
 import { buildNamingContext, type RenameableBook } from '../utils/paths.js';
@@ -95,6 +96,10 @@ export class MergeService {
     private eventHistory?: EventHistoryService,
     private eventBroadcaster?: EventBroadcasterService,
     private connectorService?: ConnectorService,
+    // Optional and TRAILING (#2078) so every existing construction site keeps compiling. That
+    // also means dropping the argument in the composition root compiles and leaves this suite
+    // green — `routes/index.test.ts` carries the same-instance assertion that catches it.
+    private taggingService?: TaggingService,
   ) {}
 
   /** Resolve the recorded provenance for a book, defaulting to 'manual' on a lookup miss. */
@@ -363,6 +368,12 @@ export class MergeService {
       this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedOutput, bookPath, topLevelAudioFiles, bookId, book);
 
+      // Layer 2 (#2078): re-tag the merged output from canonical DB state. It has to run AFTER
+      // commitMerge — `retagBook` resolves the directory from `book.path` itself, which holds
+      // the un-merged source parts until the commit lands (and the staging dir never receives
+      // `cover.jpg`, so it is not a candidate at all).
+      const taggingWarnings = await this.retagMergedOutput(bookId, outputPath);
+
       const ffprobePath = resolveFfprobePathFromSettings(ffmpegPath);
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath);
       let enrichmentWarning: string | undefined;
@@ -375,8 +386,9 @@ export class MergeService {
       // Fold the processing notices into the operator-visible completion message — the
       // existing `message` string, so the merge_complete event contract stays untouched.
       const mergedSummary = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedOutput)}`;
-      const message = processingWarnings.length > 0
-        ? `${mergedSummary} (${processingWarnings.join('; ')})`
+      const allWarnings = [...processingWarnings, ...taggingWarnings];
+      const message = allWarnings.length > 0
+        ? `${mergedSummary} (${allWarnings.join('; ')})`
         : mergedSummary;
       this.emitMergeComplete(bookId, book.title, message, enrichmentWarning);
       return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, ...(enrichmentWarning !== undefined && { enrichmentWarning }) };
@@ -389,6 +401,51 @@ export class MergeService {
     } finally {
       this.abortControllers.delete(bookId);
       this.currentPhase.delete(bookId);
+    }
+  }
+
+  /**
+   * Layer 2 (#2078): re-tag the committed merge output when Tag Embedding is enabled, and return
+   * the tag-step warnings for the operator-visible completion message.
+   *
+   * Wholly NONFATAL — the merge already succeeded on disk, so nothing here may turn it into a
+   * failure: a rejection (including `RetagError`), a returned `failed > 0`, and an unwired
+   * `taggingService` all log a warning and return.
+   *
+   * `retagBook(bookId)` is called with NO overrides on purpose. It re-resolves the settings,
+   * the ffmpeg path, and the canonical hydrated-book → tag projection itself — the same call the
+   * bulk re-tag job and the fix-match route make — which is what keeps merge-time tagging from
+   * drifting into a third author/narrator serialization policy.
+   */
+  private async retagMergedOutput(bookId: number, outputPath: string): Promise<string[]> {
+    const taggingSettings = await this.settingsService.get('tagging');
+    // `retagBook` is the manual-action entry point and has no `enabled` gate of its own, so the
+    // Tag Embedding gate lives here.
+    if (!taggingSettings?.enabled) return [];
+    if (!this.taggingService) {
+      this.log.warn({ bookId }, 'Tag embedding is enabled but no tagging service is wired — merged output keeps only its preserved source tags');
+      return [];
+    }
+
+    try {
+      const result = await this.taggingService.retagBook(bookId);
+      if (result.failed > 0) {
+        this.log.warn({ bookId, failed: result.failed }, 'Post-merge tag write reported failures — merge still succeeded');
+      }
+      // Same `tagged > 0` gate the standalone and bulk re-tag callers use.
+      enqueueRetagRefresh(this.connectorService, this.log, result);
+      if (result.tagged > 0) {
+        // `tagFile` rewrites the file through a temp + atomic rename, which invalidates the stat
+        // `commitMerge` took. Nothing else repairs it — `enrichBookFromAudio` writes
+        // `audioTotalSize`, not `size`. Skipped when nothing was rewritten: the file is byte-
+        // identical to the one `commitMerge` already measured.
+        const fileStats = await stat(outputPath);
+        await this.db.update(books).set({ size: fileStats.size, updatedAt: new Date() }).where(eq(books.id, bookId));
+      }
+      return result.warnings;
+    } catch (error: unknown) {
+      this.log.warn({ bookId, error: serializeError(error) }, 'Post-merge tag write failed — merge succeeded on disk, but the output carries only its preserved source tags');
+      return [];
     }
   }
 

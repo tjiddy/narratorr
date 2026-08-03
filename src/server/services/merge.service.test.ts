@@ -10,6 +10,7 @@ import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
+import { RetagError, type TaggingService, type RetagResult } from './tagging.service.js';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { readdir, mkdir, cp, unlink, stat, rm, rename } from 'node:fs/promises';
@@ -97,7 +98,15 @@ const SCAN_RESULT = {
   hasCoverArt: false,
 };
 
-function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService; connector?: { notifyRefresh: ReturnType<typeof vi.fn> }; processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; bitrate: number; keepOriginalBitrate: boolean; maxConcurrentProcessing: number }> }) {
+function createService(opts?: {
+  eventHistory?: EventHistoryService;
+  eventBroadcaster?: EventBroadcasterService;
+  connector?: { notifyRefresh: ReturnType<typeof vi.fn> };
+  processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; bitrate: number; keepOriginalBitrate: boolean; maxConcurrentProcessing: number }>;
+  tagging?: Partial<{ enabled: boolean; mode: 'populate_missing' | 'overwrite'; embedCover: boolean }>;
+  /** Pass `null` to exercise "tag embedding enabled but no tagger wired" (AC10's absent arm). */
+  taggingService?: { retagBook: ReturnType<typeof vi.fn> } | null;
+}) {
   const db = createMockDb();
   const bookService = {
     getById: vi.fn().mockResolvedValue(mockBook),
@@ -105,6 +114,7 @@ function createService(opts?: { eventHistory?: EventHistoryService; eventBroadca
   };
   const settingsService = createMockSettingsService({
     processing: { ...processingOverrides.processing, ...opts?.processing },
+    ...(opts?.tagging && { tagging: opts.tagging }),
   });
   const log = createMockLogger();
 
@@ -116,9 +126,10 @@ function createService(opts?: { eventHistory?: EventHistoryService; eventBroadca
     opts?.eventHistory,
     opts?.eventBroadcaster,
     opts?.connector ? inject<ConnectorService>(opts.connector) : undefined,
+    opts?.taggingService ? inject<TaggingService>(opts.taggingService) : undefined,
   );
 
-  return { service, db, bookService, log, connector: opts?.connector };
+  return { service, db, bookService, log, settingsService, connector: opts?.connector, taggingService: opts?.taggingService };
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 50));
@@ -2624,5 +2635,225 @@ describe('#1838 merge origin — event provenance', () => {
 
     // Two sequential merges of the same bookId record their OWN origin, in order.
     expect(historyFor(create, 42, 'merged').map((e) => e.source)).toEqual(['auto', 'manual']);
+  });
+});
+
+// ============================================================================
+// #2078 Layer 2 — post-merge re-tag (AC9–AC15)
+//
+// Layer 1 (in `src/core/utils/audio-processor.ts`) only carries the SOURCE parts' tags
+// forward. When Tag Embedding is on, the merged output must additionally be re-tagged from
+// canonical DB state — through the existing `retagBook`, so no second hydrated-book → tag
+// projection is introduced.
+// ============================================================================
+
+const MERGED_OUTPUT = join(BOOK_PATH, 'The Way of Kings.m4b');
+
+function retagResult(over: Partial<RetagResult> = {}): RetagResult {
+  return {
+    bookId: 42,
+    tagged: 1,
+    skipped: 0,
+    failed: 0,
+    warnings: [],
+    refreshItem: { bookId: 42, title: 'The Way of Kings', authorName: 'Author', libraryPath: BOOK_PATH },
+    ...over,
+  };
+}
+
+/** A tagger whose `retagBook` resolves to `result`. */
+function tagger(result: RetagResult = retagResult()) {
+  return { retagBook: vi.fn().mockResolvedValue(result) };
+}
+
+const TAGGING_ON = { enabled: true, mode: 'overwrite' as const, embedCover: true };
+
+describe('#2078 post-merge re-tag', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('calls retagBook(bookId) exactly once, with no overrides, when tag embedding is on (AC10)', async () => {
+    setupHappyPath();
+    const tagging = tagger();
+    const { service } = createService({ tagging: TAGGING_ON, taggingService: tagging });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    // The ABSENCE of a second argument is the point: passing a locally-built metadata object
+    // (or mode/embedCover overrides) would fork the canonical projection and let merge-time
+    // tagging drift from the manual Re-tag button.
+    expect(tagging.retagBook).toHaveBeenCalledTimes(1);
+    expect(tagging.retagBook).toHaveBeenCalledWith(42);
+    expect(tagging.retagBook.mock.calls[0]).toHaveLength(1);
+  });
+
+  it('never calls retagBook when tag embedding is off — Layer 1 alone governs (AC14)', async () => {
+    setupHappyPath();
+    const tagging = tagger();
+    const { service } = createService({
+      tagging: { enabled: false, mode: 'overwrite', embedCover: true },
+      taggingService: tagging,
+    });
+
+    const ack = await service.enqueueMerge(42);
+    await settle();
+
+    // retagBook has no `enabled` gate of its own (it is the manual-action entry point), so a
+    // missing gate here would silently re-tag on every merge with the setting off.
+    expect(tagging.retagBook).not.toHaveBeenCalled();
+    expect(ack).toEqual({ status: 'started', bookId: 42 });
+    expect(enrichBookFromAudio).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a plain Error', new Error('ffmpeg blew up')],
+    ['a RetagError', new RetagError('PATH_MISSING', 'Book path does not exist on disk')],
+  ])('survives a rejected retagBook (%s) — merge still reports success (AC10)', async (_label, error) => {
+    setupHappyPath();
+    const tagging = { retagBook: vi.fn().mockRejectedValue(error) };
+    const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+    const { service, log } = createService({ tagging: TAGGING_ON, taggingService: tagging, eventBroadcaster });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    expect(log.warn).toHaveBeenCalled();
+    expect(vi.mocked(eventBroadcaster.emit)).toHaveBeenCalledWith(
+      'merge_complete', expect.objectContaining({ success: true }),
+    );
+    // The on-disk merge succeeded; a tagging failure must not convert it into a merge failure.
+    expect(log.error).not.toHaveBeenCalled();
+    expect(enrichBookFromAudio).toHaveBeenCalled();
+  });
+
+  it('survives a returned failed > 0 and surfaces its warnings to the operator (AC10, AC13)', async () => {
+    setupHappyPath();
+    const tagging = tagger(retagResult({
+      tagged: 0, failed: 1, warnings: ['01.m4b: Output file suspiciously small — possible corruption'],
+    }));
+    const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+    const { service, log } = createService({ tagging: TAGGING_ON, taggingService: tagging, eventBroadcaster });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    expect(log.warn).toHaveBeenCalled();
+    expect(vi.mocked(eventBroadcaster.emit)).toHaveBeenCalledWith('merge_complete', expect.objectContaining({
+      success: true,
+      message: expect.stringContaining('Output file suspiciously small'),
+    }));
+    expect(enrichBookFromAudio).toHaveBeenCalled();
+  });
+
+  it('warns and continues when tag embedding is on but no tagger is wired (AC10)', async () => {
+    setupHappyPath();
+    const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+    const { service, log } = createService({ tagging: TAGGING_ON, taggingService: null, eventBroadcaster });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    expect(log.warn).toHaveBeenCalled();
+    expect(vi.mocked(eventBroadcaster.emit)).toHaveBeenCalledWith('merge_complete', expect.objectContaining({
+      success: true,
+      message: 'Merged 2 files into The Way of Kings.m4b',
+    }));
+    expect(enrichBookFromAudio).toHaveBeenCalled();
+  });
+
+  it('rewrites books.size from a POST-tag stat (AC11)', async () => {
+    setupHappyPath();
+    // tagFile rewrites the file through a temp + atomic rename, so commitMerge's stat is stale
+    // the moment a tag lands. Two different sizes make a pre-tag-only read observable.
+    const sizes = [500_000_000, 500_004_096];
+    (stat as Mock).mockImplementation(async () => ({ size: sizes.shift() ?? 500_004_096 }));
+    const { service, db } = createService({ tagging: TAGGING_ON, taggingService: tagger() });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    expect(stat).toHaveBeenCalledWith(MERGED_OUTPUT);
+    expect(vi.mocked(stat).mock.calls.filter((c) => c[0] === MERGED_OUTPUT)).toHaveLength(2);
+
+    const lastSet = (db.update as Mock).mock.results.at(-1)?.value?.set as Mock;
+    expect(lastSet).toHaveBeenCalledWith(expect.objectContaining({
+      size: 500_004_096, updatedAt: expect.any(Date),
+    }));
+  });
+
+  it('fires the post-tag metadata connector refresh only when a file was actually tagged (AC12)', async () => {
+    setupHappyPath();
+    const connector = { notifyRefresh: vi.fn().mockResolvedValue(undefined) };
+    const { service } = createService({ tagging: TAGGING_ON, taggingService: tagger(), connector });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    // commitMerge's own 'merge' refresh (the just-deleted originals) stays where it is; this
+    // second 'metadata' refresh points connectors at the finished, tagged file.
+    expect(connector.notifyRefresh).toHaveBeenCalledWith('merge', expect.any(Array));
+    expect(connector.notifyRefresh).toHaveBeenCalledWith('metadata', [
+      expect.objectContaining({ bookId: 42, libraryPath: BOOK_PATH }),
+    ]);
+  });
+
+  it('does not fire the metadata refresh when nothing was tagged (AC12)', async () => {
+    setupHappyPath();
+    const connector = { notifyRefresh: vi.fn().mockResolvedValue(undefined) };
+    const { service } = createService({
+      tagging: TAGGING_ON, connector,
+      taggingService: tagger(retagResult({ tagged: 0, skipped: 1 })),
+    });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    expect(connector.notifyRefresh).toHaveBeenCalledWith('merge', expect.any(Array));
+    expect(connector.notifyRefresh).not.toHaveBeenCalledWith('metadata', expect.anything());
+  });
+
+  it('folds tag-step warnings into the merge_complete message beside the processing ones (AC13)', async () => {
+    setupHappyPath();
+    (processAudioFiles as Mock).mockResolvedValue({
+      success: true,
+      outputFiles: [STAGING_DIR + '/The Way of Kings.m4b'],
+      warnings: ['Requested bitrate capped from 320 kbps to 256 kbps'],
+    });
+    const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+    const { service } = createService({
+      tagging: TAGGING_ON, eventBroadcaster,
+      taggingService: tagger(retagResult({ warnings: ['Cover art embedding enabled but no cover image found in book directory'] })),
+    });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    const emitted = vi.mocked(eventBroadcaster.emit).mock.calls.find((c) => c[0] === 'merge_complete')!;
+    const message = (emitted[1] as { message: string }).message;
+    expect(message).toContain('Requested bitrate capped from 320 kbps to 256 kbps');
+    expect(message).toContain('Cover art embedding enabled but no cover image found');
+  });
+
+  it('finishes the tag write BEFORE enrichment reads the file back', async () => {
+    setupHappyPath();
+    // Gate retagBook's resolution rather than comparing call order: a call-order assertion is
+    // satisfied by an un-awaited retagBook, which is exactly the bug this pins.
+    let release!: (r: RetagResult) => void;
+    const gate = new Promise<RetagResult>((res) => { release = res; });
+    const tagging = { retagBook: vi.fn().mockReturnValue(gate) };
+    const { service } = createService({ tagging: TAGGING_ON, taggingService: tagging });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    expect(tagging.retagBook).toHaveBeenCalled();
+    expect(enrichBookFromAudio).not.toHaveBeenCalled();
+
+    release(retagResult());
+    await settle();
+
+    expect(enrichBookFromAudio).toHaveBeenCalled();
   });
 });

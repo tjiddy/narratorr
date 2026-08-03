@@ -683,6 +683,43 @@ describe('createServices', () => {
     expect(mergeServiceArg).toBe(mergeInstances[0]);
   });
 
+  // #2078 (F3) — MergeService receives the composed TaggingService as its 8th constructor
+  // argument so the post-merge re-tag is live in production. The parameter is OPTIONAL and
+  // TRAILING by design (existing construction sites must keep compiling), which means dropping
+  // it here compiles cleanly AND leaves every merge.service test green — those inject their own
+  // tagger. Only a composition assertion catches the silent regression.
+  it('injects the composed TaggingService instance into MergeService as its 8th constructor arg (#2078)', async () => {
+    const { SettingsService, TaggingService } = await import('../services/index.js');
+    const { MergeService } = await import('../services/merge.service.js');
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    await createServices(db, log);
+
+    // MergeService ctor signature: db, bookService, settings, log, eventHistory,
+    // eventBroadcaster, connector, taggingService — taggingService is index 7.
+    const mergeCalls = vi.mocked(MergeService).mock.calls;
+    expect(mergeCalls).toHaveLength(1);
+    const taggingArg = mergeCalls[0]![7];
+    const taggingInstances = vi.mocked(TaggingService).mock.instances;
+    expect(taggingInstances).toHaveLength(1);
+    expect(taggingArg).toBe(taggingInstances[0]);
+  });
+
   // F29: the composition root must wire the winning-finalize nudge to the SAME
   // ImportSubmissionRunner instance it returns, and the accepted-item nudge to the
   // SAME ImportQueueWorker instance — passing no-op/reversed callbacks would compile
