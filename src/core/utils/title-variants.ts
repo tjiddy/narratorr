@@ -132,41 +132,76 @@ function colonSegments(base: string): string[] {
 }
 
 /**
- * Is this title's FULL form DEGENERATE — a bare franchise prefix wearing the
- * costume of a complete title?
+ * The LOSSLESS twin of `normalizeTitleForVariantMatch`: identical folds (curly
+ * apostrophes, audio-edition tails, case, combining diacritics, `&`/`+` → "and",
+ * punctuation-to-space, whitespace collapse) except that the character class is
+ * Unicode-aware, so letters and digits in EVERY script survive.
  *
- * The scalar normalizer is deliberately lossy: `[^a-z0-9' ]+` drops every
- * character outside the ASCII alnum set, and the NFD fold only rescues letters
- * that decompose (`é` → `e`; `ß`/`ø`/`æ` are intentionally NOT transliterated,
- * the #1547 scope pin). A title whose distinguishing content is written in
- * another script therefore loses ALL of it: the live case is
- * `"World of Warcraft: Перед бурей"`, whose FULL form normalizes to exactly
- * `world of warcraft`.
+ * It exists to answer one question the lossy form cannot: are these two titles
+ * actually the same text? It tolerates exactly the drift the scalar form
+ * tolerates and nothing more, so using it as identity evidence never accepts a
+ * pairing the scalar form would have rejected on those axes.
+ */
+export function normalizeTitleLosslessly(title: string): string {
+  return title
+    .replace(/[’‘]/g, "'")
+    .replace(/\(\s*(?:unabridged|audio|audible)\s*\)/gi, ' ')
+    .replace(/\[\s*(?:unabridged|audio|audible)\s*\]/gi, ' ')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/\s*[&+]\s*/g, ' and ')
+    .replace(/[^\p{L}\p{N}' ]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Did this title lose identity-bearing content to the scalar fold — leaving a
+ * FULL form that is not actually the whole title?
  *
- * That breaks an assumption the asymmetric acceptance rule rests on — that a
- * FULL form is the COMPLETE title, so a fragment matching it must be that whole
- * title. Here the "complete title" IS a fragment, so it legally pairs with the
- * `prefix(1)` of every other book in the franchise
- * (`"World of Warcraft: Beyond the Dark Portal"` and 40 siblings). That is
- * precisely the franchise-prefix cross-match class the asymmetric rule exists to
- * kill, leaking back in through the normalizer rather than through the rule.
+ * `normalizeTitleForVariantMatch` is deliberately lossy: `[^a-z0-9' ]+` drops
+ * every character outside the ASCII alnum set, and the NFD fold only rescues
+ * letters that DECOMPOSE (`é` → `e`; `ß`/`ø`/`æ` stay unfolded, the #1547 scope
+ * pin). A title whose distinguishing content is written in another script loses
+ * all of it: the live case is `"World of Warcraft: Перед бурей"`, whose FULL
+ * form is exactly `world of warcraft`.
  *
- * Detection is exact rather than heuristic: the title HAS a qualifying colon
- * boundary, yet dropping its last segment leaves the normalized text unchanged —
- * so the tail contributed nothing that survived the fold. A title with no colon
- * boundary is never degenerate (`"Foundation"` is a real whole title), and a
- * title whose tail survives is never degenerate (`"Chapterhouse: Dune"` →
- * `chapterhouse dune` ≠ `chapterhouse`).
+ * That breaks the assumption the asymmetric acceptance rule rests on — that a
+ * FULL form is the COMPLETE title, so a fragment equal to it must BE that whole
+ * title. Here the "complete title" IS a fragment, so it pairs with the
+ * `prefix(1)` of every sibling in the franchise. It is the franchise-prefix
+ * cross-match class the rule exists to kill, re-entering through the normalizer.
  *
- * Found by the AC17 blast check against the live library (633 books), which is
- * exactly the unknown-corpus defect that sweep exists to surface.
+ * Detection is by TOKEN SURVIVAL, deliberately structure-free: tokenize the
+ * lossless form, and report degeneracy when some token contributes nothing at
+ * all to the scalar form. An earlier version of this guard asked a structural
+ * question instead ("does the title have a qualifying colon boundary whose tail
+ * vanished?"), which needed a new special case for every shape the erased tail
+ * could take — after a colon, inside parentheses, inside brackets, or with no
+ * colon at all (`"World of Warcraft (Перед бурей)"`). Token survival is the
+ * property those shapes all share, so it closes them together rather than one
+ * structural case at a time.
+ *
+ * Non-degenerate by construction, and each pinned by a test:
+ *  - every token survives — `"Chapterhouse: Dune"`, `"Foundation (1951)"`.
+ *  - a token that FRAGMENTS still survives — `"Straße"` → `stra e` is a
+ *    mangled token, not a missing one.
+ *  - a diacritic that FOLDS survives — `"Les Misérables"` → `les miserables`.
+ *  - nothing survives at all — the empty-variant guard (G5) owns that case, so
+ *    an empty FULL form is never reported here.
+ *
+ * Found by the AC17 blast check against the live library (633 books) — exactly
+ * the unknown-corpus defect that sweep exists to surface.
  */
 export function hasDegenerateFullForm(title: string): boolean {
-  const segments = colonSegments(stripParentheticals(title));
-  if (segments.length < 2) return false;
   const full = normalizeTitleForVariantMatch(title);
   if (full.length === 0) return false;
-  return normalizeTitleForVariantMatch(segments.slice(0, -1).join(' ')) === full;
+  const lossless = normalizeTitleLosslessly(title);
+  if (lossless.length === 0) return false;
+  return lossless
+    .split(' ')
+    .some((token) => normalizeTitleForVariantMatch(token).length === 0);
 }
 
 /**

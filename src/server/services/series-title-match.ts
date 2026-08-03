@@ -1,4 +1,4 @@
-import { titleVariants, hasDegenerateFullForm } from '@core/utils/title-variants.js';
+import { titleVariants, hasDegenerateFullForm, normalizeTitleLosslessly } from '@core/utils/title-variants.js';
 // The TYPE comes straight from its canonical shared home, not through core's
 // re-export. `src/server/**` may import `src/shared/**`, and taking the type
 // from the source keeps core's public `Variant` / `VariantTag` re-export free of
@@ -67,10 +67,12 @@ export interface HardcoverMemberSummary {
  */
 export const VARIANT_CACHE_MAX = 4096;
 
-/** One title's derived matching state — variants plus whether its FULL form is degenerate. */
+/** One title's derived matching state — variants, degeneracy, and lossless identity text. */
 interface TitleShape {
   variants: Variant[];
   degenerateFull: boolean;
+  /** Unicode-preserving normalization, used as identity evidence for a degenerate side. */
+  lossless: string;
 }
 
 const variantCache = new Map<string, TitleShape>();
@@ -81,6 +83,7 @@ function cachedTitleShape(title: string): TitleShape {
   const computed: TitleShape = {
     variants: titleVariants(title),
     degenerateFull: hasDegenerateFullForm(title),
+    lossless: normalizeTitleLosslessly(title),
   };
   if (variantCache.size >= VARIANT_CACHE_MAX) variantCache.clear();
   variantCache.set(title, computed);
@@ -108,16 +111,27 @@ function isDerived(variant: Variant): boolean {
  * franchise prefix. Requiring one side to be the complete title means a
  * fragment can only ever match something that IS that fragment in full.
  *
- * A DEGENERATE full form (see `hasDegenerateFullForm`) may not serve as the FULL
- * side of the derived arm. The arm's safety rests on the FULL side being the
- * COMPLETE title; when the ASCII fold has eaten a title's only distinguishing
- * content, its "complete" form IS a bare franchise prefix, and every sibling's
- * `prefix(1)` matches it. Live case from the AC17 sweep:
- * `"World of Warcraft: Перед бурей"` normalizes to `world of warcraft` and
- * claimed `"World of Warcraft: Beyond the Dark Portal"`. The FULL≡FULL arm is
- * deliberately NOT gated — two sides that agree on their whole normalized text
- * are the same evidence they always were, and gating it would stop a book
- * genuinely titled `"World of Warcraft"` from matching its own copy.
+ * A DEGENERATE side (see `hasDegenerateFullForm`) is one whose scalar form lost
+ * identity-bearing content to the fold, so its FULL form is not really the whole
+ * title. Both arms have to account for that, because a degenerate FULL form is
+ * untrustworthy as EITHER the target of a fragment or as evidence of identity:
+ *
+ *  - DERIVED arm — a degenerate side may not serve as the FULL target. The arm's
+ *    safety rests on that side being the complete title; when it is really a bare
+ *    franchise prefix, every sibling's `prefix(1)` matches it. Live case:
+ *    `"World of Warcraft: Перед бурей"` claimed
+ *    `"World of Warcraft: Beyond the Dark Portal"`.
+ *  - FULL≡FULL arm — equal FULL forms are only equal TITLES when neither side is
+ *    degenerate. `"World of Warcraft: Перед бурей"` and
+ *    `"World of Warcraft: Последний страж"` are different books that both reduce
+ *    to `world of warcraft`, as is a genuinely bare `"World of Warcraft"`. When
+ *    either side is degenerate the arm therefore demands non-lossy evidence:
+ *    the two titles must agree under `normalizeTitleLosslessly`, which preserves
+ *    every script. That keeps the true positive (the same non-Latin title on both
+ *    sides still pairs) while refusing the three false ones.
+ *
+ * Two NON-degenerate sides take the ordinary FULL≡FULL path untouched, so no
+ * ASCII-titled pairing changes.
  *
  * Symmetric and reflexive but NON-transitive, exactly like `titlesMatchForDedup`
  * — never use it as a `Map`/`Set` key.
@@ -126,7 +140,10 @@ function titleVariantsPair(a: TitleShape, b: TitleShape): boolean {
   const aFull = fullForm(a.variants);
   const bFull = fullForm(b.variants);
   if (aFull.length === 0 || bFull.length === 0) return false;
-  if (aFull === bFull) return true;
+  if (aFull === bFull) {
+    if (a.degenerateFull || b.degenerateFull) return a.lossless === b.lossless;
+    return true;
+  }
   if (!b.degenerateFull && a.variants.some((v) => isDerived(v) && v.raw === bFull)) return true;
   return !a.degenerateFull && b.variants.some((v) => isDerived(v) && v.raw === aFull);
 }

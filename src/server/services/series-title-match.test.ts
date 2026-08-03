@@ -167,10 +167,41 @@ describe('title-variant pairing (#2096 fixture corpus)', () => {
       expect(findInLibraryMatch({ title: 'World of Warcraft: Перед бурей', position: null }, candidates)).toBeNull();
     });
 
+    // F8 — the erased tail can sit anywhere. Each of these has FULL form exactly
+    // `world of warcraft`, and each must be refused against a franchise sibling.
+    it.each([
+      ['World of Warcraft: (Перед бурей)', 'parenthesised after a colon'],
+      ['World of Warcraft: [Перед бурей]', 'bracketed after a colon'],
+      ['World of Warcraft (Перед бурей)', 'parenthesised with NO colon'],
+      ['World of Warcraft [Перед бурей]', 'bracketed with NO colon'],
+      ['Перед бурей: World of Warcraft', 'erased content LEADING the surviving text'],
+    ])('refuses %j (%s) against a franchise sibling', (member) => {
+      expect(normalizeMemberTitleForMatch(member)).toBe('world of warcraft');
+      expect(pairsBothWays(member, 'World of Warcraft: Beyond the Dark Portal')).toBe(false);
+    });
+
+    // F7 — the FULL≡FULL arm was the remaining bypass: these all collapse to the
+    // same `world of warcraft` scalar form, so equal FULL forms alone are not
+    // evidence of equal titles when either side is degenerate.
+    it('refuses two DISTINCT erased-tail titles that collapse to the same FULL form', () => {
+      expect(normalizeMemberTitleForMatch('World of Warcraft: Перед бурей')).toBe('world of warcraft');
+      expect(normalizeMemberTitleForMatch('World of Warcraft: Последний страж')).toBe('world of warcraft');
+      expect(pairsBothWays('World of Warcraft: Перед бурей', 'World of Warcraft: Последний страж')).toBe(false);
+    });
+
+    it('refuses an erased-tail title against a genuinely bare franchise title', () => {
+      expect(pairsBothWays('World of Warcraft: Перед бурей', 'World of Warcraft')).toBe(false);
+    });
+
+    it('still pairs the SAME non-Latin title with itself (the true positive)', () => {
+      // The guard demands non-lossy identity evidence, not abstinence: two copies
+      // of the same book still pair, and tolerate the usual case/spacing drift.
+      expect(pairsBothWays('World of Warcraft: Перед бурей', 'World of Warcraft: Перед бурей')).toBe(true);
+      expect(pairsBothWays('World of Warcraft: Перед бурей', '  world of WARCRAFT:  Перед  бурей (Unabridged)')).toBe(true);
+    });
+
     it('still pairs two books that agree on their WHOLE normalized text', () => {
-      // FULL≡FULL is deliberately NOT gated: a book genuinely titled
-      // "World of Warcraft" must still match its own copy, and two erased-tail
-      // members with identical normalized text are the same evidence as before.
+      // Two NON-degenerate sides take the ordinary FULL≡FULL path untouched.
       expect(pairsBothWays('World of Warcraft', 'World of Warcraft')).toBe(true);
     });
 

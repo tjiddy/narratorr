@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { titleVariants, normalizeTitleForVariantMatch, hasDegenerateFullForm } from './title-variants.js';
+import { titleVariants, normalizeTitleForVariantMatch, hasDegenerateFullForm, normalizeTitleLosslessly } from './title-variants.js';
 import type { Variant } from './title-variants.js';
 
 /** Every `raw` in a well-formed variant set is non-empty and already collapsed/lowercased. */
@@ -229,6 +229,22 @@ describe('hasDegenerateFullForm', () => {
     expect(hasDegenerateFullForm(title)).toBe(true);
   });
 
+  // F8: detection must not depend on WHERE the erased content sits. The earlier
+  // structural (colon-segment) detector missed every one of these — the paren and
+  // bracket forms because the tail was stripped before the decision, and the
+  // colon-less form because there was no boundary to find. Token survival is the
+  // property they share.
+  it.each([
+    ['World of Warcraft: (Перед бурей)', 'erased tail in parentheses after a colon'],
+    ['World of Warcraft: [Перед бурей]', 'erased tail in brackets after a colon'],
+    ['World of Warcraft (Перед бурей)', 'erased tail in parentheses with NO colon'],
+    ['World of Warcraft [Перед бурей]', 'erased tail in brackets with NO colon'],
+    ['Перед бурей: World of Warcraft', 'erased content LEADING the surviving text'],
+  ])('flags %j — %s', (title) => {
+    expect(normalizeTitleForVariantMatch(title)).toBe('world of warcraft');
+    expect(hasDegenerateFullForm(title)).toBe(true);
+  });
+
   it.each([
     // A surviving tail is the whole point — these are real, complete titles.
     ['Chapterhouse: Dune'],
@@ -240,14 +256,69 @@ describe('hasDegenerateFullForm', () => {
     ['Foundation'],
     ['Foundation (1951)'],
     ['IT: Chapter Two'],
-    // A tail that survives only partially still carries signal.
+    // A diacritic that FOLDS is not a token that vanished.
     ['Star Wars: Éowyn'],
+    ['Les Misérables'],
+    // A token that FRAGMENTS survives as mangled text, not as nothing:
+    // 'straße' -> 'stra e' (#1547 pins that ß is not transliterated).
+    ['Straße'],
+    ['Straße: Beyond the Dark Portal'],
   ])('does not flag %j', (title) => {
     expect(hasDegenerateFullForm(title)).toBe(false);
+  });
+
+  // F8 named requirement: the colon-inside-parentheses case must stay green —
+  // its parenthetical is retained by the scalar form and every token survives.
+  it('does not flag the colon-inside-parens fixture', () => {
+    expect(hasDegenerateFullForm('The Spiral Path (World of Warcraft: Traveler, Book 2)')).toBe(false);
   });
 
   it('does not flag a title that normalizes away entirely (the empty guard owns that)', () => {
     expect(hasDegenerateFullForm('[ ]')).toBe(false);
     expect(hasDegenerateFullForm('')).toBe(false);
+    // All-Cyrillic: nothing survives, so there is no FULL form to be degenerate
+    // ABOUT. G5's empty-variant guard owns this title.
+    expect(hasDegenerateFullForm('Перед бурей')).toBe(false);
+    expect(titleVariants('Перед бурей')).toEqual([]);
+  });
+});
+
+describe('normalizeTitleLosslessly', () => {
+  it('preserves every script while applying the same folds as the scalar form', () => {
+    // NOTE the trailing `и`: the combining-diacritic fold is script-agnostic, so
+    // Cyrillic `й` decomposes to `и` + breve and loses the breve exactly as `é`
+    // loses its acute. That is the intended behaviour — one consistent fold — and
+    // it costs nothing here, because the surviving letters still tell the two
+    // subtitles apart, which is all this form is used for.
+    expect(normalizeTitleLosslessly('World of Warcraft: Перед бурей')).toBe('world of warcraft перед буреи');
+    expect(normalizeTitleLosslessly('World of Warcraft: Последний страж')).toBe('world of warcraft последнии страж');
+    expect(normalizeTitleLosslessly('World of Warcraft')).toBe('world of warcraft');
+  });
+
+  it('distinguishes titles the scalar form collapses together', () => {
+    // The property the FULL≡FULL arm actually relies on: three titles that are
+    // indistinguishable after the lossy fold stay distinct here.
+    const scalar = [
+      'World of Warcraft: Перед бурей',
+      'World of Warcraft: Последний страж',
+      'World of Warcraft',
+    ].map(normalizeTitleForVariantMatch);
+    expect(new Set(scalar).size).toBe(1);
+
+    const lossless = [
+      'World of Warcraft: Перед бурей',
+      'World of Warcraft: Последний страж',
+      'World of Warcraft',
+    ].map(normalizeTitleLosslessly);
+    expect(new Set(lossless).size).toBe(3);
+  });
+
+  it('tolerates exactly the drift the scalar form tolerates — and no more', () => {
+    expect(normalizeTitleLosslessly('  WORLD  of   Warcraft (Unabridged) ')).toBe('world of warcraft');
+    expect(normalizeTitleLosslessly('Cake & Puppets')).toBe('cake and puppets');
+    expect(normalizeTitleLosslessly('Hitchhiker’s Guide')).toBe("hitchhiker's guide");
+    expect(normalizeTitleLosslessly('Les Misérables')).toBe('les miserables');
+    // But it does NOT erase a non-Latin script, which is the whole point.
+    expect(normalizeTitleLosslessly('Перед бурей')).toBe('перед буреи');
   });
 });
