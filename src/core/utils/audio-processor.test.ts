@@ -2275,7 +2275,11 @@ describe('#2068 stream-copy path (AC1–AC4)', () => {
       '-safe', '0',
       '-i', join('/lib/book', '_concat.txt'),
       '-i', join('/lib/book', '_metadata.txt'),
-      '-map_metadata', '1',
+      // #2078: the first source is opened as an extra input purely so its global tags can be
+      // mapped forward. `-map 0:a` keeps the concat input the only audio source.
+      '-i', join('/lib/book', '01.m4b'),
+      '-map', '0:a',
+      '-map_metadata', '2',
       '-map_chapters', '1',
       '-c:a', 'copy',
       '-vn',
@@ -2304,7 +2308,7 @@ describe('#2068 stream-copy path (AC1–AC4)', () => {
     expect(encodeSpawnArgs()).toContain('copy');
   });
 
-  it('copies an eligible .mp3 set into mp3, with no metadata input and no -map_chapters', async () => {
+  it('copies an eligible .mp3 set into mp3, with no chapter input and no -map_chapters', async () => {
     const paths = setupMergeSet(['01.mp3', '02.mp3']);
     setStreamInfo(streamInfoFor(paths, {
       codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
@@ -2319,7 +2323,11 @@ describe('#2068 stream-copy path (AC1–AC4)', () => {
     const args = encodeSpawnArgs();
     expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
     expect(args).not.toContain('-map_chapters');
-    expect(args).not.toContain('-map_metadata');
+    // #2078: mp3 has no generated-chapter input, so the first source is input 1 and carries
+    // the global tags forward. `-map_metadata` is now present on this path — pointed at the
+    // SOURCE, never at a chapter file (there isn't one here).
+    expect(args[args.indexOf('-map_metadata') + 1]).toBe('1');
+    expect(args[args.indexOf('-i', args.indexOf('-i') + 1) + 1]).toBe(join('/lib/book', '01.mp3'));
     expect(args[args.length - 1]).toBe(MERGED_MP3);
   });
 
@@ -2334,7 +2342,9 @@ describe('#2068 stream-copy path (AC1–AC4)', () => {
 
     const args = encodeSpawnArgs();
     expect(args[args.indexOf('-i', args.indexOf('-i') + 1) + 1]).toBe(join('/lib/book', '_metadata.txt'));
-    expect(args[args.indexOf('-map_metadata') + 1]).toBe('1');
+    // #2078 moved global metadata onto the first source (input 2); chapters stay on the
+    // generated ffmetadata input (1), which is the #2068 guarantee.
+    expect(args[args.indexOf('-map_metadata') + 1]).toBe('2');
     expect(args[args.indexOf('-map_chapters') + 1]).toBe('1');
     expect(args[args.indexOf('-c:a') + 1]).toBe('aac');
     expect(args).toContain('-b:a');
@@ -2664,5 +2674,155 @@ describe('#2068 the caller delivers the resolver notices verbatim (AC14)', () =>
     expect(result.success).toBe(true);
     expect(result.warnings).toEqual(stubbed);
     expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe('96k');
+  });
+});
+
+// ============================================================================
+// #2078 — merge carries the source parts' global tags into the output
+// ============================================================================
+
+/** The ordered `-i` operands of a spawn argv — ffmpeg input N is `inputPaths(args)[N]`. */
+function inputPaths(args: string[]): string[] {
+  const paths: string[] = [];
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === '-i') paths.push(args[i + 1]!);
+  }
+  return paths;
+}
+
+/**
+ * Resolve a `-map_metadata` / `-map_chapters` operand back to the FILE it points at.
+ *
+ * The index is computed by production, so asserting the literal digit would pin a
+ * position rather than the mapping. Reading the operand back through the input list
+ * asserts the property the AC is actually about: which file the flag resolves to.
+ */
+function mappedInput(args: string[], flag: '-map_metadata' | '-map_chapters'): string | undefined {
+  const idx = args.indexOf(flag);
+  if (idx === -1) return undefined;
+  return inputPaths(args)[Number(args[idx + 1])];
+}
+
+describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () => {
+  const CONCAT = join('/lib/book', '_concat.txt');
+  const FFMETADATA = join('/lib/book', '_metadata.txt');
+
+  it('m4b: opens the first source as an extra input and maps global metadata from it', async () => {
+    const paths = setupMergeSet(['01.m4b', '02.m4b', '03.m4b']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'aac', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(inputPaths(args)).toEqual([CONCAT, FFMETADATA, paths[0]]);
+    expect(mappedInput(args, '-map_metadata')).toBe(paths[0]);
+  });
+
+  it('m4b: -map_metadata never resolves to the generated chapter ffmetadata file', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    // The pre-#2078 defect exactly: input 1 is the generated FFMETADATA1 file, which carries
+    // only [CHAPTER] blocks, so mapping global metadata from it wrote an EMPTY tag set.
+    expect(mappedInput(encodeSpawnArgs(), '-map_metadata')).not.toBe(FFMETADATA);
+  });
+
+  it('m4b: -map_chapters still resolves to the generated ffmetadata input (#2068, AC3)', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(mappedInput(args, '-map_chapters')).toBe(FFMETADATA);
+    expect(args).toContain('-b:a'); // encode mode, not copy
+  });
+
+  it('m4b: -map_chapters resolves to the generated ffmetadata input in copy mode too (AC3)', async () => {
+    const paths = setupMergeSet(['01.m4b', '02.m4b']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'aac', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(mappedInput(args, '-map_chapters')).toBe(FFMETADATA);
+    expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
+  });
+
+  it('mp3: opens the first source as input 1 and maps metadata from it, still no -map_chapters', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles(
+      '/lib/book', { ...KEEP_ORIGINAL, outputFormat: 'mp3' }, defaultContext,
+    );
+
+    const args = encodeSpawnArgs();
+    expect(inputPaths(args)).toEqual([CONCAT, paths[0]]);
+    expect(mappedInput(args, '-map_metadata')).toBe(paths[0]);
+    expect(args).not.toContain('-map_chapters');
+  });
+
+  it('emits an explicit -map 0:a so the concat input is the only audio source (AC2)', async () => {
+    const paths = setupMergeSet(['01.m4b', '02.m4b']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'aac', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    // Two audio-bearing inputs are now open (concat + the first source). Without an explicit
+    // map, ffmpeg picks the "best" audio stream across ALL inputs, which can silently emit the
+    // first part alone. Assert the operand resolves to the concat input, not its position.
+    const args = encodeSpawnArgs();
+    const mapIdx = args.indexOf('-map');
+    expect(mapIdx).toBeGreaterThan(-1);
+    const [inputIndex, specifier] = args[mapIdx + 1]!.split(':');
+    expect(inputPaths(args)[Number(inputIndex)]).toBe(CONCAT);
+    expect(specifier).toBe('a');
+  });
+
+  it('a copy-eligible set still copies, with no -b:a, despite the extra input (AC4)', async () => {
+    const paths = setupMergeSet(['01.m4b', '02.m4b', '03.m4b']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'aac', bit_rate: '251000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
+    expect(args).not.toContain('-b:a');
+    expect(args).not.toContain('aac');
+  });
+
+  it('convert emits no -map_metadata override — ffmpeg\'s default already keeps them (AC18a)', async () => {
+    setupConvertFile();
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(inputPaths(args)).toEqual([join('/lib/book', 'book.mp3')]);
+    expect(args).not.toContain('-map_metadata');
   });
 });

@@ -10,7 +10,9 @@ import type { AppSettings } from '@shared/schemas/settings/registry.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
+import type { TaggingService } from './tagging.service.js';
 import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
+import { retagMergedOutput } from './merge-post-tag.js';
 import { processAudioFiles, resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import type { ProcessingResult } from '@core/utils/audio-processor.js';
 import { buildNamingContext, type RenameableBook } from '../utils/paths.js';
@@ -95,6 +97,10 @@ export class MergeService {
     private eventHistory?: EventHistoryService,
     private eventBroadcaster?: EventBroadcasterService,
     private connectorService?: ConnectorService,
+    // Optional and TRAILING (#2078) so every existing construction site keeps compiling. That
+    // also means dropping the argument in the composition root compiles and leaves this suite
+    // green — `routes/index.test.ts` carries the same-instance assertion that catches it.
+    private taggingService?: TaggingService,
   ) {}
 
   /** Resolve the recorded provenance for a book, defaulting to 'manual' on a lookup miss. */
@@ -363,6 +369,15 @@ export class MergeService {
       this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedOutput, bookPath, topLevelAudioFiles, bookId, book);
 
+      // Layer 2 (#2078): re-tag the merged output from canonical DB state. It has to run AFTER
+      // commitMerge — `retagBook` resolves the directory from `book.path` itself, which holds
+      // the un-merged source parts until the commit lands (and the staging dir never receives
+      // `cover.jpg`, so it is not a candidate at all).
+      const taggingWarnings = await retagMergedOutput({
+        db: this.db, settingsService: this.settingsService, log: this.log,
+        taggingService: this.taggingService, connectorService: this.connectorService,
+      }, bookId, outputPath);
+
       const ffprobePath = resolveFfprobePathFromSettings(ffmpegPath);
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath);
       let enrichmentWarning: string | undefined;
@@ -375,8 +390,9 @@ export class MergeService {
       // Fold the processing notices into the operator-visible completion message — the
       // existing `message` string, so the merge_complete event contract stays untouched.
       const mergedSummary = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedOutput)}`;
-      const message = processingWarnings.length > 0
-        ? `${mergedSummary} (${processingWarnings.join('; ')})`
+      const allWarnings = [...processingWarnings, ...taggingWarnings];
+      const message = allWarnings.length > 0
+        ? `${mergedSummary} (${allWarnings.join('; ')})`
         : mergedSummary;
       this.emitMergeComplete(bookId, book.title, message, enrichmentWarning);
       return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, ...(enrichmentWarning !== undefined && { enrichmentWarning }) };
