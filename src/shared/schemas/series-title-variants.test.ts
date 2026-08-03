@@ -98,7 +98,17 @@ describe('core ↔ shared type-contract drift guards (#2096)', () => {
   // `Variant.tag` resolves through SHARED's `VariantTag`, so a core module that
   // hand-writes only `VariantTag` while still re-exporting `Variant` leaves
   // `Equals<Variant, CoreVariant>` true and would compile clean against a
-  // `Variant`-only guard. See the AC14 counterfactuals.
+  // `Variant`-only guard.
+  //
+  // Verified standing of these guards (mutation-checked, both directions):
+  // BOTH fire under their drift — but neither fires ALONE. `title-variants.ts`
+  // builds its result through a `push` helper whose `tag` parameter is the
+  // shared `VariantTag` and whose object literal lands in a shared `Variant[]`,
+  // so the module's own typecheck rejects every divergence first — narrower,
+  // wider, or field-dropping alike. These guards are therefore a backstop that
+  // becomes the sole observation point only if that internal bridge is ever
+  // refactored away; they are sound (they DO fail against the drifted code),
+  // just not currently the first thing to fail.
   it('core Variant is still the shared Variant', () => {
     const aligned: Equals<Variant, CoreVariant> = true;
     expect(aligned).toBe(true);
