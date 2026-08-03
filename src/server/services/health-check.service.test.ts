@@ -728,68 +728,59 @@ describe('HealthCheckService', () => {
       expect(results.length).toBeGreaterThanOrEqual(3);
     });
 
+    // #2090 note: every test below drives a LOCAL check (`library-root` via a
+    // rejecting `fsAccess`, `disk-space` via `fsStatfs`) rather than an indexer.
+    // Local checks confirm on their first pass, so these keep observing pass-1
+    // dispatch. Driven by an indexer they would either go red (the window
+    // suppresses pass 1) or — worse — stay green while no notification is ever
+    // dispatched, making the fire-and-forget assertions vacuous. Each one that
+    // depends on a notification actually happening asserts that explicitly.
+    const libraryRootMissing = () => vi.fn().mockRejectedValue(
+      Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+    );
+
     it('fires on_health_issue notification once per changed check', async () => {
-      const { service, notifier } = createService({
-        indexer: {
-          getAll: vi.fn().mockResolvedValue([{ id: 1, name: 'NZB', enabled: true }]),
-          test: vi.fn().mockResolvedValue({ success: false, message: 'down' }),
-        },
-      });
+      const { service, notifier } = createService({ fsAccess: libraryRootMissing() });
 
       // First run establishes state
       await service.runAllChecks();
       // The initial run from unknown → error should fire a notification
-      expect(notifier.notify).toHaveBeenCalledWith('on_health_issue', expect.objectContaining({
-        health: expect.objectContaining({
-          checkName: 'indexer:NZB',
-          currentState: 'error',
-        }),
-      }));
+      expect(healthNotifications(notifier, 'library-root')).toMatchObject([
+        { previousState: 'healthy', currentState: 'error' },
+      ]);
     });
 
     it('fires N notifications when N checks change in one run', async () => {
+      const twoGB = 2 * 1024 * 1024 * 1024;
       const { service, notifier } = createService({
-        indexer: {
-          getAll: vi.fn().mockResolvedValue([
-            { id: 1, name: 'NZB1', enabled: true },
-            { id: 2, name: 'NZB2', enabled: true },
-          ]),
-          test: vi.fn().mockResolvedValue({ success: false, message: 'down' }),
-        },
+        fsAccess: libraryRootMissing(),
+        fsStatfs: vi.fn().mockResolvedValue({ bavail: twoGB / 4096, bsize: 4096 }),
       });
 
       await service.runAllChecks();
-      const healthCalls = (notifier.notify as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (c: unknown[]) => c[0] === 'on_health_issue'
+
+      expect(healthNotifications(notifier).map((h) => h.checkName).sort()).toEqual(
+        ['disk-space', 'library-root'],
       );
-      expect(healthCalls.length).toBeGreaterThanOrEqual(2);
     });
 
     it('does not fire notification when check state is unchanged', async () => {
-      const { service, notifier } = createService({
-        indexer: {
-          getAll: vi.fn().mockResolvedValue([{ id: 1, name: 'NZB', enabled: true }]),
-          test: vi.fn().mockResolvedValue({ success: false, message: 'still down' }),
-        },
-      });
+      const { service, notifier } = createService({ fsAccess: libraryRootMissing() });
 
       await service.runAllChecks();
+      // The first pass must actually have dispatched, or the second pass's silence
+      // proves nothing.
+      expect(healthNotifications(notifier, 'library-root')).toHaveLength(1);
       (notifier.notify as ReturnType<typeof vi.fn>).mockClear();
 
       // Second run — same state, should not fire
       await service.runAllChecks();
-      const healthCalls = (notifier.notify as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (c: unknown[]) => c[0] === 'on_health_issue'
-      );
-      expect(healthCalls).toHaveLength(0);
+      expect(healthNotifications(notifier)).toHaveLength(0);
     });
 
     it('notification fire-and-forget — notifier rejection does not throw or break health check', async () => {
-      const { service } = createService({
-        indexer: {
-          getAll: vi.fn().mockResolvedValue([{ id: 1, name: 'NZB', enabled: true }]),
-          test: vi.fn().mockResolvedValue({ success: false, message: 'down' }),
-        },
+      const { service, notifier } = createService({
+        fsAccess: libraryRootMissing(),
         notifier: {
           notify: vi.fn().mockRejectedValue(new Error('notification failed')),
         },
@@ -797,16 +788,16 @@ describe('HealthCheckService', () => {
 
       // Should not throw
       const results = await service.runAllChecks();
+      // The rejecting notifier was actually invoked — otherwise "did not throw" is
+      // trivially true and this exercises no rejection containment at all.
+      expect(healthNotifications(notifier, 'library-root')).toHaveLength(1);
       expect(results.length).toBeGreaterThan(0);
     });
 
     it('calls fireAndForget with notification promise, logger, and context string on state transition', async () => {
       const notifyPromise = Promise.resolve();
       const { service, notifier } = createService({
-        indexer: {
-          getAll: vi.fn().mockResolvedValue([{ id: 1, name: 'NZB', enabled: true }]),
-          test: vi.fn().mockResolvedValue({ success: false, message: 'down' }),
-        },
+        fsAccess: libraryRootMissing(),
         notifier: {
           notify: vi.fn().mockReturnValue(notifyPromise),
         },
@@ -816,7 +807,7 @@ describe('HealthCheckService', () => {
 
       expect(notifier.notify).toHaveBeenCalledWith('on_health_issue', expect.objectContaining({
         health: expect.objectContaining({
-          checkName: 'indexer:NZB',
+          checkName: 'library-root',
           currentState: 'error',
         }),
       }));
@@ -829,11 +820,8 @@ describe('HealthCheckService', () => {
       let notifySettled = false;
       pendingPromise.then(() => { notifySettled = true; });
 
-      const { service } = createService({
-        indexer: {
-          getAll: vi.fn().mockResolvedValue([{ id: 1, name: 'NZB', enabled: true }]),
-          test: vi.fn().mockResolvedValue({ success: false, message: 'down' }),
-        },
+      const { service, notifier } = createService({
+        fsAccess: libraryRootMissing(),
         notifier: {
           notify: vi.fn().mockReturnValue(pendingPromise),
         },
@@ -842,6 +830,9 @@ describe('HealthCheckService', () => {
       // runAllChecks should resolve even though the notification promise is still pending
       const results = await service.runAllChecks();
       expect(results.length).toBeGreaterThan(0);
+      // The deferred promise was actually requested — `notifySettled === false` is
+      // trivially true for a notification that was never dispatched.
+      expect(healthNotifications(notifier, 'library-root')).toHaveLength(1);
       expect(notifySettled).toBe(false); // notification is still pending
 
       // Clean up: settle the deferred promise
@@ -851,17 +842,15 @@ describe('HealthCheckService', () => {
 
     it('notification rejection is logged at warn level via fireAndForget, not silently swallowed', async () => {
       const error = new Error('notification failed');
-      const { service, log } = createService({
-        indexer: {
-          getAll: vi.fn().mockResolvedValue([{ id: 1, name: 'NZB', enabled: true }]),
-          test: vi.fn().mockResolvedValue({ success: false, message: 'down' }),
-        },
+      const { service, log, notifier } = createService({
+        fsAccess: libraryRootMissing(),
         notifier: {
           notify: vi.fn().mockRejectedValue(error),
         },
       });
 
       await service.runAllChecks();
+      expect(healthNotifications(notifier, 'library-root')).toHaveLength(1);
       // Allow microtasks to flush so fireAndForget's .catch() handler runs
       await new Promise((resolve) => setTimeout(resolve, 0));
 

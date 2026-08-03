@@ -40,8 +40,76 @@ export interface SystemDeps {
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
+/**
+ * Notification hysteresis for the flappy class of checks (#2090). External
+ * dependencies blip for seconds at a time — a live specimen was Hardcover
+ * returning HTTP 500 for a ~7-second window — and at the wrong tick alignment
+ * that is exactly one "Unhealthy"/"Resolved" email pair for an incident that was
+ * over before the first was read. Dispatch waits for the new state to hold this
+ * many consecutive passes; detection, the health card, and every API response
+ * stay instant.
+ *
+ * Deliberately a constant rather than a setting: a knob whose only sensible value
+ * is the default is a constant with extra steps. Promoting it is a small
+ * follow-up if a real need for tuning ever materializes.
+ */
+const NETWORK_CHECK_CONFIRMATION_PASSES = 3;
+
+/**
+ * Whether a check's state depends on a live external dependency, and so is
+ * subject to the confirmation window. A pure function of `checkName`: the
+ * `indexer:` / `download-client:` prefixes are constructed by `checkIndexers` /
+ * `checkDownloadClients`, so a user-supplied connector name cannot escape one.
+ *
+ * Everything else — `library-root`, `disk-space`, `ffmpeg`, `stuck-downloads`,
+ * `version-update` — is local, doesn't flap, and when it fires the operator wants
+ * to know now, so it keeps notifying on its first pass.
+ */
+function isNetworkBackedCheck(checkName: string): boolean {
+  return checkName === 'hardcover'
+    || checkName.startsWith('indexer:')
+    || checkName.startsWith('download-client:');
+}
+
+/**
+ * Stable identity for notification tracking — `checkName` *classifies*, it does
+ * not *identify*. Connector names carry no unique constraint and are mutable, so
+ * a display-text key would merge two same-named connectors into one confirmation
+ * run and restart the run on every rename. Connector rows carry an AUTOINCREMENT
+ * id that SQLite never reissues, so a deleted-and-recreated connector always gets
+ * a fresh key and starts from the default `healthy` notified state rather than
+ * inheriting a deleted connector's episode.
+ *
+ * NOT the client's `HealthDashboard.cardKey`: its non-connector arm is
+ * `kind:path`, which collides `library-root` with `disk-space` (both carry
+ * `{ kind: 'route', path: '/settings' }`). Server-side that would merge two
+ * independent local checks into one tracking entry; singleton checks have fixed
+ * literal `checkName`s, so falling back to that avoids the merge.
+ */
+function trackingKey(result: HealthCheckResult): string {
+  const target = result.target;
+  if (target?.kind === 'indexer' || target?.kind === 'download-client') {
+    return `${target.kind}:${target.id}`;
+  }
+  return result.checkName;
+}
+
 export class HealthCheckService {
-  private previousStates: Map<string, HealthState> = new Map();
+  /**
+   * Consecutive observations of the current state, per tracking key — the
+   * in-flight confirmation run. Clamped at the threshold so a check sitting in one
+   * state for months doesn't grow an unbounded counter.
+   */
+  private pendingStates: Map<string, { state: HealthState; passes: number }> = new Map();
+  /**
+   * Last state actually *announced* to the operator, per tracking key. Tracked
+   * separately from the observed state so a blip that self-heals inside the window
+   * sends nothing at all — no orphaned "resolved" email for a failure that was
+   * never announced. Defaults to `healthy` for a key never notified about, which
+   * preserves the pre-#2090 boot behavior (a broken check re-alerts after a
+   * restart, just three passes later).
+   */
+  private notifiedStates: Map<string, HealthState> = new Map();
   private cachedResults: HealthCheckResult[] = [];
   private running = false;
   private pendingRerun = false;
@@ -183,25 +251,42 @@ export class HealthCheckService {
       }
     }
 
-    // Fire notifications for state transitions
+    // Fire notifications for CONFIRMED state transitions (#2090). A tracking key
+    // absent from this pass's results — hardcover with no API key, ffmpeg with no
+    // automation needing it, a deleted or disabled connector — is simply not
+    // visited, which freezes its pending run rather than advancing or resetting
+    // it. For a local check `required` is 1, so `passes` is always 1 and this
+    // reduces exactly to the pre-#2090 `previousState !== result.state` compare.
     for (const result of results) {
-      const previousState = this.previousStates.get(result.checkName) ?? 'healthy';
-      if (previousState !== result.state) {
-        fireAndForget(
-          this.notifierService.notify('on_health_issue', {
-            event: 'on_health_issue',
-            health: {
-              checkName: result.checkName,
-              previousState,
-              currentState: result.state,
-              message: result.message,
-            },
-          }),
-          this.log,
-          'Failed to send health issue notification',
-        );
-      }
-      this.previousStates.set(result.checkName, result.state);
+      const key = trackingKey(result);
+      const required = isNetworkBackedCheck(result.checkName) ? NETWORK_CHECK_CONFIRMATION_PASSES : 1;
+      const pending = this.pendingStates.get(key);
+      // Confirmation is on the exact tri-state value, not a healthy/unhealthy
+      // boolean: a check flapping between `warning` and `error` restarts the run
+      // on every pass and so never confirms.
+      const passes = Math.min(pending?.state === result.state ? pending.passes + 1 : 1, required);
+      this.pendingStates.set(key, { state: result.state, passes });
+
+      const notifiedState = this.notifiedStates.get(key) ?? 'healthy';
+      if (passes < required || result.state === notifiedState) continue;
+
+      // `checkName` and `message` come from the confirming pass, so a rename
+      // mid-episode reports the current name and the operator reads the freshest
+      // diagnostic rather than a stale one retained from observation 1.
+      fireAndForget(
+        this.notifierService.notify('on_health_issue', {
+          event: 'on_health_issue',
+          health: {
+            checkName: result.checkName,
+            previousState: notifiedState,
+            currentState: result.state,
+            message: result.message,
+          },
+        }),
+        this.log,
+        'Failed to send health issue notification',
+      );
+      this.notifiedStates.set(key, result.state);
     }
 
     return results;
@@ -229,7 +314,8 @@ export class HealthCheckService {
 
   /** Reset state tracking for tests */
   _reset(): void {
-    this.previousStates.clear();
+    this.pendingStates.clear();
+    this.notifiedStates.clear();
     this.cachedResults = [];
     this.running = false;
     this.pendingRerun = false;
