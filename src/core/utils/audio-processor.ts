@@ -246,6 +246,18 @@ function spawnFfmpeg(
 }
 
 /**
+ * The ffmpeg input index of the most recently pushed `-i` operand.
+ *
+ * The merge command's input layout differs by output format (m4b opens a generated-chapter
+ * input that mp3 does not), so every `-map*` operand is DERIVED from the argv being built
+ * rather than written as a literal — a hardcoded index silently points at the wrong file the
+ * moment an input is added or removed.
+ */
+function lastInputIndex(args: string[]): number {
+  return args.filter((token) => token === '-i').length - 1;
+}
+
+/**
  * Merge multiple audio files into a single output file with chapter markers.
  */
 async function mergeFiles(
@@ -291,10 +303,6 @@ async function mergeFiles(
       '-i', concatPath,
     ];
 
-    // Input indices are COMPUTED, never hardcoded — the generated-chapter input only exists on
-    // the m4b path, so the first-source input lands at a different index per output format.
-    let nextInput = 1; // input 0 is the concat demuxer opened above
-
     // Build chapter metadata for m4b
     let metadataPath: string | undefined;
     let chapterInput: number | undefined;
@@ -303,7 +311,7 @@ async function mergeFiles(
       const metadataContent = buildChapterMetadata(chapterSources, durations);
       await writeFile(metadataPath, metadataContent, 'utf-8');
       args.push('-i', metadataPath);
-      chapterInput = nextInput++;
+      chapterInput = lastInputIndex(args);
     }
 
     // #2078: open the first source purely as a metadata donor. The generated FFMETADATA1 file
@@ -312,7 +320,7 @@ async function mergeFiles(
     // concat demuxer's own propagation of format-level metadata is version-dependent, so this
     // maps the source explicitly rather than relying on `-map_metadata 0`.
     args.push('-i', audioFiles[0]!);
-    const metadataInput = nextInput++;
+    const metadataInput = lastInputIndex(args);
 
     // Mandatory, not cosmetic: with a second audio-bearing input open, ffmpeg's automatic
     // stream selection is free to pick the donor's audio instead of the concat's — which
