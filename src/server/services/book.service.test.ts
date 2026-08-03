@@ -265,11 +265,16 @@ describe('BookService', () => {
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }, { author: author2, position: 1 }]))
         .mockReturnValueOnce(mockDbChain([]));
 
+      // Real insert order: book row first (runResolvedInsert), then syncAuthors
+      // interleaves find-or-create with the junction row per author. The previous
+      // ordering made `findOrCreateAuthor` fall into its unique-violation retry and
+      // silently mis-align every later mock, which left `getById` reading the
+      // authors result as its book row.
       db.insert
-        .mockReturnValueOnce(mockDbChain([author2]))       // insert author[1]
         .mockReturnValueOnce(mockDbChain([{ id: 1 }]))     // insert book
-        .mockReturnValueOnce(mockDbChain([]))              // insert bookAuthors
-        .mockReturnValueOnce(mockDbChain([]));             // insert bookAuthors (2nd author)
+        .mockReturnValueOnce(mockDbChain([]))              // insert bookAuthors (author 0)
+        .mockReturnValueOnce(mockDbChain([author2]))       // insert author[1]
+        .mockReturnValueOnce(mockDbChain([]));             // insert bookAuthors (author 1)
 
       await service.create({
         title: 'The Way of Kings',
@@ -2079,7 +2084,7 @@ describe('BookService — transaction atomicity (#214)', () => {
       vi.mocked(unlink).mockReset();
       const preWriteBook = createMockDbBook({ id: 1, path: '/library/book', coverUrl: null });
       const getByIdSpy = vi.spyOn(service, 'getById')
-        .mockResolvedValueOnce(preWriteBook as Awaited<ReturnType<BookService['getById']>>) // initial existence/path check
+        .mockResolvedValueOnce(preWriteBook as unknown as Awaited<ReturnType<BookService['getById']>>) // initial existence/path check
         .mockRejectedValueOnce(new Error('libSQL read failed')); // post-write reload throws
       (writeFile as Mock).mockResolvedValue(undefined);
       (rename as Mock).mockResolvedValue(undefined);

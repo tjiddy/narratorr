@@ -101,13 +101,15 @@ export function buildFfmpegArgs(
     args.push('-i', coverPath);
   }
 
-  // Map inputs
+  // Map inputs. Exactly one video mapping either way: the new cover input when one was
+  // supplied, otherwise the source's OWN attached picture (#2078). Without that fallback the
+  // tag write is audio-only and silently strips embedded art — on every `populate_missing`
+  // re-tag (where shouldEmbedCover is false precisely BECAUSE the file already has a picture)
+  // and on every re-tag with Embed cover art off. The `?` makes the specifier optional, so a
+  // file with no video stream is unaffected.
   args.push('-map', '0:a');
-  if (coverPath) {
-    args.push('-map', '1');
-    args.push('-c:v', 'copy');
-    args.push('-disposition:v', 'attached_pic');
-  }
+  args.push('-map', coverPath ? '1' : '0:v?');
+  args.push('-c:v', 'copy', '-disposition:v', 'attached_pic');
 
   // Copy audio codec (no re-encode)
   args.push('-c:a', 'copy');

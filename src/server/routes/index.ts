@@ -140,7 +140,10 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const importService = new ImportService(db, downloadClient, settings, log, remotePathMapping, book);
   // MergeService is constructed before the orchestrator so the download-import path can enqueue
   // opt-in auto-merges (#1836) into the same bounded merge queue as the manual Merge button.
-  const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster, connector);
+  // taggingService is the 8th argument (#2078): with Tag Embedding on, the merge re-tags its
+  // own output from canonical DB state after committing, so an auto-merged file is not left
+  // carrying only the source parts' tags.
+  const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster, connector, taggingService);
   const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster, connector, book, mergeService);
   const seriesCard = new SeriesCardService(db, log, settings);
   const libraryScan = new LibraryScanService(db, book, bookImport, metadata, settings, log, eventHistory, eventBroadcaster, connector);

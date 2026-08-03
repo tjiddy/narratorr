@@ -10,6 +10,8 @@ import { canonicalizeAsin } from '@shared/asin.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { BookService } from '../services/book.service.js';
 import { pickPrimarySeries } from '@shared/pick-primary-series.js';
+import { parseClearedFields } from '../utils/cleared-fields.js';
+import type { ClearableBookField } from '@shared/schemas/book.js';
 
 
 const BATCH_LIMIT = 5;
@@ -110,34 +112,112 @@ async function markFailedGuarded(
   return true;
 }
 
+/** The clearable fields this fill surface writes as plain scalars. */
+const TOMBSTONABLE_SCALAR_FILLS = ['subtitle', 'description', 'publisher', 'publishedDate'] as const;
+
 /**
- * Apply the success scalar UPDATE, scoped `WHERE id = ? AND asin <matches
- * captured>` so a Fix Match that swapped the row's identity between fetch and
- * writeback drops the stale write atomically (null-safe via `asinMatches`).
+ * Drop the writes a live tombstone suppresses (#2069 AC9). Mutates `updates` in
+ * place, so the counters the caller derives from it are already post-suppression.
  *
- * On a UNIQUE violation — a concurrent writer (Fix Match / import-list create)
- * took the resolved ASIN between `findAsinCollision` and this write — run the
- * guarded recovery write to mark the candidate `failed` instead of letting the
- * throw abort the rest of the batch, and return true so the caller `continue`s.
- * Non-unique errors are genuine faults and rethrow, preserving existing
- * crash/log behavior. Returns false on the normal path (including a scalar
- * stale-drop) so the caller falls through to the success log.
+ * `duration`, the all-caps `title` rewrite, `coverUrl`, `asin`, `enrichmentStatus`
+ * and every technical/audio field are deliberately unaffected — none of them is
+ * clearable through Edit Metadata, so none can carry a tombstone.
  */
-async function applyScalarWrite(
+function suppressTombstonedUpdates(
+  updates: Record<string, unknown>,
+  cleared: ReadonlySet<ClearableBookField>,
+): void {
+  for (const field of TOMBSTONABLE_SCALAR_FILLS) {
+    if (cleared.has(field)) delete updates[field];
+  }
+  // The series pair is single-source (#1927 AC10): the `seriesName` tombstone
+  // suppresses BOTH halves, never grafting a provider position onto a cleared name.
+  if (cleared.has('seriesName')) {
+    delete updates.seriesName;
+    delete updates.seriesPosition;
+  }
+}
+
+type EnrichmentWriteOutcome = 'applied' | 'stale' | 'unique-conflict';
+
+/**
+ * The candidate's whole durable write, in ONE transaction (#2069 AC11).
+ *
+ * Inside the transaction, in order: re-select `{ asin, user_cleared_fields }` on
+ * the handle, abort on an identity change, drop every tombstoned key from the
+ * already-prepared `updates`, then issue the scalar UPDATE and the genres write
+ * together. The provider fetch and the fill-empty decisions for non-tombstone
+ * reasons stay OUTSIDE, as they are today (`src/db/serial-transactions.ts`: keep
+ * the surrounding work outside the transaction, re-read only the preconditions
+ * inside). Re-reading is why there is no fence and no observation token — the
+ * window a fence would narrow is closed entirely.
+ *
+ * A field dropped because it is tombstoned is a DECISION, not a failure: the rest
+ * of the write proceeds and `enrichmentStatus` advances normally. Only an identity
+ * mismatch yields `'stale'`, and the caller then emits no success counters or log.
+ *
+ * `genresWritten` carries the genre payload back OUT as a DEFERRED EFFECT (#2069
+ * F21/F5): `bookService.update`'s caller-owned-tx arm deliberately emits no
+ * post-commit side effects, because a rollback the owner may still perform would
+ * strand them — so the owner is the one that must run the unmatched-genre telemetry,
+ * and only after this transaction has committed. It is `null` whenever no genre
+ * write landed (nothing to fill, or the field is tombstoned).
+ *
+ * On a UNIQUE violation — a concurrent writer took the resolved ASIN between
+ * `findAsinCollision` and this write — the throw rolls the transaction back and the
+ * guarded recovery write marks the candidate `failed` OUTSIDE it, so the rest of
+ * the batch continues. Non-unique errors are genuine faults and rethrow.
+ */
+async function applyEnrichmentWrites(
   db: Db,
+  bookService: BookService,
   log: FastifyBaseLogger,
   bookId: number,
   capturedAsin: string | null,
   updates: Record<string, unknown>,
   resolvedAsin: string | null,
-): Promise<boolean> {
-  let scalarResult;
+  genresToFill: string[] | null,
+): Promise<{ outcome: EnrichmentWriteOutcome; filledGenres: number; genresWritten: string[] | null }> {
   try {
-    scalarResult = await db
-      .update(books)
-      .set(updates)
-      .where(and(eq(books.id, bookId), asinMatches(capturedAsin)))
-      .returning({ id: books.id });
+    return await db.transaction(async (tx) => {
+      const rows = await tx
+        .select({ asin: books.asin, userClearedFields: books.userClearedFields })
+        .from(books)
+        .where(eq(books.id, bookId))
+        .limit(1);
+      const row = rows[0];
+
+      // Identity guard, same meaning as today's `asinMatches` predicate — just
+      // observed early enough to skip the write. A MISSING row needs no branch of
+      // its own: it cannot satisfy that predicate either, so it drops below.
+      if (row && (row.asin ?? null) !== capturedAsin) {
+        log.debug({ bookId, asin: capturedAsin }, 'stale enrichment dropped (identity re-read)');
+        return { outcome: 'stale' as const, filledGenres: 0, genresWritten: null };
+      }
+
+      const cleared = new Set(parseClearedFields(row?.userClearedFields ?? null, log, bookId));
+      suppressTombstonedUpdates(updates, cleared);
+
+      const scalarResult = await tx
+        .update(books)
+        .set(updates)
+        .where(and(eq(books.id, bookId), asinMatches(capturedAsin)))
+        .returning({ id: books.id });
+
+      if (scalarResult.length === 0) {
+        log.debug({ bookId, asin: capturedAsin }, 'stale enrichment dropped (scalar update)');
+        return { outcome: 'stale' as const, filledGenres: 0, genresWritten: null };
+      }
+
+      // The genres write commits through `bookService.update`, which has no
+      // captured-ASIN scope of its own — it inherits this transaction's guard, and
+      // runs on the handle so it does not open a second (nested) transaction.
+      if (genresToFill && !cleared.has('genres')) {
+        await bookService.update(bookId, { genres: genresToFill }, { tx });
+        return { outcome: 'applied' as const, filledGenres: 1, genresWritten: genresToFill };
+      }
+      return { outcome: 'applied' as const, filledGenres: 0, genresWritten: null };
+    });
   } catch (error: unknown) {
     if (!isUniqueViolation(error, ASIN_UNIQUE_VIOLATION)) throw error;
     log.warn(
@@ -145,12 +225,8 @@ async function applyScalarWrite(
       'Resolved ASIN hit a unique-constraint race — marking failed',
     );
     await markFailedGuarded(db, log, bookId, capturedAsin, 'unique recovery');
-    return true;
+    return { outcome: 'unique-conflict', filledGenres: 0, genresWritten: null };
   }
-  if (scalarResult.length === 0) {
-    log.debug({ bookId, asin: capturedAsin }, 'stale enrichment dropped (scalar update)');
-  }
-  return false;
 }
 
 /** Fill empty scalar fields from enrichment result. Returns only non-empty entries. */
@@ -206,33 +282,29 @@ function fillSeriesFields(
   return updates;
 }
 
-/** Build the scalar updates and return fill counts for batch logging. */
+/**
+ * Build the scalar updates for a candidate. Counts are NOT derived here: the
+ * write transaction may still drop tombstoned keys (#2069 AC9), so the batch
+ * counters are read off the surviving `updates` object after the write lands.
+ */
 function buildMetadataUpdates(
   book: ExistingBookFields,
   result: { title?: string | null | undefined; subtitle?: string | null | undefined; description?: string | null | undefined; publisher?: string | null | undefined; coverUrl?: string | null | undefined; publishedDate?: string | null | undefined; duration?: number | null | undefined; seriesPrimary?: { name?: string | undefined; position?: number | undefined } | undefined; series?: Array<{ name?: string | undefined; position?: number | undefined }> | undefined },
 ) {
   const updates: Record<string, unknown> = {};
-  let filledDuration = 0;
-  let filledTitle = 0;
-  let filledDescription = 0;
 
   if (!book.duration && result.duration) {
     updates.duration = result.duration;
-    filledDuration++;
   }
 
   if (result.title && isAllCaps(book.title) && result.title !== book.title) {
     updates.title = result.title;
-    filledTitle++;
   }
 
-  const scalarFills = fillEmptyFields(book, result as Record<string, unknown>);
-  if (scalarFills.description) filledDescription++;
-  Object.assign(updates, scalarFills);
-
+  Object.assign(updates, fillEmptyFields(book, result as Record<string, unknown>));
   Object.assign(updates, fillSeriesFields(book, result));
 
-  return { updates, filledDuration, filledTitle, filledDescription };
+  return { updates };
 }
 
 // eslint-disable-next-line complexity -- linear enrichment pipeline with null guards per category
@@ -358,25 +430,16 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
         .where(eq(books.id, candidate.id))
         .limit(1);
 
+      // Genres fill when the stored list is null or empty. The tombstone check and
+      // the write both live in the write transaction below (#2069 AC11) — this only
+      // decides whether there is anything to fill.
+      let genresToFill: string[] | null = null;
+
       if (existing.length > 0) {
         const book = existing[0]!;
-        const filled = buildMetadataUpdates(book, result);
-        Object.assign(updates, filled.updates);
-        filledDuration += filled.filledDuration;
-        filledTitle += filled.filledTitle;
-        filledDescription += filled.filledDescription;
-
-        // Fill genres via bookService.update() when existing genres are null or empty.
-        // Re-check the row's ASIN before mutating to drop writes for books whose
-        // identity was swapped under us (Fix Match). The genres path commits
-        // through bookService.update(), which has no capturedAsin scope.
+        Object.assign(updates, buildMetadataUpdates(book, result).updates);
         if (result.genres?.length && (!book.genres || book.genres.length === 0)) {
-          if (await isStillSameAsin(db, candidate.id, capturedAsin)) {
-            await bookService.update(candidate.id, { genres: result.genres });
-            filledGenres++;
-          } else {
-            log.debug({ bookId: candidate.id, asin: capturedAsin }, 'stale enrichment dropped (genres)');
-          }
+          genresToFill = result.genres;
         }
       }
 
@@ -411,13 +474,36 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
         }
       }
 
-      // Scalar UPDATE: scope `WHERE id = ? AND asin <matches captured>` so a Fix
-      // Match that swapped the row's identity between fetch and writeback drops
-      // the stale write atomically. Null-safe: a captured-null row matches via
+      // One transaction for the scalar UPDATE + the genres write, with the
+      // tombstone set and the row identity re-read inside it (#2069 AC11). The
+      // scalar write keeps its `WHERE id = ? AND asin <matches captured>` scope so
+      // a Fix Match that swapped the row's identity between fetch and writeback
+      // still drops atomically. Null-safe: a captured-null row matches via
       // `asin IS NULL` (a plain `asin = NULL` predicate never matches, which
       // would silently drop the writeback for a search-rescued null-ASIN book).
-      if (await applyScalarWrite(db, log, candidate.id, capturedAsin, updates, resolvedAsin)) {
-        continue; // unique-constraint race recovered → candidate marked failed
+      const written = await applyEnrichmentWrites(
+        db, bookService, log, candidate.id, capturedAsin, updates, resolvedAsin, genresToFill,
+      );
+      // A stale drop is NOT a success: no fill counters, no 'Book enriched
+      // successfully' line. Only fields that actually landed are counted, so a
+      // tombstone-suppressed fill is not reported as filled either.
+      if (written.outcome !== 'applied') continue;
+
+      if ('duration' in updates) filledDuration++;
+      if ('title' in updates) filledTitle++;
+      if ('description' in updates) filledDescription++;
+      filledGenres += written.filledGenres;
+
+      // Deferred effect, run only now that the write transaction has COMMITTED
+      // (#2069 F21/F5). The genres write goes through `bookService.update`'s
+      // caller-owned-tx arm, which emits no post-commit side effects of its own
+      // precisely so a rollback cannot strand them — which makes running this the
+      // owner's job. Awaited rather than fire-and-forget so a batch cannot outlive
+      // its own telemetry; still non-fatal, matching the `update()` wrapper.
+      if (written.genresWritten) {
+        await bookService.trackUnmatchedGenres(written.genresWritten).catch((error: unknown) => {
+          log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres');
+        });
       }
 
       enrichedCount++;

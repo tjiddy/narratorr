@@ -890,7 +890,7 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(services.book.update).toHaveBeenCalledWith(1, { seriesName: 'Stormlight', seriesPosition: 1 });
+      expect(services.book.update).toHaveBeenCalledWith(1, { seriesName: 'Stormlight', seriesPosition: 1 }, { userAsserted: true });
     });
 
     it('rejects empty title', async () => {
@@ -2722,7 +2722,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
 
     expect(res.statusCode).toBe(200);
     // Service called without authors — junction rows left unchanged
-    expect(services.book.update).toHaveBeenCalledWith(1, { title: 'Updated Title' });
+    expect(services.book.update).toHaveBeenCalledWith(1, { title: 'Updated Title' }, { userAsserted: true });
   });
 
   it('narrators: [] → clears all narrator junction rows', async () => {
@@ -2740,7 +2740,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(services.book.update).toHaveBeenCalledWith(1, { narrators: [] });
+    expect(services.book.update).toHaveBeenCalledWith(1, { narrators: [] }, { userAsserted: true });
   });
 
   it('authors: [] → 400 error (min(1))', async () => {
@@ -2779,7 +2779,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
       description: 'New description',
       authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }],
       narrators: ['Michael Kramer'],
-    }));
+    }), { userAsserted: true });
   });
 
   it('accepts the extended metadata body (publishedDate/genres/nullable description+coverUrl) and delegates to the service (#1609)', async () => {
@@ -2807,7 +2807,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
       coverUrl: null,
       publishedDate: '2010-08-31',
       genres: ['Fantasy', 'Epic'],
-    });
+    }, { userAsserted: true });
   });
 
   it('passes null clears for publishedDate and genres through to the service (#1609)', async () => {
@@ -2825,7 +2825,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(services.book.update).toHaveBeenCalledWith(1, { publishedDate: null, genres: null });
+    expect(services.book.update).toHaveBeenCalledWith(1, { publishedDate: null, genres: null }, { userAsserted: true });
   });
 
   it('rejects an invalid publishedDate type (number) with 400 (#1609)', async () => {

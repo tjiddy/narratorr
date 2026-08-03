@@ -6,7 +6,7 @@ vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
 
 import { inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { BookService, BookWithAuthor } from './book.service.js';
+import type { BookService, BookDetail } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 
 vi.mock('@core/utils/audio-scanner.js', () => ({
@@ -62,8 +62,9 @@ function makeScanResult(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
-  return inject<BookWithAuthor>({
+function makeBook(overrides: Partial<BookDetail> = {}): BookDetail {
+  return inject<BookDetail>({
+    userClearedFields: [],
     id: 1,
     title: 'Test Book',
     path: '/library/author/book',

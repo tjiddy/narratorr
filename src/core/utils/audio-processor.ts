@@ -15,6 +15,7 @@ import { deriveFfprobePath } from './ffprobe-path.js';
 // the Vite client build, and sanitizedEnv is Node-only. Mirrors the script
 // notifier / post-processing-script call sites.
 import { sanitizedEnv } from './sanitized-env.js';
+import { noticeMessages, resolveCodecArgs, resolveTargetBitrate } from './encode-strategy.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -24,7 +25,28 @@ const FFMPEG_STALL_TIMEOUT_MS = 60_000;
 export interface ProcessingConfig {
   ffmpegPath: string;
   outputFormat: 'm4b' | 'mp3';
-  /** Target bitrate in kbps. When omitted, the original bitrate is preserved (copy codec where possible). */
+  /**
+   * Target bitrate in **kbps** — never divided by this module. Two modes:
+   *
+   * - **Omitted (or present but unusable — see below): keep original.** A source set that
+   *   already matches the output container is stream-copied (`-c:a copy`, no re-encode).
+   *   Otherwise it is re-encoded at the highest target the source evidence supports that the
+   *   selected encoder will *accept*; with no usable evidence, at a conservative default.
+   * - **Present and usable: `min(source, target)`** — except where the encoder's lowest
+   *   accepted rate is higher than that, which is the one case an emitted value exceeds the
+   *   request.
+   *
+   * Both modes are legalized for the output encoder (MP3 snaps to a legal Layer III rate for
+   * the source sample rate; AAC caps at the settings maximum), and every adjustment this
+   * module makes is disclosed through `ProcessingResult.warnings`.
+   *
+   * The emitted value is a **request**, not a promise about the output: the encoder may
+   * normalize it further without this module observing it, so no relationship is claimed
+   * between the emitted bitrate and any source file's bitrate.
+   *
+   * An unusable value — non-integer, non-finite, or below the plausibility floor — is treated
+   * as absent (keep-original semantics) and reported as a warning.
+   */
   bitrate?: number | undefined;
   /** Source bitrate in kbps (converted from bps at the call site). When set, effective bitrate is min(source, target) to prevent upsampling. */
   sourceBitrateKbps?: number | undefined;
@@ -45,8 +67,10 @@ export interface ProcessingContext {
 }
 
 export type ProcessingResult =
+  // `warnings` is on BOTH variants on purpose: a run that adjusted a bitrate and then failed
+  // for an unrelated reason must still report the adjustment.
   | { success: true; outputFiles: string[]; warnings?: string[] }
-  | { success: false; error: string };
+  | { success: false; error: string; warnings?: string[] };
 
 /** Callbacks for streaming progress and stderr from ffmpeg. Keeps src/core/ adapter-agnostic. */
 export interface ProcessingCallbacks {
@@ -76,33 +100,42 @@ export async function processAudioFiles(
     return { success: true, outputFiles: [] };
   }
 
-  // Skip processing for single m4b (already ABS-ready) — but only when the configured
-  // target is also m4b. With outputFormat 'mp3', a single .m4b must fall through to the
-  // convert path so it is re-encoded to .mp3 rather than returned unchanged.
+  // Skip processing for single m4b (already ABS-ready) — but only when the configured target
+  // is also m4b AND no usable explicit bitrate is configured. With outputFormat 'mp3', or with
+  // a usable target, the file must fall through to the convert path instead of being returned
+  // unchanged; where the target is absent-or-unusable, returning it untouched IS the copy path
+  // with zero ffmpeg work. The unusable-target notice still has to surface here.
+  const target = resolveTargetBitrate(config.bitrate);
   if (
     audioFiles.length === 1 &&
     extname(audioFiles[0]!).toLowerCase() === '.m4b' &&
-    config.outputFormat === 'm4b'
+    config.outputFormat === 'm4b' &&
+    target.targetKbps === undefined
   ) {
-    return { success: true, outputFiles: audioFiles };
+    const noOpWarnings = noticeMessages(target.notices);
+    return { success: true, outputFiles: audioFiles, ...(noOpWarnings.length > 0 && { warnings: noOpWarnings }) };
   }
 
   const shouldMerge = config.mergeBehavior === 'always' ||
     (config.mergeBehavior === 'multi-file-only' && audioFiles.length > 1);
+
+  // Resolver notices, accumulated in command order so a multi-file convert keeps every earlier
+  // adjustment even when a later command fails.
+  const warnings: string[] = [];
 
   try {
     // Read chapter sources once — needed for merge (chapter markers) and convert (file naming)
     const chapterSources = await readChapterSources(audioFiles);
 
     if (shouldMerge && audioFiles.length > 1) {
-      return await mergeFiles(targetDir, chapterSources, config, context, callbacks, signal);
-    } else {
-      return await convertFiles(targetDir, audioFiles, config, context, chapterSources, callbacks, signal);
+      return await mergeFiles(targetDir, chapterSources, config, context, warnings, callbacks, signal);
     }
+    return await convertFiles(targetDir, audioFiles, config, context, chapterSources, warnings, callbacks, signal);
   } catch (error: unknown) {
     return {
       success: false,
       error: getErrorMessage(error),
+      ...(warnings.length > 0 && { warnings }),
     };
   }
 }
@@ -213,6 +246,18 @@ function spawnFfmpeg(
 }
 
 /**
+ * The ffmpeg input index of the most recently pushed `-i` operand.
+ *
+ * The merge command's input layout differs by output format (m4b opens a generated-chapter
+ * input that mp3 does not), so every `-map*` operand is DERIVED from the argv being built
+ * rather than written as a literal — a hardcoded index silently points at the wrong file the
+ * moment an input is added or removed.
+ */
+function lastInputIndex(args: string[]): number {
+  return args.filter((token) => token === '-i').length - 1;
+}
+
+/**
  * Merge multiple audio files into a single output file with chapter markers.
  */
 async function mergeFiles(
@@ -220,6 +265,7 @@ async function mergeFiles(
   chapterSources: ChapterSource[],
   config: ProcessingConfig,
   context: ProcessingContext,
+  warnings: string[],
   callbacks?: ProcessingCallbacks,
   signal?: AbortSignal,
 ): Promise<ProcessingResult> {
@@ -259,24 +305,37 @@ async function mergeFiles(
 
     // Build chapter metadata for m4b
     let metadataPath: string | undefined;
+    let chapterInput: number | undefined;
     if (outputExt === 'm4b') {
       metadataPath = join(targetDir, '_metadata.txt');
       const metadataContent = buildChapterMetadata(chapterSources, durations);
       await writeFile(metadataPath, metadataContent, 'utf-8');
-      args.push('-i', metadataPath, '-map_metadata', '1');
+      args.push('-i', metadataPath);
+      chapterInput = lastInputIndex(args);
     }
 
-    if (config.bitrate != null) {
-      const effectiveBitrate = config.sourceBitrateKbps != null
-        ? Math.min(config.sourceBitrateKbps, config.bitrate)
-        : config.bitrate;
-      args.push(
-        '-c:a', outputExt === 'm4b' ? 'aac' : 'libmp3lame',
-        '-b:a', `${effectiveBitrate}k`,
-      );
-    } else {
-      args.push('-c:a', outputExt === 'm4b' ? 'aac' : 'libmp3lame');
+    // #2078: open the first source purely as a metadata donor. The generated FFMETADATA1 file
+    // carries ONLY [CHAPTER] blocks, so the pre-#2078 `-map_metadata 1` overrode ffmpeg's
+    // default with an EMPTY global tag set — every merged output came out metadata-naked. The
+    // concat demuxer's own propagation of format-level metadata is version-dependent, so this
+    // maps the source explicitly rather than relying on `-map_metadata 0`.
+    args.push('-i', audioFiles[0]!);
+    const metadataInput = lastInputIndex(args);
+
+    // Mandatory, not cosmetic: with a second audio-bearing input open, ffmpeg's automatic
+    // stream selection is free to pick the donor's audio instead of the concat's — which
+    // would emit the first part alone as a file that still probes as valid.
+    args.push('-map', '0:a');
+    args.push('-map_metadata', String(metadataInput));
+    if (chapterInput !== undefined) {
+      // -map_chapters pins the GENERATED chapters over whatever the concat demuxer propagates
+      // from the source parts (and now over the metadata donor's own internal chapters):
+      // ffmpeg's default picks the input with the most chapters, so source m4b parts carrying
+      // internal chapters could otherwise outvote the generated set. Both copy and encode modes.
+      args.push('-map_chapters', String(chapterInput));
     }
+
+    args.push(...await resolveCodecArgs(config, audioFiles, warnings, callbacks?.onStderr));
 
     args.push('-vn');
     args.push('-max_muxing_queue_size', '4096');
@@ -308,10 +367,11 @@ async function mergeFiles(
     await cleanupTempFiles(concatPath, join(targetDir, '_metadata.txt'));
     await removeSourceFiles(audioFiles, outputPath);
 
+    warnings.push(...result.warnings);
     return {
       success: true,
       outputFiles: result.outputFiles,
-      ...(result.warnings.length > 0 && { warnings: result.warnings }),
+      ...(warnings.length > 0 && { warnings }),
     };
   } catch (error: unknown) {
     await cleanupTempFiles(concatPath, join(targetDir, '_metadata.txt')).catch(() => {});
@@ -366,6 +426,7 @@ async function convertFiles(
   config: ProcessingConfig,
   context: ProcessingContext,
   chapterSources: ChapterSource[],
+  warnings: string[],
   callbacks?: ProcessingCallbacks,
   signal?: AbortSignal,
 ): Promise<ProcessingResult> {
@@ -387,14 +448,10 @@ async function convertFiles(
         ? dotPrefixBasename(join(targetDir, `${stem}_tmp.${config.outputFormat}`))
         : outputPath;
 
-      const args = ['-y', '-i', filePath, '-c:a', config.outputFormat === 'm4b' ? 'aac' : 'libmp3lame'];
+      // One resolution per constructed command: this file's own evidence, never the directory's.
+      const codecArgs = await resolveCodecArgs(config, [filePath], warnings, callbacks?.onStderr);
 
-      if (config.bitrate != null) {
-        const effectiveBitrate = config.sourceBitrateKbps != null
-          ? Math.min(config.sourceBitrateKbps, config.bitrate) : config.bitrate;
-        args.push('-b:a', `${effectiveBitrate}k`);
-      }
-
+      const args = ['-y', '-i', filePath, ...codecArgs];
       args.push('-vn', '-max_muxing_queue_size', '4096');
       if (config.outputFormat === 'm4b') args.push('-f', 'mp4');
       args.push('-progress', 'pipe:1', writePath);
@@ -418,10 +475,11 @@ async function convertFiles(
     config.ffmpegPath, audioFiles, targetDir, config.outputFormat, encodeFn, spawnFfmpeg,
   );
   for (const w of result.warnings) callbacks?.onStderr?.(w);
+  warnings.push(...result.warnings);
   return {
     success: true,
     outputFiles: result.outputFiles,
-    ...(result.warnings.length > 0 && { warnings: result.warnings }),
+    ...(warnings.length > 0 && { warnings }),
   };
 }
 

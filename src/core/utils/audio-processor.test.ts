@@ -32,6 +32,16 @@ vi.mock('./chapter-resolver.js', () => ({
   resolveChapterTitle: vi.fn(),
 }));
 
+// Passthrough spy on the encode-strategy seam — real behavior by default, so only the test
+// that pins "the caller does not re-derive resolver predicates" overrides it.
+vi.mock('./encode-strategy.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    resolveCodecArgs: vi.fn().mockImplementation(actual.resolveCodecArgs as (...args: unknown[]) => unknown),
+  };
+});
+
 // Spy on naming.js — passthrough to real implementation
 vi.mock('./naming.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -45,6 +55,12 @@ import { execFile, spawn } from 'node:child_process';
 import { readdir, rename, unlink, writeFile, rm, stat } from 'node:fs/promises';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import { renderFilename } from './naming.js';
+import { resolveCodecArgs } from './encode-strategy.js';
+
+// The real implementation, re-installed on the spy in beforeEach. `vi.clearAllMocks()` clears
+// call history but neither drains `*Once()` queues nor restores implementations, so an
+// override in one test would otherwise leak into every test after it.
+const actualEncodeStrategy = await vi.importActual<typeof import('./encode-strategy.js')>('./encode-strategy.js');
 
 // execFile is callback-based; mock the promisified version (used by probeFfmpeg, detectFfmpegPath, getFileDurations)
 const mockExecFile = vi.mocked(execFile);
@@ -117,8 +133,102 @@ const defaultContext: ProcessingContext = {
   title: 'The Way of Kings',
 };
 
+/** An ffprobe `stream=codec_name,bit_rate,sample_rate,channels` payload for one source file. */
+interface StreamInfoFixture {
+  codec_name?: string;
+  /** bps, as ffprobe reports it — the collector is what floors it to kbps. */
+  bit_rate?: string;
+  sample_rate?: string;
+  channels?: number;
+}
+
+/**
+ * Per-file stream-info fixtures for the encode-strategy probe collector, keyed by file path.
+ * A missing entry (or an explicit null) makes that file's probe return null, which is what an
+ * unreadable stream looks like to the resolver. Reset in beforeEach — never queued with
+ * `mockResolvedValueOnce`, since `vi.clearAllMocks()` does not drain `*Once()` queues.
+ */
+let streamInfoByFile: Record<string, StreamInfoFixture | null> = {};
+
+function setStreamInfo(map: Record<string, StreamInfoFixture | null>): void {
+  // Fixture maps are keyed by path strings that tests write either as POSIX literals or via
+  // join() (backslashes on Windows). Re-key POSIX so both styles hit on every platform.
+  streamInfoByFile = Object.fromEntries(
+    Object.entries(map).map(([k, v]) => [k.split('\\').join('/'), v]),
+  );
+}
+
+/**
+ * Install an execFile mock that dispatches on argv AND returns the callback shape each caller
+ * expects.
+ *
+ * Two shapes, not one: the duration and cover-detection callers go through
+ * `promisify(execFile)` and receive a single `{ stdout, stderr }` object, while
+ * `getFFprobeStreamInfo` calls raw `execFile` and receives `(error, stdout, stderr)`
+ * positionally. A dispatcher preserving only one shape either breaks the duration tests or
+ * silently makes every stream probe null — which would disable the copy path without failing
+ * anything. `asserts a parsed stream probe` below pins that it does not happen.
+ */
+function installExecFileDispatcher(opts: {
+  durations?: number[];
+  videoStreams?: Record<string, number>;
+} = {}): void {
+  let durationIdx = 0;
+  // Same POSIX re-keying as setStreamInfo: callers key this map both ways.
+  const videoStreams = Object.fromEntries(
+    Object.entries(opts.videoStreams ?? {}).map(([k, v]) => [k.split('\\').join('/'), v]),
+  );
+  mockExecFile.mockImplementation((...args: unknown[]) => {
+    const cb = args[args.length - 1];
+    if (typeof cb !== 'function') return {} as never;
+    const execArgs = (args[1] as string[] | undefined) ?? [];
+    const filePath = execArgs[execArgs.length - 1] ?? '';
+    // Production probes join()-built paths (backslashes on Windows); fixture maps are keyed
+    // POSIX. Normalize at the lookup boundary or every keyed probe silently misses on Windows.
+    const posixPath = filePath.split('\\').join('/');
+
+    if (execArgs.includes('stream=codec_name,bit_rate,sample_rate,channels')) {
+      const positional = cb as (err: Error | null, stdout: string, stderr: string) => void;
+      const fixture = streamInfoByFile[posixPath];
+      positional(null, JSON.stringify({ streams: fixture ? [fixture] : [] }), '');
+      return {} as never;
+    }
+
+    const objectCb = cb as (err: Error | null, result: { stdout: string; stderr: string }) => void;
+    if (execArgs.includes('stream=codec_type')) {
+      const lines = ['audio'];
+      for (let i = 0; i < (videoStreams[posixPath] ?? 0); i++) lines.push('video');
+      objectCb(null, { stdout: `${lines.join('\n')}\n`, stderr: '' });
+    } else if (execArgs.includes('format=duration')) {
+      objectCb(null, { stdout: `${opts.durations?.[durationIdx++] ?? 120}\n`, stderr: '' });
+    } else {
+      objectCb(null, { stdout: 'audio\n', stderr: '' });
+    }
+    return {} as never;
+  });
+}
+
+/** The argv the encode-strategy collector probes each source file with. */
+function streamProbeCalls(): unknown[][] {
+  return mockExecFile.mock.calls.filter(
+    (call) => (call[1] as string[] | undefined)?.includes('stream=codec_name,bit_rate,sample_rate,channels') ?? false,
+  );
+}
+
+/** The ffmpeg encode spawn — selected by argv, since cover art adds extract/reattach spawns. */
+function encodeSpawnArgs(index = 0): string[] {
+  const encodes = mockSpawn.mock.calls
+    .map((call) => call[1] as string[])
+    .filter((args) => args.includes('-c:a'));
+  const found = encodes[index];
+  if (!found) throw new Error(`no encode spawn at index ${index} (saw ${encodes.length})`);
+  return found;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(resolveCodecArgs).mockImplementation(actualEncodeStrategy.resolveCodecArgs);
+  streamInfoByFile = {};
   mockUnlink.mockResolvedValue(undefined);
   mockRename.mockResolvedValue(undefined);
   mockWriteFile.mockResolvedValue(undefined);
@@ -365,15 +475,7 @@ function setupMergeFiles(durations: number[] = [300, 300, 300]) {
   mockReadChapterSources.mockResolvedValue(sources);
   mockResolveChapterTitle.mockImplementation((_s, i) => `Chapter ${i + 1}`);
 
-  // ffprobe calls for durations (still use execFile)
-  let callIdx = 0;
-  mockExecFile.mockImplementation((...args: unknown[]) => {
-    const cb = args[args.length - 1] as (err: Error | null, result: { stdout: string; stderr: string }) => void;
-    if (typeof cb === 'function') {
-      cb(null, { stdout: `${durations[callIdx++] ?? 0}\n`, stderr: '' });
-    }
-    return {} as never;
-  });
+  installExecFileDispatcher({ durations });
 }
 
 /**
@@ -385,13 +487,7 @@ function setupMergeFiles(durations: number[] = [300, 300, 300]) {
  * this, or they stay order-coupled on whatever execFile impl leaked through clearAllMocks.
  */
 function seedNoCoverFfprobe() {
-  mockExecFile.mockImplementation((...args: unknown[]) => {
-    const cb = args[args.length - 1] as (err: Error | null, result: { stdout: string; stderr: string }) => void;
-    if (typeof cb === 'function') {
-      cb(null, { stdout: 'audio\n', stderr: '' });
-    }
-    return {} as never;
-  });
+  installExecFileDispatcher();
 }
 
 /** Setup helpers for convert path tests. */
@@ -409,15 +505,54 @@ function setupConvertFile() {
 }
 
 describe('processAudioFiles', () => {
-  it('skips processing for single m4b input', async () => {
+  it('skips processing for single m4b input under keep-original', async () => {
     mockReaddir.mockResolvedValue([
       { name: 'book.m4b', isFile: () => true, isDirectory: () => false },
     ] as never);
 
-    const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+    // Omits `bitrate` deliberately: the early return is the zero-work copy path, so it applies
+    // only when no usable target is configured. Passing 128 here would pin the behavior AC13
+    // removes.
+    const { bitrate: _bitrate, ...keepOriginal } = defaultConfig;
+    const result = await processAudioFiles('/lib/book', keepOriginal, defaultContext);
     expect(result).toEqual({ success: true, outputFiles: [join('/lib/book', 'book.m4b')] });
     expect(mockExecFile).not.toHaveBeenCalled();
     expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('takes the same no-op path for an unusable bitrate, surfacing the notice', async () => {
+    mockReaddir.mockResolvedValue([
+      { name: 'book.m4b', isFile: () => true, isDirectory: () => false },
+    ] as never);
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, bitrate: Number.NaN }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings![0]).toContain('NaN');
+  });
+
+  it('re-encodes a single m4b to an explicit target instead of short-circuiting', async () => {
+    mockReaddir.mockResolvedValue([
+      { name: 'book.m4b', isFile: () => true, isDirectory: () => false },
+    ] as never);
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: join('/lib/book', 'book.m4b'), title: 'Ch 1', trackNumber: 1 },
+    ]);
+    seedNoCoverFfprobe();
+    mockSpawnSuccess();
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, bitrate: 64 }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+    const args = encodeSpawnArgs();
+    expect(args).toContain('-c:a');
+    expect(args[args.indexOf('-c:a') + 1]).toBe('aac');
+    expect(args[args.indexOf('-b:a') + 1]).toBe('64k');
   });
 
   it('re-encodes single m4b input to mp3 when outputFormat is mp3 (does not short-circuit)', async () => {
@@ -551,19 +686,39 @@ describe('processAudioFiles', () => {
     expect(mockRename).not.toHaveBeenCalled();
   });
 
-  it('omits -b:a flag when bitrate is undefined (keep original)', async () => {
+  it('stream-copies an eligible source under keep-original (convert path)', async () => {
     setupConvertFile();
+    setStreamInfo({
+      '/lib/book/book.mp3': { codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2 },
+    });
     mockSpawnSuccess();
 
     const { bitrate: _bitrate, ...configWithoutBitrate } = defaultConfig;
-    const config: ProcessingConfig = configWithoutBitrate;
+    const config: ProcessingConfig = { ...configWithoutBitrate, outputFormat: 'mp3' };
     const result = await processAudioFiles('/lib/book', config, defaultContext);
     expect(result.success).toBe(true);
 
-    // spawn should be called — check args
-    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
+    const spawnArgs = encodeSpawnArgs();
+    expect(spawnArgs[spawnArgs.indexOf('-c:a') + 1]).toBe('copy');
     expect(spawnArgs).not.toContain('-b:a');
-    expect(spawnArgs).toContain('-c:a');
+    expect(spawnArgs).not.toContain('libmp3lame');
+  });
+
+  it('encodes with an explicit -b:a under keep-original when the source is ineligible', async () => {
+    setupConvertFile();
+    setStreamInfo({
+      '/lib/book/book.mp3': { codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2 },
+    });
+    mockSpawnSuccess();
+
+    // outputFormat m4b against an mp3 source — a genuine transcode, so `-b:a` is mandatory.
+    const { bitrate: _bitrate, ...configWithoutBitrate } = defaultConfig;
+    const result = await processAudioFiles('/lib/book', configWithoutBitrate, defaultContext);
+    expect(result.success).toBe(true);
+
+    const spawnArgs = encodeSpawnArgs();
+    expect(spawnArgs[spawnArgs.indexOf('-c:a') + 1]).toBe('aac');
+    expect(spawnArgs[spawnArgs.indexOf('-b:a') + 1]).toBe('128k');
   });
 
   it('returns error result on non-zero ffmpeg exit', async () => {
@@ -910,13 +1065,23 @@ describe('bitrate capping — sourceBitrateKbps', () => {
     expect(spawnArgs[bitrateIdx + 1]).toBe('128k');
   });
 
-  it('omits -b:a flag when config.bitrate is undefined regardless of sourceBitrateKbps', async () => {
+  it('still emits an explicit -b:a when config.bitrate is undefined (keep original, ineligible)', async () => {
     const { bitrate: _bitrate, ...configWithoutBitrate } = defaultConfig;
     const config: ProcessingConfig = { ...configWithoutBitrate, sourceBitrateKbps: 64 };
     await processAudioFiles('/lib/book', config, defaultContext);
 
-    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
-    expect(spawnArgs).not.toContain('-b:a');
+    const spawnArgs = encodeSpawnArgs();
+    expect(spawnArgs[spawnArgs.indexOf('-c:a') + 1]).toBe('aac');
+    expect(spawnArgs[spawnArgs.indexOf('-b:a') + 1]).toBe('64k');
+  });
+
+  it('never emits -b:a 0k for a zero sourceBitrateKbps', async () => {
+    const config: ProcessingConfig = { ...defaultConfig, bitrate: 128, sourceBitrateKbps: 0 };
+    await processAudioFiles('/lib/book', config, defaultContext);
+
+    const spawnArgs = encodeSpawnArgs();
+    expect(spawnArgs).not.toContain('0k');
+    expect(spawnArgs[spawnArgs.indexOf('-b:a') + 1]).toBe('128k');
   });
 });
 
@@ -1323,27 +1488,7 @@ describe('#424 spawnFfmpeg — stall timeout', () => {
  * For each file path, returns ffprobe output with the specified number of video streams.
  */
 function mockExecFileWithStreams(fileStreamMap: Record<string, number>) {
-  mockExecFile.mockImplementation((...args: unknown[]) => {
-    const cb = args[args.length - 1] as (err: Error | null, result: { stdout: string; stderr: string }) => void;
-    if (typeof cb !== 'function') return {} as never;
-
-    const execArgs = args[1] as string[];
-    // Detect if this is a stream-detection ffprobe call (has -show_entries stream=codec_type)
-    if (execArgs?.includes('stream=codec_type')) {
-      const filePath = execArgs[execArgs.length - 1]!;
-      const videoCount = fileStreamMap[filePath] ?? 0;
-      const lines = ['audio'];
-      for (let i = 0; i < videoCount; i++) lines.push('video');
-      cb(null, { stdout: lines.join('\n') + '\n', stderr: '' });
-    } else if (execArgs?.includes('format=duration')) {
-      // Duration probe
-      cb(null, { stdout: '120\n', stderr: '' });
-    } else {
-      // Default (version probe etc.)
-      cb(null, { stdout: 'ffmpeg version 6.1.1\n', stderr: '' });
-    }
-    return {} as never;
-  });
+  installExecFileDispatcher({ videoStreams: fileStreamMap });
 }
 
 describe('#424 cover art detection and extraction', () => {
@@ -2091,5 +2236,607 @@ describe('processAudioFiles — fileFormat token threading (#1720)', () => {
       if (!result.success) return;
       expect(result.outputFiles).toEqual([join('/lib/book', 'Tolkien - The Hobbit.m4b')]);
     });
+  });
+});
+
+// ============================================================================
+// #2068 — keepOriginalBitrate: stream copy, and an explicit -b:a on every encode
+// ============================================================================
+
+/** Merge-path setup with explicit file names, so extension-sensitive cases are constructible. */
+function setupMergeSet(names: string[], durations?: number[]): string[] {
+  mockReaddir.mockResolvedValue(
+    names.map((name) => ({ name, isFile: () => true, isDirectory: () => false })) as never,
+  );
+  const sources = names.map((name, i) => ({
+    filePath: `/lib/book/${name}`, title: `Ch ${i + 1}`, trackNumber: i + 1,
+  }));
+  mockReadChapterSources.mockResolvedValue(sources);
+  mockResolveChapterTitle.mockImplementation((_s, i) => `Chapter ${i + 1}`);
+  installExecFileDispatcher({ durations: durations ?? names.map(() => 120) });
+  return sources.map((s) => s.filePath);
+}
+
+function streamInfoFor(paths: string[], fixture: StreamInfoFixture): Record<string, StreamInfoFixture> {
+  return Object.fromEntries(paths.map((p) => [p, fixture]));
+}
+
+const MERGE_ALWAYS = { ...defaultConfig, mergeBehavior: 'always' as const };
+const KEEP_ORIGINAL = (() => {
+  const { bitrate: _bitrate, ...rest } = MERGE_ALWAYS;
+  return rest;
+})();
+const MERGED_M4B = join('/lib/book', 'Brandon Sanderson - The Way of Kings.m4b');
+const MERGED_MP3 = join('/lib/book', 'Brandon Sanderson - The Way of Kings.mp3');
+
+describe('#2068 stream-copy path (AC1–AC4)', () => {
+  it('copies an eligible AAC/m4b set, preserving every other arg in position', async () => {
+    const paths = setupMergeSet(['01.m4b', '02.m4b', '03.m4b']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'aac', bit_rate: '251000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    const result = await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+    expect(result.success).toBe(true);
+
+    expect(encodeSpawnArgs()).toEqual([
+      '-y',
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', join('/lib/book', '_concat.txt'),
+      '-i', join('/lib/book', '_metadata.txt'),
+      // #2078: the first source is opened as an extra input purely so its global tags can be
+      // mapped forward. `-map 0:a` keeps the concat input the only audio source.
+      // The donor input is audioFiles[0] passed VERBATIM (a POSIX fixture literal), not a
+      // join()-built path — asserting join() here fails on Windows.
+      '-i', '/lib/book/01.m4b',
+      '-map', '0:a',
+      '-map_metadata', '2',
+      '-map_chapters', '1',
+      '-c:a', 'copy',
+      '-vn',
+      '-max_muxing_queue_size', '4096',
+      '-f', 'mp4',
+      '-progress', 'pipe:1',
+      MERGED_M4B,
+    ]);
+    expect(encodeSpawnArgs()).not.toContain('-b:a');
+    expect(encodeSpawnArgs()).not.toContain('aac');
+    expect(encodeSpawnArgs()).not.toContain('libmp3lame');
+  });
+
+  it('parses the stream probe into non-null technical fields (mock-shape regression)', async () => {
+    const paths = setupMergeSet(['01.m4b', '02.m4b']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'aac', bit_rate: '251000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    // A dispatcher returning the wrong callback shape makes every probe null, which silently
+    // disables the copy path — the copy decision below is only reachable from parsed fields.
+    expect(streamProbeCalls()).toHaveLength(2);
+    expect(encodeSpawnArgs()).toContain('copy');
+  });
+
+  it('copies an eligible .mp3 set into mp3, with no chapter input and no -map_chapters', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...KEEP_ORIGINAL, outputFormat: 'mp3' }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+
+    const args = encodeSpawnArgs();
+    expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
+    expect(args).not.toContain('-map_chapters');
+    // #2078: mp3 has no generated-chapter input, so the first source is input 1 and carries
+    // the global tags forward. `-map_metadata` is now present on this path — pointed at the
+    // SOURCE, never at a chapter file (there isn't one here).
+    expect(args[args.indexOf('-map_metadata') + 1]).toBe('1');
+    // Verbatim donor path (POSIX fixture literal), never join()-built — see the m4b twin above.
+    expect(args[args.indexOf('-i', args.indexOf('-i') + 1) + 1]).toBe('/lib/book/01.mp3');
+    expect(args[args.length - 1]).toBe(MERGED_MP3);
+  });
+
+  it('emits -map_chapters 1 in encode mode on the m4b path too (AC3)', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(args[args.indexOf('-i', args.indexOf('-i') + 1) + 1]).toBe(join('/lib/book', '_metadata.txt'));
+    // #2078 moved global metadata onto the first source (input 2); chapters stay on the
+    // generated ffmetadata input (1), which is the #2068 guarantee.
+    expect(args[args.indexOf('-map_metadata') + 1]).toBe('2');
+    expect(args[args.indexOf('-map_chapters') + 1]).toBe('1');
+    expect(args[args.indexOf('-c:a') + 1]).toBe('aac');
+    expect(args).toContain('-b:a');
+  });
+});
+
+describe('#2068 explicit -b:a on every encode (AC5–AC11)', () => {
+  it('re-encodes an all-MP3 set to m4b at the probed maximum', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3']);
+    setStreamInfo({
+      [paths[0]!]: { codec_name: 'mp3', bit_rate: '251000', sample_rate: '44100', channels: 2 },
+      [paths[1]!]: { codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2 },
+    });
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(args[args.indexOf('-c:a') + 1]).toBe('aac');
+    expect(args[args.indexOf('-b:a') + 1]).toBe('251k');
+  });
+
+  it('falls back to 192k for m4b with no usable probe or hint, reporting it once', async () => {
+    setupMergeSet(['01.mp3', '02.mp3']);
+    mockSpawnSuccess();
+
+    const result = await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe('192k');
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings![0]).toContain('192');
+  });
+
+  it('reports both the fallback and its MP3 legalization for unknown rates', async () => {
+    setupMergeSet(['01.mp3', '02.mp3']);
+    mockSpawnSuccess();
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...KEEP_ORIGINAL, outputFormat: 'mp3' }, defaultContext,
+    );
+
+    expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe('160k');
+    expect(result.warnings).toHaveLength(2);
+    expect(result.warnings![0]).toContain('192');
+    expect(result.warnings![1]).toMatch(/192.*160/);
+  });
+
+  it('legalizes a 1411 kbps 44.1 kHz PCM set to 320k for mp3, and shapes nothing', async () => {
+    const paths = setupMergeSet(['01.wav', '02.wav']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'pcm_s16le', bit_rate: '1411000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...KEEP_ORIGINAL, outputFormat: 'mp3' }, defaultContext,
+    );
+
+    const args = encodeSpawnArgs();
+    expect(args[args.indexOf('-c:a') + 1]).toBe('libmp3lame');
+    expect(args[args.indexOf('-b:a') + 1]).toBe('320k');
+    expect(args).not.toContain('-ar');
+    expect(result.warnings!.some((w) => w.includes('1411') && w.includes('320'))).toBe(true);
+  });
+
+  it('caps a 22.05 kHz set at the MPEG-2 table maximum, never 320k', async () => {
+    const paths = setupMergeSet(['01.wav', '02.wav']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'pcm_s16le', bit_rate: '705000', sample_rate: '22050', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', { ...KEEP_ORIGINAL, outputFormat: 'mp3' }, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(args[args.indexOf('-b:a') + 1]).toBe('160k');
+    expect(args).not.toContain('320k');
+    expect(args).not.toContain('-ar');
+  });
+
+  it('uses the rate-agnostic table when a probed sample rate is absent, without resampling', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3']);
+    setStreamInfo(streamInfoFor(paths, { codec_name: 'mp3', bit_rate: '256000', channels: 2 }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', { ...KEEP_ORIGINAL, outputFormat: 'mp3' }, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(args[args.indexOf('-b:a') + 1]).toBe('160k');
+    expect(args).not.toContain('-ar');
+  });
+
+  it.each(['m4b', 'mp3'] as const)(
+    'emits neither -ar nor -ac for an 11024 Hz 6-channel source (%s output)',
+    async (outputFormat) => {
+      const paths = setupMergeSet(['01.wav', '02.wav']);
+      setStreamInfo(streamInfoFor(paths, {
+        codec_name: 'pcm_s16le', bit_rate: '128000', sample_rate: '11024', channels: 6,
+      }));
+      mockSpawnSuccess();
+
+      await processAudioFiles('/lib/book', { ...KEEP_ORIGINAL, outputFormat }, defaultContext);
+
+      const args = encodeSpawnArgs();
+      expect(args).not.toContain('-ar');
+      expect(args).not.toContain('-ac');
+      expect(args).toContain('-b:a');
+    },
+  );
+
+  it.each([
+    ['44100', '320k'],
+    ['22050', '160k'],
+  ])('legalizes an explicit 512 kbps mp3 target at %s Hz to %s', async (sampleRate, expected) => {
+    const paths = setupMergeSet(['01.wav', '02.wav']);
+    setStreamInfo(streamInfoFor(paths, { codec_name: 'pcm_s16le', sample_rate: sampleRate, channels: 2 }));
+    mockSpawnSuccess();
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...MERGE_ALWAYS, outputFormat: 'mp3', bitrate: 512 }, defaultContext,
+    );
+
+    expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe(expected);
+    expect(result.warnings!.some((w) => w.includes('512'))).toBe(true);
+  });
+
+  it('tells the operator when their explicit 200 kbps became 192 kbps', async () => {
+    const paths = setupMergeSet(['01.wav', '02.wav']);
+    setStreamInfo(streamInfoFor(paths, { codec_name: 'pcm_s16le', sample_rate: '44100', channels: 2 }));
+    mockSpawnSuccess();
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...MERGE_ALWAYS, outputFormat: 'mp3', bitrate: 200 }, defaultContext,
+    );
+
+    expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe('192k');
+    expect(result.warnings!.some((w) => w.includes('200') && w.includes('192'))).toBe(true);
+  });
+
+  it('records one evidence-cap notice when the source caps the operator target', async () => {
+    setupMergeSet(['01.mp3', '02.mp3']);
+    mockSpawnSuccess();
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...MERGE_ALWAYS, bitrate: 128, sourceBitrateKbps: 64 }, defaultContext,
+    );
+
+    expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe('64k');
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings![0]).toMatch(/128.*64/);
+  });
+
+  it('records nothing when min() returns the operator target unchanged', async () => {
+    setupMergeSet(['01.mp3', '02.mp3']);
+    mockSpawnSuccess();
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...MERGE_ALWAYS, bitrate: 128, sourceBitrateKbps: 251 }, defaultContext,
+    );
+
+    expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe('128k');
+    expect(result.warnings).toBeUndefined();
+  });
+});
+
+describe('#2068 per-command resolution and probe cost (AC12)', () => {
+  it('resolves a strategy and a bitrate per file on a multi-file convert', async () => {
+    const paths = setupMergeSet(['a.m4a', 'b.mp3']);
+    setStreamInfo({
+      [paths[0]!]: { codec_name: 'aac', bit_rate: '64000', sample_rate: '44100', channels: 2 },
+      [paths[1]!]: { codec_name: 'mp3', bit_rate: '251000', sample_rate: '44100', channels: 2 },
+    });
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...KEEP_ORIGINAL, mergeBehavior: 'never' }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+
+    // a.m4a is copy-eligible into m4b on its own; b.mp3 is not, and carries its own 251 kbps.
+    const first = encodeSpawnArgs(0);
+    const second = encodeSpawnArgs(1);
+    expect(first[first.indexOf('-c:a') + 1]).toBe('copy');
+    expect(first).not.toContain('-b:a');
+    expect(second[second.indexOf('-c:a') + 1]).toBe('aac');
+    expect(second[second.indexOf('-b:a') + 1]).toBe('251k');
+  });
+
+  it('probes each source exactly once on the keep-original merge path', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3', '03.mp3']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    const probed = streamProbeCalls().map((call) => (call[1] as string[]).at(-1));
+    expect(probed).toHaveLength(3);
+    expect(new Set(probed).size).toBe(3);
+  });
+
+  it('probes on the explicit-target path too — AC8 needs the source sample rates', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', { ...MERGE_ALWAYS, bitrate: 320 }, defaultContext);
+
+    expect(streamProbeCalls()).toHaveLength(2);
+  });
+
+  it('accumulates notices in command order across a multi-file convert', async () => {
+    const paths = setupMergeSet(['x.m4a', 'y.m4a']);
+    setStreamInfo({
+      [paths[0]!]: { codec_name: 'aac', bit_rate: '200000', sample_rate: '44100', channels: 2 },
+      [paths[1]!]: { codec_name: 'aac', bit_rate: '700000', sample_rate: '44100', channels: 2 },
+    });
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...KEEP_ORIGINAL, outputFormat: 'mp3', mergeBehavior: 'never' }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+    expect(result.warnings).toHaveLength(2);
+    expect(result.warnings![0]).toMatch(/200.*192/);
+    expect(result.warnings![1]).toMatch(/700.*320/);
+  });
+
+  it('keeps earlier notices when a later convert command fails', async () => {
+    const paths = setupMergeSet(['x.m4a', 'y.m4a']);
+    setStreamInfo({
+      [paths[0]!]: { codec_name: 'aac', bit_rate: '200000', sample_rate: '44100', channels: 2 },
+      [paths[1]!]: { codec_name: 'aac', bit_rate: '700000', sample_rate: '44100', channels: 2 },
+    });
+    let spawnCount = 0;
+    mockSpawn.mockImplementation(() => {
+      spawnCount++;
+      const child = new MockChildProcess();
+      const code = spawnCount === 2 ? 1 : 0;
+      process.nextTick(() => child.emit('close', code));
+      return child as never;
+    });
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...KEEP_ORIGINAL, outputFormat: 'mp3', mergeBehavior: 'never' }, defaultContext,
+    );
+    expect(result.success).toBe(false);
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings!.some((w) => /200.*192/.test(w))).toBe(true);
+    expect(result.warnings!.some((w) => /700.*320/.test(w))).toBe(true);
+  });
+});
+
+describe('#2068 invariant — an encoder token never appears without -b:a (AC5)', () => {
+  const CONFIGS: Array<Partial<ProcessingConfig>> = [
+    {},
+    { bitrate: 128 },
+    { bitrate: 320, sourceBitrateKbps: 64 },
+    { bitrate: Number.NaN },
+    { bitrate: 0 },
+    { bitrate: -1 },
+    { bitrate: 7 },
+    { bitrate: 128.5 },
+    { sourceBitrateKbps: 0 },
+    { sourceBitrateKbps: 827 / 1000 },
+    { sourceBitrateKbps: 1411 },
+  ];
+  const PROBES: Array<StreamInfoFixture | null> = [
+    null,
+    { codec_name: 'aac', bit_rate: '251000', sample_rate: '44100', channels: 2 },
+    { codec_name: 'mp3', bit_rate: '64000', sample_rate: '22050', channels: 1 },
+    { codec_name: 'mp3' },
+  ];
+
+  it.each(['m4b', 'mp3'] as const)('holds for every config shape (%s output)', async (outputFormat) => {
+    for (const overrides of CONFIGS) {
+      for (const probe of PROBES) {
+        vi.clearAllMocks();
+        const paths = setupMergeSet(['01.m4b', '02.m4b']);
+        setStreamInfo(probe ? streamInfoFor(paths, probe) : {});
+        mockSpawnSuccess();
+
+        const { bitrate: _drop, ...base } = MERGE_ALWAYS;
+        await processAudioFiles('/lib/book', { ...base, outputFormat, ...overrides }, defaultContext);
+
+        const args = encodeSpawnArgs();
+        const codec = args[args.indexOf('-c:a') + 1]!;
+        if (codec === 'copy') {
+          expect(args).not.toContain('-b:a');
+          continue;
+        }
+        expect(['aac', 'libmp3lame']).toContain(codec);
+        const value = args[args.indexOf('-b:a') + 1]!;
+        const parsed = Number.parseInt(value.replace(/k$/, ''), 10);
+        expect(value).toMatch(/^\d+k$/);
+        expect(Number.isFinite(parsed)).toBe(true);
+        expect(parsed).toBeGreaterThan(0);
+      }
+    }
+  });
+});
+
+describe('#2068 the caller delivers the resolver notices verbatim (AC14)', () => {
+  it('surfaces exactly the notices the resolver produced, re-deriving no predicate', async () => {
+    setupMergeSet(['01.mp3', '02.mp3']);
+    mockSpawnSuccess();
+
+    const stubbed = ['first stubbed notice', 'second stubbed notice'];
+    vi.mocked(resolveCodecArgs).mockImplementation(async (_config, _paths, warnings) => {
+      warnings.push(...stubbed);
+      return ['-c:a', 'aac', '-b:a', '96k'];
+    });
+
+    const result = await processAudioFiles('/lib/book', MERGE_ALWAYS, defaultContext);
+
+    expect(result.success).toBe(true);
+    expect(result.warnings).toEqual(stubbed);
+    expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe('96k');
+  });
+});
+
+// ============================================================================
+// #2078 — merge carries the source parts' global tags into the output
+// ============================================================================
+
+/** The ordered `-i` operands of a spawn argv — ffmpeg input N is `inputPaths(args)[N]`. */
+function inputPaths(args: string[]): string[] {
+  const paths: string[] = [];
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === '-i') paths.push(args[i + 1]!);
+  }
+  return paths;
+}
+
+/**
+ * Resolve a `-map_metadata` / `-map_chapters` operand back to the FILE it points at.
+ *
+ * The index is computed by production, so asserting the literal digit would pin a
+ * position rather than the mapping. Reading the operand back through the input list
+ * asserts the property the AC is actually about: which file the flag resolves to.
+ */
+function mappedInput(args: string[], flag: '-map_metadata' | '-map_chapters'): string | undefined {
+  const idx = args.indexOf(flag);
+  if (idx === -1) return undefined;
+  return inputPaths(args)[Number(args[idx + 1])];
+}
+
+describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () => {
+  const CONCAT = join('/lib/book', '_concat.txt');
+  const FFMETADATA = join('/lib/book', '_metadata.txt');
+
+  it('m4b: opens the first source as an extra input and maps global metadata from it', async () => {
+    const paths = setupMergeSet(['01.m4b', '02.m4b', '03.m4b']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'aac', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(inputPaths(args)).toEqual([CONCAT, FFMETADATA, paths[0]]);
+    expect(mappedInput(args, '-map_metadata')).toBe(paths[0]);
+  });
+
+  it('m4b: -map_metadata never resolves to the generated chapter ffmetadata file', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    // The pre-#2078 defect exactly: input 1 is the generated FFMETADATA1 file, which carries
+    // only [CHAPTER] blocks, so mapping global metadata from it wrote an EMPTY tag set.
+    expect(mappedInput(encodeSpawnArgs(), '-map_metadata')).not.toBe(FFMETADATA);
+  });
+
+  it('m4b: -map_chapters still resolves to the generated ffmetadata input (#2068, AC3)', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(mappedInput(args, '-map_chapters')).toBe(FFMETADATA);
+    expect(args).toContain('-b:a'); // encode mode, not copy
+  });
+
+  it('m4b: -map_chapters resolves to the generated ffmetadata input in copy mode too (AC3)', async () => {
+    const paths = setupMergeSet(['01.m4b', '02.m4b']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'aac', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(mappedInput(args, '-map_chapters')).toBe(FFMETADATA);
+    expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
+  });
+
+  it('mp3: opens the first source as input 1 and maps metadata from it, still no -map_chapters', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles(
+      '/lib/book', { ...KEEP_ORIGINAL, outputFormat: 'mp3' }, defaultContext,
+    );
+
+    const args = encodeSpawnArgs();
+    expect(inputPaths(args)).toEqual([CONCAT, paths[0]]);
+    expect(mappedInput(args, '-map_metadata')).toBe(paths[0]);
+    expect(args).not.toContain('-map_chapters');
+  });
+
+  it('emits an explicit -map 0:a so the concat input is the only audio source (AC2)', async () => {
+    const paths = setupMergeSet(['01.m4b', '02.m4b']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'aac', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    // Two audio-bearing inputs are now open (concat + the first source). Without an explicit
+    // map, ffmpeg picks the "best" audio stream across ALL inputs, which can silently emit the
+    // first part alone. Assert the operand resolves to the concat input, not its position.
+    const args = encodeSpawnArgs();
+    const mapIdx = args.indexOf('-map');
+    expect(mapIdx).toBeGreaterThan(-1);
+    const [inputIndex, specifier] = args[mapIdx + 1]!.split(':');
+    expect(inputPaths(args)[Number(inputIndex)]).toBe(CONCAT);
+    expect(specifier).toBe('a');
+  });
+
+  it('a copy-eligible set still copies, with no -b:a, despite the extra input (AC4)', async () => {
+    const paths = setupMergeSet(['01.m4b', '02.m4b', '03.m4b']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'aac', bit_rate: '251000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
+    expect(args).not.toContain('-b:a');
+    expect(args).not.toContain('aac');
+  });
+
+  it('convert emits no -map_metadata override — ffmpeg\'s default already keeps them (AC18a)', async () => {
+    setupConvertFile();
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    const args = encodeSpawnArgs();
+    expect(inputPaths(args)).toEqual([join('/lib/book', 'book.mp3')]);
+    expect(args).not.toContain('-map_metadata');
   });
 });

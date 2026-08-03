@@ -2414,3 +2414,77 @@ describe('DownloadService', () => {
     });
   });
 });
+
+// ─── #2069 AC16: the raw tombstone column must not reach a serialized response ───
+//
+// `DownloadWithBook.book` is a `BookRowPublic`, and each builder copies the joined
+// row wholesale into five responses that declare NO response schema — nothing
+// downstream strips extra keys, so the projection has to happen in the service.
+// Typecheck alone cannot catch a regression here: the leak is a runtime object key
+// and the old code reached the response through a `BookRow`-typed field that
+// compiles fine. These assert on key PRESENCE, not value — an implementation that
+// copies `undefined` through serializes nothing but should not pass by accident,
+// and one that copies the raw string must fail.
+//
+// Counterfactual: revert `DownloadWithBook.book` to `BookRow` (drop the
+// `stripClearedFields` calls) and every case below goes red.
+describe('DownloadService — user_cleared_fields is projected out (#2069 AC16)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: DownloadService;
+
+  const seededBook = createMockDbBook({ userClearedFields: '["genres"]' });
+
+  beforeEach(() => {
+    db = createMockDb();
+    service = new DownloadService(
+      inject<Db>(db),
+      createMockDownloadClientService(),
+      inject<FastifyBaseLogger>(createMockLogger()),
+    );
+  });
+
+  it('getAll: the joined book carries no userClearedFields key', async () => {
+    db.select
+      .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+      .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: seededBook }]));
+
+    const { data } = await service.getAll();
+
+    expect(data[0]!.book).toBeDefined();
+    expect('userClearedFields' in data[0]!.book!).toBe(false);
+    expect(JSON.stringify(data[0])).not.toContain('userClearedFields');
+  });
+
+  it('getById: the joined book carries no userClearedFields key', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: seededBook }]));
+
+    const row = await service.getById(1);
+
+    expect('userClearedFields' in row!.book!).toBe(false);
+  });
+
+  it('getActive: the joined book carries no userClearedFields key', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: seededBook }]));
+
+    const rows = await service.getActive();
+
+    expect('userClearedFields' in rows[0]!.book!).toBe(false);
+  });
+
+  it('getActiveByBookId: the joined book carries no userClearedFields key', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: seededBook }]));
+
+    const rows = await service.getActiveByBookId(1);
+
+    expect('userClearedFields' in rows[0]!.book!).toBe(false);
+  });
+
+  it('preserves every other book column while stripping only that one', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: seededBook }]));
+
+    const row = await service.getById(1);
+
+    expect(row!.book!.title).toBe(seededBook.title);
+    expect(row!.book!.id).toBe(seededBook.id);
+  });
+});

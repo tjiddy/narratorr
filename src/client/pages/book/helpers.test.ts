@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { mergeBookData } from './helpers.js';
+import { mergeBookData, resolveDisplayedFields } from './helpers.js';
 import { bookStatusConfig } from '@/lib/status';
 import { createMockBook } from '@/__tests__/factories';
-import type { BookStatus } from '@shared/schemas.js';
+import type { BookStatus, ClearableBookField } from '@shared/schemas.js';
 
 describe('mergeBookData', () => {
   describe('status palette flow-through', () => {
@@ -218,5 +218,149 @@ describe('mergeBookData', () => {
       const result = mergeBookData(book, null);
       expect(result.metaDots).toContain('Stored Publisher');
     });
+  });
+});
+
+// ─── #2069: the operator's explicit clears suppress the provider fallback ───
+describe('resolveDisplayedFields / mergeBookData — user-cleared fields (#2069)', () => {
+  const providerMeta = {
+    subtitle: 'Provider Subtitle',
+    description: 'Provider description',
+    publisher: 'Tor Books',
+    publishedDate: '2010-08-31',
+    genres: ['Fantasy', 'Epic'],
+    seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+    series: [{ name: 'Cosmere', position: 5 }],
+  };
+
+  /** A book whose stored clearable columns are all empty — provider-only display. */
+  function providerOnlyBook(userClearedFields?: ClearableBookField[]) {
+    return createMockBook({
+      seriesName: null, seriesPosition: null, subtitle: null, description: null,
+      publisher: null, publishedDate: null, genres: null,
+      ...(userClearedFields ? { userClearedFields } : {}),
+    });
+  }
+
+  describe('AC21 — nothing changes for a book that was never cleared', () => {
+    it.each([
+      ['absent', undefined],
+      ['empty', [] as ClearableBookField[]],
+    ])('%s userClearedFields resolves every field from the provider', (_label, cleared) => {
+      const book = providerOnlyBook(cleared as ClearableBookField[] | undefined);
+      const displayed = resolveDisplayedFields(book, providerMeta);
+
+      expect(displayed).toEqual({
+        seriesName: 'The Stormlight Archive',
+        seriesPosition: 2,
+        subtitle: 'Provider Subtitle',
+        description: 'Provider description',
+        publisher: 'Tor Books',
+        publishedDate: '2010-08-31',
+        genres: ['Fantasy', 'Epic'],
+      });
+      expect(mergeBookData(book, providerMeta).metaDots).toContain('The Stormlight Archive #2');
+    });
+  });
+
+  describe('AC18 — a tombstone resolves to nothing, per field', () => {
+    it('seriesName suppresses the header series dot AND its position (the pair rule)', () => {
+      const book = providerOnlyBook(['seriesName']);
+      const displayed = resolveDisplayedFields(book, providerMeta);
+
+      expect(displayed.seriesName).toBeUndefined();
+      expect(displayed.seriesPosition).toBeUndefined();
+
+      const merged = mergeBookData(book, providerMeta);
+      expect(merged.metaDots.some((d) => /Stormlight|Cosmere/.test(d))).toBe(false);
+      // Untouched neighbours still render.
+      expect(merged.metaDots).toContain('2010');
+      expect(merged.metaDots).toContain('Tor Books');
+    });
+
+    it.each([
+      ['subtitle', 'subtitle'],
+      ['description', 'description'],
+      ['publisher', 'publisher'],
+      ['publishedDate', 'publishedDate'],
+      ['genres', 'genres'],
+    ] as const)('%s suppresses only its own fallback', (_label, field) => {
+      const displayed = resolveDisplayedFields(providerOnlyBook([field]), providerMeta);
+
+      expect(displayed[field]).toBeUndefined();
+      // Every sibling still resolves in the same call.
+      for (const other of ['subtitle', 'description', 'publisher', 'publishedDate', 'genres'] as const) {
+        if (other !== field) expect(displayed[other]).toBeDefined();
+      }
+      expect(displayed.seriesName).toBe('The Stormlight Archive');
+    });
+
+    it('a publisher tombstone drops the publisher dot but keeps year and series', () => {
+      const merged = mergeBookData(providerOnlyBook(['publisher']), providerMeta);
+      expect(merged.metaDots).not.toContain('Tor Books');
+      expect(merged.metaDots).toContain('2010');
+      expect(merged.metaDots).toContain('The Stormlight Archive #2');
+    });
+
+    it('a publishedDate tombstone drops the year dot only', () => {
+      const merged = mergeBookData(providerOnlyBook(['publishedDate']), providerMeta);
+      expect(merged.metaDots).not.toContain('2010');
+      expect(merged.metaDots).toContain('Tor Books');
+    });
+
+    it('description/genres/subtitle tombstones flow through mergeBookData', () => {
+      const merged = mergeBookData(providerOnlyBook(['description', 'genres', 'subtitle']), providerMeta);
+      expect(merged.description).toBeUndefined();
+      expect(merged.genres).toBeUndefined();
+      expect(merged.subtitle).toBeUndefined();
+    });
+  });
+
+  describe('AC18 — the || / ?? asymmetry is preserved by construction', () => {
+    it.each(['description', 'seriesName', 'publisher', 'publishedDate', 'subtitle'] as const)(
+      'a stored empty string on %s still falls through to the provider value',
+      (field) => {
+        const book = createMockBook({
+          seriesName: null, seriesPosition: null, subtitle: null, description: null,
+          publisher: null, publishedDate: null, genres: null,
+          [field]: '',
+        });
+        expect(resolveDisplayedFields(book, providerMeta)[field]).toBe(
+          field === 'seriesName' ? 'The Stormlight Archive' : providerMeta[field as 'subtitle'],
+        );
+      },
+    );
+
+    it('a stored genres: [] OVERRIDES the provider list and does not fall through', () => {
+      const book = createMockBook({ genres: [] });
+      expect(resolveDisplayedFields(book, providerMeta).genres).toEqual([]);
+    });
+
+    it('seriesPosition prefers pickPrimarySeries over series[0]', () => {
+      const displayed = resolveDisplayedFields(providerOnlyBook(), providerMeta);
+      expect(displayed.seriesName).toBe('The Stormlight Archive');
+      expect(displayed.seriesPosition).toBe(2);
+    });
+
+    it('seriesPosition resolves only when seriesName does', () => {
+      const book = createMockBook({ seriesName: null, seriesPosition: 7 });
+      expect(resolveDisplayedFields(book, null).seriesName).toBeUndefined();
+      expect(resolveDisplayedFields(book, null).seriesPosition).toBeUndefined();
+    });
+  });
+
+  it('the header and the modal baseline derive from ONE call, so they cannot disagree', () => {
+    // Consistency guard: a future divergence between what the header hides and what
+    // the modal pre-fills fails here rather than shipping.
+    const book = providerOnlyBook(['seriesName', 'publisher']);
+    const displayed = resolveDisplayedFields(book, providerMeta);
+    const merged = mergeBookData(book, providerMeta);
+
+    expect(displayed.seriesName).toBeUndefined();
+    expect(merged.metaDots.some((d) => /Stormlight/.test(d))).toBe(false);
+    expect(displayed.publisher).toBeUndefined();
+    expect(merged.metaDots).not.toContain('Tor Books');
+    expect(displayed.publishedDate).toBe('2010-08-31');
+    expect(merged.metaDots).toContain('2010');
   });
 });

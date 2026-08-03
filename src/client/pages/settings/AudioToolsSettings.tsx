@@ -113,11 +113,11 @@ export function AudioToolsSettings() {
             </div>
           </SettingsRow>
 
-          <SettingsRow htmlFor="keepOriginalBitrate" label="Keep original bitrate" description="Re-encode at each file’s source bitrate.">
+          <SettingsRow htmlFor="keepOriginalBitrate" label="Keep original bitrate" description="Copies the audio when the parts are compatible. Otherwise re-encodes using the source bitrate where it is known, or a conservative default where it is not, adjusted to a value the output format accepts.">
             <ToggleSwitch id="keepOriginalBitrate" {...register('keepOriginalBitrate')} />
           </SettingsRow>
 
-          <SettingsRow htmlFor="bitrate" label="Target bitrate" description="The bitrate to encode to — active only when Keep original is off." muted={keepOriginalBitrate}>
+          <SettingsRow htmlFor="bitrate" label="Target bitrate" description="The bitrate to encode to — active only when Keep original is off. MP3 output rounds down to the next supported rate — or up to the minimum, if lower — and its maximum depends on the source sample rate." muted={keepOriginalBitrate}>
             <NumberField
               id="bitrate"
               {...register('bitrate', { valueAsNumber: true })}

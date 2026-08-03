@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook } from '../__tests__/factories.js';
 import { BookRejectionService, BookRejectionError } from './book-rejection.service.js';
-import { BookService, type BookWithAuthor } from './book.service.js';
+import { BookService, type BookDetail } from './book.service.js';
 import type { DeleteManagedFilesResult } from '../utils/delete-managed-files.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -253,7 +253,7 @@ describe('BookRejectionService', () => {
         // Real BookService: deleteBookFiles touches only the filesystem + logger (no DB), so the mock
         // DB is unused there; getById is spied to return the staged book.
         const realBookService = new BookService(inject<Db>(createMockDb()), inject<FastifyBaseLogger>(createMockLogger()));
-        vi.spyOn(realBookService, 'getById').mockResolvedValue({ ...importedBook, path: bookDir } as unknown as BookWithAuthor);
+        vi.spyOn(realBookService, 'getById').mockResolvedValue({ ...importedBook, path: bookDir, userClearedFields: [] } as unknown as BookDetail);
 
         const { service } = createService({
           bookService: realBookService,

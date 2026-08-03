@@ -1328,3 +1328,64 @@ describe('getIdentifiers() — authorSlug field (#133)', () => {
     expect(result[0]!.authorSlug).toBe('jk-rowling');
   });
 });
+
+// ─── #2069 AC16: the raw tombstone column must not reach GET /api/books ───
+//
+// `getAll` spreads whole `books` rows into its result and casts to
+// `BookWithAuthor`. That declared type omits the column, but the cast is erased at
+// runtime — the strip has to happen in the service, and only a seeded row can prove
+// it did. The download/activity assertions exercise DIFFERENT builders and cannot
+// fail if this list-specific strip is removed.
+//
+// Counterfactual: drop the `stripClearedFields` call at `book-list.service.ts` and
+// every case below goes red.
+describe('BookListService — user_cleared_fields is projected out (#2069 AC16)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: BookListService;
+
+  const seededBook = createMockDbBook({ userClearedFields: '["genres"]' });
+
+  beforeEach(() => {
+    db = createMockDb();
+    service = new BookListService(inject<Db>(db));
+  });
+
+  function seedOneRow() {
+    db.select
+      .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+      .mockReturnValueOnce(mockDbChain([{ book: seededBook, importListName: null, primaryAuthorName: 'Brandon Sanderson' }]))
+      .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+      .mockReturnValueOnce(mockDbChain([]));
+  }
+
+  it('getAll rows carry no userClearedFields key', async () => {
+    seedOneRow();
+
+    const { data } = await service.getAll();
+
+    // Key PRESENCE, not value — an implementation that copies `undefined` through
+    // serializes nothing but must not pass by accident, and one that copies the raw
+    // string must fail.
+    expect('userClearedFields' in data[0]!).toBe(false);
+  });
+
+  it('the serialized list body contains neither the key nor the stored value', async () => {
+    seedOneRow();
+
+    const { data } = await service.getAll();
+
+    const body = JSON.stringify({ data, total: 1 });
+    expect(body).not.toContain('userClearedFields');
+    expect(body).not.toContain('["genres"]');
+  });
+
+  it('every other book column survives the strip', async () => {
+    seedOneRow();
+
+    const { data } = await service.getAll();
+
+    expect(data[0]!.title).toBe(seededBook.title);
+    expect(data[0]!.id).toBe(seededBook.id);
+    expect(data[0]!.authors[0]?.name).toBe('Brandon Sanderson');
+  });
+});

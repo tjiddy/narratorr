@@ -15,6 +15,16 @@ export function useBookActions(bookId: number) {
     queryClient.invalidateQueries({ queryKey: queryKeys.book(bookId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.bookFiles(bookId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+    // The series card lives in its own ROOT namespace — `queryKeys.book(id)` is
+    // `['books', id]` while `queryKeys.bookSeries(id)` is `['book', id, 'series']`
+    // — so no prefix cascade reaches it and a metadata save that clears the series
+    // would otherwise leave the card rendering stale cached data until a reload
+    // (#2069 AC17). `BookFixMatchModal` already invalidates this key explicitly;
+    // putting it in the shared helper also covers the rename mutation, which is
+    // strictly more invalidation and loses nothing. Retag is deliberately NOT
+    // covered: its success handler never calls this helper, and a re-tag rewrites
+    // file tags without changing any stored series.
+    queryClient.invalidateQueries({ queryKey: queryKeys.bookSeries(bookId) });
   };
 
   const renameMutation = useMutation({

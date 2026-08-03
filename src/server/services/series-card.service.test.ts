@@ -861,4 +861,107 @@ describe('SeriesCardService — unit', () => {
       expect(book.seriesName).toBe('The Earthsea Cycle');
     });
   });
+  // ─── #2069 AC24: binding is an operator re-assertion of the SERIES ───
+  //
+  // It removes the initiating book's `seriesName` tombstone in the SAME transaction
+  // as the scalar write (otherwise a stored series would coexist with a live
+  // tombstone), and only that entry — binding asserts nothing about the other
+  // clearable fields.
+  describe('bindHardcoverSeries — user-cleared fields (#2069 AC24)', () => {
+    /** Set the tombstone column out of band, the way a prior PUT would have. */
+    async function setTombstones(bookId: number, raw: string | null): Promise<void> {
+      await db.update(books).set({ userClearedFields: raw }).where(eq(books.id, bookId));
+    }
+
+    async function readBook(bookId: number) {
+      return (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
+    }
+
+    const earthseaPayload = (title: string) => hardcoverSeriesPayload({
+      id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+      members: [{ position: 1, id: 1, slug: 'wizard', title }],
+    });
+
+    it('removes the seriesName entry and leaves every other tombstone in place', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: null, authorName: 'Ursula K. Le Guin' });
+      await setTombstones(bookId, '["genres","seriesName"]');
+      mockFetchOnce(earthseaPayload('A Wizard of Earthsea'));
+
+      await new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(bookId, 4242);
+
+      // Both asserted from ONE read, so a write that lands the series without the
+      // removal (or vice versa) cannot pass.
+      const book = await readBook(bookId);
+      expect(book.seriesName).toBe('The Earthsea Quartet');
+      expect(book.userClearedFields).toBe('["genres"]');
+    });
+
+    it('persists the empty set as SQL NULL when seriesName was the only tombstone', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: null, authorName: 'Ursula K. Le Guin' });
+      await setTombstones(bookId, '["seriesName"]');
+      mockFetchOnce(earthseaPayload('A Wizard of Earthsea'));
+
+      await new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(bookId, 4242);
+
+      expect((await readBook(bookId)).userClearedFields).toBeNull();
+    });
+
+    it('F13: re-reads the set INSIDE the transaction, so a clear committed during the fetch survives', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: null, authorName: 'Ursula K. Le Guin' });
+      await setTombstones(bookId, '["seriesName","subtitle"]');
+
+      // An unrelated `genres` clear commits while the Hardcover fetch is in flight.
+      globalThis.fetch = vi.fn().mockImplementation(async () => {
+        await setTombstones(bookId, '["genres","seriesName","subtitle"]');
+        return new Response(JSON.stringify(earthseaPayload('A Wizard of Earthsea')), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }) as typeof globalThis.fetch;
+
+      await new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(bookId, 4242);
+
+      // An implementation that drops `seriesName` from the PRE-fetch snapshot and
+      // writes that back yields '["subtitle"]', silently erasing the concurrent clear.
+      expect((await readBook(bookId)).userClearedFields).toBe('["genres","subtitle"]');
+    });
+
+    it('a seriesName-tombstoned sibling is structurally absent from the sibling pool and keeps its tombstone', async () => {
+      // The pool comes from `WHERE series_name IN (…)`, and a tombstoned book has
+      // `series_name = NULL` — SQL `IN` never matches NULL. Pinned here rather than
+      // defended by a guard branch.
+      const bookA = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'Earthsea', authorName: 'Ursula K. Le Guin' });
+      const sibling = await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: null, authorName: 'Ursula K. Le Guin' });
+      await setTombstones(sibling, '["seriesName"]');
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [
+          { position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' },
+          { position: 2, id: 2, slug: 'tombs', title: 'The Tombs of Atuan' },
+        ],
+      }));
+
+      await new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(bookA, 4242);
+
+      const siblingRow = await readBook(sibling);
+      expect(siblingRow.seriesName).toBeNull();
+      expect(siblingRow.userClearedFields).toBe('["seriesName"]');
+    });
+
+    it('rolls the tombstone removal back with the scalar write when a later step in the transaction fails', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: null, authorName: 'Ursula K. Le Guin' });
+      await setTombstones(bookId, '["seriesName"]');
+      mockFetchOnce(earthseaPayload('A Wizard of Earthsea'));
+
+      const link = await import('./book-series-link.js');
+      vi.spyOn(link, 'relinkBookToBoundSeries').mockRejectedValueOnce(new Error('relink boom'));
+
+      await expect(
+        new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(bookId, 4242),
+      ).rejects.toThrow('relink boom');
+
+      const book = await readBook(bookId);
+      expect(book.seriesName).toBeNull();
+      expect(book.userClearedFields).toBe('["seriesName"]');
+    });
+  });
 });

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import { api } from '@/lib/api';
 import { useBookActions } from './useBookActions.js';
+import { queryKeys } from '@/lib/queryKeys.js';
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
@@ -187,6 +188,41 @@ describe('useBookActions', () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 42] });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 42, 'files'] });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+    });
+
+    // #2069 AC17 — the series card lives in the SINGULAR `book` root namespace, so
+    // no prefix cascade from `['books', id]` reaches it. Without this the card keeps
+    // rendering the old series after a metadata save that cleared it.
+    it('also invalidates the series-card query after a successful save', async () => {
+      (api.updateBook as Mock).mockResolvedValue({});
+      const { queryClient, wrapper } = createTestHarness();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      const { result } = renderHook(() => useBookActions(42), { wrapper });
+
+      await act(async () => {
+        await result.current.handleSave({ seriesName: null }, false);
+      });
+
+      // The EXACT key array — a prefix-shaped assertion is what let the false
+      // "it already cascades" claim through in the first place.
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['book', 42, 'series'] });
+      expect(queryKeys.bookSeries(42)).toEqual(['book', 42, 'series']);
+      expect(queryKeys.book(42)).toEqual(['books', 42]);
+    });
+
+    it('also invalidates the series-card query after a standalone rename', async () => {
+      (api.renameBook as Mock).mockResolvedValue({ message: 'Moved' });
+      const { queryClient, wrapper } = createTestHarness();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      const { result } = renderHook(() => useBookActions(42), { wrapper });
+
+      await act(async () => {
+        await result.current.renameMutation.mutateAsync();
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['book', 42, 'series'] });
     });
 
     it('invalidates queries twice when save + rename both succeed', async () => {

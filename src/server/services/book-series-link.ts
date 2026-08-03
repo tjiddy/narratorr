@@ -1,11 +1,12 @@
 import { and, eq, isNull, ne } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { DbOrTx } from '@db/index.js';
-import { series, seriesMembers } from '@db/schema.js';
+import { books, series, seriesMembers } from '@db/schema.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { normalizeMemberTitleForMatch } from './series-title-match.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { parseClearedFields, serializeClearedFields } from '../utils/cleared-fields.js';
 
 /**
  * Slim payload for linking a freshly-created or rematched book to its series.
@@ -66,6 +67,37 @@ export async function replaceSeriesLink(
     position: args.position,
     source: 'local',
   });
+}
+
+/**
+ * Reconcile a book's `series_members` rows after the operator explicitly CLEARED
+ * its series through Edit Metadata (#2069 AC14). Runs on the caller's handle,
+ * inside the same transaction as the clear, so a failure here rolls the clear
+ * back rather than leaving exactly the stale residue this removes.
+ *
+ * The two sources are treated differently on purpose:
+ *
+ *   - `source: 'local'` rows are the book's own create-time cache seed. Nothing
+ *     else references them, so they are DELETED.
+ *   - `source: 'hardcover'` rows are canonical members of the series and still
+ *     belong on the SIBLING series card. Deleting one would drop a canonical
+ *     member until the weekly `series-refresh` cron rebuilds it, so the row keeps
+ *     its identity and only loses the book link (`book_id = NULL`). That is safe
+ *     for the cards: `buildCardFromCache` computes `inLibrary` by title-matching
+ *     against books selected on `books.series_name`, never off `series_members.book_id`.
+ *
+ * Deliberately NOT `replaceSeriesLink`, which deletes unconditionally by `bookId`
+ * — that behavior is correct for Fix Match and is left alone here.
+ */
+export async function detachBookFromSeriesMembers(tx: DbOrTx, bookId: number): Promise<void> {
+  await tx
+    .delete(seriesMembers)
+    .where(and(eq(seriesMembers.bookId, bookId), eq(seriesMembers.source, 'local')));
+  // Everything still linked to the book after that delete is provider-sourced.
+  await tx
+    .update(seriesMembers)
+    .set({ bookId: null, updatedAt: new Date() })
+    .where(eq(seriesMembers.bookId, bookId));
 }
 
 /**
@@ -179,4 +211,29 @@ export async function upsertSeriesLink(
   } catch (error: unknown) {
     log.warn({ error: serializeError(error), bookId, seriesName: args.name }, 'Series link upsert failed during book create');
   }
+}
+
+/**
+ * Read the book's tombstone set ON the supplied handle and return the canonical
+ * serialization with the `seriesName` entry removed (#2069 AC24) — the operator
+ * re-assertion a Hardcover series bind performs.
+ *
+ * Read → drop → validate → serialize, all inside the caller's transaction: the
+ * bind's `fetchById` is a network round-trip, so a `PUT` can add an unrelated
+ * tombstone while it is in flight and writing back a pre-fetch snapshot would
+ * silently erase that concurrent clear. Only `seriesName` is dropped — binding
+ * asserts nothing about the other clearable fields.
+ */
+export async function removeSeriesNameTombstone(
+  tx: DbOrTx,
+  log: FastifyBaseLogger,
+  bookId: number,
+): Promise<string | null> {
+  const rows = await tx
+    .select({ userClearedFields: books.userClearedFields })
+    .from(books)
+    .where(eq(books.id, bookId))
+    .limit(1);
+  const current = parseClearedFields(rows[0]?.userClearedFields ?? null, log, bookId);
+  return serializeClearedFields(current.filter((field) => field !== 'seriesName'));
 }

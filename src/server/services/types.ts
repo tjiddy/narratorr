@@ -42,6 +42,21 @@ export type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStat
   productionType: ProductionType;
 };
 
+/**
+ * A `books` row minus the RAW `user_cleared_fields` text (#2069 AC16).
+ *
+ * The column is plain text, so `BookRow` types it `string | null` — a shape that
+ * must never reach an HTTP response. **Any book row that gets serialized is a
+ * `BookRowPublic`**; `BookRow` is for consumers that only compare/score it
+ * internally (quality gate, discovery). One named type rather than a per-site
+ * omission is what makes that rule checkable. Strip with `stripClearedFields`.
+ *
+ * A caller that needs the tombstones as behavior takes the hydrated `BookDetail`
+ * (`book.service.ts`), whose `userClearedFields` is the `parseClearedFields`
+ * output — never the raw string.
+ */
+export type BookRowPublic = Omit<BookRow, 'userClearedFields'>;
+
 // Two-axis download state (#1445): narrow both axis columns to their Zod-derived
 // unions (Drizzle's $inferSelect widens text-enum columns to `string`). There is
 // no `status` column anymore — the display status is derived from the tuple.

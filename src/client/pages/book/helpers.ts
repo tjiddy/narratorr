@@ -17,19 +17,89 @@ export interface MetadataBook {
   seriesPrimary?: { name: string; position?: number | undefined } | undefined;
 }
 
+/**
+ * The RAW resolved value of each clearable field, plus `seriesPosition` — "what
+ * does the operator actually see" (#2069 AC18).
+ *
+ * `undefined` means "resolves to nothing": either nothing is stored and the
+ * provider has none, or the field carries a tombstone.
+ */
+export interface DisplayedFields {
+  seriesName: string | undefined;
+  seriesPosition: number | undefined;
+  subtitle: string | undefined;
+  description: string | undefined;
+  publisher: string | undefined;
+  publishedDate: string | undefined;
+  genres: string[] | undefined;
+}
+
+/**
+ * ONE decision, in one place: what the header shows and what the Edit Metadata
+ * modal pre-fills and diffs against must not be able to disagree (#2069 AC18/AC25).
+ *
+ * Order of application:
+ *
+ *  1. **Tombstoned → resolves to nothing.** An explicit clear stays cleared
+ *     everywhere until the operator sets a new value; the provider fallback must
+ *     not resurrect it.
+ *  2. **Otherwise → today's exact per-field operator, unchanged.** `||` for
+ *     `description`, `seriesName`, `publisher`, `publishedDate`, `subtitle` (so a
+ *     stored empty string still falls through to the provider value, as it does
+ *     today); `??` for `genres` (so a stored `[]` deliberately OVERRIDES the
+ *     provider list) and for `seriesPosition`; `pickPrimarySeries` for the series
+ *     ref (#1088/#1097 — `series[0]` on Audible can be a broader universe entry).
+ *
+ * The `||`/`??` asymmetry is preserved by construction, not re-derived: a uniform
+ * operator would change behavior on exactly the `''` and `[]` cases.
+ *
+ * `seriesPosition` follows `seriesName` (the #1927 AC10 pair rule) and is never
+ * resolved independently. `coverUrl`, `duration`, and `narratorNames` are NOT part
+ * of this decision — none of them is clearable — and stay inside `mergeBookData`.
+ */
+export function resolveDisplayedFields(
+  libraryBook: BookWithAuthor,
+  metadataBook?: MetadataBook | null | undefined,
+): DisplayedFields {
+  const cleared = new Set<string>(libraryBook.userClearedFields ?? []);
+  const primaryMetaSeries = pickPrimarySeries(metadataBook);
+  const seriesName = orProvider(cleared, 'seriesName', libraryBook.seriesName, primaryMetaSeries?.name);
+
+  return {
+    seriesName,
+    // Pair rule: the position resolves only when the name does.
+    seriesPosition: seriesName ? (libraryBook.seriesPosition ?? primaryMetaSeries?.position) : undefined,
+    subtitle: orProvider(cleared, 'subtitle', libraryBook.subtitle, metadataBook?.subtitle),
+    description: orProvider(cleared, 'description', libraryBook.description, metadataBook?.description),
+    publisher: orProvider(cleared, 'publisher', libraryBook.publisher, metadataBook?.publisher),
+    publishedDate: orProvider(cleared, 'publishedDate', libraryBook.publishedDate, metadataBook?.publishedDate),
+    // `??`, not `||`: a stored `[]` is a deliberate override that must NOT fall
+    // through to the provider list.
+    genres: cleared.has('genres') ? undefined : (libraryBook.genres ?? metadataBook?.genres),
+  };
+}
+
+/**
+ * The `||` arm shared by the five string fields: tombstoned resolves to nothing,
+ * otherwise a stored empty string still defers to the provider value — today's
+ * exact behavior, preserved by construction.
+ */
+function orProvider(
+  cleared: ReadonlySet<string>,
+  field: string,
+  stored: string | null | undefined,
+  provider: string | undefined,
+): string | undefined {
+  if (cleared.has(field)) return undefined;
+  return stored || provider;
+}
+
 // eslint-disable-next-line complexity -- flat data coalescing across two sources, no nesting
 export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: MetadataBook | null | undefined) {
-  const description = libraryBook.description || metadataBook?.description;
+  const displayed = resolveDisplayedFields(libraryBook, metadataBook);
   const coverUrl = libraryBook.coverUrl || metadataBook?.coverUrl;
-  const genres = libraryBook.genres ?? metadataBook?.genres;
-  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
-  // on Audible can be a broader universe entry rather than the real book series.
-  const primaryMetaSeries = pickPrimarySeries(metadataBook);
-  const seriesName = libraryBook.seriesName || primaryMetaSeries?.name;
-  const seriesPosition = libraryBook.seriesPosition ?? primaryMetaSeries?.position;
   const duration = formatDurationMinutes(libraryBook.duration ?? metadataBook?.duration);
-  const publisher = libraryBook.publisher || metadataBook?.publisher;
-  const year = formatYear(libraryBook.publishedDate || metadataBook?.publishedDate);
+  const year = formatYear(displayed.publishedDate);
   const status = requireDefined(
     bookStatusConfig[libraryBook.status],
     `mergeBookData: bookStatusConfig missing entry for "${libraryBook.status}"`,
@@ -37,23 +107,23 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
   const narratorNames = (libraryBook.narrators.length > 0 ? libraryBook.narrators.map((n) => n.name).join(', ') : null) || metadataBook?.narrators?.join(', ');
 
   const metaDots: string[] = [];
-  if (seriesName) {
-    metaDots.push(`${seriesName}${seriesPosition != null ? ` #${seriesPosition}` : ''}`);
+  if (displayed.seriesName) {
+    metaDots.push(`${displayed.seriesName}${displayed.seriesPosition != null ? ` #${displayed.seriesPosition}` : ''}`);
   }
   if (duration) metaDots.push(duration);
   if (year) metaDots.push(year);
-  if (publisher) metaDots.push(publisher);
+  if (displayed.publisher) metaDots.push(displayed.publisher);
 
   return {
-    description,
+    description: displayed.description,
     coverUrl,
-    genres,
+    genres: displayed.genres,
     narratorNames,
     metaDots,
     statusLabel: status.label,
     statusDotClass: status.dotClass,
     statusBarClass: status.barClass,
-    subtitle: libraryBook.subtitle || metadataBook?.subtitle,
+    subtitle: displayed.subtitle,
     authorName: libraryBook.authors[0]?.name,
     authorAsin: libraryBook.authors[0]?.asin,
   };

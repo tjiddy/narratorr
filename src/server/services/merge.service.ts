@@ -10,8 +10,11 @@ import type { AppSettings } from '@shared/schemas/settings/registry.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
+import type { TaggingService } from './tagging.service.js';
 import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
+import { retagMergedOutput } from './merge-post-tag.js';
 import { processAudioFiles, resolveFfmpegPath } from '@core/utils/audio-processor.js';
+import type { ProcessingResult } from '@core/utils/audio-processor.js';
 import { buildNamingContext, type RenameableBook } from '../utils/paths.js';
 import { toNamingOptions, type NamingOptions } from '@core/utils/naming.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
@@ -19,7 +22,7 @@ import { enrichBookFromAudio } from './enrichment-utils.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
-import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
+import { toSourceBitrateKbps } from '../utils/audio-bitrate.js';
 import { Semaphore, type SemaphoreRelease } from '../utils/semaphore.js';
 import type { MergePhase, MergeFailedReason } from '@shared/schemas/sse-events.js';
 import type { EventSource } from '@shared/schemas/event-history.js';
@@ -94,6 +97,10 @@ export class MergeService {
     private eventHistory?: EventHistoryService,
     private eventBroadcaster?: EventBroadcasterService,
     private connectorService?: ConnectorService,
+    // Optional and TRAILING (#2078) so every existing construction site keeps compiling. That
+    // also means dropping the argument in the composition root compiles and leaves this suite
+    // green — `routes/index.test.ts` carries the same-instance assertion that catches it.
+    private taggingService?: TaggingService,
   ) {}
 
   /** Resolve the recorded provenance for a book, defaulting to 'manual' on a lookup miss. */
@@ -349,7 +356,7 @@ export class MergeService {
       }
 
       this.emitMergeProgress(bookId, book.title, 'staging');
-      const stagedOutput = await this.runStaging(
+      const { stagedOutput, warnings: processingWarnings } = await this.runStaging(
         stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, { ...processingSettings, ffmpegPath },
         bookId, book.title, librarySettings.fileFormat, toNamingOptions(librarySettings), controller.signal,
       );
@@ -362,6 +369,15 @@ export class MergeService {
       this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedOutput, bookPath, topLevelAudioFiles, bookId, book);
 
+      // Layer 2 (#2078): re-tag the merged output from canonical DB state. It has to run AFTER
+      // commitMerge — `retagBook` resolves the directory from `book.path` itself, which holds
+      // the un-merged source parts until the commit lands (and the staging dir never receives
+      // `cover.jpg`, so it is not a candidate at all).
+      const taggingWarnings = await retagMergedOutput({
+        db: this.db, settingsService: this.settingsService, log: this.log,
+        taggingService: this.taggingService, connectorService: this.connectorService,
+      }, bookId, outputPath);
+
       const ffprobePath = resolveFfprobePathFromSettings(ffmpegPath);
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath);
       let enrichmentWarning: string | undefined;
@@ -371,7 +387,13 @@ export class MergeService {
       }
 
       this.log.info({ bookId, outputPath, filesReplaced: topLevelAudioFiles.length }, 'Book merged');
-      const message = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedOutput)}`;
+      // Fold the processing notices into the operator-visible completion message — the
+      // existing `message` string, so the merge_complete event contract stays untouched.
+      const mergedSummary = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedOutput)}`;
+      const allWarnings = [...processingWarnings, ...taggingWarnings];
+      const message = allWarnings.length > 0
+        ? `${mergedSummary} (${allWarnings.join('; ')})`
+        : mergedSummary;
       this.emitMergeComplete(bookId, book.title, message, enrichmentWarning);
       return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, ...(enrichmentWarning !== undefined && { enrichmentWarning }) };
     } catch (error: unknown) {
@@ -386,7 +408,26 @@ export class MergeService {
     }
   }
 
-  /** Steps 1-5: copy to staging, process, verify. Returns the staged output filename (extension follows outputFormat). */
+  /**
+   * Surface the encode-strategy notices (and cover-art degradations) at warn on BOTH outcomes.
+   *
+   * The stderr deduplicator logs at debug, which the shipped default log level hides, and a run
+   * that adjusted a bitrate and then failed for an unrelated reason must still report the
+   * adjustment — which is why the failure variant carries `warnings` too.
+   */
+  private reportProcessingWarnings(bookId: number, result: ProcessingResult): string[] {
+    const warnings = result.warnings ?? [];
+    for (const warning of warnings) {
+      this.log.warn({ bookId }, warning);
+    }
+    return warnings;
+  }
+
+  /**
+   * Steps 1-5: copy to staging, process, verify. Returns the staged output filename (extension
+   * follows outputFormat) plus the processing warnings, which the caller folds into the
+   * operator-visible completion message.
+   */
   private async runStaging(
     stagingDir: string,
     book: RenameableBook & { path: string; authors?: Array<{ name: string }> | null; audioBitrate?: number | null },
@@ -397,7 +438,7 @@ export class MergeService {
     fileFormat: string,
     namingOptions: NamingOptions,
     signal?: AbortSignal,
-  ): Promise<string> {
+  ): Promise<{ stagedOutput: string; warnings: string[] }> {
     // Reset the deterministic staging dir to empty before copying (Change 4 / F25). A prior kill
     // can leave stale (non-dot) audio inside this exact path; the owning merge reopens it by
     // identity and would otherwise fold that residue into the result. A failure to empty it throws
@@ -413,7 +454,6 @@ export class MergeService {
     const authorName = book.authors?.[0]?.name ?? '';
     const sourceBitrateKbps = toSourceBitrateKbps(book.audioBitrate);
     const targetBitrateKbps = processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate;
-    logBitrateCapping(sourceBitrateKbps, targetBitrateKbps, this.log);
 
     // Build stderr deduplicator for logging
     const stderrDedup = createStderrDeduplicator(this.log);
@@ -446,6 +486,8 @@ export class MergeService {
 
     stderrDedup.flush();
 
+    const warnings = this.reportProcessingWarnings(bookId, processingResult);
+
     if (!processingResult.success) {
       throw new Error(`Audio processing failed: ${processingResult.error}`);
     }
@@ -469,7 +511,7 @@ export class MergeService {
       throw new Error('Staged output not found after processing');
     }
 
-    return stagedOutput;
+    return { stagedOutput, warnings };
   }
 
   /** Step 7: move the staged output to book.path, update DB size, delete originals, clean staging. */

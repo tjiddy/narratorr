@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
-import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { createTestApp, createMockServices, resetMockServices, createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDbBook } from '../__tests__/factories.js';
+import { DownloadService } from '../services/download.service.js';
+import type { DownloadClientService } from '../services/download-client.service.js';
+import type { Db } from '@db/index.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Services } from './index.js';
 import { QualityGateServiceError } from '../services/quality-gate.service.js';
 import { DownloadError } from '../services/download.service.js';
@@ -824,5 +829,51 @@ describe('activity routes', () => {
 
       expect(res.statusCode).toBe(409);
     });
+  });
+});
+
+// ─── #2069 AC16: no raw tombstone column in a schema-less activity response ───
+//
+// `GET /api/activity` declares only a querystring schema, so nothing strips extra
+// keys off the serialized download rows — whatever `DownloadService` puts on
+// `.book` is what ships. This drives the REAL service (over a mock db) rather than
+// the service mock, so the assertion watches the object the projection acts on.
+//
+// Counterfactual: revert `DownloadWithBook.book` to `BookRow` (drop the
+// `stripClearedFields` calls) and this goes red alongside the service-level cases
+// in `download.service.test.ts`.
+describe('GET /api/activity — user_cleared_fields never reaches the response (#2069)', () => {
+  it('serializes the joined book without the raw column', async () => {
+    const db = createMockDb();
+    const seededBook = createMockDbBook({ userClearedFields: '["genres"]' });
+    db.select
+      .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+      .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: seededBook, indexer: null }]));
+
+    const realDownloadService = new DownloadService(
+      inject<Db>(db),
+      inject<DownloadClientService>({} as DownloadClientService),
+      inject<FastifyBaseLogger>(createMockLogger()),
+    );
+    // `createMockServices` spreads its overrides into a plain object, so bind the
+    // real method rather than handing it the instance.
+    const localServices = createMockServices({
+      download: { getAll: realDownloadService.getAll.bind(realDownloadService) },
+    });
+    const localApp = await createTestApp(localServices);
+
+    try {
+      const res = await localApp.inject({ method: 'GET', url: '/api/activity' });
+
+      expect(res.statusCode, res.payload).toBe(200);
+      expect(res.payload).not.toContain('userClearedFields');
+      const body = JSON.parse(res.payload);
+      expect(body.data[0].book).toBeDefined();
+      expect('userClearedFields' in body.data[0].book).toBe(false);
+      // The rest of the row still ships, so this is not passing on an empty response.
+      expect(body.data[0].book.title).toBe(seededBook.title);
+    } finally {
+      await localApp.close();
+    }
   });
 });
