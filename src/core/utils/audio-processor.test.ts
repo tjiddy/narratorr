@@ -151,7 +151,11 @@ interface StreamInfoFixture {
 let streamInfoByFile: Record<string, StreamInfoFixture | null> = {};
 
 function setStreamInfo(map: Record<string, StreamInfoFixture | null>): void {
-  streamInfoByFile = map;
+  // Fixture maps are keyed by path strings that tests write either as POSIX literals or via
+  // join() (backslashes on Windows). Re-key POSIX so both styles hit on every platform.
+  streamInfoByFile = Object.fromEntries(
+    Object.entries(map).map(([k, v]) => [k.split('\\').join('/'), v]),
+  );
 }
 
 /**
@@ -170,15 +174,22 @@ function installExecFileDispatcher(opts: {
   videoStreams?: Record<string, number>;
 } = {}): void {
   let durationIdx = 0;
+  // Same POSIX re-keying as setStreamInfo: callers key this map both ways.
+  const videoStreams = Object.fromEntries(
+    Object.entries(opts.videoStreams ?? {}).map(([k, v]) => [k.split('\\').join('/'), v]),
+  );
   mockExecFile.mockImplementation((...args: unknown[]) => {
     const cb = args[args.length - 1];
     if (typeof cb !== 'function') return {} as never;
     const execArgs = (args[1] as string[] | undefined) ?? [];
     const filePath = execArgs[execArgs.length - 1] ?? '';
+    // Production probes join()-built paths (backslashes on Windows); fixture maps are keyed
+    // POSIX. Normalize at the lookup boundary or every keyed probe silently misses on Windows.
+    const posixPath = filePath.split('\\').join('/');
 
     if (execArgs.includes('stream=codec_name,bit_rate,sample_rate,channels')) {
       const positional = cb as (err: Error | null, stdout: string, stderr: string) => void;
-      const fixture = streamInfoByFile[filePath];
+      const fixture = streamInfoByFile[posixPath];
       positional(null, JSON.stringify({ streams: fixture ? [fixture] : [] }), '');
       return {} as never;
     }
@@ -186,7 +197,7 @@ function installExecFileDispatcher(opts: {
     const objectCb = cb as (err: Error | null, result: { stdout: string; stderr: string }) => void;
     if (execArgs.includes('stream=codec_type')) {
       const lines = ['audio'];
-      for (let i = 0; i < (opts.videoStreams?.[filePath] ?? 0); i++) lines.push('video');
+      for (let i = 0; i < (videoStreams[posixPath] ?? 0); i++) lines.push('video');
       objectCb(null, { stdout: `${lines.join('\n')}\n`, stderr: '' });
     } else if (execArgs.includes('format=duration')) {
       objectCb(null, { stdout: `${opts.durations?.[durationIdx++] ?? 120}\n`, stderr: '' });
@@ -2277,7 +2288,9 @@ describe('#2068 stream-copy path (AC1–AC4)', () => {
       '-i', join('/lib/book', '_metadata.txt'),
       // #2078: the first source is opened as an extra input purely so its global tags can be
       // mapped forward. `-map 0:a` keeps the concat input the only audio source.
-      '-i', join('/lib/book', '01.m4b'),
+      // The donor input is audioFiles[0] passed VERBATIM (a POSIX fixture literal), not a
+      // join()-built path — asserting join() here fails on Windows.
+      '-i', '/lib/book/01.m4b',
       '-map', '0:a',
       '-map_metadata', '2',
       '-map_chapters', '1',
@@ -2327,7 +2340,8 @@ describe('#2068 stream-copy path (AC1–AC4)', () => {
     // the global tags forward. `-map_metadata` is now present on this path — pointed at the
     // SOURCE, never at a chapter file (there isn't one here).
     expect(args[args.indexOf('-map_metadata') + 1]).toBe('1');
-    expect(args[args.indexOf('-i', args.indexOf('-i') + 1) + 1]).toBe(join('/lib/book', '01.mp3'));
+    // Verbatim donor path (POSIX fixture literal), never join()-built — see the m4b twin above.
+    expect(args[args.indexOf('-i', args.indexOf('-i') + 1) + 1]).toBe('/lib/book/01.mp3');
     expect(args[args.length - 1]).toBe(MERGED_MP3);
   });
 
