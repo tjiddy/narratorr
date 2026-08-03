@@ -2321,7 +2321,7 @@ describe('#2068 stream-copy path (AC1–AC4)', () => {
     expect(encodeSpawnArgs()).toContain('copy');
   });
 
-  it('copies an eligible .mp3 set into mp3, with no chapter input and no -map_chapters', async () => {
+  it('copies an eligible .mp3 set into mp3, with no chapter input and -map_chapters -1 (#2083)', async () => {
     const paths = setupMergeSet(['01.mp3', '02.mp3']);
     setStreamInfo(streamInfoFor(paths, {
       codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
@@ -2335,7 +2335,12 @@ describe('#2068 stream-copy path (AC1–AC4)', () => {
 
     const args = encodeSpawnArgs();
     expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
-    expect(args).not.toContain('-map_chapters');
+    // #2083: this assertion was `not.toContain('-map_chapters')` until the metadata donor's
+    // internal chapters started landing on the merged mp3. Asserted as the LITERAL `-1` and
+    // deliberately NOT through `mappedInput()`: the suppression sentinel is not an input index,
+    // so mappedInput would return `undefined` — indistinguishable from the flag being absent,
+    // i.e. from the exact pre-fix state this assertion exists to detect.
+    expect(args[args.indexOf('-map_chapters') + 1]).toBe('-1');
     // #2078: mp3 has no generated-chapter input, so the first source is input 1 and carries
     // the global tags forward. `-map_metadata` is now present on this path — pointed at the
     // SOURCE, never at a chapter file (there isn't one here).
@@ -2777,7 +2782,7 @@ describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () 
     expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
   });
 
-  it('mp3: opens the first source as input 1 and maps metadata from it, still no -map_chapters', async () => {
+  it('mp3: opens the first source as input 1, maps metadata from it, and suppresses its chapters', async () => {
     const paths = setupMergeSet(['01.mp3', '02.mp3']);
     setStreamInfo(streamInfoFor(paths, {
       codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
@@ -2789,9 +2794,33 @@ describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () 
     );
 
     const args = encodeSpawnArgs();
+    // These two pin that #2083's fix added no input and moved no mapping.
     expect(inputPaths(args)).toEqual([CONCAT, paths[0]]);
     expect(mappedInput(args, '-map_metadata')).toBe(paths[0]);
-    expect(args).not.toContain('-map_chapters');
+    // #2083 — literal sentinel, not `mappedInput()`: `-1` resolves to no input at all, so
+    // reading it back through the input list cannot tell suppression from omission.
+    expect(args[args.indexOf('-map_chapters') + 1]).toBe('-1');
+  });
+
+  it('mp3 encode mode: -map_chapters -1 survives the encode branch too (#2083 AC1)', async () => {
+    const paths = setupMergeSet(['01.mp3', '02.mp3']);
+    setStreamInfo(streamInfoFor(paths, {
+      codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2,
+    }));
+    mockSpawnSuccess();
+
+    // A usable explicit bitrate always re-encodes: MERGE_ALWAYS keeps `bitrate`, KEEP_ORIGINAL drops it.
+    await processAudioFiles(
+      '/lib/book', { ...MERGE_ALWAYS, outputFormat: 'mp3' }, defaultContext,
+    );
+
+    const args = encodeSpawnArgs();
+    expect(args[args.indexOf('-c:a') + 1]).toBe('libmp3lame');
+    expect(args).toContain('-b:a');
+    expect(args[args.indexOf('-map_chapters') + 1]).toBe('-1');
+    // Still exactly the copy-mode input layout: the encode branch opens no chapter input.
+    expect(inputPaths(args)).toEqual([CONCAT, paths[0]]);
+    expect(args[args.length - 1]).toBe(MERGED_MP3);
   });
 
   it('emits an explicit -map 0:a so the concat input is the only audio source (AC2)', async () => {
@@ -2838,5 +2867,9 @@ describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () 
     const args = encodeSpawnArgs();
     expect(inputPaths(args)).toEqual([join('/lib/book', 'book.mp3')]);
     expect(args).not.toContain('-map_metadata');
+    // #2083 AC9 — and no `-map_chapters` either, in EITHER direction. A single-file convert has
+    // no metadata donor, so ffmpeg's default carries the file's own chapters forward, which is
+    // correct here; the merge path's suppression must not be generalized onto this command.
+    expect(args).not.toContain('-map_chapters');
   });
 });
