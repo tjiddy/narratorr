@@ -132,6 +132,44 @@ function colonSegments(base: string): string[] {
 }
 
 /**
+ * Is this title's FULL form DEGENERATE — a bare franchise prefix wearing the
+ * costume of a complete title?
+ *
+ * The scalar normalizer is deliberately lossy: `[^a-z0-9' ]+` drops every
+ * character outside the ASCII alnum set, and the NFD fold only rescues letters
+ * that decompose (`é` → `e`; `ß`/`ø`/`æ` are intentionally NOT transliterated,
+ * the #1547 scope pin). A title whose distinguishing content is written in
+ * another script therefore loses ALL of it: the live case is
+ * `"World of Warcraft: Перед бурей"`, whose FULL form normalizes to exactly
+ * `world of warcraft`.
+ *
+ * That breaks an assumption the asymmetric acceptance rule rests on — that a
+ * FULL form is the COMPLETE title, so a fragment matching it must be that whole
+ * title. Here the "complete title" IS a fragment, so it legally pairs with the
+ * `prefix(1)` of every other book in the franchise
+ * (`"World of Warcraft: Beyond the Dark Portal"` and 40 siblings). That is
+ * precisely the franchise-prefix cross-match class the asymmetric rule exists to
+ * kill, leaking back in through the normalizer rather than through the rule.
+ *
+ * Detection is exact rather than heuristic: the title HAS a qualifying colon
+ * boundary, yet dropping its last segment leaves the normalized text unchanged —
+ * so the tail contributed nothing that survived the fold. A title with no colon
+ * boundary is never degenerate (`"Foundation"` is a real whole title), and a
+ * title whose tail survives is never degenerate (`"Chapterhouse: Dune"` →
+ * `chapterhouse dune` ≠ `chapterhouse`).
+ *
+ * Found by the AC17 blast check against the live library (633 books), which is
+ * exactly the unknown-corpus defect that sweep exists to surface.
+ */
+export function hasDegenerateFullForm(title: string): boolean {
+  const segments = colonSegments(stripParentheticals(title));
+  if (segments.length < 2) return false;
+  const full = normalizeTitleForVariantMatch(title);
+  if (full.length === 0) return false;
+  return normalizeTitleForVariantMatch(segments.slice(0, -1).join(' ')) === full;
+}
+
+/**
  * Generate the ordered, deduped variant set for a title.
  *
  * Order is a TOTAL order (G4), most-specific first, so a full-array assertion is

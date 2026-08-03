@@ -148,6 +148,49 @@ describe('title-variant pairing (#2096 fixture corpus)', () => {
     { a: 'Saga Book 1', b: 'Saga Book 2', matches: false, arm: 'none' },
   ];
 
+  // The live AC17 sweep found this class: the ASCII fold erases a non-Latin
+  // subtitle, so the member's FULL form degenerates to a bare franchise prefix
+  // and legally pairs with every sibling's `prefix(1)`. A degenerate FULL may not
+  // serve as the FULL side of the derived arm.
+  describe('degenerate full forms (AC17 live finding)', () => {
+    it('refuses the live case: an erased-subtitle member claiming a franchise sibling', () => {
+      expect(pairsBothWays('World of Warcraft: Перед бурей', 'World of Warcraft: Beyond the Dark Portal')).toBe(false);
+    });
+
+    it('refuses it against every sibling, not just the one it happened to claim', () => {
+      const siblings = [
+        'World of Warcraft: Beyond the Dark Portal',
+        'World of Warcraft: Traveler',
+        'World of Warcraft: Illidan',
+      ];
+      const candidates = siblings.map((title, i) => ({ id: i + 1, title, seriesPosition: null }));
+      expect(findInLibraryMatch({ title: 'World of Warcraft: Перед бурей', position: null }, candidates)).toBeNull();
+    });
+
+    it('still pairs two books that agree on their WHOLE normalized text', () => {
+      // FULL≡FULL is deliberately NOT gated: a book genuinely titled
+      // "World of Warcraft" must still match its own copy, and two erased-tail
+      // members with identical normalized text are the same evidence as before.
+      expect(pairsBothWays('World of Warcraft', 'World of Warcraft')).toBe(true);
+    });
+
+    it('leaves a non-degenerate franchise title able to serve as the FULL side', () => {
+      // The guard must not disarm the real derived arm: this is the deep-franchise
+      // `first+last` case, whose FULL side keeps its distinguishing tail.
+      expect(pairsBothWays(
+        'star wars: the high republic: Light of the Jedi (New Order Series)',
+        'Star Wars: Light of the Jedi',
+      )).toBe(true);
+    });
+
+    it('still rescues an erased-subtitle member by POSITION', () => {
+      // The guard gates one arm of the title path only — it must not make the
+      // member unmatchable, exactly as the empty-variant guard does not (G5).
+      const candidates = [{ id: 1, title: 'World of Warcraft: Beyond the Dark Portal', seriesPosition: 15 }];
+      expect(findInLibraryMatch({ title: 'World of Warcraft: Перед бурей', position: 15 }, candidates)?.id).toBe(1);
+    });
+  });
+
   it.each(corpus)('$a ↔ $b → $matches via $arm', ({ a, b, matches, arm }) => {
     expect(pairsBothWays(a, b)).toBe(matches);
     expect(pairingArm(a, b)).toBe(arm);

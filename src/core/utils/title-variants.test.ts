@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { titleVariants, normalizeTitleForVariantMatch } from './title-variants.js';
+import { titleVariants, normalizeTitleForVariantMatch, hasDegenerateFullForm } from './title-variants.js';
 import type { Variant } from './title-variants.js';
 
 /** Every `raw` in a well-formed variant set is non-empty and already collapsed/lowercased. */
@@ -202,5 +202,52 @@ describe('titleVariants', () => {
       expect(Number.isInteger(n)).toBe(true);
       expect(n).toBeGreaterThan(0);
     }
+  });
+});
+
+/**
+ * Surfaced by the AC17 blast check against the live library (633 books) — the
+ * unknown-corpus defect that sweep exists to find. The scalar normalizer's ASCII
+ * fold can eat a title's ONLY distinguishing content, leaving a "complete" form
+ * that is really a bare franchise prefix.
+ */
+describe('hasDegenerateFullForm', () => {
+  it('flags a title whose colon tail is erased by the ASCII fold (the live case)', () => {
+    // Every Cyrillic character is dropped by `[^a-z0-9' ]+`, so the FULL form is
+    // indistinguishable from the franchise prefix shared by ~40 sibling books.
+    expect(normalizeTitleForVariantMatch('World of Warcraft: Перед бурей')).toBe('world of warcraft');
+    expect(hasDegenerateFullForm('World of Warcraft: Перед бурей')).toBe(true);
+  });
+
+  it.each([
+    ['World of Warcraft: 前夜'],
+    ['Star Wars: Επεισόδιο'],
+    // #1547 scope pin: ß/ø/æ do not decompose, so an all-non-decomposing tail
+    // erases the same way a non-Latin script does.
+    ['Star Wars: Æ'],
+  ])('flags %j — any tail that leaves nothing behind', (title) => {
+    expect(hasDegenerateFullForm(title)).toBe(true);
+  });
+
+  it.each([
+    // A surviving tail is the whole point — these are real, complete titles.
+    ['Chapterhouse: Dune'],
+    ['World of Warcraft: Beyond the Dark Portal'],
+    ['The Farseer: Assassin\'s Apprentice'],
+    ['Foo: Subtitle'],
+    // No qualifying colon boundary at all: a bare title is never degenerate,
+    // otherwise "Foundation" could not pair with "Foundation (1951)".
+    ['Foundation'],
+    ['Foundation (1951)'],
+    ['IT: Chapter Two'],
+    // A tail that survives only partially still carries signal.
+    ['Star Wars: Éowyn'],
+  ])('does not flag %j', (title) => {
+    expect(hasDegenerateFullForm(title)).toBe(false);
+  });
+
+  it('does not flag a title that normalizes away entirely (the empty guard owns that)', () => {
+    expect(hasDegenerateFullForm('[ ]')).toBe(false);
+    expect(hasDegenerateFullForm('')).toBe(false);
   });
 });

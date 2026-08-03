@@ -1,4 +1,4 @@
-import { titleVariants } from '@core/utils/title-variants.js';
+import { titleVariants, hasDegenerateFullForm } from '@core/utils/title-variants.js';
 // The TYPE comes straight from its canonical shared home, not through core's
 // re-export. `src/server/**` may import `src/shared/**`, and taking the type
 // from the source keeps core's public `Variant` / `VariantTag` re-export free of
@@ -66,12 +66,22 @@ export interface HardcoverMemberSummary {
  * drive the transition without hard-coding the number in two places.
  */
 export const VARIANT_CACHE_MAX = 4096;
-const variantCache = new Map<string, Variant[]>();
 
-function cachedTitleVariants(title: string): Variant[] {
+/** One title's derived matching state — variants plus whether its FULL form is degenerate. */
+interface TitleShape {
+  variants: Variant[];
+  degenerateFull: boolean;
+}
+
+const variantCache = new Map<string, TitleShape>();
+
+function cachedTitleShape(title: string): TitleShape {
   const hit = variantCache.get(title);
   if (hit) return hit;
-  const computed = titleVariants(title);
+  const computed: TitleShape = {
+    variants: titleVariants(title),
+    degenerateFull: hasDegenerateFullForm(title),
+  };
   if (variantCache.size >= VARIANT_CACHE_MAX) variantCache.clear();
   variantCache.set(title, computed);
   return computed;
@@ -98,16 +108,27 @@ function isDerived(variant: Variant): boolean {
  * franchise prefix. Requiring one side to be the complete title means a
  * fragment can only ever match something that IS that fragment in full.
  *
+ * A DEGENERATE full form (see `hasDegenerateFullForm`) may not serve as the FULL
+ * side of the derived arm. The arm's safety rests on the FULL side being the
+ * COMPLETE title; when the ASCII fold has eaten a title's only distinguishing
+ * content, its "complete" form IS a bare franchise prefix, and every sibling's
+ * `prefix(1)` matches it. Live case from the AC17 sweep:
+ * `"World of Warcraft: Перед бурей"` normalizes to `world of warcraft` and
+ * claimed `"World of Warcraft: Beyond the Dark Portal"`. The FULL≡FULL arm is
+ * deliberately NOT gated — two sides that agree on their whole normalized text
+ * are the same evidence they always were, and gating it would stop a book
+ * genuinely titled `"World of Warcraft"` from matching its own copy.
+ *
  * Symmetric and reflexive but NON-transitive, exactly like `titlesMatchForDedup`
  * — never use it as a `Map`/`Set` key.
  */
-function titleVariantsPair(a: readonly Variant[], b: readonly Variant[]): boolean {
-  const aFull = fullForm(a);
-  const bFull = fullForm(b);
+function titleVariantsPair(a: TitleShape, b: TitleShape): boolean {
+  const aFull = fullForm(a.variants);
+  const bFull = fullForm(b.variants);
   if (aFull.length === 0 || bFull.length === 0) return false;
   if (aFull === bFull) return true;
-  if (a.some((v) => isDerived(v) && v.raw === bFull)) return true;
-  return b.some((v) => isDerived(v) && v.raw === aFull);
+  if (!b.degenerateFull && a.variants.some((v) => isDerived(v) && v.raw === bFull)) return true;
+  return !a.degenerateFull && b.variants.some((v) => isDerived(v) && v.raw === aFull);
 }
 
 /**
@@ -142,11 +163,11 @@ export function findInLibraryMatch(
     if (alreadyMatched?.has(candidate.id)) continue;
     if (positionsMatch(member.position, candidate.seriesPosition)) return candidate;
   }
-  const memberVariants = cachedTitleVariants(member.title);
-  if (memberVariants.length === 0) return null;
+  const memberShape = cachedTitleShape(member.title);
+  if (memberShape.variants.length === 0) return null;
   for (const candidate of candidates) {
     if (alreadyMatched?.has(candidate.id)) continue;
-    if (titleVariantsPair(memberVariants, cachedTitleVariants(candidate.title))) return candidate;
+    if (titleVariantsPair(memberShape, cachedTitleShape(candidate.title))) return candidate;
   }
   return null;
 }
