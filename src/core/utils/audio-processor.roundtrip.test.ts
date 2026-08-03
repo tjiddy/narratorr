@@ -398,6 +398,21 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     return join(dir, found);
   }
 
+  /**
+   * The output must carry the WHOLE book, not just the metadata donor's single part.
+   *
+   * A band rather than `toBeCloseTo`: an AAC re-encode adds encoder priming/padding that
+   * differs by ffmpeg version (~24 ms on copy, ~42 ms at 64 kbps here), which would sit right
+   * on `toBeCloseTo(…, 0)`'s 0.05 edge. Half a second still separates the 9 s whole from a
+   * truncated 3 s first part by a factor the assertion can never confuse.
+   */
+  function expectFullBookDuration(file: string): void {
+    const total = PART_SECONDS * 3;
+    const actual = audioStreamDuration(file);
+    expect(actual, `audio-stream duration of ${file}`).toBeGreaterThan(total - 0.5);
+    expect(actual, `audio-stream duration of ${file}`).toBeLessThan(total + 0.5);
+  }
+
   function expectSourceTagsPreserved(file: string): void {
     const tags = readFormatTags(file);
     for (const [key, value] of Object.entries(SOURCE_TAGS)) {
@@ -429,7 +444,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     // AC3/F5 — the generated set (3, from the parts' title tags) beats part 01's competing 5.
     expect(chapterTitles(merged)).toEqual(['Part 1', 'Part 2', 'Part 3']);
     // AC2 — the whole book, not just the metadata donor's 3 s.
-    expect(audioStreamDuration(merged)).toBeCloseTo(PART_SECONDS * 3, 0);
+    expectFullBookDuration(merged);
     // AC4 — the extra input forced no re-encode.
     expect(probeStream(merged).codecName).toBe('aac');
     expect(result.warnings ?? []).toEqual([]);
@@ -447,7 +462,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     expectSourceTagsPreserved(merged);
     expect(hasAttachedPic(merged)).toBe(true);
     expect(chapterTitles(merged)).toEqual(['Part 1', 'Part 2', 'Part 3']);
-    expect(audioStreamDuration(merged)).toBeCloseTo(PART_SECONDS * 3, 0);
+    expectFullBookDuration(merged);
   });
 
   it('mp3 output: global tags survive, and there is deliberately NO embedded cover (AC8b)', async () => {
