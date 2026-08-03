@@ -1,25 +1,41 @@
 import { describe, it, expect } from 'vitest';
 import { findInLibraryMatch, normalizeMemberTitleForMatch } from './series-title-match.js';
+import { titleVariants } from '@core/utils/title-variants.js';
 
 describe('normalizeMemberTitleForMatch', () => {
   it('case-folds, drops punctuation, collapses whitespace', () => {
     expect(normalizeMemberTitleForMatch('The Wind Through the Keyhole')).toBe('the wind through the keyhole');
     expect(normalizeMemberTitleForMatch('The Wind through the Keyhole')).toBe('the wind through the keyhole');
   });
-  it('strips subtitles after the first colon', () => {
-    expect(normalizeMemberTitleForMatch('Foo: A Tale of Two Cities')).toBe('foo');
+
+  // #2096: the colon is a SEPARATOR, not a truncation point. The pre-#2096
+  // normalizer returned 'foo' here, which keyed "Chapterhouse: Dune" to
+  // `chapterhouse` and lost the pairing with a library "Chapterhouse Dune".
+  it('treats `:` as a separator instead of truncating the subtitle', () => {
+    expect(normalizeMemberTitleForMatch('Foo: A Tale of Two Cities')).toBe('foo a tale of two cities');
+    expect(normalizeMemberTitleForMatch('Chapterhouse: Dune')).toBe('chapterhouse dune');
   });
-  it('strips parens and brackets', () => {
-    expect(normalizeMemberTitleForMatch('Foundation (1951)')).toBe('foundation');
-    expect(normalizeMemberTitleForMatch('Foundation [1951]')).toBe('foundation');
+
+  // #2096: the generic paren/bracket strip moved to the DERIVED variant axis,
+  // so the scalar form retains the annotation text.
+  it('retains generic parenthetical/bracket text', () => {
+    expect(normalizeMemberTitleForMatch('Foundation (1951)')).toBe('foundation 1951');
+    expect(normalizeMemberTitleForMatch('Foundation [1951]')).toBe('foundation 1951');
   });
-  it('strips Unabridged / Audio / Audible edition tails', () => {
+
+  // AC7 — the edition strip is load-bearing HERE, in the scalar normalizer.
+  // Demote it to the derived axis and 'Foo (Audio)' ≡ 'Foo (Unabridged)' below
+  // regresses: both sides become DERIVED forms, which the asymmetric rule
+  // forbids from pairing. Asserting the scalar values directly means that
+  // refactor fails on THIS assertion rather than mysteriously on the pairing one.
+  it('strips Unabridged / Audio / Audible edition tails in the scalar form', () => {
     expect(normalizeMemberTitleForMatch('Foo (Unabridged)')).toBe('foo');
     expect(normalizeMemberTitleForMatch('Foo (Audio)')).toBe('foo');
     expect(normalizeMemberTitleForMatch('Foo (Audible)')).toBe('foo');
   });
-  it("normalizes curly apostrophes to straight", () => {
-    expect(normalizeMemberTitleForMatch("Hitchhiker’s Guide")).toBe("hitchhiker's guide");
+
+  it('normalizes curly apostrophes to straight', () => {
+    expect(normalizeMemberTitleForMatch('Hitchhiker’s Guide')).toBe("hitchhiker's guide");
   });
 
   // #1543: `&` and the word `and` must normalize identically — the `&` form
@@ -65,6 +81,68 @@ describe('normalizeMemberTitleForMatch', () => {
   });
 });
 
+/**
+ * Which arm of the #2096 asymmetric rule a pairing reaches, derived independently
+ * from the variant sets so a test can pin the arm, not just the boolean. FULL is
+ * `{ tag: 'full', parensStripped: false }`, which is the scalar normalized form
+ * by construction.
+ */
+function pairingArm(a: string, b: string): 'full-equals-full' | 'derived-equals-full' | 'none' {
+  const aFull = normalizeMemberTitleForMatch(a);
+  const bFull = normalizeMemberTitleForMatch(b);
+  if (aFull.length === 0 || bFull.length === 0) return 'none';
+  if (aFull === bFull) return 'full-equals-full';
+  const derived = (title: string): string[] =>
+    titleVariants(title).filter((v) => v.tag !== 'full' || v.parensStripped).map((v) => v.raw);
+  if (derived(a).includes(bFull) || derived(b).includes(aFull)) return 'derived-equals-full';
+  return 'none';
+}
+
+/** Pair two titles through the real matcher, in the given argument order, positions absent. */
+function pairsOneWay(memberTitle: string, bookTitle: string): boolean {
+  return findInLibraryMatch(
+    { title: memberTitle, position: null },
+    [{ id: 1, title: bookTitle, seriesPosition: null }],
+  ) !== null;
+}
+
+/** The `bothWays` idiom from `dedup.test.ts` — the relation must be symmetric. */
+function pairsBothWays(a: string, b: string): boolean {
+  const forward = pairsOneWay(a, b);
+  expect(pairsOneWay(b, a)).toBe(forward);
+  return forward;
+}
+
+describe('title-variant pairing (#2096 fixture corpus)', () => {
+  const corpus: Array<{ a: string; b: string; matches: boolean; arm: ReturnType<typeof pairingArm> }> = [
+    // The live prod case: the colon truncation keyed the member to `chapterhouse`.
+    { a: 'Chapterhouse: Dune', b: 'Chapterhouse Dune', matches: true, arm: 'full-equals-full' },
+    // Franchise-FIRST: the library owns the sub-title alone.
+    { a: "The Farseer: Assassin's Apprentice", b: "Assassin's Apprentice", matches: true, arm: 'derived-equals-full' },
+    // Title-FIRST subtitle: the library owns the prefix. Must keep matching.
+    { a: 'The Churn: An Expanse Novella', b: 'The Churn', matches: true, arm: 'derived-equals-full' },
+    { a: 'Foo: Subtitle', b: 'Foo', matches: true, arm: 'derived-equals-full' },
+    // Asymmetric-rule negatives — derived≡derived is never a match.
+    { a: 'Series: A', b: 'Series: B', matches: false, arm: 'none' },
+    { a: 'Foo: A Novel', b: 'Bar: A Novel', matches: false, arm: 'none' },
+    { a: 'Star Wars: A', b: 'Star Wars: B', matches: false, arm: 'none' },
+    // Paren axis: the parens-stripped full is derived, the bare title is FULL.
+    { a: 'Star Wars: The Rising Storm (The High Republic)', b: 'Star Wars: The Rising Storm', matches: true, arm: 'derived-equals-full' },
+    // Colon INSIDE parens — the ordering rule keeps `world of warcraft` out of
+    // every derived variant, so this must NOT pair on a sheared prefix.
+    { a: 'The Spiral Path (World of Warcraft: Traveler, Book 2)', b: 'The Spiral Path World of Warcraft', matches: false, arm: 'none' },
+    // The deep-franchise case `first+last` exists for.
+    { a: 'star wars: the high republic: Light of the Jedi (New Order Series)', b: 'Star Wars: Light of the Jedi', matches: true, arm: 'derived-equals-full' },
+    // AC18: the #1896 volume-marker collapse is NOT propagated here.
+    { a: 'Saga Book 1', b: 'Saga Book 2', matches: false, arm: 'none' },
+  ];
+
+  it.each(corpus)('$a ↔ $b → $matches via $arm', ({ a, b, matches, arm }) => {
+    expect(pairsBothWays(a, b)).toBe(matches);
+    expect(pairingArm(a, b)).toBe(arm);
+  });
+});
+
 describe('findInLibraryMatch', () => {
   it('matches on exact position equality', () => {
     const candidates = [{ id: 1, title: 'Some Title', seriesPosition: 2 }];
@@ -78,6 +156,14 @@ describe('findInLibraryMatch', () => {
     const candidates = [{ id: 1, title: 'The Wind Through the Keyhole', seriesPosition: 8 }];
     const match = findInLibraryMatch({ title: 'The Wind through the Keyhole', position: 4.5 }, candidates);
     expect(match?.id).toBe(1);
+  });
+
+  // #2096 — the live Chapterhouse case at the matcher layer: BOTH signals used
+  // to fail (member colon-truncated to `chapterhouse`, positions 6 vs a stale 17).
+  it('matches Chapterhouse: Dune against a stale-position library Chapterhouse Dune', () => {
+    const candidates = [{ id: 4, title: 'Chapterhouse Dune', seriesPosition: 17 }];
+    const match = findInLibraryMatch({ title: 'Chapterhouse: Dune', position: 6 }, candidates);
+    expect(match?.id).toBe(4);
   });
 
   it('returns null when neither signal matches', () => {
@@ -126,6 +212,36 @@ describe('findInLibraryMatch', () => {
     expect(match?.id).toBe(1);
   });
 
+  // AC9 / G5 — position is evaluated FIRST and independently, and the
+  // empty-variant guard sits BETWEEN the passes, never above them.
+  describe('pass precedence', () => {
+    it('position still wins over a title pairing with a different candidate', () => {
+      const candidates = [
+        { id: 10, title: 'The Churn', seriesPosition: 1 },
+        { id: 20, title: 'Unrelated Book', seriesPosition: 6 },
+      ];
+      const match = findInLibraryMatch({ title: 'The Churn: An Expanse Novella', position: 6 }, candidates);
+      expect(match?.id).toBe(20);
+    });
+
+    // The decisive G5 pair. An implementation that early-returns null before the
+    // position pass fails the first; one that lets an empty variant set pair on
+    // the title path fails the second.
+    it('an empty-variant member still claims a candidate that shares its position', () => {
+      const candidates = [{ id: 1, title: 'Anything', seriesPosition: 2 }];
+      expect(findInLibraryMatch({ title: '[ ]', position: 2 }, candidates)?.id).toBe(1);
+    });
+
+    it('an empty-variant member with no position claims nothing', () => {
+      const candidates = [{ id: 1, title: 'Anything', seriesPosition: 2 }];
+      expect(findInLibraryMatch({ title: '[ ]', position: null }, candidates)).toBeNull();
+    });
+
+    it('two empty-variant titles never pair with each other', () => {
+      expect(pairsOneWay('[ ]', '   ')).toBe(false);
+    });
+  });
+
   // #1139 Bug 2: callers iterating a member list pass a Set to enforce
   // first-match-wins semantics across the list.
   describe('alreadyMatched dedup', () => {
@@ -172,6 +288,8 @@ describe('findInLibraryMatch', () => {
       expect(second).toBeNull();
     });
 
+    // AC7's pinned pairing: both sides reduce to `foo` as FULL forms because the
+    // edition tail is stripped by the SCALAR normalizer.
     it('first-match-wins for two members with normalized-equal titles', () => {
       const candidates = [{ id: 42, title: 'Foo (Unabridged)', seriesPosition: 99 }];
       const claimed = new Set<number>();
