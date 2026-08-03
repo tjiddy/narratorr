@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
-import { createMockLogger, createMockDb, inject, createMockSettingsService } from '../__tests__/helpers.js';
+import { createMockLogger, createMockDb, mockDbChain, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { MergeService, clampConcurrency } from './merge.service.js';
 import { processAudioFiles } from '@core/utils/audio-processor.js';
@@ -15,6 +15,8 @@ import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { readdir, mkdir, cp, unlink, stat, rm, rename } from 'node:fs/promises';
 import { join } from 'node:path';
+import { eq } from 'drizzle-orm';
+import { books } from '@db/schema.js';
 import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 
@@ -690,6 +692,10 @@ describe('MergeService', () => {
         size: 123_456_789,
         updatedAt: expect.any(Date),
       }));
+      // Sibling of the post-tag write's F12 fix: the DB mutation contract is payload AND
+      // filter, so this pre-existing commit-time write gets its row predicate pinned too.
+      const whereMock = setMock.mock.results[0]?.value?.where as Mock;
+      expect(whereMock).toHaveBeenCalledWith(eq(books.id, 42));
     });
 
     it('emits merge_complete SSE event with message field on success', async () => {
@@ -2689,6 +2695,61 @@ describe('#2078 post-merge re-tag', () => {
     expect(tagging.retagBook.mock.calls[0]).toHaveLength(1);
   });
 
+  it('does not start the tag write until the merge commit has landed the output (AC10)', async () => {
+    setupHappyPath();
+    // Hold the commit's staging→bookPath rename open. That rename IS the moment the merged file
+    // appears at `book.path`, and `retagBook` resolves its working directory from `book.path`
+    // itself — started any earlier it would tag the soon-to-be-deleted source parts and could
+    // not see the merged output or the folder cover.
+    let releaseCommit!: () => void;
+    const committed = new Promise<void>((res) => { releaseCommit = res; });
+    (rename as Mock).mockImplementation(() => committed);
+
+    const tagging = tagger();
+    const { service } = createService({ tagging: TAGGING_ON, taggingService: tagging });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    expect(rename).toHaveBeenCalledWith(join(STAGING_DIR, 'The Way of Kings.m4b'), MERGED_OUTPUT);
+    // Moving retagMergedOutput above commitMerge makes this the failing line.
+    expect(tagging.retagBook).not.toHaveBeenCalled();
+
+    releaseCommit();
+    await settle();
+
+    expect(tagging.retagBook).toHaveBeenCalledWith(42);
+  });
+
+  it('survives a rejecting tagging-settings read — the merge is already committed (AC10)', async () => {
+    setupHappyPath();
+    const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+    const tagging = tagger();
+    const { service, settingsService, log } = createService({
+      tagging: TAGGING_ON, taggingService: tagging, eventBroadcaster,
+    });
+    // Only the tagging read rejects; every other category still resolves, so this isolates the
+    // post-commit lookup rather than failing the merge somewhere upstream.
+    const realGet = (settingsService.get as Mock).getMockImplementation()!;
+    (settingsService.get as Mock).mockImplementation((category: string) =>
+      category === 'tagging'
+        ? Promise.reject(new Error('settings store unavailable'))
+        : realGet(category));
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    // By this point commitMerge has deleted the originals — reporting merge_failed here would
+    // tell the operator a completed, irreversible merge did not happen.
+    expect(log.warn).toHaveBeenCalled();
+    expect(vi.mocked(eventBroadcaster.emit)).toHaveBeenCalledWith(
+      'merge_complete', expect.objectContaining({ success: true }),
+    );
+    expect(vi.mocked(eventBroadcaster.emit).mock.calls.some((c) => c[0] === 'merge_failed')).toBe(false);
+    expect(tagging.retagBook).not.toHaveBeenCalled();
+    expect(enrichBookFromAudio).toHaveBeenCalled();
+  });
+
   it('never calls retagBook when tag embedding is off — Layer 1 alone governs (AC14)', async () => {
     setupHappyPath();
     const tagging = tagger();
@@ -2763,24 +2824,115 @@ describe('#2078 post-merge re-tag', () => {
     expect(enrichBookFromAudio).toHaveBeenCalled();
   });
 
-  it('rewrites books.size from a POST-tag stat (AC11)', async () => {
+  /** Count the `stat()` reads taken against the committed merge output. */
+  function statsOnOutput(): number {
+    return vi.mocked(stat).mock.calls.filter((c) => c[0] === MERGED_OUTPUT).length;
+  }
+
+  it('takes the size stat only AFTER the tag rewrite resolves (AC11)', async () => {
     setupHappyPath();
     // tagFile rewrites the file through a temp + atomic rename, so commitMerge's stat is stale
-    // the moment a tag lands. Two different sizes make a pre-tag-only read observable.
+    // the moment a tag lands.
     const sizes = [500_000_000, 500_004_096];
     (stat as Mock).mockImplementation(async () => ({ size: sizes.shift() ?? 500_004_096 }));
-    const { service, db } = createService({ tagging: TAGGING_ON, taggingService: tagger() });
+
+    // Gate `retagBook` rather than feeding two values and reading the second: a stat hoisted
+    // above `await retagBook` consumes that same second value and leaves a value-only
+    // assertion green. Holding the tag write open makes the ORDER the observable.
+    let release!: (r: RetagResult) => void;
+    const gate = new Promise<RetagResult>((res) => { release = res; });
+    const tagging = { retagBook: vi.fn().mockReturnValue(gate) };
+    const { service, db } = createService({ tagging: TAGGING_ON, taggingService: tagging });
 
     await service.enqueueMerge(42);
     await settle();
 
-    expect(stat).toHaveBeenCalledWith(MERGED_OUTPUT);
-    expect(vi.mocked(stat).mock.calls.filter((c) => c[0] === MERGED_OUTPUT)).toHaveLength(2);
+    expect(tagging.retagBook).toHaveBeenCalled();
+    // Only commitMerge's own stat so far — the post-tag one must not have been taken yet.
+    expect(statsOnOutput()).toBe(1);
 
+    release(retagResult());
+    await settle();
+
+    expect(statsOnOutput()).toBe(2);
     const lastSet = (db.update as Mock).mock.results.at(-1)?.value?.set as Mock;
     expect(lastSet).toHaveBeenCalledWith(expect.objectContaining({
       size: 500_004_096, updatedAt: expect.any(Date),
     }));
+  });
+
+  it('awaits the final size write before the merge moves on (AC11)', async () => {
+    setupHappyPath();
+    (stat as Mock).mockResolvedValue({ size: 500_004_096 });
+
+    // Gate the post-tag update's `where()` terminus. Inspecting the synchronous `set()` call
+    // cannot see a dropped `await` — the call trace is identical either way (the repo's
+    // issuance-vs-persistence trap). Only a pending terminus can.
+    let releasePersist!: () => void;
+    const persisted = new Promise<void>((res) => { releasePersist = res; });
+    const gatedWhere = vi.fn().mockImplementation(() => ({
+      // Thenable only: production awaits this terminus directly and never calls `.returning()`.
+      then: (onOk: unknown, onErr: unknown) =>
+        persisted.then(() => undefined).then(onOk as never, onErr as never),
+    }));
+
+    // Discriminate the post-tag update from commitMerge's by TAG STATE, not call index: the
+    // post-tag write is by definition the one issued after `retagBook` resolved, so this stays
+    // correct however many updates either step makes.
+    let tagWriteDone = false;
+    const tagging = {
+      retagBook: vi.fn().mockImplementation(async () => { tagWriteDone = true; return retagResult(); }),
+    };
+    const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+    const { service, db } = createService({ tagging: TAGGING_ON, taggingService: tagging, eventBroadcaster });
+    (db.update as Mock).mockImplementation(() =>
+      tagWriteDone ? { set: vi.fn().mockReturnValue({ where: gatedWhere }) } : mockDbChain());
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    // The write was ISSUED, but the merge must not have proceeded past it.
+    expect(gatedWhere).toHaveBeenCalledTimes(1);
+    expect(enrichBookFromAudio).not.toHaveBeenCalled();
+    expect(vi.mocked(eventBroadcaster.emit).mock.calls.some((c) => c[0] === 'merge_complete')).toBe(false);
+
+    releasePersist();
+    await settle();
+
+    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(vi.mocked(eventBroadcaster.emit)).toHaveBeenCalledWith('merge_complete', expect.objectContaining({ success: true }));
+  });
+
+  it('scopes the final size write to exactly the merged book row (AC11)', async () => {
+    setupHappyPath();
+    (stat as Mock).mockResolvedValue({ size: 500_004_096 });
+
+    const capturedWhere: unknown[] = [];
+    let tagWriteDone = false;
+    const tagging = {
+      retagBook: vi.fn().mockImplementation(async () => { tagWriteDone = true; return retagResult(); }),
+    };
+    const { service, db } = createService({ tagging: TAGGING_ON, taggingService: tagging });
+    (db.update as Mock).mockImplementation(() => {
+      if (!tagWriteDone) return mockDbChain();
+      return {
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockImplementation((predicate: unknown) => {
+            capturedWhere.push(predicate);
+            return Promise.resolve(undefined);
+          }),
+        }),
+      };
+    });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    // A payload-only assertion passes with the WHERE deleted, widened, or pointed at another
+    // book — which would rewrite the wrong rows' size.
+    expect(capturedWhere).toHaveLength(1);
+    expect(capturedWhere[0]).toEqual(eq(books.id, 42));
+    expect(capturedWhere[0]).not.toEqual(eq(books.id, 43));
   });
 
   it('fires the post-tag metadata connector refresh only when a file was actually tagged (AC12)', async () => {

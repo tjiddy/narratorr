@@ -413,11 +413,21 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     expect(actual, `audio-stream duration of ${file}`).toBeLessThan(total + 0.5);
   }
 
-  function expectSourceTagsPreserved(file: string): void {
+  /**
+   * Every tag the sources carried, INCLUDING the global `title`.
+   *
+   * `title` is passed per scenario rather than folded into SOURCE_TAGS because it is the one
+   * field whose expected value differs by fixture: a merge inherits the metadata DONOR's title
+   * (part 01's `Part 1`), while a convert keeps the single file's own. Leaving it out of the
+   * shared set is exactly how a merge or convert could silently drop or overwrite the global
+   * title with the whole real-ffmpeg suite still green.
+   */
+  function expectSourceTagsPreserved(file: string, expectedTitle: string): void {
     const tags = readFormatTags(file);
     for (const [key, value] of Object.entries(SOURCE_TAGS)) {
       expect(tags[key], `tag "${key}" on ${file}`).toBe(value);
     }
+    expect(tags.title, `tag "title" on ${file}`).toBe(expectedTitle);
   }
 
   /** Build a tagged, chaptered, cover-bearing 3-part set. Part 01 carries 5 internal chapters. */
@@ -438,7 +448,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
 
     const merged = outputIn(dir, '.m4b');
     // AC1/AC5 — pre-#2078 this read `{major_brand, minor_version, compatible_brands, encoder}`.
-    expectSourceTagsPreserved(merged);
+    expectSourceTagsPreserved(merged, 'Part 1');
     // AC8 — the extract/reattach lifecycle survives the 60 s stall timer and lands the picture.
     expect(hasAttachedPic(merged)).toBe(true);
     // AC3/F5 — the generated set (3, from the parts' title tags) beats part 01's competing 5.
@@ -459,7 +469,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     expect(result.success).toBe(true);
 
     const merged = outputIn(dir, '.m4b');
-    expectSourceTagsPreserved(merged);
+    expectSourceTagsPreserved(merged, 'Part 1');
     expect(hasAttachedPic(merged)).toBe(true);
     expect(chapterTitles(merged)).toEqual(['Part 1', 'Part 2', 'Part 3']);
     expectFullBookDuration(merged);
@@ -474,7 +484,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
 
     const merged = outputIn(dir, '.mp3');
     // The mp3 merge path has no generated-chapter input, so the first source is input 1.
-    expectSourceTagsPreserved(merged);
+    expectSourceTagsPreserved(merged, 'Part 1');
     // Pinned, not implied: `withCoverArtPipeline` gains no MP3 reattach arm in this issue.
     expect(hasAttachedPic(merged)).toBe(false);
   });
@@ -487,7 +497,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     expect(result.success).toBe(true);
 
     const merged = outputIn(dir, '.m4b');
-    expectSourceTagsPreserved(merged);
+    expectSourceTagsPreserved(merged, 'Part 1');
     expect(hasAttachedPic(merged)).toBe(false);
     expect(result.warnings ?? []).toEqual([]);
   });
@@ -504,7 +514,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     expect(result.success).toBe(true);
 
     const converted = outputIn(dir, '.m4b');
-    expectSourceTagsPreserved(converted);
+    expectSourceTagsPreserved(converted, 'Oathbringer');
     expect(hasAttachedPic(converted)).toBe(true);
   });
 });

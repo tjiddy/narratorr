@@ -14,7 +14,7 @@
  * survive. xHE-AAC / USAC decode depends on ffmpeg 8 (#1667), so the suite skips
  * when the runtime ffmpeg major is < 8 — but it MUST run in the ffmpeg-8 CI lane.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -309,7 +309,11 @@ describe.skipIf(!hasAnyFfmpeg)('#2078 re-tag self-heals a metadata-naked merged 
 
   afterAll(() => {
     if (bookDir) rmSync(bookDir, { recursive: true, force: true });
-    delete process.env.FFMPEG_PATH;
+    // Restore the AMBIENT value rather than deleting the key: a runner or dev machine may have
+    // its own FFMPEG_PATH configured, and unconditionally unsetting it makes every later suite
+    // order-dependent on this one. Reset the resolver cache AFTER restoring, so the next caller
+    // re-resolves against the restored environment rather than this suite's override.
+    vi.unstubAllEnvs();
     resetFfmpegPathCache();
   });
 
@@ -346,7 +350,9 @@ describe.skipIf(!hasAnyFfmpeg)('#2078 re-tag self-heals a metadata-naked merged 
     expect(readChapterCount(merged)).toBe(2);
 
     // `resolveFfmpegPath` honors FFMPEG_PATH first, so the real resolver runs unmocked.
-    process.env.FFMPEG_PATH = FFMPEG;
+    // `stubEnv` (not a raw assignment) so `vi.unstubAllEnvs()` in afterAll puts back whatever
+    // the ambient value was — including "not set at all".
+    vi.stubEnv('FFMPEG_PATH', FFMPEG);
     resetFfmpegPathCache();
 
     const bookService = {
