@@ -173,23 +173,45 @@ export function normalizeTitleLosslessly(title: string): string {
  * `prefix(1)` of every sibling in the franchise. It is the franchise-prefix
  * cross-match class the rule exists to kill, re-entering through the normalizer.
  *
- * Detection is by TOKEN SURVIVAL, deliberately structure-free: tokenize the
- * lossless form, and report degeneracy when some token contributes nothing at
- * all to the scalar form. An earlier version of this guard asked a structural
- * question instead ("does the title have a qualifying colon boundary whose tail
- * vanished?"), which needed a new special case for every shape the erased tail
- * could take — after a colon, inside parentheses, inside brackets, or with no
- * colon at all (`"World of Warcraft (Перед бурей)"`). Token survival is the
- * property those shapes all share, so it closes them together rather than one
- * structural case at a time.
+ * Detection is by CHARACTER SURVIVAL, deliberately structure-free: every
+ * identity-bearing character the lossless form keeps but the ASCII fold drops is
+ * content the FULL form does not represent. Because `normalizeTitleLosslessly`
+ * has already reduced the title to letters, digits, apostrophes and single
+ * spaces, "dropped by the ASCII fold" is exactly "outside `[a-z0-9' ]`".
  *
- * Non-degenerate by construction, and each pinned by a test:
- *  - every token survives — `"Chapterhouse: Dune"`, `"Foundation (1951)"`.
- *  - a token that FRAGMENTS still survives — `"Straße"` → `stra e` is a
- *    mangled token, not a missing one.
- *  - a diacritic that FOLDS survives — `"Les Misérables"` → `les miserables`.
+ * This guard has been wrong twice, in instructive ways, and the current shape is
+ * what survived both:
+ *
+ *  1. A STRUCTURAL test ("does the title have a qualifying colon boundary whose
+ *     tail vanished?") had to name every shape the erased content could take —
+ *     after a colon, inside parentheses, inside brackets, or with no colon at all
+ *     (`"World of Warcraft (Перед бурей)"`). It missed each shape it had not been
+ *     told about.
+ *  2. A TOKEN test ("does some whole token normalize to nothing?") missed MIXED
+ *     tokens. `"World of Warcraft: A前夜"` and `"World of Warcraft: A後夜"` both
+ *     reduce to `world of warcraft a`; each tail is a single token whose scalar
+ *     form is the non-empty `a`, so both looked safe and the two different books
+ *     matched through FULL≡FULL. The `a` survived; the characters that told the
+ *     books apart did not. Partial loss is loss.
+ *
+ * Characters, not tokens and not structure, are the granularity at which the
+ * fold actually discards information — so that is where the question belongs.
+ *
+ * Non-degenerate by construction, each pinned by a test:
+ *  - every character survives — `"Chapterhouse: Dune"`, `"Foundation (1951)"`.
+ *  - a diacritic that FOLDS survives — `"Les Misérables"` → `les miserables` is
+ *    all-ASCII after the fold, so nothing was discarded.
+ *  - an apostrophe survives — `"Hitchhiker's Guide"`.
  *  - nothing survives at all — the empty-variant guard (G5) owns that case, so
  *    an empty FULL form is never reported here.
+ *
+ * Note that a NON-decomposing Latin letter (`ß`/`ø`/`æ`, the #1547 scope pin) IS
+ * degenerate: `"Straße"` scalar-folds to `stra e`, which has genuinely lost the
+ * `ß`. An earlier revision of this guard called that "fragmenting, not missing"
+ * and let it pass — the same reasoning that let the mixed-token case through.
+ * Being degenerate costs such a title very little: it can still offer its
+ * fragments to a non-degenerate FULL side, and two records of it still pair
+ * through the lossless comparison.
  *
  * Found by the AC17 blast check against the live library (633 books) — exactly
  * the unknown-corpus defect that sweep exists to surface.
@@ -197,11 +219,7 @@ export function normalizeTitleLosslessly(title: string): string {
 export function hasDegenerateFullForm(title: string): boolean {
   const full = normalizeTitleForVariantMatch(title);
   if (full.length === 0) return false;
-  const lossless = normalizeTitleLosslessly(title);
-  if (lossless.length === 0) return false;
-  return lossless
-    .split(' ')
-    .some((token) => normalizeTitleForVariantMatch(token).length === 0);
+  return /[^a-z0-9' ]/.test(normalizeTitleLosslessly(title));
 }
 
 /**

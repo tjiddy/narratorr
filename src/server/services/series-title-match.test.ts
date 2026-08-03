@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { findInLibraryMatch, normalizeMemberTitleForMatch, VARIANT_CACHE_MAX } from './series-title-match.js';
-import { titleVariants } from '@core/utils/title-variants.js';
+import { titleVariants, hasDegenerateFullForm } from '@core/utils/title-variants.js';
 
 // Spy-wrap the REAL generator so derivation counts are observable. A cache hit
 // and a cache miss return equal values, so the memo's two branches cannot be
@@ -203,6 +203,38 @@ describe('title-variant pairing (#2096 fixture corpus)', () => {
     it('still pairs two books that agree on their WHOLE normalized text', () => {
       // Two NON-degenerate sides take the ordinary FULL≡FULL path untouched.
       expect(pairsBothWays('World of Warcraft', 'World of Warcraft')).toBe(true);
+    });
+
+    // F10 — erased characters MIXED INTO a surviving token. Both of these reduce
+    // to `world of warcraft a`, so the FULL≡FULL arm sees identical forms; only
+    // the lossless comparison can tell the two books apart.
+    it('refuses two DISTINCT mixed-token titles that collapse to the same FULL form', () => {
+      expect(normalizeMemberTitleForMatch('World of Warcraft: A前夜')).toBe('world of warcraft a');
+      expect(normalizeMemberTitleForMatch('World of Warcraft: A後夜')).toBe('world of warcraft a');
+      expect(pairsBothWays('World of Warcraft: A前夜', 'World of Warcraft: A後夜')).toBe(false);
+    });
+
+    it('refuses a mixed-token title against the bare title its FULL form collides with', () => {
+      // 'World of Warcraft A' is a different book that happens to normalize to
+      // the same scalar text once 前夜 is discarded.
+      expect(normalizeMemberTitleForMatch('World of Warcraft A')).toBe('world of warcraft a');
+      expect(pairsBothWays('World of Warcraft: A前夜', 'World of Warcraft A')).toBe(false);
+    });
+
+    it('still pairs the SAME mixed-token title with itself', () => {
+      expect(pairsBothWays('World of Warcraft: A前夜', 'World of Warcraft: A前夜')).toBe(true);
+    });
+
+    // Scope pin for the guard: degeneracy disqualifies a title from being the
+    // trusted COMPLETE side, NOT from offering a fragment to one. Gating this
+    // would break the AC11 fixture `'Foo: Subtitle' ≡ 'Foo'`, whose shape it
+    // shares exactly.
+    it('lets a degenerate title still OFFER a fragment to a non-degenerate FULL side', () => {
+      expect(hasDegenerateFullForm("Sønner: Assassin's Apprentice")).toBe(true);
+      expect(pairsBothWays("Sønner: Assassin's Apprentice", "Assassin's Apprentice")).toBe(true);
+      // The pinned fixture this preserves, and its all-ASCII franchise twin.
+      expect(pairsBothWays('Foo: Subtitle', 'Foo')).toBe(true);
+      expect(pairsBothWays('World of Warcraft: Beyond the Dark Portal', 'World of Warcraft')).toBe(true);
     });
 
     it('leaves a non-degenerate franchise title able to serve as the FULL side', () => {

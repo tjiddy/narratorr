@@ -245,24 +245,42 @@ describe('hasDegenerateFullForm', () => {
     expect(hasDegenerateFullForm(title)).toBe(true);
   });
 
+  // F10: PARTIAL loss is loss. An earlier token-level test asked whether a whole
+  // token vanished, so a token mixing surviving and erased characters looked
+  // safe — `"A前夜"` and `"A後夜"` both reduce to `a`, and the two different books
+  // matched. The question belongs at the CHARACTER level, where the fold
+  // actually discards information.
   it.each([
-    // A surviving tail is the whole point — these are real, complete titles.
+    ['World of Warcraft: A前夜'],
+    ['World of Warcraft: A後夜'],
+    ['Star Wars: Episode1エピソード'],
+  ])('flags %j — erased characters mixed INTO a surviving token', (title) => {
+    expect(hasDegenerateFullForm(title)).toBe(true);
+  });
+
+  it('flags a non-decomposing Latin letter, which the fold genuinely discards', () => {
+    // #1547 pins that ß/ø/æ are NOT transliterated, so `straße` -> `stra e` has
+    // lost the ß. A prior revision called this "fragmenting, not missing" and let
+    // it pass — the same reasoning that let the mixed-token case through.
+    expect(normalizeTitleForVariantMatch('Straße')).toBe('stra e');
+    expect(hasDegenerateFullForm('Straße')).toBe(true);
+    expect(hasDegenerateFullForm('Straße: Beyond the Dark Portal')).toBe(true);
+  });
+
+  it.each([
+    // Every character survives — these are real, complete titles.
     ['Chapterhouse: Dune'],
     ['World of Warcraft: Beyond the Dark Portal'],
     ['The Farseer: Assassin\'s Apprentice'],
     ['Foo: Subtitle'],
-    // No qualifying colon boundary at all: a bare title is never degenerate,
-    // otherwise "Foundation" could not pair with "Foundation (1951)".
     ['Foundation'],
     ['Foundation (1951)'],
     ['IT: Chapter Two'],
-    // A diacritic that FOLDS is not a token that vanished.
+    // A diacritic that FOLDS leaves an all-ASCII form: nothing was discarded.
     ['Star Wars: Éowyn'],
     ['Les Misérables'],
-    // A token that FRAGMENTS survives as mangled text, not as nothing:
-    // 'straße' -> 'stra e' (#1547 pins that ß is not transliterated).
-    ['Straße'],
-    ['Straße: Beyond the Dark Portal'],
+    // The apostrophe is inside the scalar character class, so it is not loss.
+    ['Hitchhiker’s Guide'],
   ])('does not flag %j', (title) => {
     expect(hasDegenerateFullForm(title)).toBe(false);
   });
