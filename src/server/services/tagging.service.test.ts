@@ -150,14 +150,41 @@ describe('buildFfmpegArgs', () => {
     expect(args).toContain('attached_pic');
   });
 
-  it('omits cover art args when no coverPath', () => {
+  it('opens no cover input when no coverPath, but PRESERVES an existing picture (#2078 AC16)', () => {
     const tags: TagMetadata = { artist: 'Author' };
     const args = buildFfmpegArgs('/books/input.mp3', '/books/out.mp3', tags);
 
     // Should only have one -i (for the audio input)
     const iCount = args.filter(a => a === '-i').length;
     expect(iCount).toBe(1);
-    expect(args).not.toContain('-c:v');
+
+    // Pre-#2078 this mapped `0:a` alone, so EVERY tag write without a cover input silently
+    // stripped embedded art — including `populate_missing`, where shouldEmbedCover is false
+    // precisely BECAUSE the file already has art. `?` keeps files with no picture unaffected.
+    const mapIdx = args.indexOf('-map', args.indexOf('-map') + 1);
+    expect(args[mapIdx]).toBe('-map');
+    expect(args[mapIdx + 1]).toBe('0:v?');
+    expect(args[args.indexOf('-c:v') + 1]).toBe('copy');
+    expect(args[args.indexOf('-disposition:v') + 1]).toBe('attached_pic');
+  });
+
+  it('with a coverPath the NEW cover input wins and video is mapped exactly once (#2078 AC16)', () => {
+    const args = buildFfmpegArgs('/books/input.m4b', '/books/out.m4b', { artist: 'Author' }, '/books/cover.jpg');
+
+    const mapped = args.reduce<string[]>((acc, a, i) => (a === '-map' ? [...acc, args[i + 1]!] : acc), []);
+    // Exactly one video mapping, and it is the new cover input — never `0:v?` alongside it,
+    // which would emit two attached pictures.
+    expect(mapped).toEqual(['0:a', '1']);
+    expect(mapped).not.toContain('0:v?');
+  });
+
+  it('keeps -map_chapters 0 in both the cover and no-cover shapes (#2078 AC17)', () => {
+    for (const args of [
+      buildFfmpegArgs('/books/in.m4b', '/books/out.m4b', { album: 'Book' }),
+      buildFfmpegArgs('/books/in.m4b', '/books/out.m4b', { album: 'Book' }, '/books/cover.jpg'),
+    ]) {
+      expect(args[args.indexOf('-map_chapters') + 1]).toBe('0');
+    }
   });
 
   it('omits undefined tag fields', () => {
@@ -1752,7 +1779,11 @@ describe('TaggingService', () => {
 
       const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
       expect(args.some(a => a.endsWith('cover.jpg'))).toBe(false);
-      expect(args).not.toContain('-disposition:v');
+      // Observation point moved by #2078: `-disposition:v` is now emitted unconditionally (it
+      // labels the file's OWN preserved picture), so it no longer distinguishes "cover embedded"
+      // from "cover suppressed". The input list does — a suppressed cover opens no second input.
+      expect(args.filter(a => a === '-i')).toHaveLength(1);
+      expect(args[args.indexOf('-map', args.indexOf('-map') + 1) + 1]).toBe('0:v?');
     });
 
     it('omitting overrides falls back to settings (regression — bare retagBook call)', async () => {

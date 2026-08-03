@@ -94,7 +94,9 @@ async function extractCoverArt(
 ): Promise<string | null> {
   const coverPath = join(targetDir, '_cover.jpg');
   try {
-    await spawnFfmpeg(ffmpegPath, ['-y', '-i', sourceFile, '-an', '-vcodec', 'copy', coverPath]);
+    // `-progress pipe:1` is load-bearing, not diagnostic (#2078): spawnFfmpeg's 60 s stall timer
+    // only resets on STDOUT activity, and a `-c copy` remux emits nothing there on its own.
+    await spawnFfmpeg(ffmpegPath, ['-y', '-i', sourceFile, '-an', '-vcodec', 'copy', '-progress', 'pipe:1', coverPath]);
     const info = await stat(coverPath);
     if (info.size === 0) {
       await rm(coverPath, { force: true });
@@ -127,8 +129,16 @@ async function reattachCoverArt(
       '-map', '0:a',
       '-map', '1:v',
       '-c', 'copy',
+      // Explicit (#2078): this is a second remux over the just-merged file, so it must carry
+      // forward the global tags the merge preserved and the generated chapter set #2068 pinned.
+      // ffmpeg's chapter default picks the input with the most chapters — a cover JPEG has none
+      // today, but relying on that is a silent dependency on the other input's shape.
+      '-map_metadata', '0',
+      '-map_chapters', '0',
       '-disposition:v:0', 'attached_pic',
       '-f', 'mp4',
+      // Same stall-timer reason as the extract above — this is the long one (multi-GB remux).
+      '-progress', 'pipe:1',
       tempOutput,
     ]);
     await rename(tempOutput, audioFile);

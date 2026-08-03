@@ -291,17 +291,40 @@ async function mergeFiles(
       '-i', concatPath,
     ];
 
+    // Input indices are COMPUTED, never hardcoded — the generated-chapter input only exists on
+    // the m4b path, so the first-source input lands at a different index per output format.
+    let nextInput = 1; // input 0 is the concat demuxer opened above
+
     // Build chapter metadata for m4b
     let metadataPath: string | undefined;
+    let chapterInput: number | undefined;
     if (outputExt === 'm4b') {
       metadataPath = join(targetDir, '_metadata.txt');
       const metadataContent = buildChapterMetadata(chapterSources, durations);
       await writeFile(metadataPath, metadataContent, 'utf-8');
-      // -map_chapters 1 pins the GENERATED chapters over whatever the concat demuxer
-      // propagates from the source parts: ffmpeg's default picks the input with the most
-      // chapters, so source m4b parts carrying internal chapters could otherwise outvote
-      // the generated set. Emitted in both copy and encode modes.
-      args.push('-i', metadataPath, '-map_metadata', '1', '-map_chapters', '1');
+      args.push('-i', metadataPath);
+      chapterInput = nextInput++;
+    }
+
+    // #2078: open the first source purely as a metadata donor. The generated FFMETADATA1 file
+    // carries ONLY [CHAPTER] blocks, so the pre-#2078 `-map_metadata 1` overrode ffmpeg's
+    // default with an EMPTY global tag set — every merged output came out metadata-naked. The
+    // concat demuxer's own propagation of format-level metadata is version-dependent, so this
+    // maps the source explicitly rather than relying on `-map_metadata 0`.
+    args.push('-i', audioFiles[0]!);
+    const metadataInput = nextInput++;
+
+    // Mandatory, not cosmetic: with a second audio-bearing input open, ffmpeg's automatic
+    // stream selection is free to pick the donor's audio instead of the concat's — which
+    // would emit the first part alone as a file that still probes as valid.
+    args.push('-map', '0:a');
+    args.push('-map_metadata', String(metadataInput));
+    if (chapterInput !== undefined) {
+      // -map_chapters pins the GENERATED chapters over whatever the concat demuxer propagates
+      // from the source parts (and now over the metadata donor's own internal chapters):
+      // ffmpeg's default picks the input with the most chapters, so source m4b parts carrying
+      // internal chapters could otherwise outvote the generated set. Both copy and encode modes.
+      args.push('-map_chapters', String(chapterInput));
     }
 
     args.push(...await resolveCodecArgs(config, audioFiles, warnings, callbacks?.onStderr));
