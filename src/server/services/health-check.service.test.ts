@@ -1422,6 +1422,14 @@ describe('HealthCheckService', () => {
           },
         });
 
+        await runPasses(service, 2); // the blip: two failing observations
+        expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+
+        // Recovery is debounced symmetrically, so a resolve does not become
+        // ELIGIBLE until the third healthy pass. Stopping at the first healthy
+        // pass would leave the entire window in which an orphan can appear
+        // unobserved — the assertion would not cover the property this test is
+        // named for. Run the recovery all the way through its own window.
         await service.runAllChecks();
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
         await service.runAllChecks();
@@ -1429,7 +1437,10 @@ describe('HealthCheckService', () => {
         await service.runAllChecks();
 
         // Neither the failure nor the recovery is announced: the failure was never
-        // confirmed, so there is no announced episode for a resolve to close.
+        // confirmed, so there is no announced episode for a resolve to close. An
+        // implementation that banks an unconfirmed failure into the notified map
+        // emits a spurious `error -> healthy` resolve exactly here, on the third
+        // healthy pass, and nowhere earlier.
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
       });
 
