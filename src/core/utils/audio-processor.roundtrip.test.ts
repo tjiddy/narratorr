@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, renameSync, writeFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { processAudioFiles, type ProcessingConfig, type ProcessingContext } from './audio-processor.js';
@@ -271,5 +271,225 @@ describe.skipIf(!FFMPEG_PRESENT)('#2068 encode strategy round-trip (real ffmpeg)
     expect(result.success).toBe(true);
     expect(result.warnings!.some((w) => w.includes('705') && w.includes('320'))).toBe(true);
     expect(probeStream(outputIn(dir, '.mp3')).bitRate).toBeLessThanOrEqual(320_000);
+  });
+});
+
+// ============================================================================
+// #2078 — a merge must not destroy the metadata and cover art its sources had.
+//
+// The mocked suite can only prove what argv this module CONSTRUCTS. The production defect was
+// downstream of that: `-map_metadata 1` pointed at the generated FFMETADATA1 file, which has
+// only [CHAPTER] blocks, so ffmpeg wrote an EMPTY global tag set and every auto-merged m4b came
+// out carrying nothing but `major_brand`/`encoder`. Only a real read-back can see that.
+//
+// Gated on ffmpeg PRESENCE, like the block above: nothing here needs the ffmpeg-8 xHE-AAC floor.
+// ============================================================================
+
+/** Format-level tags as a lowercased-key map (ffprobe casing varies by container). */
+function readFormatTags(file: string): Record<string, string> {
+  const out = execFileSync(FFPROBE, ['-v', 'quiet', '-print_format', 'json', '-show_format', file], { encoding: 'utf8' });
+  const tags = (JSON.parse(out).format?.tags ?? {}) as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(tags).map(([k, v]) => [k.toLowerCase(), String(v)]));
+}
+
+/** True when the file carries a video stream flagged `attached_pic` (an embedded cover). */
+function hasAttachedPic(file: string): boolean {
+  const out = execFileSync(FFPROBE, [
+    '-v', 'quiet', '-select_streams', 'v', '-show_entries', 'stream_disposition=attached_pic',
+    '-of', 'json', file,
+  ], { encoding: 'utf8' });
+  return ((JSON.parse(out).streams ?? []) as Array<{ disposition?: { attached_pic?: number } }>)
+    .some((s) => s.disposition?.attached_pic === 1);
+}
+
+/**
+ * The AUDIO STREAM's duration — deliberately NOT `format=duration`.
+ *
+ * In an m4b the chapter track counts toward the container duration, so `format=duration` reads
+ * the full 9 s even when only the 3 s first part was muxed: it CANNOT see the truncation
+ * `-map 0:a` exists to prevent. The audio stream's own duration can.
+ */
+function audioStreamDuration(file: string): number {
+  const out = execFileSync(FFPROBE, [
+    '-v', 'quiet', '-select_streams', 'a:0', '-show_entries', 'stream=duration', '-of', 'json', file,
+  ], { encoding: 'utf8' });
+  return Number.parseFloat(String(JSON.parse(out).streams?.[0]?.duration));
+}
+
+/** The tags every fixture part carries, so a naked output is unambiguous. */
+const SOURCE_TAGS: Record<string, string> = {
+  artist: 'Brandon Sanderson',
+  album_artist: 'Brandon Sanderson',
+  album: 'Oathbringer',
+  date: '2017',
+  genre: 'Fantasy',
+};
+
+const PART_SECONDS = 3;
+
+describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cover art (real ffmpeg)', () => {
+  let root: string;
+  let caseIndex = 0;
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), 'narratorr-2078-'));
+  });
+
+  afterAll(() => {
+    if (root) rmSync(root, { recursive: true, force: true });
+  });
+
+  function caseDir(): string {
+    const dir = join(root, `case-${caseIndex++}`);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  function makeCover(dir: string): string {
+    const path = join(dir, 'art.jpg');
+    execFileSync(FFMPEG, ['-y', '-v', 'quiet', '-f', 'lavfi', '-i', 'color=c=red:s=64x64:d=1', '-frames:v', '1', path], { stdio: 'ignore' });
+    return path;
+  }
+
+  /**
+   * One tagged, non-silent part. `cover` embeds an attached picture; `internalChapters` gives
+   * the part its OWN chapter set, which is what makes the `-map_chapters` assertion real —
+   * ffmpeg's default picks the input with the MOST chapters, so a part carrying more chapters
+   * than the generated set would win without the explicit map.
+   */
+  function makeTaggedPart(dir: string, name: string, opts: {
+    codecArgs: string[];
+    title: string;
+    cover?: string | undefined;
+    internalChapters?: number | undefined;
+  }): string {
+    const path = join(dir, name);
+    const metadataArgs = Object.entries({ ...SOURCE_TAGS, title: opts.title })
+      .flatMap(([k, v]) => ['-metadata', `${k}=${v}`]);
+
+    execFileSync(FFMPEG, [
+      '-y', '-v', 'quiet',
+      '-f', 'lavfi', '-i', `sine=frequency=440:sample_rate=44100:duration=${PART_SECONDS}`,
+      ...(opts.cover ? ['-i', opts.cover, '-map', '0:a', '-map', '1:v', '-c:v', 'copy', '-disposition:v', 'attached_pic'] : []),
+      ...opts.codecArgs,
+      ...metadataArgs,
+      path,
+    ], { stdio: 'ignore' });
+
+    if (!opts.internalChapters) return path;
+
+    const metaPath = join(dir, `${name}.internal.ffmeta`);
+    const slice = Math.floor((PART_SECONDS * 1000) / opts.internalChapters);
+    writeFileSync(metaPath, [';FFMETADATA1', ...Array.from({ length: opts.internalChapters }, (_, i) =>
+      ['[CHAPTER]', 'TIMEBASE=1/1000', `START=${i * slice}`, `END=${(i + 1) * slice}`, `title=Source Chapter ${i + 1}`].join('\n'),
+    )].join('\n') + '\n', 'utf-8');
+
+    const withChapters = join(dir, `chaptered-${name}`);
+    execFileSync(FFMPEG, ['-y', '-v', 'quiet', '-i', path, '-i', metaPath, '-map_metadata', '0', '-map_chapters', '1', '-c', 'copy', withChapters], { stdio: 'ignore' });
+    rmSync(path);
+    rmSync(metaPath);
+    renameSync(withChapters, path);
+    return path;
+  }
+
+  function outputIn(dir: string, ext: string): string {
+    const found = readdirSync(dir).find((f) => f.toLowerCase().endsWith(ext));
+    if (!found) throw new Error(`no ${ext} output in ${dir} (saw ${readdirSync(dir).join(', ')})`);
+    return join(dir, found);
+  }
+
+  function expectSourceTagsPreserved(file: string): void {
+    const tags = readFormatTags(file);
+    for (const [key, value] of Object.entries(SOURCE_TAGS)) {
+      expect(tags[key], `tag "${key}" on ${file}`).toBe(value);
+    }
+  }
+
+  /** Build a tagged, chaptered, cover-bearing 3-part set. Part 01 carries 5 internal chapters. */
+  function buildParts(dir: string, ext: string, codecArgs: string[], opts: { cover?: boolean } = {}): string[] {
+    const cover = opts.cover === false ? undefined : makeCover(dir);
+    return ['01', '02', '03'].map((n, i) => makeTaggedPart(dir, `${n}.${ext}`, {
+      codecArgs, title: `Part ${i + 1}`, cover,
+      ...(i === 0 && { internalChapters: 5 }),
+    }));
+  }
+
+  it('m4b stream-copy: keeps the source tags, the cover, the generated chapters and the full duration', async () => {
+    const dir = caseDir();
+    buildParts(dir, 'm4b', ['-c:a', 'aac', '-b:a', '128k']);
+
+    const result = await processAudioFiles(dir, keepOriginal('m4b'), CONTEXT);
+    expect(result.success).toBe(true);
+
+    const merged = outputIn(dir, '.m4b');
+    // AC1/AC5 — pre-#2078 this read `{major_brand, minor_version, compatible_brands, encoder}`.
+    expectSourceTagsPreserved(merged);
+    // AC8 — the extract/reattach lifecycle survives the 60 s stall timer and lands the picture.
+    expect(hasAttachedPic(merged)).toBe(true);
+    // AC3/F5 — the generated set (3, from the parts' title tags) beats part 01's competing 5.
+    expect(chapterTitles(merged)).toEqual(['Part 1', 'Part 2', 'Part 3']);
+    // AC2 — the whole book, not just the metadata donor's 3 s.
+    expect(audioStreamDuration(merged)).toBeCloseTo(PART_SECONDS * 3, 0);
+    // AC4 — the extra input forced no re-encode.
+    expect(probeStream(merged).codecName).toBe('aac');
+    expect(result.warnings ?? []).toEqual([]);
+  });
+
+  it('m4b encode mode: the same guarantees hold when the set is re-encoded (AC3, AC4)', async () => {
+    const dir = caseDir();
+    buildParts(dir, 'm4b', ['-c:a', 'aac', '-b:a', '128k']);
+
+    // A usable explicit target always re-encodes, whatever the source codec.
+    const result = await processAudioFiles(dir, { ...keepOriginal('m4b'), bitrate: 64 }, CONTEXT);
+    expect(result.success).toBe(true);
+
+    const merged = outputIn(dir, '.m4b');
+    expectSourceTagsPreserved(merged);
+    expect(hasAttachedPic(merged)).toBe(true);
+    expect(chapterTitles(merged)).toEqual(['Part 1', 'Part 2', 'Part 3']);
+    expect(audioStreamDuration(merged)).toBeCloseTo(PART_SECONDS * 3, 0);
+  });
+
+  it('mp3 output: global tags survive, and there is deliberately NO embedded cover (AC8b)', async () => {
+    const dir = caseDir();
+    buildParts(dir, 'mp3', ['-c:a', 'libmp3lame', '-b:a', '128k']);
+
+    const result = await processAudioFiles(dir, keepOriginal('mp3'), CONTEXT);
+    expect(result.success).toBe(true);
+
+    const merged = outputIn(dir, '.mp3');
+    // The mp3 merge path has no generated-chapter input, so the first source is input 1.
+    expectSourceTagsPreserved(merged);
+    // Pinned, not implied: `withCoverArtPipeline` gains no MP3 reattach arm in this issue.
+    expect(hasAttachedPic(merged)).toBe(false);
+  });
+
+  it('sources with no embedded art merge cleanly, with no spurious cover warning', async () => {
+    const dir = caseDir();
+    buildParts(dir, 'm4b', ['-c:a', 'aac', '-b:a', '128k'], { cover: false });
+
+    const result = await processAudioFiles(dir, keepOriginal('m4b'), CONTEXT);
+    expect(result.success).toBe(true);
+
+    const merged = outputIn(dir, '.m4b');
+    expectSourceTagsPreserved(merged);
+    expect(hasAttachedPic(merged)).toBe(false);
+    expect(result.warnings ?? []).toEqual([]);
+  });
+
+  it('convert path: a per-file convert keeps its tags and its cover (AC18)', async () => {
+    const dir = caseDir();
+    const cover = makeCover(dir);
+    makeTaggedPart(dir, 'book.m4b', { codecArgs: ['-c:a', 'aac', '-b:a', '128k'], title: 'Oathbringer', cover });
+    rmSync(cover);
+
+    // An explicit target defeats the single-m4b keep-original short-circuit, so this really
+    // runs `convertFiles` — which emits no `-map_metadata` at all and relies on ffmpeg's default.
+    const result = await processAudioFiles(dir, { ...keepOriginal('m4b'), bitrate: 64 }, CONTEXT);
+    expect(result.success).toBe(true);
+
+    const converted = outputIn(dir, '.m4b');
+    expectSourceTagsPreserved(converted);
+    expect(hasAttachedPic(converted)).toBe(true);
   });
 });

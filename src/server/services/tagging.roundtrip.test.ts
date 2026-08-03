@@ -19,7 +19,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildFfmpegArgs, type TagMetadata } from './tagging.service.js';
+import { TaggingService, buildFfmpegArgs, type TagMetadata } from './tagging.service.js';
+import { resetFfmpegPathCache } from '@core/utils/audio-processor.js';
 import { extractFfmpegMajor } from '@core/utils/ffmpeg-version.js';
 
 const FFMPEG = 'ffmpeg';
@@ -183,5 +184,210 @@ describe.skipIf(!hasFfmpeg8)('tag-write round-trip (real ffmpeg ≥ 8)', () => {
     const tags = readTags(tagged);
     expect(tags.album).toBe('Words of Radiance');
     expect(tags.album_artist).toBe('Brandon Sanderson');
+  });
+});
+
+// ============================================================================
+// #2078 — a tag write must not destroy the cover art it was not asked to touch,
+// and a re-tag must be able to SELF-HEAL an already-merged, metadata-naked m4b.
+//
+// Gated on ffmpeg PRESENCE rather than the ≥8 floor above: nothing here decodes xHE-AAC, and
+// the M4B survival contract these assert against (album/album_artist/artist/composer/grouping/
+// date/genre/description survive; the freeform series/subtitle/asin/publisher atoms do not) is
+// the same one the ffmpeg-8 block documents.
+// ============================================================================
+
+const hasAnyFfmpeg = major !== null;
+
+/** True when the file carries a video stream flagged `attached_pic`. */
+function hasAttachedPic(file: string): boolean {
+  const out = execFileSync(FFPROBE, [
+    '-v', 'quiet', '-select_streams', 'v', '-show_entries', 'stream_disposition=attached_pic',
+    '-of', 'json', file,
+  ], { encoding: 'utf8' });
+  return ((JSON.parse(out).streams ?? []) as Array<{ disposition?: { attached_pic?: number } }>)
+    .some((s) => s.disposition?.attached_pic === 1);
+}
+
+describe.skipIf(!hasAnyFfmpeg)('#2078 cover art survives a re-tag (real ffmpeg)', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'narratorr-2078-tag-'));
+  });
+
+  afterAll(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function makeCoverJpg(name: string): string {
+    const path = join(dir, name);
+    execFileSync(FFMPEG, ['-y', '-v', 'quiet', '-f', 'lavfi', '-i', 'color=c=blue:s=64x64:d=1', '-frames:v', '1', path], { stdio: 'ignore' });
+    return path;
+  }
+
+  /** An m4b with an embedded picture, and optionally its own chapter set. */
+  function makeArtM4b(name: string, opts: { chapters?: boolean } = {}): string {
+    const cover = makeCoverJpg(`${name}.src.jpg`);
+    const path = join(dir, name);
+    execFileSync(FFMPEG, [
+      '-y', '-v', 'quiet',
+      // Duration lives INSIDE the filter: a positional `-t` here would bind to the next
+      // input (the cover), leaving anullsrc unbounded and the command running forever.
+      '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono:d=6',
+      '-i', cover,
+      '-map', '0:a', '-map', '1:v', '-c:a', 'aac', '-c:v', 'copy', '-disposition:v', 'attached_pic',
+      path,
+    ], { stdio: 'ignore' });
+    if (!opts.chapters) return path;
+
+    const metaPath = join(dir, `${name}.ffmeta`);
+    writeFileSync(metaPath, [
+      ';FFMETADATA1',
+      '[CHAPTER]', 'TIMEBASE=1/1000', 'START=0', 'END=3000', 'title=Chapter 1',
+      '[CHAPTER]', 'TIMEBASE=1/1000', 'START=3000', 'END=6000', 'title=Chapter 2',
+      '',
+    ].join('\n'));
+    const out = join(dir, `chaptered-${name}`);
+    execFileSync(FFMPEG, ['-y', '-v', 'quiet', '-i', path, '-i', metaPath, '-map_metadata', '0', '-map_chapters', '1', '-c', 'copy', out], { stdio: 'ignore' });
+    return out;
+  }
+
+  it('a tag write with NO cover input keeps the file\'s existing picture (AC16)', () => {
+    const src = makeArtM4b('has-art.m4b');
+    expect(hasAttachedPic(src)).toBe(true);
+
+    // The exact `populate_missing` shape: `shouldEmbedCover` is false precisely BECAUSE the
+    // file already has art, so `tagFile` passes no coverPath. Pre-#2078 the args were
+    // `-map 0:a` alone and this remux silently dropped the picture.
+    const tagged = writeTags(src, join(dir, 'has-art.tagged.m4b'), { album: 'Retagged' });
+
+    expect(hasAttachedPic(tagged)).toBe(true);
+    expect(readTags(tagged).album).toBe('Retagged');
+  });
+
+  it('a tag write on a file with NO picture stream still succeeds (the `?` in -map 0:v?)', () => {
+    const src = join(dir, 'no-art.mp3');
+    execFileSync(FFMPEG, ['-y', '-v', 'quiet', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono:d=1', '-c:a', 'libmp3lame', src], { stdio: 'ignore' });
+    const tagged = writeTags(src, join(dir, 'no-art.tagged.mp3'), { album: 'Retagged' });
+
+    expect(hasAttachedPic(tagged)).toBe(false);
+    expect(readTags(tagged).album).toBe('Retagged');
+  });
+
+  it('a re-tag preserves BOTH the existing picture and the chapter set (AC16 + AC17)', () => {
+    const src = makeArtM4b('art-and-chapters.m4b', { chapters: true });
+    const before = readChapterCount(src);
+    expect(before).toBe(2);
+    expect(hasAttachedPic(src)).toBe(true);
+
+    const tagged = writeTags(src, join(dir, 'art-and-chapters.tagged.m4b'), { album: 'Retagged' });
+
+    expect(hasAttachedPic(tagged)).toBe(true);
+    expect(readChapterCount(tagged)).toBe(before);
+  });
+});
+
+/**
+ * AC19 / F6 — the self-heal path for the 12 already-naked production files.
+ *
+ * An already-merged book has exactly ONE top-level audio file, and both merge admission gates
+ * reject a single-file book (`NO_TOP_LEVEL_FILES`), so a re-merge cannot recover it. The
+ * existing re-tag action is the recovery path — which is why AC16 matters: before this issue a
+ * `populate_missing` re-tag of a file that already had art DESTROYED that art.
+ *
+ * This drives the real `retagBook` end to end (canonical hydrated-book → tag projection, disk
+ * cover discovery, the temp + atomic-rename write) rather than `buildFfmpegArgs` alone, so it
+ * also pins AC15's multi-author/multi-narrator joins on a real read-back.
+ */
+describe.skipIf(!hasAnyFfmpeg)('#2078 re-tag self-heals a metadata-naked merged m4b (AC15, AC19)', () => {
+  let bookDir: string;
+
+  beforeAll(() => {
+    bookDir = mkdtempSync(join(tmpdir(), 'narratorr-2078-selfheal-'));
+  });
+
+  afterAll(() => {
+    if (bookDir) rmSync(bookDir, { recursive: true, force: true });
+    delete process.env.FFMPEG_PATH;
+    resetFfmpegPathCache();
+  });
+
+  /** Exactly what auto-merge produced in production: chapters, no tags, no embedded art. */
+  function makeNakedMergedM4b(name: string): string {
+    const base = join(bookDir, `base-${name}`);
+    execFileSync(FFMPEG, ['-y', '-v', 'quiet', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono:d=6', '-c:a', 'aac', base], { stdio: 'ignore' });
+
+    const metaPath = join(bookDir, `${name}.ffmeta`);
+    writeFileSync(metaPath, [
+      ';FFMETADATA1',
+      '[CHAPTER]', 'TIMEBASE=1/1000', 'START=0', 'END=3000', 'title=Chapter 1',
+      '[CHAPTER]', 'TIMEBASE=1/1000', 'START=3000', 'END=6000', 'title=Chapter 2',
+      '',
+    ].join('\n'));
+
+    const out = join(bookDir, name);
+    execFileSync(FFMPEG, ['-y', '-v', 'quiet', '-i', base, '-i', metaPath, '-map_metadata', '1', '-map_chapters', '1', '-c', 'copy', out], { stdio: 'ignore' });
+    rmSync(base);
+    rmSync(metaPath);
+    return out;
+  }
+
+  it('restores the canonical tag set, embeds the disk cover, and leaves chapters intact', async () => {
+    const merged = makeNakedMergedM4b('The Way of Kings.m4b');
+    // The disk cover `retagBook` will find via `findCoverFile(book.path)`.
+    execFileSync(FFMPEG, ['-y', '-v', 'quiet', '-f', 'lavfi', '-i', 'color=c=green:s=64x64:d=1', '-frames:v', '1', join(bookDir, 'cover.jpg')], { stdio: 'ignore' });
+
+    // Baseline: the reported production symptom — structural tags only, no art, chapters present.
+    const before = readTags(merged);
+    expect(before.artist).toBeUndefined();
+    expect(before.album).toBeUndefined();
+    expect(hasAttachedPic(merged)).toBe(false);
+    expect(readChapterCount(merged)).toBe(2);
+
+    // `resolveFfmpegPath` honors FFMPEG_PATH first, so the real resolver runs unmocked.
+    process.env.FFMPEG_PATH = FFMPEG;
+    resetFfmpegPathCache();
+
+    const bookService = {
+      getById: async () => ({
+        id: 1, title: 'The Way of Kings', path: bookDir,
+        authors: [{ name: 'Brandon Sanderson' }, { name: 'Co Author' }],
+        narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }],
+        seriesName: 'The Stormlight Archive', seriesPosition: 1,
+        asin: 'B00ABCDEFG', subtitle: 'Book One', description: 'An epic fantasy.',
+        publisher: 'Tor Books', publishedDate: '2010-08-31', genres: ['Fantasy', 'Epic'],
+        coverUrl: null,
+      }),
+    };
+    const settingsService = { get: async () => ({ mode: 'overwrite' as const, embedCover: true }) };
+    const log = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
+
+    const service = new TaggingService(
+      null as never, settingsService as never, log as never, bookService as never,
+    );
+
+    const result = await service.retagBook(1);
+    expect(result.failed).toBe(0);
+    expect(result.tagged).toBe(1);
+
+    const after = readTags(merged);
+    // AC15 — the canonical projection joins ALL authors and ALL narrators with ', '. Asserted
+    // against the M4B-SURVIVING subset documented in this file's header, not the full shape.
+    expect(after.artist).toBe('Brandon Sanderson, Co Author');
+    expect(after.album_artist).toBe('Brandon Sanderson, Co Author');
+    expect(after.composer).toBe('Michael Kramer, Kate Reading');
+    expect(after.album).toBe('The Way of Kings');
+    expect(after.grouping).toBe('The Stormlight Archive');
+    expect(after.date).toBe('2010');
+    expect(after.genre).toBe('Fantasy');
+    expect(after.description).toBe('An epic fantasy.');
+    // Same container contract the ffmpeg-8 block pins: the freeform atoms do not survive M4B.
+    expect(after.series).toBeUndefined();
+    expect(after.asin).toBeUndefined();
+
+    // AC19 — the cover is newly embedded from disk, and the chapter set is untouched.
+    expect(hasAttachedPic(merged)).toBe(true);
+    expect(readChapterCount(merged)).toBe(2);
   });
 });
