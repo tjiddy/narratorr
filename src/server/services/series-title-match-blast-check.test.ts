@@ -8,6 +8,7 @@ import { join } from 'path';
 import { sql } from 'drizzle-orm';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books } from '@db/schema.js';
+import { sanitizedEnv } from '@core/utils/sanitized-env.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { loadReplayCandidates } from './series-title-match-blast-check.js';
 
@@ -158,12 +159,20 @@ describe('series-title-match-blast-check — CLI entry guard (#2108)', () => {
    * script imports; the DB path is controlled through the environment instead,
    * which is both sufficient and stronger — setting `DATABASE_PATH` removes the
    * cwd-relative default from the chain entirely.
+   *
+   * The environment is the repo's `sanitizedEnv` ALLOWLIST, never a
+   * `...process.env` spread: no spawned child gets `NARRATORR_SECRET_KEY`,
+   * `DATABASE_URL` or CI credentials, and that rule has no test-code carve-out
+   * (`CLAUDE.md`, settled decisions). The allowlist is also sufficient here —
+   * node and the tsx CLI are invoked by absolute path and every remaining
+   * dependency resolves through the filesystem, so `PATH`/`HOME`/`TMPDIR`/
+   * locale plus the explicit `DATABASE_PATH` override is all this child reads.
    */
   function runChild(entry: string, args: string[], dbPath: string): ChildRun {
     try {
       const stdout = execFileSync(process.execPath, [tsxCli, entry, ...args], {
         encoding: 'utf8',
-        env: { ...process.env, DATABASE_PATH: dbPath },
+        env: sanitizedEnv({ DATABASE_PATH: dbPath }),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       return { status: 0, stdout, stderr: '' };
@@ -193,7 +202,8 @@ describe('series-title-match-blast-check — CLI entry guard (#2108)', () => {
       // fails to transform — a load error that would satisfy "no replay ran"
       // vacuously. The sentinel below is what catches that.
       const probe = join(dir, 'probe.mts');
-      writeFileSync(probe, `import '${pathToFileURL(script).href}';\nprocess.stdout.write('${SENTINEL}');\n`);
+      writeFileSync(probe, `import '${pathToFileURL(script).href}';\n`
+        + `process.stdout.write(JSON.stringify({ sentinel: '${SENTINEL}', envKeys: Object.keys(process.env).sort() }));\n`);
 
       const child = runChild(probe, [], missing);
 
@@ -201,6 +211,21 @@ describe('series-title-match-blast-check — CLI entry guard (#2108)', () => {
       // Had `main()` run, the controlled-missing path guarantees this refusal.
       expect(`${child.stdout}${child.stderr}`).not.toContain('No database at');
       expect(child.status).toBe(0);
+
+      // The env allowlist, observed rather than assumed (#2108 F7). Reusing this
+      // probe instead of spawning a third child: it already reports the exact
+      // environment the child received, so a separate run would observe the same
+      // thing a second time. `main()` never runs here, so stdout is only the JSON.
+      //
+      // The sanctioned set is DERIVED from `sanitizedEnv`, never re-listed, so
+      // this cannot drift from the allowlist it is checking.
+      const report = JSON.parse(child.stdout) as { envKeys: string[] };
+      const sanctioned = new Set(Object.keys(sanitizedEnv({ DATABASE_PATH: missing })));
+      expect(report.envKeys.filter((key) => !sanctioned.has(key))).toEqual([]);
+      // Non-vacuity: the parent really does carry keys the allowlist withholds,
+      // so the assertion above is a filter and not a tautology. Restoring a
+      // `...process.env` spread forwards every one of them.
+      expect(Object.keys(process.env).some((key) => !sanctioned.has(key))).toBe(true);
     });
   }, 60_000);
 
