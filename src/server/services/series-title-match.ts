@@ -1,34 +1,31 @@
+import { titleVariants, hasDegenerateFullForm, normalizeTitleLosslessly } from '@core/utils/title-variants.js';
+// The TYPE comes straight from its canonical shared home, not through core's
+// re-export. `src/server/**` may import `src/shared/**`, and taking the type
+// from the source keeps core's public `Variant` / `VariantTag` re-export free of
+// production consumers — which is what lets the drift guards in
+// `series-title-variants.test.ts` be the SOLE failing observation when one of
+// those exported names drifts (they would otherwise be masked by an error here).
+import type { Variant } from '@shared/schemas/series-title-variants.js';
+
 /** Floating-point tolerance for matching series_position values across sources. */
 export const POSITION_MATCH_EPSILON = 1e-9;
 
 /**
  * Normalize a member work title for "In Library" matching across Hardcover and
- * Audible naming variants. Strips subtitles after `:`, removes parenthetical
- * / bracketed annotations, peels common audio-edition tails
- * (`(Unabridged)`, `(Audio)`, `(Audible)`), folds curly apostrophes, lowercases,
- * collapses non-alphanumeric runs to single spaces.
+ * Audible naming variants.
  *
- * This is the matcher form — different from `normalizeSeriesName` because we
- * want title equivalence across noisy edition variants, not just a stable
- * DB-row key.
+ * Re-export of the ONE implementation, which lives in
+ * `src/core/utils/title-variants.ts` beside the variant generator that consumes
+ * it (`src/core/**` may not import `src/server/**`, so a server-homed normalizer
+ * would be unreachable from the generator and force a duplicate). Kept under this
+ * name so the four existing production call sites — `book-series-link.ts:65,193,206`
+ * and `series-card.service.ts` — keep importing it from here unchanged.
+ *
+ * Since #2096 a `:` is a SEPARATOR, not a truncation point, and the generic
+ * parenthetical strip has moved to the derived variant axis. The audio-edition
+ * tail strip stays scalar — see the note on the core function.
  */
-export function normalizeMemberTitleForMatch(title: string): string {
-  let stripped = title
-    .replace(/[’‘]/g, "'")
-    .replace(/\(\s*(?:unabridged|audio|audible)\s*\)/gi, ' ')
-    .replace(/\[\s*(?:unabridged|audio|audible)\s*\]/gi, ' ');
-  const colonIdx = stripped.indexOf(':');
-  if (colonIdx >= 0) stripped = stripped.slice(0, colonIdx);
-  stripped = stripped.replace(/\([^)]*\)/g, ' ').replace(/\[[^\]]*\]/g, ' ');
-  return stripped
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '') // fold combining diacritics (é -> e) before the alnum strip, so the accented spelling keeps its letter instead of dropping to a space
-    .replace(/\s*[&+]\s*/g, ' and ') // & / + -> "and" before the alnum strip, so neither spelling drops
-    .replace(/[^a-z0-9' ]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+export { normalizeTitleForVariantMatch as normalizeMemberTitleForMatch } from '@core/utils/title-variants.js';
 
 export interface LibraryBookSummary {
   id: number;
@@ -42,8 +39,118 @@ export interface HardcoverMemberSummary {
 }
 
 /**
+ * Bounded memo over `titleVariants`, keyed on the RAW title.
+ *
+ * `findInLibraryMatch` re-derives every candidate's variants on every call and
+ * both callers invoke it once per member — O(members × candidates) derivations,
+ * and the persist path holds a transaction open while it runs. Variant
+ * generation is strictly more expensive than the scalar normalize it replaced,
+ * so the repeated candidate work is memoized. Purity is unaffected:
+ * `titleVariants` is a pure function of its input, so a cache hit and a miss are
+ * observationally identical. The cache is cleared wholesale rather than evicted
+ * one key at a time — a library's title set is small and bounded, the reset is
+ * O(1), and no call depends on a prior entry surviving.
+ *
+ * Two independently breakable branches, each with its own test in
+ * `series-title-match.test.ts` ("memoization"): the HIT branch (delete it and
+ * matching silently regresses to O(members × candidates) derivations inside the
+ * persistence transaction) and the BOUND branch (delete it and the module-level
+ * map grows without limit for the process lifetime). Neither is observable
+ * through pairing results — a cache hit and a miss return equal values — so both
+ * are observed by counting derivations through a spy on `titleVariants`.
+ */
+
+/**
+ * Entry ceiling: the memo is cleared wholesale on the insertion that would take
+ * it past this. Exported as the bounded-cache contract so the reset test can
+ * drive the transition without hard-coding the number in two places.
+ */
+export const VARIANT_CACHE_MAX = 4096;
+
+/** One title's derived matching state — variants, degeneracy, and lossless identity text. */
+interface TitleShape {
+  variants: Variant[];
+  degenerateFull: boolean;
+  /** Unicode-preserving normalization, used as identity evidence for a degenerate side. */
+  lossless: string;
+}
+
+const variantCache = new Map<string, TitleShape>();
+
+function cachedTitleShape(title: string): TitleShape {
+  const hit = variantCache.get(title);
+  if (hit) return hit;
+  const computed: TitleShape = {
+    variants: titleVariants(title),
+    degenerateFull: hasDegenerateFullForm(title),
+    lossless: normalizeTitleLosslessly(title),
+  };
+  if (variantCache.size >= VARIANT_CACHE_MAX) variantCache.clear();
+  variantCache.set(title, computed);
+  return computed;
+}
+
+/** The FULL form — `{ tag: 'full', parensStripped: false }` — or `''` when the set is empty. */
+function fullForm(variants: readonly Variant[]): string {
+  return variants.find((v) => v.tag === 'full' && !v.parensStripped)?.raw ?? '';
+}
+
+/** Every variant that is NOT the FULL form: prefix / suffix / first+last / paren-stripped. */
+function isDerived(variant: Variant): boolean {
+  return variant.tag !== 'full' || variant.parensStripped;
+}
+
+/**
+ * The #1891 asymmetric one-side-stripped rule, generalized to variant sets: two
+ * titles pair iff their FULL forms are equal, OR some DERIVED variant of one
+ * side equals the other side's FULL form. derived≡derived is NEVER a match.
+ *
+ * That asymmetry is the whole safety argument. Without it, `"Foo: A Novel"` and
+ * `"Bar: A Novel"` pair on their shared `suffix(1)` (the generic-tail sibling
+ * class), and `"Star Wars: A"` pairs with `"Star Wars: B"` on their shared
+ * franchise prefix. Requiring one side to be the complete title means a
+ * fragment can only ever match something that IS that fragment in full.
+ *
+ * A DEGENERATE side (see `hasDegenerateFullForm`) is one whose scalar form lost
+ * identity-bearing content to the fold, so its FULL form is not really the whole
+ * title. Both arms have to account for that, because a degenerate FULL form is
+ * untrustworthy as EITHER the target of a fragment or as evidence of identity:
+ *
+ *  - DERIVED arm — a degenerate side may not serve as the FULL target. The arm's
+ *    safety rests on that side being the complete title; when it is really a bare
+ *    franchise prefix, every sibling's `prefix(1)` matches it. Live case:
+ *    `"World of Warcraft: Перед бурей"` claimed
+ *    `"World of Warcraft: Beyond the Dark Portal"`.
+ *  - FULL≡FULL arm — equal FULL forms are only equal TITLES when neither side is
+ *    degenerate. `"World of Warcraft: Перед бурей"` and
+ *    `"World of Warcraft: Последний страж"` are different books that both reduce
+ *    to `world of warcraft`, as is a genuinely bare `"World of Warcraft"`. When
+ *    either side is degenerate the arm therefore demands non-lossy evidence:
+ *    the two titles must agree under `normalizeTitleLosslessly`, which preserves
+ *    every script. That keeps the true positive (the same non-Latin title on both
+ *    sides still pairs) while refusing the three false ones.
+ *
+ * Two NON-degenerate sides take the ordinary FULL≡FULL path untouched, so no
+ * ASCII-titled pairing changes.
+ *
+ * Symmetric and reflexive but NON-transitive, exactly like `titlesMatchForDedup`
+ * — never use it as a `Map`/`Set` key.
+ */
+function titleVariantsPair(a: TitleShape, b: TitleShape): boolean {
+  const aFull = fullForm(a.variants);
+  const bFull = fullForm(b.variants);
+  if (aFull.length === 0 || bFull.length === 0) return false;
+  if (aFull === bFull) {
+    if (a.degenerateFull || b.degenerateFull) return a.lossless === b.lossless;
+    return true;
+  }
+  if (!b.degenerateFull && a.variants.some((v) => isDerived(v) && v.raw === bFull)) return true;
+  return !a.degenerateFull && b.variants.some((v) => isDerived(v) && v.raw === aFull);
+}
+
+/**
  * Find the matching library book for a Hardcover member, using either
- * position equality (with ε tolerance) OR normalized-title equality. Both
+ * position equality (with ε tolerance) OR title-variant pairing. Both
  * signals are necessary: position-only fails when Audnexus / Hardcover
  * disagree on numbering (Dark Tower's Wind Through the Keyhole at 8 vs 4.5,
  * Hunger Games prequels at NULL vs 0/0.5). Title-only fails on edition
@@ -51,28 +158,33 @@ export interface HardcoverMemberSummary {
  * empirical sweet spot. Library books MUST already be scoped to the current
  * series_name by the caller — this matcher does no scoping itself.
  *
+ * Position is evaluated FIRST and independently. The empty-variant guard sits
+ * BETWEEN the two passes, deliberately: its job is to stop an untitled member
+ * from pairing empty≡empty on the title path, not to make that member
+ * unmatchable. A member titled `'[ ]'` at position 2 still claims a candidate at
+ * position 2; the same member with a null position claims nothing.
+ *
  * `alreadyMatched` (optional) lets callers iterate a member list with
  * first-match-wins semantics: pass a Set of already-claimed library book ids
  * and add each returned candidate's id to it before the next call. Two
- * Hardcover members at the same position (or with normalized-equal titles)
- * can otherwise both claim the same library book, producing a duplicate
- * "In Library" badge and — in the persist path — a duplicate `bookId` in
- * `series_members`.
+ * Hardcover members at the same position (or with pairing titles) can otherwise
+ * both claim the same library book, producing a duplicate "In Library" badge
+ * and — in the persist path — a duplicate `bookId` in `series_members`.
  */
 export function findInLibraryMatch(
   member: HardcoverMemberSummary,
   candidates: LibraryBookSummary[],
   alreadyMatched?: ReadonlySet<number>,
 ): LibraryBookSummary | null {
-  const memberNormalized = normalizeMemberTitleForMatch(member.title);
   for (const candidate of candidates) {
     if (alreadyMatched?.has(candidate.id)) continue;
     if (positionsMatch(member.position, candidate.seriesPosition)) return candidate;
   }
-  if (memberNormalized.length === 0) return null;
+  const memberShape = cachedTitleShape(member.title);
+  if (memberShape.variants.length === 0) return null;
   for (const candidate of candidates) {
     if (alreadyMatched?.has(candidate.id)) continue;
-    if (normalizeMemberTitleForMatch(candidate.title) === memberNormalized) return candidate;
+    if (titleVariantsPair(memberShape, cachedTitleShape(candidate.title))) return candidate;
   }
   return null;
 }

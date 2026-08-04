@@ -625,4 +625,109 @@ describe('SeriesCardService — integration', () => {
       expect(card!.members.map((m) => m.title)).toEqual(['Anchor', 'Book Two-Five', 'Book Four', 'Companion']);
     });
   });
+
+  // #2096: the live production case. A Hardcover member "Chapterhouse: Dune" at
+  // position 6 against a library "Chapterhouse Dune" carrying a stale position 17
+  // failed BOTH signals — the member colon-truncated to `chapterhouse`, and the
+  // positions disagreed — so the bind left the stale position and the Series panel
+  // offered "+Add" for a book the user already owned.
+  describe('#2096 — colon-separated member titles', () => {
+    function mockFetchHardcover(payload: unknown): ReturnType<typeof vi.fn> {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      globalThis.fetch = fetchMock as typeof globalThis.fetch;
+      return fetchMock;
+    }
+
+    function chapterhousePayload() {
+      return {
+        data: {
+          series: [{
+            id: 7701,
+            name: 'Dune',
+            slug: 'dune',
+            author: { name: 'Frank Herbert' },
+            book_series: [
+              { position: 6, book: { id: 2001, slug: 'chapterhouse-dune', title: 'Chapterhouse: Dune', image: null, users_count: 50 } },
+            ],
+          }],
+        },
+      };
+    }
+
+    it('binds Chapterhouse: Dune to a stale-position library Chapterhouse Dune and syncs both fields', async () => {
+      const bookId = await seedBookWithSeries(db, {
+        title: 'Chapterhouse Dune',
+        seriesName: 'Dune Chronicles',
+        seriesPosition: 17,
+        authorName: 'Frank Herbert',
+      });
+      mockFetchHardcover(chapterhousePayload());
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.bindHardcoverSeries(bookId, 7701);
+
+      expect(card).not.toBeNull();
+      const member = card!.members.find((m) => m.title === 'Chapterhouse: Dune')!;
+      expect(member.inLibrary).toBe(true);
+      expect(member.libraryBookId).toBe(bookId);
+
+      // The bind syncs BOTH durable fields — the stale 17 is rewritten to 6.
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.seriesName).toBe('Dune');
+      expect(row!.seriesPosition).toBe(6);
+    });
+
+    it('persistMembers writes the new colon-separated normalized form (no migration needed)', async () => {
+      const bookId = await seedBookWithSeries(db, {
+        title: 'Chapterhouse Dune',
+        seriesName: 'Dune',
+        seriesPosition: 17,
+        authorName: 'Frank Herbert',
+      });
+      mockFetchHardcover(chapterhousePayload());
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(bookId);
+
+      const memberRows = await db.select().from(seriesMembers);
+      expect(memberRows).toHaveLength(1);
+      // Pre-#2096 this column received `chapterhouse`; it now receives the full
+      // separator form. The column has zero production read sites, so the value
+      // simply changes shape with no backfill.
+      expect(memberRows[0]!.normalizedTitle).toBe('chapterhouse dune');
+    });
+
+    it('inserts a member whose normalized title is empty (notNull but not non-empty)', async () => {
+      const bookId = await seedBookWithSeries(db, {
+        title: 'Anchor',
+        seriesName: 'Odd Series',
+        seriesPosition: 1,
+        authorName: 'Some Author',
+      });
+      mockFetchHardcover({
+        data: {
+          series: [{
+            id: 7702,
+            name: 'Odd Series',
+            slug: 'odd',
+            author: { name: 'Some Author' },
+            book_series: [
+              { position: 1, book: { id: 3001, slug: 'anchor', title: 'Anchor', image: null, users_count: 10 } },
+              { position: null, book: { id: 3002, slug: 'art', title: '[ ]', image: null, users_count: 5 } },
+            ],
+          }],
+        },
+      });
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(bookId);
+
+      const rows = await db.select().from(seriesMembers);
+      expect(rows).toHaveLength(2);
+      expect(rows.find((r) => r.title === '[ ]')!.normalizedTitle).toBe('');
+      // An empty variant set never claims a candidate on the title path, and this
+      // member has no position to be rescued by either.
+      expect(card!.members.find((m) => m.title === '[ ]')!.inLibrary).toBe(false);
+    });
+  });
 });
