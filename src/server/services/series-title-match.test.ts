@@ -682,6 +682,128 @@ describe('findInLibraryMatch', () => {
       expect(match?.id).toBe(1);
     });
   });
+
+  /**
+   * #2108 — the title pass ranks the acceptance arms into two tiers (EXACT:
+   * `full-equals-full` / `lossless-equals-lossless`; DERIVED:
+   * `derived-equals-full`) and prefers EXACT across the WHOLE pool before any
+   * DERIVED candidate can claim.
+   *
+   * Every case here needs a MULTI-CANDIDATE pool: `pairsOneWay` /
+   * `pairsBothWays` build single-candidate pools and structurally cannot observe
+   * ranking at all (with one candidate there is nothing to rank, which is why
+   * the entire #2096 fixture corpus is unaffected by this change — AC4).
+   */
+  describe('claim ranking (#2108)', () => {
+    /** The reported pool: id 1 pairs `derived-equals-full`, id 9 `full-equals-full`. */
+    const chapterhouse = () => [
+      { id: 1, title: 'Dune', seriesPosition: null },
+      { id: 9, title: 'Chapterhouse Dune', seriesPosition: 17 },
+    ];
+
+    // Counterfactual, recorded: on pre-#2108 `develop` the FIRST assertion reads
+    // id 1 (single unranked scan, first-claim-wins) and the second reads id 9 —
+    // exactly the order-dependence being closed.
+    it('claims the exact candidate over a derived one, in the declared pool order', () => {
+      const match = findInLibraryMatch({ title: 'Chapterhouse: Dune', position: 6 }, chapterhouse());
+      expect(match?.id).toBe(9);
+    });
+
+    it('claims the exact candidate over a derived one, in the reversed pool order', () => {
+      const match = findInLibraryMatch({ title: 'Chapterhouse: Dune', position: 6 }, [...chapterhouse()].reverse());
+      expect(match?.id).toBe(9);
+    });
+
+    // The property behind the two cases above, and the assertion that fails again
+    // if a single-scan shortcut is ever reintroduced. It holds for CROSS-TIER
+    // pools only: within one tier AC3 keeps first-claim-wins, which makes pool
+    // order decisive by design (pinned by the forced-index integration test).
+    it('is order-independent for a pool spanning both tiers', () => {
+      const member = { title: 'Chapterhouse: Dune', position: 6 };
+      const pool = chapterhouse();
+      expect(findInLibraryMatch(member, pool)?.id).toBe(findInLibraryMatch(member, [...pool].reverse())?.id);
+    });
+
+    it('claims the exact candidate even when several derived candidates precede it', () => {
+      // `Dune` and `Chapterhouse` are both suffix(1)/prefix(1) offers of the
+      // member; `Chapterhouse Dune` is the FULL≡FULL match, placed LAST.
+      const candidates = [
+        { id: 1, title: 'Dune', seriesPosition: null },
+        { id: 2, title: 'Chapterhouse', seriesPosition: null },
+        { id: 3, title: 'Chapterhouse Dune', seriesPosition: null },
+      ];
+      expect(findInLibraryMatch({ title: 'Chapterhouse: Dune', position: null }, candidates)?.id).toBe(3);
+    });
+
+    // AC4 — tiering is "prefer exact", never "require exact". The matchable SET
+    // is exactly what it was; only the CHOICE among several changes.
+    it('still claims a derived candidate when the pool holds no exact one', () => {
+      const candidates = [{ id: 1, title: 'Dune', seriesPosition: null }];
+      expect(findInLibraryMatch({ title: 'Chapterhouse: Dune', position: null }, candidates)?.id).toBe(1);
+    });
+
+    // AC6 — the position pass runs first and independently of BOTH tiers.
+    it('position still outranks the exact tier and the derived tier alike', () => {
+      const candidates = [
+        { id: 10, title: 'Dune', seriesPosition: null },
+        { id: 20, title: 'Chapterhouse Dune', seriesPosition: null },
+        { id: 30, title: 'Unrelated Book', seriesPosition: 6 },
+      ];
+      expect(findInLibraryMatch({ title: 'Chapterhouse: Dune', position: 6 }, candidates)?.id).toBe(30);
+    });
+
+    // AC6 — the no-identity-evidence guard sits ABOVE both title scans, never
+    // between them. Multi-candidate pools this time, so an implementation that
+    // moved the guard down into the derived scan is caught.
+    it('keeps the empty-variant guard above both title scans', () => {
+      const candidates = [
+        { id: 1, title: 'Anything', seriesPosition: 2 },
+        { id: 2, title: 'Chapterhouse Dune', seriesPosition: null },
+      ];
+      expect(findInLibraryMatch({ title: '[ ]', position: 2 }, candidates)?.id).toBe(1);
+      expect(findInLibraryMatch({ title: '[ ]', position: null }, candidates)).toBeNull();
+    });
+
+    // AC5 — `alreadyMatched` is honoured in BOTH tiers. This combination is what
+    // an "exact scan, else bail" implementation gets wrong.
+    it('falls through to a derived candidate when the only exact one is already claimed', () => {
+      const candidates = [
+        { id: 1, title: 'Chapterhouse Dune', seriesPosition: null },
+        { id: 2, title: 'Dune', seriesPosition: null },
+      ];
+      const match = findInLibraryMatch({ title: 'Chapterhouse: Dune', position: null }, candidates, new Set([1]));
+      expect(match?.id).toBe(2);
+    });
+
+    it('claims nothing when the exact AND the derived candidate are both claimed', () => {
+      const candidates = [
+        { id: 1, title: 'Chapterhouse Dune', seriesPosition: null },
+        { id: 2, title: 'Dune', seriesPosition: null },
+      ];
+      expect(findInLibraryMatch({ title: 'Chapterhouse: Dune', position: null }, candidates, new Set([1, 2]))).toBeNull();
+    });
+
+    // AC8 — the two EXACT arms provably never compete. `lossless-equals-lossless`
+    // requires the member's FULL form to be EMPTY; `full-equals-full` and
+    // `derived-equals-full` both require it to be non-empty, so a member can
+    // never have candidates on both. Arms come from the independent `pairingArm`
+    // model, not from the production rule under test.
+    it('never puts lossless-equals-lossless in competition with another arm', () => {
+      const member = 'Перед бурей';
+      const candidates = [
+        { id: 1, title: 'Anything', seriesPosition: null },
+        { id: 2, title: 'Последний страж', seriesPosition: null },
+        { id: 3, title: '  перед  БУРЕЙ (Unabridged)', seriesPosition: null },
+      ];
+      expect(candidates.map((c) => pairingArm(member, c.title))).toEqual([
+        'none',
+        'none',
+        'lossless-equals-lossless',
+      ]);
+      expect(findInLibraryMatch({ title: member, position: null }, candidates)?.id).toBe(3);
+      expect(findInLibraryMatch({ title: member, position: null }, [...candidates].reverse())?.id).toBe(3);
+    });
+  });
 });
 
 /**
@@ -731,6 +853,39 @@ describe('memoization', () => {
     // The candidate is derived once even though two separate members scanned it —
     // this is the O(members × candidates) collapse the memo is for.
     expect(spy.mock.calls.filter((call) => call[0] === 'F2 shared candidate title')).toHaveLength(1);
+  });
+
+  // #2108 AC7 — the tiered title pass still routes EVERY candidate shape through
+  // `cachedTitleShape`, and still derives the member before any candidate.
+  //
+  // The NO-MATCH pool is load-bearing, not incidental: a scan stops at the
+  // candidate it claims, and the two conforming implementation shapes (return at
+  // the first EXACT hit vs. scan the whole pool retaining the first EXACT) walk
+  // different numbers of candidates on a MATCHING pool. On a no-match pool both
+  // walk the whole list, which is what makes this observation stable under
+  // either. It pins routing and member-first order — NOT a global derivation
+  // count; AC7 disclaims those (see the `VARIANT_CACHE_MAX` case below).
+  it('routes every candidate shape through the memo, member first, across both tiers', () => {
+    const member = { title: 'F4 member — chapterhouse: dune', position: null };
+    const candidates = [
+      { id: 1, title: 'F4 candidate one', seriesPosition: null },
+      { id: 2, title: 'F4 candidate two', seriesPosition: null },
+      { id: 3, title: 'F4 candidate three', seriesPosition: null },
+    ];
+
+    spy.mockClear();
+    expect(findInLibraryMatch(member, candidates)).toBeNull();
+    findInLibraryMatch(member, candidates);
+
+    // Four distinct raw titles → four derivations in member-first order, and the
+    // second matcher call adds none. Four entries is far below VARIANT_CACHE_MAX,
+    // so eviction is not in play.
+    expect(spy.mock.calls.map((call) => call[0])).toEqual([
+      'F4 member — chapterhouse: dune',
+      'F4 candidate one',
+      'F4 candidate two',
+      'F4 candidate three',
+    ]);
   });
 
   it('clears the memo at VARIANT_CACHE_MAX so it cannot grow without bound', () => {

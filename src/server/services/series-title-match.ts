@@ -5,7 +5,7 @@ import { titleVariants, hasDegenerateFullForm, normalizeTitleLosslessly } from '
 // production consumers — which is what lets the drift guards in
 // `series-title-variants.test.ts` be the SOLE failing observation when one of
 // those exported names drifts (they would otherwise be masked by an error here).
-import type { TitlePairVerdict, Variant } from '@shared/schemas/series-title-variants.js';
+import type { TitlePairArm, TitlePairVerdict, Variant } from '@shared/schemas/series-title-variants.js';
 
 /** Floating-point tolerance for matching series_position values across sources. */
 export const POSITION_MATCH_EPSILON = 1e-9;
@@ -147,9 +147,10 @@ function derivedVerdict(forms: string, variant: Variant, offeringSide: string, t
 
 /**
  * THE acceptance rule — the only place rows 1–8 exist in production code.
- * `titleVariantsPair` is a one-line wrapper over it and the debug route
- * delegates to `explainTitlePairing`, so the diagnostic can never again reach
- * the opposite conclusion from the matcher (#2110).
+ * `pairTier` is a one-line ranking of its `arm` and the debug route delegates to
+ * `explainTitlePairing`, so the diagnostic can never again reach the opposite
+ * conclusion from the matcher (#2110). Ranking READS the arm; it never
+ * redefines it, so which pairings are ACCEPTED is decided here and only here.
  *
  * Evaluated in this exact order; `arm` names the branch that decided it:
  *
@@ -259,9 +260,39 @@ function explainEqualFulls(a: TitleShape, b: TitleShape, forms: string): TitlePa
   };
 }
 
-/** The hot path: the boolean the matcher needs, from the one rule. */
-function titleVariantsPair(a: TitleShape, b: TitleShape): boolean {
-  return explainShapePairing(a, b).pairs;
+/**
+ * Match-quality tier of an accepted pairing — the ONE place the arms are ranked.
+ *
+ *   EXACT   `full-equals-full`, `lossless-equals-lossless` — both sides are the
+ *           COMPLETE title.
+ *   DERIVED `derived-equals-full` — a FRAGMENT of one side equals the other
+ *           side's complete title.
+ *   null    `none` — not a match, so not a tier.
+ *
+ * Keyed as a total `Record<TitlePairArm, …>` on purpose: adding an arm to the
+ * union in `series-title-variants.ts` without assigning it a tier is a
+ * typecheck error here, so a future arm cannot slip into the matcher untiered.
+ *
+ * `lossless-equals-lossless` sitting in EXACT is DOCUMENTATIONAL, not
+ * behavioural: it requires BOTH FULL forms to be empty (row 1), while
+ * `full-equals-full` and `derived-equals-full` both require the member's FULL
+ * form to be non-empty (rows 2-3 return first). A member therefore can never
+ * have a `lossless-equals-lossless` candidate AND a `derived-equals-full`
+ * candidate, so the two EXACT arms provably never compete with DERIVED or with
+ * each other for the same member (#2108 AC8).
+ */
+type ArmTier = 'exact' | 'derived' | null;
+
+const ARM_TIER: Record<TitlePairArm, ArmTier> = {
+  'full-equals-full': 'exact',
+  'lossless-equals-lossless': 'exact',
+  'derived-equals-full': 'derived',
+  none: null,
+};
+
+/** The hot path: the ranked tier the matcher needs, from the one rule. */
+function pairTier(a: TitleShape, b: TitleShape): ArmTier {
+  return ARM_TIER[explainShapePairing(a, b).arm];
 }
 
 /**
@@ -296,6 +327,14 @@ export function explainTitlePairing(aTitle: string, bTitle: string): TitlePairVe
  * unmatchable. A member titled `'[ ]'` at position 2 still claims a candidate at
  * position 2; the same member with a null position claims nothing.
  *
+ * The title pass is RANKED by match-quality tier (#2108): an EXACT pairing
+ * (`full-equals-full` / `lossless-equals-lossless`) anywhere in the pool beats a
+ * DERIVED one (`derived-equals-full`) anywhere in the pool, and first-claim-wins
+ * applies only WITHIN a tier — which is why `loadLibraryBooksForSeriesNames`
+ * pins `ORDER BY books.id`. Ranking changes only WHICH candidate is returned:
+ * the matchable set is unchanged, so a single-candidate pool behaves exactly as
+ * it did before.
+ *
  * `alreadyMatched` (optional) lets callers iterate a member list with
  * first-match-wins semantics: pass a Set of already-claimed library book ids
  * and add each returned candidate's id to it before the next call. Two
@@ -321,11 +360,34 @@ export function findInLibraryMatch(
   // (`'[ ]'`, `'   '`) still returns here, which is what keeps it from claiming
   // another untitled member's book on the title path.
   if (memberShape.variants.length === 0 && memberShape.lossless.length === 0) return null;
+  // The title pass is TIERED (#2108): an EXACT pairing anywhere in the pool beats
+  // a DERIVED one anywhere in the pool, and only within a tier does first-claim
+  // win. A single unranked scan let `"Chapterhouse: Dune"` claim a bare `"Dune"`
+  // by `suffix(1)` whenever that book merely sorted earlier than the real
+  // `"Chapterhouse Dune"` — and on the bind path that misclaim is durable, since
+  // `bindHardcoverSeries` rewrites the claimed book's series_name/position, after
+  // which the wrong pairing position-matches forever.
+  //
+  // One pass, recording the first candidate of each tier: `exact ?? derived` is
+  // the same candidate two literal scans would return, with each candidate's arm
+  // evaluated once.
+  //
+  // DEFERRED, deliberately — CROSS-MEMBER arbitration. Claiming is per-member
+  // greedy rather than batched in rounds, so an EARLIER member's DERIVED match
+  // can still steal a LATER member's EXACT one: `"World of Warcraft: Illidan"`
+  // claims a bare `"World of Warcraft"` on `prefix(1)`, and the eponymous
+  // `"World of Warcraft"` member — which pairs FULL≡FULL and iterates later —
+  // then gets nothing. Fixing that means a position → EXACT → DERIVED sweep
+  // across ALL members at both call sites; out of scope until a real case
+  // demands it.
+  let derived: LibraryBookSummary | null = null;
   for (const candidate of candidates) {
     if (alreadyMatched?.has(candidate.id)) continue;
-    if (titleVariantsPair(memberShape, cachedTitleShape(candidate.title))) return candidate;
+    const tier = pairTier(memberShape, cachedTitleShape(candidate.title));
+    if (tier === 'exact') return candidate;
+    if (tier === 'derived') derived ??= candidate;
   }
-  return null;
+  return derived;
 }
 
 function positionsMatch(a: number | null, b: number | null): boolean {
