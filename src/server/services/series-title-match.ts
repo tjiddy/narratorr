@@ -5,7 +5,7 @@ import { titleVariants, hasDegenerateFullForm, normalizeTitleLosslessly } from '
 // production consumers — which is what lets the drift guards in
 // `series-title-variants.test.ts` be the SOLE failing observation when one of
 // those exported names drifts (they would otherwise be masked by an error here).
-import type { Variant } from '@shared/schemas/series-title-variants.js';
+import type { TitlePairVerdict, Variant } from '@shared/schemas/series-title-variants.js';
 
 /** Floating-point tolerance for matching series_position values across sources. */
 export const POSITION_MATCH_EPSILON = 1e-9;
@@ -77,14 +77,19 @@ interface TitleShape {
 
 const variantCache = new Map<string, TitleShape>();
 
-function cachedTitleShape(title: string): TitleShape {
-  const hit = variantCache.get(title);
-  if (hit) return hit;
-  const computed: TitleShape = {
+/** Derive a title's matching state from the three pure core functions. */
+function titleShape(title: string): TitleShape {
+  return {
     variants: titleVariants(title),
     degenerateFull: hasDegenerateFullForm(title),
     lossless: normalizeTitleLosslessly(title),
   };
+}
+
+function cachedTitleShape(title: string): TitleShape {
+  const hit = variantCache.get(title);
+  if (hit) return hit;
+  const computed = titleShape(title);
   if (variantCache.size >= VARIANT_CACHE_MAX) variantCache.clear();
   variantCache.set(title, computed);
   return computed;
@@ -100,52 +105,179 @@ function isDerived(variant: Variant): boolean {
   return variant.tag !== 'full' || variant.parensStripped;
 }
 
+/** How a FULL form appears inside a `reason`. `''` is a real, load-bearing value, so it is NAMED. */
+function renderFull(full: string): string {
+  return full.length === 0 ? '(empty)' : `"${full}"`;
+}
+
 /**
- * The #1891 asymmetric one-side-stripped rule, generalized to variant sets: two
- * titles pair iff their FULL forms are equal, OR some DERIVED variant of one
- * side equals the other side's FULL form. derived≡derived is NEVER a match.
+ * The first non-lossy DERIVED variant of `offering` that equals `target`'s FULL
+ * form — or `undefined` when the arm does not apply.
  *
- * That asymmetry is the whole safety argument. Without it, `"Foo: A Novel"` and
- * `"Bar: A Novel"` pair on their shared `suffix(1)` (the generic-tail sibling
- * class), and `"Star Wars: A"` pairs with `"Star Wars: B"` on their shared
- * franchise prefix. Requiring one side to be the complete title means a
- * fragment can only ever match something that IS that fragment in full.
+ * TWO independent character-survival gates, and neither subsumes the other:
  *
- * A DEGENERATE side (see `hasDegenerateFullForm`) is one whose scalar form lost
- * identity-bearing content to the fold, so its FULL form is not really the whole
- * title. Both arms have to account for that, because a degenerate FULL form is
- * untrustworthy as EITHER the target of a fragment or as evidence of identity:
+ *  - `target.degenerateFull` gates the TARGET side. The arm's safety rests on
+ *    that side being the COMPLETE title; when the fold has reduced it to a bare
+ *    franchise prefix, every sibling's `prefix(1)` matches it.
+ *  - `!v.lossy` gates the OFFERING side. Same lesson, applied one level down: a
+ *    fragment whose own distinguishing characters the fold ate is not evidence
+ *    of anything either. `"World of Warcraft: Тревелер (Traveler)"` offered
+ *    `world of warcraft` and claimed a bare `"World of Warcraft"`;
+ *    `"Star Wars: 前夜Thrawn"` offered `thrawn` and claimed a library
+ *    `"Thrawn"`. Both are the franchise cross-match class re-entering through
+ *    the variant axis rather than the full-form axis (#2110).
  *
- *  - DERIVED arm — a degenerate side may not serve as the FULL target. The arm's
- *    safety rests on that side being the complete title; when it is really a bare
- *    franchise prefix, every sibling's `prefix(1)` matches it. Live case:
- *    `"World of Warcraft: Перед бурей"` claimed
- *    `"World of Warcraft: Beyond the Dark Portal"`.
- *  - FULL≡FULL arm — equal FULL forms are only equal TITLES when neither side is
- *    degenerate. `"World of Warcraft: Перед бурей"` and
- *    `"World of Warcraft: Последний страж"` are different books that both reduce
- *    to `world of warcraft`, as is a genuinely bare `"World of Warcraft"`. When
- *    either side is degenerate the arm therefore demands non-lossy evidence:
- *    the two titles must agree under `normalizeTitleLosslessly`, which preserves
- *    every script. That keeps the true positive (the same non-Latin title on both
- *    sides still pairs) while refusing the three false ones.
+ * The `"Sønner"`-class true positives are untouched: their offered fragments
+ * lost nothing, so only the whole-title flag is set, not the slice's.
+ */
+function findDerivedOffer(offering: TitleShape, target: TitleShape, targetFull: string): Variant | undefined {
+  if (target.degenerateFull) return undefined;
+  return offering.variants.find((v) => isDerived(v) && !v.lossy && v.raw === targetFull);
+}
+
+function derivedVerdict(forms: string, variant: Variant, offeringSide: string, targetSide: string): TitlePairVerdict {
+  return {
+    pairs: true,
+    arm: 'derived-equals-full',
+    reason:
+      `derived-equals-full: ${forms} — the FULL forms differ, but the ${variant.tag} variant ` +
+      `"${variant.raw}" (offered by: ${offeringSide}) equals the non-degenerate FULL form of ${targetSide}`,
+  };
+}
+
+/**
+ * THE acceptance rule — the only place rows 1–8 exist in production code.
+ * `titleVariantsPair` is a one-line wrapper over it and the debug route
+ * delegates to `explainTitlePairing`, so the diagnostic can never again reach
+ * the opposite conclusion from the matcher (#2110).
  *
- * Two NON-degenerate sides take the ordinary FULL≡FULL path untouched, so no
+ * Evaluated in this exact order; `arm` names the branch that decided it:
+ *
+ *   1. both FULL forms empty, both lossless forms non-empty and equal
+ *      → `lossless-equals-lossless`, pairs
+ *   2. both FULL forms empty, otherwise                → `none`
+ *   3. exactly one FULL form empty                     → `none`
+ *   4. FULLs equal, neither side degenerate            → `full-equals-full`, pairs
+ *   5. FULLs equal, either degenerate, lossless equal  → `full-equals-full`, pairs
+ *   6. FULLs equal, either degenerate, lossless differ → `none`
+ *   7. FULLs differ, some non-lossy DERIVED variant of one side equals the
+ *      other side's FULL form, and that other side is not degenerate
+ *      → `derived-equals-full`, pairs
+ *   8. otherwise                                       → `none`
+ *
+ * `pairs === (arm !== 'none')` for every input pair.
+ *
+ * Rows 4/7 are the #1891 asymmetric one-side-stripped rule generalized to
+ * variant sets, and that asymmetry is the whole safety argument: derived≡derived
+ * is NEVER a match, because otherwise `"Foo: A Novel"` and `"Bar: A Novel"` pair
+ * on their shared `suffix(1)` and `"Star Wars: A"` pairs with `"Star Wars: B"`
+ * on their shared franchise prefix. Requiring one side to be the complete title
+ * means a fragment can only ever match something that IS that fragment in full.
+ *
+ * Rows 5/6 exist because equal FULL forms are only equal TITLES when neither
+ * side is DEGENERATE (see `hasDegenerateFullForm`) — `"…: Перед бурей"`,
+ * `"…: Последний страж"` and a genuinely bare `"World of Warcraft"` all reduce
+ * to `world of warcraft`. When either side is degenerate the arm demands
+ * non-lossy evidence: agreement under `normalizeTitleLosslessly`, which
+ * preserves every script. Two NON-degenerate sides take row 4 untouched, so no
  * ASCII-titled pairing changes.
  *
- * Symmetric and reflexive but NON-transitive, exactly like `titlesMatchForDedup`
- * — never use it as a `Map`/`Set` key.
+ * Row 1 is the narrow non-Latin identity arm (#2110). An all-non-Latin title
+ * scalar-folds to empty and yields ZERO variants, so before it two IDENTICAL
+ * non-Latin titles could never title-pair — leaving the original Chapterhouse
+ * symptom (a wrong '+Add' on an owned book) fully intact for non-Latin
+ * libraries. It is deliberately the narrowest possible closure: exact lossless
+ * equality only. There is no non-Latin fragment-to-FULL path, because row 2
+ * catches `"Дюна: Капитул"` vs `"Капитул"` — both FULL forms are empty and the
+ * lossless forms differ.
+ *
+ * SYMMETRIC for every input pair, in both `pairs` and `arm`. **Reflexive only
+ * on the domain `normalizeTitleLosslessly(a) !== ''`** — titles carrying some
+ * identity evidence. Outside it, row 2 refuses a self-pair, and that is
+ * REQUIRED rather than tolerated: it is the same refusal that stops two
+ * DIFFERENT untitled members (`'[ ]'`, `'   '`) claiming each other's books.
+ * (An earlier revision of this docblock said "symmetric and reflexive" flatly,
+ * which has been wrong for the empty-form case since #2096.) NON-transitive
+ * either way, exactly like `titlesMatchForDedup` — never use it as a `Map`/`Set`
+ * key.
  */
-function titleVariantsPair(a: TitleShape, b: TitleShape): boolean {
+function explainShapePairing(a: TitleShape, b: TitleShape): TitlePairVerdict {
   const aFull = fullForm(a.variants);
   const bFull = fullForm(b.variants);
-  if (aFull.length === 0 || bFull.length === 0) return false;
-  if (aFull === bFull) {
-    if (a.degenerateFull || b.degenerateFull) return a.lossless === b.lossless;
-    return true;
+  const forms = `${renderFull(aFull)} vs ${renderFull(bFull)}`;
+
+  if (aFull.length === 0 && bFull.length === 0) {
+    if (a.lossless.length > 0 && a.lossless === b.lossless) {
+      return {
+        pairs: true,
+        arm: 'lossless-equals-lossless',
+        reason: `lossless-equals-lossless: ${forms} — both FULL forms are empty and the lossless forms are identical: "${a.lossless}"`,
+      };
+    }
+    return {
+      pairs: false,
+      arm: 'none',
+      reason: `no arm applies: ${forms} — both FULL forms are empty and the lossless forms are not both non-empty and equal`,
+    };
   }
-  if (!b.degenerateFull && a.variants.some((v) => isDerived(v) && v.raw === bFull)) return true;
-  return !a.degenerateFull && b.variants.some((v) => isDerived(v) && v.raw === aFull);
+  if (aFull.length === 0 || bFull.length === 0) {
+    return { pairs: false, arm: 'none', reason: `no arm applies: ${forms} — exactly one FULL form is empty` };
+  }
+  if (aFull === bFull) return explainEqualFulls(a, b, forms);
+
+  const fromA = findDerivedOffer(a, b, bFull);
+  if (fromA) return derivedVerdict(forms, fromA, 'title', 'other');
+  const fromB = findDerivedOffer(b, a, aFull);
+  if (fromB) return derivedVerdict(forms, fromB, 'other', 'title');
+  return {
+    pairs: false,
+    arm: 'none',
+    reason: `no arm applies: ${forms} — the FULL forms differ and no non-lossy derived variant of either side equals the other side's non-degenerate FULL form`,
+  };
+}
+
+/** Rows 4-6, split out so `explainShapePairing` stays readable. */
+function explainEqualFulls(a: TitleShape, b: TitleShape, forms: string): TitlePairVerdict {
+  if (!a.degenerateFull && !b.degenerateFull) {
+    return {
+      pairs: true,
+      arm: 'full-equals-full',
+      reason: `full-equals-full: ${forms} — the FULL forms are equal and neither side is degenerate`,
+    };
+  }
+  if (a.lossless === b.lossless) {
+    return {
+      pairs: true,
+      arm: 'full-equals-full',
+      reason: `full-equals-full: ${forms} — the FULL forms are equal and, a side being degenerate, the lossless forms agree: "${a.lossless}"`,
+    };
+  }
+  return {
+    pairs: false,
+    arm: 'none',
+    reason: `no arm applies: ${forms} — the FULL forms are equal but a side is degenerate and the lossless forms differ`,
+  };
+}
+
+/** The hot path: the boolean the matcher needs, from the one rule. */
+function titleVariantsPair(a: TitleShape, b: TitleShape): boolean {
+  return explainShapePairing(a, b).pairs;
+}
+
+/**
+ * The diagnostic entry point — the SAME rule the matcher runs, from two raw
+ * titles. `POST /api/series/title-variants-debug` calls exactly this, so the
+ * endpoint's verdict is production's verdict by construction rather than by a
+ * route comment an operator has to hand-apply.
+ *
+ * Derives both shapes DIRECTLY, bypassing `cachedTitleShape`. Deliberate: the
+ * memoization suite counts `titleVariants` derivations through a spy, and
+ * routing a diagnostic through the memo would make those counts a function of
+ * two callers instead of one. A debug endpoint pays two derivations per
+ * request; that is free.
+ */
+export function explainTitlePairing(aTitle: string, bTitle: string): TitlePairVerdict {
+  return explainShapePairing(titleShape(aTitle), titleShape(bTitle));
 }
 
 /**
@@ -158,9 +290,9 @@ function titleVariantsPair(a: TitleShape, b: TitleShape): boolean {
  * empirical sweet spot. Library books MUST already be scoped to the current
  * series_name by the caller — this matcher does no scoping itself.
  *
- * Position is evaluated FIRST and independently. The empty-variant guard sits
- * BETWEEN the two passes, deliberately: its job is to stop an untitled member
- * from pairing empty≡empty on the title path, not to make that member
+ * Position is evaluated FIRST and independently. The no-identity-evidence guard
+ * sits BETWEEN the two passes, deliberately: its job is to stop an untitled
+ * member from pairing empty≡empty on the title path, not to make that member
  * unmatchable. A member titled `'[ ]'` at position 2 still claims a candidate at
  * position 2; the same member with a null position claims nothing.
  *
@@ -181,7 +313,14 @@ export function findInLibraryMatch(
     if (positionsMatch(member.position, candidate.seriesPosition)) return candidate;
   }
   const memberShape = cachedTitleShape(member.title);
-  if (memberShape.variants.length === 0) return null;
+  // The G5 empty-variant guard, loosened by exactly the width of the non-Latin
+  // identity arm (#2110). An all-non-Latin title yields zero variants, so this
+  // early return fired before any candidate was compared and made row 1 of the
+  // acceptance rule unreachable from the matcher — changing only the pairing
+  // rule would have been inert. A member carrying NO identity evidence at all
+  // (`'[ ]'`, `'   '`) still returns here, which is what keeps it from claiming
+  // another untitled member's book on the title path.
+  if (memberShape.variants.length === 0 && memberShape.lossless.length === 0) return null;
   for (const candidate of candidates) {
     if (alreadyMatched?.has(candidate.id)) continue;
     if (titleVariantsPair(memberShape, cachedTitleShape(candidate.title))) return candidate;

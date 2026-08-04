@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { findInLibraryMatch, normalizeMemberTitleForMatch, VARIANT_CACHE_MAX } from './series-title-match.js';
-import { titleVariants, hasDegenerateFullForm } from '@core/utils/title-variants.js';
+import {
+  explainTitlePairing,
+  findInLibraryMatch,
+  normalizeMemberTitleForMatch,
+  VARIANT_CACHE_MAX,
+} from './series-title-match.js';
+import { titleVariants, hasDegenerateFullForm, normalizeTitleLosslessly } from '@core/utils/title-variants.js';
+import type { TitlePairArm } from '@shared/schemas/series-title-variants.js';
 
 // Spy-wrap the REAL generator so derivation counts are observable. A cache hit
 // and a cache miss return equal values, so the memo's two branches cannot be
@@ -93,19 +99,43 @@ describe('normalizeMemberTitleForMatch', () => {
 });
 
 /**
- * Which arm of the #2096 asymmetric rule a pairing reaches, derived independently
- * from the variant sets so a test can pin the arm, not just the boolean. FULL is
- * `{ tag: 'full', parensStripped: false }`, which is the scalar normalized form
- * by construction.
+ * An INDEPENDENT re-derivation of the acceptance rule, built from the core pure
+ * functions rather than from `explainShapePairing` — so that when the two
+ * disagree, the rule has drifted from its model and the corpus says so.
+ *
+ * It models all EIGHT ordered rows of the rule. Before #2110 it modelled only
+ * rows 3, 4 and 7 and had never modelled the degeneracy contracts at all; the
+ * corpus agreed with production only because every corpus row was
+ * non-degenerate. **Update this whenever the rule's rows change** — that is the
+ * entire point of it existing separately.
+ *
+ * FULL is `{ tag: 'full', parensStripped: false }`, which is the scalar
+ * normalized form by construction.
  */
-function pairingArm(a: string, b: string): 'full-equals-full' | 'derived-equals-full' | 'none' {
+function pairingArm(a: string, b: string): TitlePairArm {
   const aFull = normalizeMemberTitleForMatch(a);
   const bFull = normalizeMemberTitleForMatch(b);
+  const aLossless = normalizeTitleLosslessly(a);
+  const bLossless = normalizeTitleLosslessly(b);
+
+  // Rows 1-2: both FULL forms empty.
+  if (aFull.length === 0 && bFull.length === 0) {
+    return aLossless.length > 0 && aLossless === bLossless ? 'lossless-equals-lossless' : 'none';
+  }
+  // Row 3: exactly one FULL form empty.
   if (aFull.length === 0 || bFull.length === 0) return 'none';
-  if (aFull === bFull) return 'full-equals-full';
+  // Rows 4-6: FULL forms equal.
+  if (aFull === bFull) {
+    if (!hasDegenerateFullForm(a) && !hasDegenerateFullForm(b)) return 'full-equals-full';
+    return aLossless === bLossless ? 'full-equals-full' : 'none';
+  }
+  // Rows 7-8: a non-lossy derived variant reaching a non-degenerate FULL form.
   const derived = (title: string): string[] =>
-    titleVariants(title).filter((v) => v.tag !== 'full' || v.parensStripped).map((v) => v.raw);
-  if (derived(a).includes(bFull) || derived(b).includes(aFull)) return 'derived-equals-full';
+    titleVariants(title)
+      .filter((v) => (v.tag !== 'full' || v.parensStripped) && !v.lossy)
+      .map((v) => v.raw);
+  if (!hasDegenerateFullForm(b) && derived(a).includes(bFull)) return 'derived-equals-full';
+  if (!hasDegenerateFullForm(a) && derived(b).includes(aFull)) return 'derived-equals-full';
   return 'none';
 }
 
@@ -125,7 +155,7 @@ function pairsBothWays(a: string, b: string): boolean {
 }
 
 describe('title-variant pairing (#2096 fixture corpus)', () => {
-  const corpus: Array<{ a: string; b: string; matches: boolean; arm: ReturnType<typeof pairingArm> }> = [
+  const corpus: Array<{ a: string; b: string; matches: boolean; arm: TitlePairArm }> = [
     // The live prod case: the colon truncation keyed the member to `chapterhouse`.
     { a: 'Chapterhouse: Dune', b: 'Chapterhouse Dune', matches: true, arm: 'full-equals-full' },
     // Franchise-FIRST: the library owns the sub-title alone.
@@ -146,6 +176,30 @@ describe('title-variant pairing (#2096 fixture corpus)', () => {
     { a: 'star wars: the high republic: Light of the Jedi (New Order Series)', b: 'Star Wars: Light of the Jedi', matches: true, arm: 'derived-equals-full' },
     // AC18: the #1896 volume-marker collapse is NOT propagated here.
     { a: 'Saga Book 1', b: 'Saga Book 2', matches: false, arm: 'none' },
+
+    // ---- #2110: rows the pre-#2110 `pairingArm` could not reach at all. ----
+    // Row 6 — FULLs equal, a side degenerate, lossless forms differ.
+    { a: 'World of Warcraft: Перед бурей', b: 'World of Warcraft: Последний страж', matches: false, arm: 'none' },
+    { a: 'World of Warcraft: Перед бурей', b: 'World of Warcraft', matches: false, arm: 'none' },
+    // Row 5 — FULLs equal, a side degenerate, lossless forms agree.
+    { a: 'World of Warcraft: Перед бурей', b: 'World of Warcraft: Перед бурей', matches: true, arm: 'full-equals-full' },
+    // Row 7 — a degenerate side may still OFFER a fragment that lost nothing.
+    { a: "Sønner: Assassin's Apprentice", b: "Assassin's Apprentice", matches: true, arm: 'derived-equals-full' },
+    // Row 8 — the offered fragment is itself lossy, so it is not evidence.
+    { a: 'Star Wars: 前夜Thrawn', b: 'Thrawn', matches: false, arm: 'none' },
+    // Row 7 — its non-lossy sibling fragment still pairs. Deliberately BOTH, so
+    // the lossy filter is pinned as a filter and not as a blanket refusal.
+    { a: 'Star Wars: 前夜Thrawn', b: 'Star Wars', matches: true, arm: 'derived-equals-full' },
+    // Row 1 — the narrow non-Latin identity arm.
+    { a: 'Перед бурей', b: 'Перед бурей', matches: true, arm: 'lossless-equals-lossless' },
+    // Row 2 — both FULL forms empty, lossless forms differ.
+    { a: 'Перед бурей', b: 'Последний страж', matches: false, arm: 'none' },
+    // Row 2 again, and the reason there is no non-Latin fragment path: EVERY
+    // character of `'Дюна: Капитул'` is Cyrillic, so its FULL form is empty too.
+    { a: 'Дюна: Капитул', b: 'Капитул', matches: false, arm: 'none' },
+    // Row 3 — exactly one FULL form empty. This is the case the loosened G5
+    // guard newly REACHES, and it must still refuse.
+    { a: 'Перед бурей', b: 'Anything', matches: false, arm: 'none' },
   ];
 
   // The live AC17 sweep found this class: the ASCII fold erases a non-Latin
@@ -235,6 +289,32 @@ describe('title-variant pairing (#2096 fixture corpus)', () => {
       // The pinned fixture this preserves, and its all-ASCII franchise twin.
       expect(pairsBothWays('Foo: Subtitle', 'Foo')).toBe(true);
       expect(pairsBothWays('World of Warcraft: Beyond the Dark Portal', 'World of Warcraft')).toBe(true);
+      // #2110: a lossy fragment is refused, a non-lossy one from the SAME
+      // degenerate title is not. Both, deliberately — the flag is a filter on
+      // fragments, not a blanket refusal of degenerate offerers.
+      expect(pairsBothWays('Star Wars: 前夜Thrawn', 'Star Wars')).toBe(true);
+    });
+
+    /**
+     * #2110 gap 1 — the OFFERING side's fragments were never checked for
+     * character survival, only the target's FULL form was. Both arms trusted a
+     * fragment whose own distinguishing characters the fold had eaten, which is
+     * the franchise cross-match class re-entering one level down.
+     */
+    describe('lossy derived fragments are not evidence (#2110)', () => {
+      it('refuses a Russian-edition-with-translation title claiming the bare franchise', () => {
+        // The paren-stripped full reduces to exactly `world of warcraft`, and
+        // the non-lossy `prefix(1)` that would carry the same text is shadowed
+        // by it under first-wins dedup — so nothing non-lossy is offered.
+        expect(titleVariants('World of Warcraft: Тревелер (Traveler)').every((v) => v.lossy)).toBe(true);
+        expect(pairsBothWays('World of Warcraft: Тревелер (Traveler)', 'World of Warcraft')).toBe(false);
+      });
+
+      it('refuses a CJK-prefixed subtitle claiming the library book its suffix collides with', () => {
+        const suffix = titleVariants('Star Wars: 前夜Thrawn').find((v) => v.tag === 'suffix(1)');
+        expect(suffix).toMatchObject({ raw: 'thrawn', lossy: true });
+        expect(pairsBothWays('Star Wars: 前夜Thrawn', 'Thrawn')).toBe(false);
+      });
     });
 
     it('leaves a non-degenerate franchise title able to serve as the FULL side', () => {
@@ -254,9 +334,180 @@ describe('title-variant pairing (#2096 fixture corpus)', () => {
     });
   });
 
+  /**
+   * THREE assertions, each observing a different thing (#2110 AC38):
+   *  - `pairsBothWays` — what the real matcher does.
+   *  - `pairingArm` — the independent re-derivation. Disagreement with the first
+   *    means the rule drifted from its model.
+   *  - `explainTitlePairing(...).arm` — production's OWN classification.
+   *    Disagreement with the second means `arm` is mislabelled, which is
+   *    invisible to any boolean assertion.
+   */
   it.each(corpus)('$a ↔ $b → $matches via $arm', ({ a, b, matches, arm }) => {
     expect(pairsBothWays(a, b)).toBe(matches);
     expect(pairingArm(a, b)).toBe(arm);
+    expect(explainTitlePairing(a, b).arm).toBe(arm);
+  });
+
+  /**
+   * #2110 AC18/AC19 — the rule's structural properties, as properties rather
+   * than as one restatement per corpus row.
+   */
+  describe('rule properties (#2110)', () => {
+    const probes = [...new Set([
+      ...corpus.flatMap(({ a, b }) => [a, b]),
+      'World of Warcraft: A前夜',
+      'Sa᷀ga: Book One',
+      'Straße: Beyond the Dark Portal',
+      // AC19's boundary table — every one of these is a case where a
+      // raw-character reading of the reflexivity domain gets the answer wrong.
+      '&',
+      '+',
+      '’',
+      "'",
+      '(Audio)',
+      '[Audible]',
+      '(Unabridged)',
+      '[ ]',
+      '   ',
+    ])];
+    const pairs: Array<[string, string]> = probes.flatMap((a) => probes.map((b): [string, string] => [a, b]));
+
+    it('pairs === (arm !== "none") for every pair', () => {
+      for (const [a, b] of pairs) {
+        const verdict = explainTitlePairing(a, b);
+        expect(verdict.pairs).toBe(verdict.arm !== 'none');
+      }
+    });
+
+    it('is symmetric in both `pairs` and `arm` for every pair', () => {
+      for (const [a, b] of pairs) {
+        const forward = explainTitlePairing(a, b);
+        const backward = explainTitlePairing(b, a);
+        expect(backward.pairs).toBe(forward.pairs);
+        expect(backward.arm).toBe(forward.arm);
+      }
+    });
+
+    /**
+     * Reflexivity holds EXACTLY on `normalizeTitleLosslessly(t) !== ''`, and
+     * that predicate is the only normative form of the domain. Do NOT restate
+     * it as a test over the raw input's characters: the fold TRANSFORMS before
+     * it applies its keep class, so a raw-character shorthand is wrong in both
+     * directions — `'&'` carries no letter yet folds to `and`, and `'(Audio)'`
+     * carries five yet folds to `''`.
+     *
+     * The filter therefore calls the normalizer, never a hand-written class.
+     */
+    it('is reflexive exactly where the lossless form is non-empty', () => {
+      const inDomain = probes.filter((t) => normalizeTitleLosslessly(t) !== '');
+      expect(inDomain.length).toBeGreaterThan(0);
+      for (const t of inDomain) expect(explainTitlePairing(t, t).pairs).toBe(true);
+    });
+
+    /**
+     * Outside the domain a self-pair is REFUSED, and that is required rather
+     * than tolerated: it is the same refusal that stops two DIFFERENT untitled
+     * members claiming each other's books (AC24). "Fixing" it would violate
+     * row 2.
+     */
+    it('refuses a self-pair outside the domain', () => {
+      const outOfDomain = probes.filter((t) => normalizeTitleLosslessly(t) === '');
+      expect(outOfDomain.length).toBeGreaterThan(0);
+      for (const t of outOfDomain) {
+        expect(explainTitlePairing(t, t)).toMatchObject({ pairs: false, arm: 'none' });
+      }
+    });
+
+    /**
+     * Every row of AC19's boundary table, self-paired, pinned individually.
+     * These are the ONLY cases that can catch a hand-rolled character-class
+     * filter — the `'[ ]'` case alone cannot, since both readings agree on it.
+     */
+    it.each([
+      // No letter, digit, mark or apostrophe in the input, yet `&`/`+` → "and"
+      // creates one.
+      ['&', 'and', 'full-equals-full'],
+      ['+', 'and', 'full-equals-full'],
+      // Folded to the straight form BEFORE the keep class, so it survives
+      // despite not being the listed straight `'`.
+      ['’', "'", 'full-equals-full'],
+      ["'", "'", 'full-equals-full'],
+      // Carries letters, but the edition-tail strip removes the whole string.
+      ['(Audio)', '', 'none'],
+      ['[Audible]', '', 'none'],
+      ['(Unabridged)', '', 'none'],
+      // Nothing survives either fold.
+      ['[ ]', '', 'none'],
+      ['   ', '', 'none'],
+      // Zero variants and an empty scalar FULL, but non-empty identity
+      // evidence — the domain is not "has variants" either.
+      ['Перед бурей', 'перед бурей', 'lossless-equals-lossless'],
+    ])('self-pairs %j (lossless %j) via arm %s', (title, lossless, arm) => {
+      expect(normalizeTitleLosslessly(title)).toBe(lossless);
+      expect(explainTitlePairing(title, title)).toMatchObject({ pairs: arm !== 'none', arm });
+    });
+  });
+});
+
+/**
+ * #2110 — the narrow non-Latin identity arm. An all-non-Latin title scalar-folds
+ * to empty and yields ZERO variants, so before this arm two IDENTICAL non-Latin
+ * titles never title-paired at all (position rescue only) — leaving the original
+ * Chapterhouse symptom, a wrong '+Add' on an owned book, fully intact for
+ * non-Latin libraries.
+ */
+describe('non-Latin identity arm (#2110)', () => {
+  it('pairs two identical non-Latin titles', () => {
+    expect(titleVariants('Перед бурей')).toEqual([]);
+    expect(normalizeMemberTitleForMatch('Перед бурей')).toBe('');
+    expect(pairsBothWays('Перед бурей', 'Перед бурей')).toBe(true);
+  });
+
+  it('tolerates the same drift every other arm tolerates', () => {
+    expect(pairsBothWays('Перед бурей', '  перед  БУРЕЙ (Unabridged)')).toBe(true);
+  });
+
+  // AC23 — the original Chapterhouse symptom (`:` truncation vs separator),
+  // closed for non-Latin.
+  it('pairs across a colon the way the scalar form does for Latin titles', () => {
+    expect(pairsBothWays('Перед: бурей', 'Перед бурей')).toBe(true);
+  });
+
+  it('refuses two DIFFERENT non-Latin titles', () => {
+    expect(pairsBothWays('Перед бурей', 'Последний страж')).toBe(false);
+  });
+
+  /**
+   * AC25 — the arm does NOT widen the derived path, and both refusals matter:
+   *  - `'Дюна: Капитул'` vs `'Капитул'`: every character is Cyrillic, so BOTH
+   *    scalar FULL forms are empty and row 2 fires on unequal lossless forms.
+   *    There is no non-Latin fragment-to-FULL path at all.
+   *  - `'Перед бурей'` vs `'Anything'`: exactly one FULL form is empty, so row 3
+   *    fires — the case the loosened G5 guard newly reaches.
+   */
+  it('offers no non-Latin fragment-to-FULL path', () => {
+    expect(normalizeMemberTitleForMatch('Дюна: Капитул')).toBe('');
+    expect(normalizeMemberTitleForMatch('Капитул')).toBe('');
+    expect(pairsBothWays('Дюна: Капитул', 'Капитул')).toBe(false);
+  });
+
+  it('refuses a non-Latin title against an unrelated Latin one', () => {
+    expect(pairsBothWays('Перед бурей', 'Anything')).toBe(false);
+  });
+
+  /**
+   * BOTH edits are load-bearing, and this records why the pairing rule alone is
+   * not enough — the same reasoning as the "decisive G5 pair" above.
+   * Counterfactual (run, verified): revert `findInLibraryMatch`'s guard to
+   * `variants.length === 0` and every assertion in this describe that goes
+   * through the matcher fails, while `explainTitlePairing` keeps returning
+   * `lossless-equals-lossless`. The guard sits BEFORE any candidate is
+   * compared, so a rule-only change is inert.
+   */
+  it('reaches the matcher, not just the rule', () => {
+    expect(explainTitlePairing('Перед бурей', 'Перед бурей').arm).toBe('lossless-equals-lossless');
+    expect(pairsOneWay('Перед бурей', 'Перед бурей')).toBe(true);
   });
 });
 
@@ -356,6 +607,14 @@ describe('findInLibraryMatch', () => {
 
     it('two empty-variant titles never pair with each other', () => {
       expect(pairsOneWay('[ ]', '   ')).toBe(false);
+    });
+
+    // #2110 AC24 — the case the loosened guard newly REACHES. Before, a
+    // zero-variant member early-returned before any candidate was compared;
+    // now it walks the candidate list, and row 3 (exactly one FULL form empty)
+    // is what refuses it.
+    it('a member with identity evidence but no variants still claims nothing arbitrary', () => {
+      expect(pairsBothWays('Перед бурей', 'Anything')).toBe(false);
     });
   });
 
