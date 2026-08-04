@@ -8,6 +8,7 @@ import {
   type Rung,
 } from './search-query-ladder.js';
 import { buildSearchQuery } from './indexer-query.js';
+import { titleSegments, normalizeTitleForVariantMatch } from '@core/utils/title-variants.js';
 import type { SearchResult } from '@core/index.js';
 
 /** Compact `tag@author` view of a ladder, for order assertions. */
@@ -35,6 +36,55 @@ function makeResult(overrides: MakeResultOverrides): SearchResult {
   return { ...RESULT_DEFAULTS, ...overrides } as SearchResult;
 }
 
+/**
+ * #2133 AC9 — the titles the anchored floor rule is specified over: the three
+ * live examples, the depth/punctuation shapes #2104 already pinned, and the
+ * three derived classes of AC16 (collapsed anchors, an anchor recurring inside a
+ * neighbouring segment, a generic parenthetical splitting an anchor). `Dune`
+ * carries the fewer-than-two-effective-segments arm.
+ */
+const FLOOR_FIXTURES = [
+  'Star Wars: The High Republic: Haunted Starlight',
+  'The Churn: An Expanse Novella',
+  'Star Wars: The Rising Storm (The High Republic)',
+  'Alpha: Beta: Gamma: Delta: Eps: Zeta',
+  'Star Wars: ---: The High Republic: Haunted Starlight',
+  'Star Wars: The High Republic: Star Wars',
+  'Alpha: Beta Gamma: Gamma',
+  'Star (Deluxe) Wars: Haunted Starlight',
+  'Dune',
+] as const;
+
+/** Text no fixture title contains, for the AC9(b) generated siblings. */
+const UNRELATED = 'Quixotic Zephyr Nonesuch';
+
+/**
+ * Rebuild a release name from `title` with the effective segment at one END
+ * replaced by unrelated text (#2133 AC9(b)).
+ *
+ * Operates on the RAW segments and rejoins on `:`, so every other segment
+ * survives verbatim and a punctuation-only segment stays where it was — the
+ * replaced index is the first/last segment that is non-empty after
+ * normalization, which is the anchor's own position.
+ */
+function replaceEndSegment(title: string, end: 'first' | 'last'): string {
+  const raw = titleSegments(title);
+  const effective = raw.flatMap((s, i) => (normalizeTitleForVariantMatch(s).length > 0 ? [i] : []));
+  const target = end === 'first' ? effective[0] : effective[effective.length - 1];
+  return raw.map((segment, i) => (i === target ? ` ${UNRELATED} ` : segment)).join(':');
+}
+
+/** Every admitted segment-cut rung of `title`, deduped by tag. */
+function segmentCutRungs(title: string): Rung[] {
+  const byTag = new Map<string, Rung>();
+  for (const rung of buildQueryLadder({ title, author: 'A' })) {
+    const tag = rung.variant?.tag;
+    if (tag === undefined || tag === 'full') continue;
+    if (!byTag.has(tag)) byTag.set(tag, rung);
+  }
+  return [...byTag.values()];
+}
+
 describe('buildQueryLadder', () => {
   // AC1 — rung 1 is today's canonical query verbatim, so a book findable at
   // rung 1 issues byte-identically the same query it did before the ladder.
@@ -47,6 +97,7 @@ describe('buildQueryLadder', () => {
       author: 'George Mann',
       variant: null,
       segments: [],
+      floorSegments: [],
     });
     expect(ladder[0]!.query).toBe('Star Wars The High Republic Haunted Starlight George Mann');
   });
@@ -60,54 +111,66 @@ describe('buildQueryLadder', () => {
       author: 'George Mann',
     });
 
+    // #2133 AC1, AC3 — every segment-cut rung carries the SAME anchored floor
+    // (the canonical first and last effective segments), whatever it transported;
+    // `segments` still records what it transported.
+    const FLOOR = ['star wars', 'haunted starlight'];
     expect(ladder).toEqual([
       {
         query: 'Star Wars The High Republic Haunted Starlight George Mann',
         author: 'George Mann',
         variant: null,
         segments: [],
+        floorSegments: [],
       },
       {
         query: 'star wars the high republic George Mann',
         author: 'George Mann',
         variant: { raw: 'star wars the high republic', tag: 'prefix(2)', parensStripped: true, lossy: false },
         segments: ['star wars', 'the high republic'],
+        floorSegments: FLOOR,
       },
       {
         query: 'the high republic haunted starlight George Mann',
         author: 'George Mann',
         variant: { raw: 'the high republic haunted starlight', tag: 'suffix(2)', parensStripped: true, lossy: false },
         segments: ['the high republic', 'haunted starlight'],
+        floorSegments: FLOOR,
       },
       {
         query: 'star wars haunted starlight George Mann',
         author: 'George Mann',
         variant: { raw: 'star wars haunted starlight', tag: 'first+last', parensStripped: true, lossy: false },
         segments: ['star wars', 'haunted starlight'],
+        floorSegments: FLOOR,
       },
       {
         query: 'star wars the high republic haunted starlight',
         author: undefined,
         variant: { raw: 'star wars the high republic haunted starlight', tag: 'full', parensStripped: false, lossy: false },
         segments: [],
+        floorSegments: [],
       },
       {
         query: 'star wars the high republic',
         author: undefined,
         variant: { raw: 'star wars the high republic', tag: 'prefix(2)', parensStripped: true, lossy: false },
         segments: ['star wars', 'the high republic'],
+        floorSegments: FLOOR,
       },
       {
         query: 'the high republic haunted starlight',
         author: undefined,
         variant: { raw: 'the high republic haunted starlight', tag: 'suffix(2)', parensStripped: true, lossy: false },
         segments: ['the high republic', 'haunted starlight'],
+        floorSegments: FLOOR,
       },
       {
         query: 'star wars haunted starlight',
         author: undefined,
         variant: { raw: 'star wars haunted starlight', tag: 'first+last', parensStripped: true, lossy: false },
         segments: ['star wars', 'haunted starlight'],
+        floorSegments: FLOOR,
       },
     ]);
 
@@ -133,6 +196,58 @@ describe('buildQueryLadder', () => {
         expect(rung.segments.join(' ')).toBe(rung.variant.raw);
         for (const segment of rung.segments) expect(segment).not.toBe('');
       }
+    }
+  });
+
+  // #2133 AC3 — the worked floor values. Each is built over the DISTINCT anchor
+  // values, each repeated as many times as it occurs in the canonical title's
+  // own effective text.
+  it.each([
+    ['Star Wars: The High Republic: Haunted Starlight', ['star wars', 'haunted starlight']],
+    ['The Churn: An Expanse Novella', ['the churn', 'an expanse novella']],
+    ['Star Wars: The Rising Storm (The High Republic)', ['star wars', 'the rising storm']],
+    ['Alpha: Beta: Gamma: Delta: Eps: Zeta', ['alpha', 'zeta']],
+    // A punctuation-only edge segment never becomes an empty anchor.
+    ['Star Wars: ---: The High Republic: Haunted Starlight', ['star wars', 'haunted starlight']],
+    // COUNTERFACTUAL: build the array POSITIONALLY (a count per position rather
+    // than per distinct value) and this emits FOUR copies, which makes the
+    // book's own title fail its own floor.
+    ['Star Wars: The High Republic: Star Wars', ['star wars', 'star wars']],
+    // The anchor `gamma` recurs inside the neighbouring segment, so the
+    // canonical text demands it twice.
+    ['Alpha: Beta Gamma: Gamma', ['alpha', 'gamma', 'gamma']],
+    // A generic parenthetical splits the first anchor; both sides reduce through
+    // `titleSegments`, so the anchor is the paren-stripped `star wars`.
+    ['Star (Deluxe) Wars: Haunted Starlight', ['star wars', 'haunted starlight']],
+  ])('floors every segment-cut rung of %s at the canonical anchors (AC3)', (title, expected) => {
+    const cuts = segmentCutRungs(title);
+    expect(cuts.length).toBeGreaterThan(0);
+    for (const rung of cuts) expect(rung.floorSegments).toEqual(expected);
+  });
+
+  // #2133 AC4 — fewer than two effective segments admits no segment cut at all,
+  // so no rung of such a title carries a floor.
+  it('carries an empty floor on every rung of a title with fewer than two effective segments (AC4)', () => {
+    const ladder = buildQueryLadder({ title: 'Dune', author: 'Frank Herbert' });
+    expect(segmentCutRungs('Dune')).toEqual([]);
+    expect(ladder.every((r) => r.floorSegments.length === 0)).toBe(true);
+  });
+
+  // #2133 AC9(a) — the construction invariant, over the whole fixture list.
+  it('carries an empty floor exactly on rung 1 and full rungs, and one identical floor on every cut (AC9a)', () => {
+    for (const title of FLOOR_FIXTURES) {
+      const ladder = buildQueryLadder({ title, author: 'A' });
+      const cutFloors = new Set<string>();
+      for (const rung of ladder) {
+        const unfloored = rung.variant === null || rung.variant.tag === 'full';
+        expect({ title, tag: rung.variant?.tag ?? 'canonical', empty: rung.floorSegments.length === 0 })
+          .toEqual({ title, tag: rung.variant?.tag ?? 'canonical', empty: unfloored });
+        if (unfloored) continue;
+        for (const segment of rung.floorSegments) expect(segment).not.toBe('');
+        cutFloors.add(JSON.stringify(rung.floorSegments));
+      }
+      // Byte-identical across every segment-cut rung of the same title.
+      expect(cutFloors.size).toBeLessThanOrEqual(1);
     }
   });
 
@@ -249,30 +364,104 @@ describe('buildQueryLadder', () => {
   });
 });
 
+describe('the anchored floor — sibling rejection (#2133)', () => {
+  // AC9(b) — the universal this issue exists to establish. All three releases
+  // are GENERATED from each fixture title, so adding a title extends the
+  // property automatically. The hold arms are provable: replacing an end segment
+  // removes one occurrence of that anchor, so the release necessarily falls
+  // below the count the canonical text demands.
+  it.each(FLOOR_FIXTURES.filter((title) => segmentCutRungs(title).length > 0))(
+    'grabs %s verbatim and holds both end-replaced siblings on every cut rung (AC9b)',
+    (title) => {
+      const lastReplaced = replaceEndSegment(title, 'last');
+      const firstReplaced = replaceEndSegment(title, 'first');
+      for (const rung of segmentCutRungs(title)) {
+        const tag = rung.variant!.tag;
+        expect({ tag, release: 'verbatim', passes: passesSegmentFloor(title, rung) })
+          .toEqual({ tag, release: 'verbatim', passes: true });
+        expect({ tag, release: lastReplaced, passes: passesSegmentFloor(lastReplaced, rung) })
+          .toEqual({ tag, release: lastReplaced, passes: false });
+        expect({ tag, release: firstReplaced, passes: passesSegmentFloor(firstReplaced, rung) })
+          .toEqual({ tag, release: firstReplaced, passes: false });
+      }
+    },
+  );
+
+  // AC9(c) — self-pass is a RECORDED TABLE, not a rule. Two review rounds killed
+  // two different prose characterizations of this set; it is an artifact of the
+  // generator and the anchor counts, so do not restate it as a rule. A `true`
+  // row is not a defect — those rungs transport exactly the anchor text, and the
+  // floor still adds CONTIGUITY, which a token-AND indexer does not guarantee.
+  it('records the measured self-pass verdict for every admitted cut rung (AC9c)', () => {
+    const measured: Record<string, boolean> = {};
+    for (const title of FLOOR_FIXTURES) {
+      for (const rung of segmentCutRungs(title)) {
+        measured[`${title} | ${rung.variant!.tag}`] = passesSegmentFloor(rung.variant!.raw, rung);
+      }
+    }
+
+    expect(measured).toEqual({
+      'Star Wars: The High Republic: Haunted Starlight | prefix(2)': false,
+      'Star Wars: The High Republic: Haunted Starlight | suffix(2)': false,
+      'Star Wars: The High Republic: Haunted Starlight | first+last': true,
+      'The Churn: An Expanse Novella | prefix(1)': false,
+      'The Churn: An Expanse Novella | suffix(1)': false,
+      'Star Wars: The Rising Storm (The High Republic) | prefix(1)': false,
+      'Star Wars: The Rising Storm (The High Republic) | suffix(1)': false,
+      'Alpha: Beta: Gamma: Delta: Eps: Zeta | prefix(5)': false,
+      'Alpha: Beta: Gamma: Delta: Eps: Zeta | suffix(5)': false,
+      'Alpha: Beta: Gamma: Delta: Eps: Zeta | prefix(4)': false,
+      'Alpha: Beta: Gamma: Delta: Eps: Zeta | suffix(4)': false,
+      'Alpha: Beta: Gamma: Delta: Eps: Zeta | prefix(3)': false,
+      'Alpha: Beta: Gamma: Delta: Eps: Zeta | suffix(3)': false,
+      'Alpha: Beta: Gamma: Delta: Eps: Zeta | first+last': true,
+      'Star Wars: ---: The High Republic: Haunted Starlight | first+last': true,
+      'Star Wars: The High Republic: Star Wars | prefix(2)': false,
+      'Star Wars: The High Republic: Star Wars | suffix(2)': false,
+      'Star Wars: The High Republic: Star Wars | first+last': true,
+      'Alpha: Beta Gamma: Gamma | prefix(2)': false,
+      'Alpha: Beta Gamma: Gamma | suffix(2)': false,
+      'Alpha: Beta Gamma: Gamma | first+last': false,
+      'Star (Deluxe) Wars: Haunted Starlight | prefix(1)': false,
+      'Star (Deluxe) Wars: Haunted Starlight | suffix(1)': false,
+    });
+  });
+});
+
 describe('passesSegmentFloor', () => {
   const haunted = buildQueryLadder({ title: 'Star Wars: The High Republic: Haunted Starlight', author: 'George Mann' });
   const firstLast = rungFor(haunted, 'first+last');
+  const prefix2 = rungFor(haunted, 'prefix(2)');
   const churn = buildQueryLadder({ title: 'The Churn: An Expanse Novella', author: 'James S. A. Corey' });
   const prefix1 = rungFor(churn, 'prefix(1)');
+  const churnSuffix1 = rungFor(churn, 'suffix(1)');
+  const risingStorm = buildQueryLadder({ title: 'Star Wars: The Rising Storm (The High Republic)', author: 'Cavan Scott' });
+  const risingStormPrefix1 = rungFor(risingStorm, 'prefix(1)');
+  // #2133 AC16 — the three derived classes.
+  const collapsedPrefix2 = rungFor(buildQueryLadder({ title: 'Star Wars: The High Republic: Star Wars', author: 'George Mann' }), 'prefix(2)');
+  const neighbourPrefix2 = rungFor(buildQueryLadder({ title: 'Alpha: Beta Gamma: Gamma', author: 'A' }), 'prefix(2)');
+  const parenPrefix1 = rungFor(buildQueryLadder({ title: 'Star (Deluxe) Wars: Haunted Starlight', author: 'George Mann' }), 'prefix(1)');
 
   // AC10 — a `full` rung is not a segment cut, so there is nothing to corroborate.
-  it('short-circuits true for a full-tagged rung without inspecting the title (AC10)', () => {
-    const full = rungFor(buildQueryLadder({ title: 'Star Wars: The Rising Storm (The High Republic)', author: 'Cavan Scott' }), 'full');
+  it('short-circuits true for a full-tagged rung without inspecting the title (AC10, #2133 AC2)', () => {
+    const full = rungFor(risingStorm, 'full');
     expect(full.segments).toEqual([]);
+    expect(full.floorSegments).toEqual([]);
     expect(passesSegmentFloor('Something Entirely Unrelated', full)).toBe(true);
   });
 
   it('short-circuits true for rung 1, which is never floored', () => {
+    expect(haunted[0]!.floorSegments).toEqual([]);
     expect(passesSegmentFloor('Something Entirely Unrelated', haunted[0]!)).toBe(true);
   });
 
   // AC11, AC12 — the ground-truth verdicts plus the two load-bearing
   // counterfactual rows.
   it.each([
-    // AC11 reference verdicts.
+    // AC11 reference verdicts. The `firstLast` rows are unchanged by #2133 —
+    // that rung's floor VALUE is the same array it always carried.
     ['Star Wars: Haunted Starlight', firstLast, true],
     ['Star Wars: The High Republic: Cataclysm', firstLast, false],
-    ['The Churn (Unabridged) [M4B]', prefix1, true],
     ['The Expanse: Nemesis Games', prefix1, false],
     // AC12 — the book's own canonical title must never false-negative.
     // COUNTERFACTUAL: whole-`raw` string containment flips ONLY this row to false.
@@ -282,6 +471,58 @@ describe('passesSegmentFloor', () => {
     ['Star Wars: Haunted Totally Different Starlight', firstLast, false],
     // AC12 — space-bounded. "the churner" must not satisfy "the churn".
     ['The Churner', prefix1, false],
+
+    // #2133 AC5 — the live repro. The prefix(2) rung transports exactly
+    // `["star wars", "the high republic"]`, so under the pre-#2133 retained-set
+    // floor EVERY High Republic sibling corroborated its own query.
+    // COUNTERFACTUAL: read `rung.segments` instead of `rung.floorSegments` and
+    // both sibling rows flip to true.
+    ['01 Star Wars-The High Republic-The Eye of Darkness', prefix2, false],
+    ['Star Wars: The High Republic: Cataclysm', prefix2, false],
+    ['Star Wars: Haunted Starlight', prefix2, true],
+    ['Star Wars: The High Republic: Haunted Starlight', prefix2, true],
+
+    // #2133 AC7 — the suffix-side mirror hole, and the accepted flip: a release
+    // named by the canonical HEAD alone is corroborated only by the query's own
+    // tokens, which is the circular evidence this issue outlaws.
+    ['The Vital Abyss: An Expanse Novella', churnSuffix1, false],
+    ['Gods of Risk: An Expanse Novella', churnSuffix1, false],
+    ['The Churn', prefix1, false],
+    ['The Churn (Unabridged) [M4B]', prefix1, false],
+    ['The Churn: An Expanse Novella', prefix1, true],
+    ['The Churn: An Expanse Novella', churnSuffix1, true],
+
+    // #2133 AC8 — a two-segment franchise title already shipped a single-segment
+    // franchise floor; that rung's own `variant.raw` no longer satisfies it.
+    ['Star Wars: Cataclysm', risingStormPrefix1, false],
+    ['Star Wars: The Rising Storm', risingStormPrefix1, true],
+    ['Star Wars: The Rising Storm (The High Republic)', risingStormPrefix1, true],
+
+    // #2133 AC15, AC16 — collapsed anchors. The floor demands `star wars` TWICE
+    // because the canonical title carries it twice, and the prefix(2) query only
+    // guarantees one. COUNTERFACTUAL: demand each distinct anchor once and the
+    // sibling row flips to true; restart the occurrence scan past the shared
+    // delimiter and the own-title and noisy rows flip to false.
+    ['Star Wars: The High Republic: The Eye of Darkness', collapsedPrefix2, false],
+    ['Star Wars: Cataclysm', collapsedPrefix2, false],
+    ['Star Wars: The High Republic: Star Wars', collapsedPrefix2, true],
+    ['01 Star Wars-The High Republic-Star Wars', collapsedPrefix2, true],
+
+    // #2133 AC16 — an anchor recurring inside a NEIGHBOURING segment. The rung's
+    // own text supplies one `gamma`; the canonical title demands two.
+    ['Alpha: Beta Gamma: Delta', neighbourPrefix2, false],
+    ['Alpha: Beta Gamma: Gamma', neighbourPrefix2, true],
+    // The accepted second-order hold: indistinguishable from a sibling that
+    // borrowed `gamma` from the middle segment.
+    ['Alpha: Gamma', neighbourPrefix2, false],
+
+    // #2133 AC0, AC16 — a generic parenthetical splitting an anchor. Both sides
+    // reduce through `titleSegments`. COUNTERFACTUAL: reduce the release with
+    // `normalizeTitleForVariantMatch` alone and the book's OWN paren-intact
+    // release fails its own floor.
+    ['Star (Deluxe) Wars: Haunted Starlight', parenPrefix1, true],
+    // The accepted hold: a different book naming the wanted one only in an aside.
+    ['Cataclysm (Star Wars: Haunted Starlight)', parenPrefix1, false],
   ])('verdict for %s', (releaseTitle, rung, expected) => {
     expect(passesSegmentFloor(releaseTitle, rung)).toBe(expected);
   });
@@ -349,5 +590,32 @@ describe('selectRelaxedCandidate', () => {
       kind: 'hold',
       releaseTitle: 'Star Wars: The High Republic: Cataclysm',
     });
+  });
+
+  // #2133 AC5, AC6 — the same two decisions on the PREFIX rung. Every case above
+  // uses `first+last`, which is exactly why the circular-floor hole stayed
+  // invisible: a prefix rung's retained segments ARE its query, so before #2133
+  // every franchise sibling corroborated itself.
+  const prefix2 = rungFor(haunted, 'prefix(2)');
+
+  it('holds every High-Republic sibling on the prefix(2) rung, naming the top one (AC5)', () => {
+    const results = [
+      makeResult({ title: '01 Star Wars-The High Republic-The Eye of Darkness' }),
+      makeResult({ title: 'Star Wars: The High Republic: Cataclysm' }),
+    ];
+    expect(selectRelaxedCandidate(results, prefix2)).toEqual({
+      kind: 'hold',
+      releaseTitle: '01 Star Wars-The High Republic-The Eye of Darkness',
+    });
+  });
+
+  it('grabs a lower-ranked passing candidate past a failing one on the prefix(2) rung (AC6)', () => {
+    const results = [failing('01 Star Wars-The High Republic-The Eye of Darkness'), passing('Star Wars: Haunted Starlight')];
+    expect(selectRelaxedCandidate(results, prefix2)).toEqual({ kind: 'grab', result: results[1] });
+  });
+
+  it("grabs the book's own canonical title on the prefix(2) rung (AC6)", () => {
+    const results = [passing('Star Wars: The High Republic: Haunted Starlight')];
+    expect(selectRelaxedCandidate(results, prefix2)).toEqual({ kind: 'grab', result: results[0] });
   });
 });
