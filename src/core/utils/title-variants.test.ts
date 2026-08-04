@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { titleVariants, titleSegments, normalizeTitleForVariantMatch, hasDegenerateFullForm, normalizeTitleLosslessly } from './title-variants.js';
+import {
+  titleVariants,
+  titleSegments,
+  normalizeTitleForVariantMatch,
+  hasDegenerateFullForm,
+  normalizeTitleLosslessly,
+  MAX_VARIANT_TITLE_LENGTH,
+  MAX_VARIANT_SEGMENTS,
+} from './title-variants.js';
 import type { Variant } from './title-variants.js';
 
 /**
@@ -124,6 +132,19 @@ describe('titleSegments', () => {
     expect(titleSegments('')).toEqual([]);
     expect(titleSegments('   ')).toEqual([]);
   });
+
+  // T12 / #2109 AC6 — `titleSegments` is explicitly NOT clamped. It is documented
+  // as returning the EXACT base slices the generator derives from, so silently
+  // capping it would break that contract (and the ladder's `effective` count with
+  // it). It is already linear, and `admitVariants` only admits unfloored `full`
+  // variants once the derived axis is empty, so no inconsistency arises.
+  it('is NOT clamped — returns the full raw segment list past the generator cap (T12)', () => {
+    // 2400 chars / 300 segments: well past both MAX_VARIANT_TITLE_LENGTH and
+    // MAX_VARIANT_SEGMENTS, which `titleVariants` degrades on and this does not.
+    const segments = titleSegments('ab: '.repeat(600));
+    expect(segments).toHaveLength(300);
+    expect(effectiveSegments('ab: '.repeat(600))).toHaveLength(300);
+  });
 });
 
 /**
@@ -139,7 +160,13 @@ describe('titleSegments', () => {
 describe('public export surface (#2104 AC30)', () => {
   it('exports exactly the #2096 surface plus titleSegments', async () => {
     const ns = await import('./title-variants.js');
+    // #2109 AC11 — a deliberate TWO-name addition for the AC5 clamp constants,
+    // and nothing else. `applyCommonFolds` (AC8) stays private: the extraction
+    // is internal DRY, not a new contract, and keeping it unexported is what
+    // leaves this assertion a meaningful signal.
     expect(Object.keys(ns).sort()).toEqual([
+      'MAX_VARIANT_SEGMENTS',
+      'MAX_VARIANT_TITLE_LENGTH',
       'hasDegenerateFullForm',
       'normalizeTitleForVariantMatch',
       'normalizeTitleLosslessly',
@@ -477,6 +504,141 @@ describe('titleVariants', () => {
       for (const title of nonDegenerate) {
         expect(titleVariants(title).filter((v) => v.lossy)).toEqual([]);
       }
+    });
+  });
+
+  /**
+   * #2109 (b) — the input clamp.
+   *
+   * The derived loop does an O(L) slice/join/normalize per colon segment, so it
+   * is O(L²) on colon-dense input: 8 KB measured at ~360 ms, 16 KB at ~1 370 ms,
+   * 64 KB at ~27 s of synchronous event-loop blocking. The input is
+   * community-edited Hardcover member titles, and generation runs inside the
+   * `persistMembers` transaction, which serializes every other libSQL write.
+   *
+   * The clamp REMOVES WORK; it does not add a return shape. Both FULL pushes
+   * still run through the unchanged first-key-wins dedup, so cardinality is 1 or
+   * 2 depending on whether the paren-stripped form normalizes differently — a
+   * consequence of dedup, never a rule of the clamp. The one observable the
+   * clamp itself owns is asserted in every case below: NO `prefix(n)`,
+   * `suffix(n)` or `first+last` variant is emitted.
+   *
+   * The title text is never TRUNCATED. Truncating manufactures a sheared
+   * fragment — precisely what G1 forbids — whereas dropping the derived axis can
+   * only ever produce FEWER variants, so the failure mode is a false refusal (a
+   * missing "In Library" badge, which position rescue already covers) and never
+   * a false pair.
+   */
+  describe('input clamp (#2109 AC5/AC6)', () => {
+    const derivedTagsOf = (title: string): string[] =>
+      titleVariants(title).map((v) => v.tag).filter((tag) => tag !== 'full');
+
+    it('exports the two caps as the thresholds under test', () => {
+      expect(MAX_VARIANT_TITLE_LENGTH).toBe(2048);
+      expect(MAX_VARIANT_SEGMENTS).toBe(32);
+    });
+
+    // T8 — the LENGTH branch's own observation point. 2306 chars but only 2
+    // segments, so it trips the length cap and nothing else: delete the length
+    // check and this fails; delete the segment check and it still passes.
+    // ('ab: '.repeat(600) would trip BOTH predicates and isolate neither.)
+    it('degrades on length alone, with the segment count well under its cap (T8)', () => {
+      const title = 'x'.repeat(2300) + ': tail';
+      expect(title.length).toBe(2306);
+      expect(titleSegments(title)).toHaveLength(2);
+
+      // No parenthetical, so both FULL pushes collapse onto the same key — the
+      // same single-entry collapse every no-parenthesis fixture already shows.
+      expect(titleVariants(title)).toEqual([
+        { raw: `${'x'.repeat(2300)} tail`, tag: 'full', parensStripped: false, lossy: false },
+      ]);
+    });
+
+    // T9 — the SEGMENT branch's own observation point. 200 chars, far under the
+    // length cap, 40 segments. Delete the segment check and this fails; delete
+    // the length check and it still passes.
+    it('degrades on segment count alone, well under the length cap (T9)', () => {
+      const title = 'abc: '.repeat(40);
+      expect(title.length).toBe(200);
+      expect(title.length).toBeLessThanOrEqual(MAX_VARIANT_TITLE_LENGTH);
+      expect(titleSegments(title)).toHaveLength(40);
+
+      const variants = titleVariants(title);
+      assertWellFormed(variants);
+      expect(variants).toHaveLength(1);
+      expect(variants[0]!.tag).toBe('full');
+      expect(derivedTagsOf(title)).toEqual([]);
+    });
+
+    // T9b — the TWO-FULL clamped case: the paren-stripped form normalizes
+    // differently from the intact one, so dedup keeps both. `(Deluxe)`, not
+    // `(Unabridged)`/`(Audio)`/`(Audible)` — those are peeled by the SCALAR
+    // normalizer itself, which would collapse the two FULL forms back into one
+    // and silently make this a duplicate of T8.
+    it('still emits both FULL forms when the paren-stripped one differs (T9b)', () => {
+      const title = '(Deluxe) ' + 'ab: '.repeat(600);
+      expect(title.length).toBe(2409);
+
+      const variants = titleVariants(title);
+      assertWellFormed(variants);
+      expect(variants).toHaveLength(2);
+      expect(variants.map((v) => ({ tag: v.tag, parensStripped: v.parensStripped }))).toEqual([
+        { tag: 'full', parensStripped: false },
+        { tag: 'full', parensStripped: true },
+      ]);
+      expect(variants[0]!.raw.startsWith('deluxe ab')).toBe(true);
+      expect(variants[1]!.raw.startsWith('ab ab')).toBe(true);
+      expect(derivedTagsOf(title)).toEqual([]);
+    });
+
+    // T10 — both sides of both caps. The predicate is EXCEEDS, so at-cap still
+    // derives and cap+1 degrades. Off-by-one is the entire risk surface of a
+    // threshold, so neither side is sampled.
+    describe('boundary quartet (T10)', () => {
+      it('derives at exactly MAX_VARIANT_TITLE_LENGTH', () => {
+        const title = 'x'.repeat(2042) + ': tail';
+        expect(title.length).toBe(MAX_VARIANT_TITLE_LENGTH);
+        expect(titleVariants(title).map((v) => v.tag)).toEqual(['full', 'prefix(1)', 'suffix(1)']);
+      });
+
+      it('degrades one character past MAX_VARIANT_TITLE_LENGTH', () => {
+        const title = 'x'.repeat(2043) + ': tail';
+        expect(title.length).toBe(MAX_VARIANT_TITLE_LENGTH + 1);
+        expect(derivedTagsOf(title)).toEqual([]);
+      });
+
+      it('derives at exactly MAX_VARIANT_SEGMENTS', () => {
+        const title = 'abc: '.repeat(32);
+        expect(titleSegments(title)).toHaveLength(MAX_VARIANT_SEGMENTS);
+        expect(title.length).toBeLessThanOrEqual(MAX_VARIANT_TITLE_LENGTH);
+        expect(derivedTagsOf(title).length).toBeGreaterThan(0);
+      });
+
+      it('degrades one segment past MAX_VARIANT_SEGMENTS', () => {
+        const title = 'abc: '.repeat(33);
+        expect(titleSegments(title)).toHaveLength(MAX_VARIANT_SEGMENTS + 1);
+        expect(title.length).toBeLessThanOrEqual(MAX_VARIANT_TITLE_LENGTH);
+        expect(derivedTagsOf(title)).toEqual([]);
+      });
+    });
+
+    /**
+     * T17b — the performance AC, asserted as a SHAPE rather than a wall clock.
+     *
+     * A timing assertion is flaky in CI, so the property under test is that the
+     * result does not grow with N: past the cap the derived axis is empty for
+     * every N, which is the same observable T8/T9 use. The wall clock enters
+     * only through vitest's default 5 s per-test timeout, and only as a coarse
+     * backstop — the pre-clamp code measured ~27 s on the 64 KB input below (8
+     * KB ≈ 360 ms, 16 KB ≈ 1 370 ms, clean 4x per 2x), so it would time out
+     * here, while the clamped code returns in single-digit milliseconds.
+     */
+    it.each([[600], [6_000], [16_000]])('emits no derived variant for a %i-repeat colon-dense title (T17b)', (n) => {
+      const title = 'ab: '.repeat(n);
+      expect(title.length).toBeGreaterThan(MAX_VARIANT_TITLE_LENGTH);
+      const variants = titleVariants(title);
+      assertWellFormed(variants);
+      expect(derivedTagsOf(title)).toEqual([]);
     });
   });
 });

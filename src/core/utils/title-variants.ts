@@ -66,6 +66,20 @@ export type { Variant, VariantTag } from '@shared/schemas/series-title-variants.
 const COLON_PREFIX_MIN = 3;
 
 /**
+ * The generator's input clamp (#2109). Past EITHER cap `titleVariants` skips the
+ * colon-segment loop entirely and emits only its FULL forms — see that
+ * function's docblock for the degrade rule and why dropping the derived axis is
+ * the safe direction.
+ *
+ * `MAX_VARIANT_TITLE_LENGTH` doubles as the source bound `hardcover.ts` applies
+ * to a member title before mapping it, so the two limits cannot drift apart.
+ * 2048 characters is roughly 25x the longest real book title; the values exist
+ * to bound adversarial or corrupt input, not to make a judgement about titles.
+ */
+export const MAX_VARIANT_TITLE_LENGTH = 2048;
+export const MAX_VARIANT_SEGMENTS = 32;
+
+/**
  * The scalar normalizer, and the SINGLE implementation home for it — a
  * server-homed one would be unreachable from here (`src/core/**` may not import
  * `src/server/**`) and would force a duplicate. `series-title-match.ts`
@@ -208,6 +222,13 @@ function colonSegments(base: string): string[] {
  * {@link normalizeTitleForVariantMatch} then erases. Consumers that count
  * segments must normalize and drop empties FIRST and count that set — the raw
  * length is not the effective one.
+ *
+ * Explicitly NOT subject to the `titleVariants` clamp (#2109 AC6). This function
+ * is documented as returning the EXACT base slices the generator derives from,
+ * and capping it silently would break that contract; it is already linear, so
+ * there is nothing to bound. No inconsistency arises from the asymmetry either:
+ * once the generator degrades, the ladder's `admitVariants` finds no derived
+ * variant to floor and admits only the unfloored `full` forms.
  */
 export function titleSegments(title: string): string[] {
   return colonSegments(stripParentheticals(title));
@@ -355,6 +376,32 @@ export function hasDegenerateFullForm(title: string): boolean {
  * Variants whose normalized text is empty are discarded, so a title carrying no
  * alphanumerics (`'[ ]'`, `'   '`) yields `[]` — never an empty-string entry that
  * could pair with another empty-string entry.
+ *
+ * **The clamp (#2109).** Past `MAX_VARIANT_TITLE_LENGTH` raw characters, or
+ * `MAX_VARIANT_SEGMENTS` colon segments in the paren-stripped base, the derived
+ * loop is skipped and only the FULL forms are emitted. Everything else about the
+ * function is unchanged: the two FULL pushes and the first-key-wins dedup run
+ * exactly as they always do, so a clamped result carries 1 or 2 entries
+ * following the ordinary dedup contract — the clamp removes work, it does not
+ * add a return shape. The one property it owns is that no `prefix(n)`,
+ * `suffix(n)` or `first+last` variant is emitted.
+ *
+ * Why: the loop slices, joins and normalizes once per segment, each step O(L), so
+ * it is O(L²) on colon-dense input — 8 KB measured at ~360 ms, 64 KB at ~27 s of
+ * SYNCHRONOUS event-loop blocking. That work runs inside `persistMembers`'
+ * transaction, and libSQL serializes every transaction at the single connection,
+ * so one corrupt community-edited member title stalls all other writes. Post-
+ * clamp the function is O(L) at any length: the depth scan, the normalizers and
+ * `hasDegenerateFullForm` are each linear and the quadratic loop is unreachable.
+ *
+ * The title text is NEVER truncated. Truncation manufactures a sheared fragment
+ * that the matcher would then trust as a complete title — exactly what G1
+ * forbids, and durable on the bind path. Dropping the derived axis can only ever
+ * yield FEWER variants, so its failure mode is a false REFUSAL (a missing "In
+ * Library" badge, which position rescue already covers) and never a false pair.
+ * Same safety posture the module takes on `ß`/`ø`/`æ`.
+ *
+ * `titleSegments` is deliberately NOT clamped — see its docblock.
  */
 export function titleVariants(title: string): SharedVariant[] {
   const variants: SharedVariant[] = [];
@@ -391,7 +438,13 @@ export function titleVariants(title: string): SharedVariant[] {
   const base = stripParentheticals(title);
   push(base, 'full', true);
 
+  // Two separate returns, not one combined predicate: each cap then has its own
+  // observation point (T8 / T9), so deleting either check fails a test.
+  if (title.length > MAX_VARIANT_TITLE_LENGTH) return variants;
+
   const segments = colonSegments(base);
+  if (segments.length > MAX_VARIANT_SEGMENTS) return variants;
+
   const last = segments[segments.length - 1];
   for (let n = segments.length; n >= 1; n--) {
     push(segments.slice(0, n).join(' '), `prefix(${n})`, true);
