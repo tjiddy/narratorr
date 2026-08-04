@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { HARDCOVER_TIMEOUT_MS } from '../utils/constants.js';
+import { MAX_VARIANT_TITLE_LENGTH } from '../utils/title-variants.js';
 import { RateLimitError, TransientError, MetadataError } from './errors.js';
 
 const HARDCOVER_PROVIDER = 'hardcover';
@@ -177,8 +178,40 @@ function mapMember(entry: z.infer<typeof hardcoverBookSeriesSchema>): HardcoverM
   };
 }
 
+/**
+ * The sole producer of `HardcoverMember[]` — both `getSeriesMembers` and
+ * `getSeriesMembersById` route through it — which is what makes the one length
+ * filter below a complete chokepoint (#2109 AC7).
+ *
+ * A member whose title exceeds `MAX_VARIANT_TITLE_LENGTH` is DROPPED; every
+ * other member in the same response is returned normally. Titles here are
+ * community-edited UGC arriving as a bare `z.string()`, and the consuming
+ * `persistMembers` generates title variants for each one inside a transaction
+ * that libSQL serializes against every other write.
+ *
+ * Three deliberate choices, each ruling out a worse degrade:
+ *
+ *  - **Never truncate.** A truncated title is a sheared fragment that
+ *    `findInLibraryMatch` then treats as a member's COMPLETE identity, so it can
+ *    FULL≡FULL a different library book named by the retained prefix — and on
+ *    the manual-bind path `bindHardcoverSeries` durably rewrites that book's
+ *    series fields. Dropping cannot produce that: the sheared string is never
+ *    constructed. Dropping can only ever yield FEWER members and therefore fewer
+ *    matches, so its failure mode is a false refusal, never a false pair.
+ *  - **Never reject the response.** `hardcoverBookSchema` nests inside
+ *    `seriesMembersResponseSchema`, whose `safeParse` failure throws
+ *    `MetadataError` — a `.max()` there would let one absurd member take down the
+ *    entire series card, converting a bounded perf problem into a hard outage.
+ *  - **Silent, deliberately.** `src/core/**` holds no logger and may not import
+ *    fastify, so surfacing the drop would mean plumbing a count out of the
+ *    adapter into the calling service — machinery a 2048-character threshold no
+ *    real title reaches does not warrant. `hardcover.test.ts` pins the drop so it
+ *    stays visible to developers.
+ */
 function mapSeries(entry: z.infer<typeof hardcoverSeriesSchema>): HardcoverSeriesData {
-  const members = (entry.book_series ?? []).map(mapMember);
+  const members = (entry.book_series ?? [])
+    .filter((member) => member.book.title.length <= MAX_VARIANT_TITLE_LENGTH)
+    .map(mapMember);
   return {
     id: entry.id,
     name: entry.name,

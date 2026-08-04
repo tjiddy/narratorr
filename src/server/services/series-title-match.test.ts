@@ -1,11 +1,17 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   explainTitlePairing,
   findInLibraryMatch,
   normalizeMemberTitleForMatch,
   VARIANT_CACHE_MAX,
 } from './series-title-match.js';
-import { titleVariants, hasDegenerateFullForm, normalizeTitleLosslessly } from '@core/utils/title-variants.js';
+import {
+  titleVariants,
+  hasDegenerateFullForm,
+  normalizeTitleLosslessly,
+  MAX_VARIANT_TITLE_LENGTH,
+} from '@core/utils/title-variants.js';
+import { HardcoverClient } from '@core/metadata/hardcover.js';
 import type { TitlePairArm } from '@shared/schemas/series-title-variants.js';
 
 // Spy-wrap the REAL generator so derivation counts are observable. A cache hit
@@ -930,5 +936,71 @@ describe('memoization', () => {
     spy.mockClear();
     derive(warm);
     expect(spy).toHaveBeenCalledWith(warm);
+  });
+});
+
+/**
+ * T13b / #2109 AC7 — the false-pair refutation, at the member→matcher seam.
+ *
+ * This is the counterfactual F5 named, constructed end to end: a library book
+ * titled `X` (exactly `MAX_VARIANT_TITLE_LENGTH` characters) and a Hardcover
+ * member titled `X + ' Distinguishing Suffix'`. The member is dropped at
+ * `mapSeries`, so it never reaches `findInLibraryMatch` at all and the library
+ * book keeps its `seriesName`/`seriesPosition`.
+ *
+ * Had AC7 TRUNCATED instead of dropped, the member's title would be exactly `X`;
+ * it would pair with that book on the FULL≡FULL arm, and on the bind path
+ * `bindHardcoverSeries` would durably rewrite the book's series fields, after
+ * which the wrong pairing position-matches forever. The assertions below fail
+ * under such an implementation — the member list would be non-empty and the
+ * claim would land — which is what makes this an observation point rather than a
+ * restatement of T13.
+ */
+describe('an over-length Hardcover member never reaches the matcher (#2109 T13b)', () => {
+  let originalFetch: typeof globalThis.fetch;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('drops it at mapSeries, so it cannot claim the library book named by its prefix', async () => {
+    const X = 'The Long Corrupt Title '.repeat(90).slice(0, MAX_VARIANT_TITLE_LENGTH);
+    expect(X).toHaveLength(MAX_VARIANT_TITLE_LENGTH);
+    const memberTitle = `${X} Distinguishing Suffix`;
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: {
+        series: [{
+          id: 1,
+          name: 'A',
+          slug: 'a',
+          author: { name: 'Y' },
+          book_series: [{ position: 1, book: { id: 101, slug: 'b', title: memberTitle, image: null, users_count: 1 } }],
+        }],
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const series = await new HardcoverClient('K').getSeriesMembers('A', 'Y');
+    // The member is gone before any matching happens.
+    expect(series!.members).toEqual([]);
+
+    // Nothing is left to claim the book, so no `bookId` is recorded for it.
+    // `seriesPosition: null` is deliberate: it forbids the position arm from
+    // rescuing the match, leaving the TITLE arm as the only way a claim could
+    // land — which is exactly the arm truncation would have handed the win to.
+    const libraryBook = { id: 7, title: X, seriesPosition: null };
+    const claims = series!.members.map((m) => findInLibraryMatch({ title: m.title, position: m.position }, [libraryBook]));
+    expect(claims).toEqual([]);
+
+    // The counterfactual, stated as an assertion rather than only a comment: a
+    // truncated title WOULD have claimed that book on the FULL≡FULL arm.
+    expect(findInLibraryMatch({ title: X, position: 1 }, [libraryBook])).toBe(libraryBook);
   });
 });

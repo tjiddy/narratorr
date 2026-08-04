@@ -57,13 +57,45 @@ import type {
 export type { Variant, VariantTag } from '@shared/schemas/series-title-variants.js';
 
 /**
- * Min trimmed length of a segment's left context for a `:` to act as a
- * boundary. Same threshold, same intent as `COLON_PREFIX_MIN` in
- * `src/shared/dedup.ts` — generalized from "the first colon" to "every colon"
- * (G3). Below the threshold the `:` stays inside its segment as ordinary
- * separator text, so `"IT: Chapter Two"` is one segment, not two.
+ * The colon-boundary threshold, imported from its single home in
+ * `src/shared/dedup.ts` (#2109 AC12) rather than re-declared — a core→shared
+ * VALUE import, which the layer rules permit (`src/core/**` is restricted from
+ * `src/server/**` only) and which this tree already does widely.
+ *
+ * Here it is the min trimmed length of a segment's LEFT CONTEXT for a `:` to act
+ * as a boundary: below it the `:` stays inside its segment as ordinary separator
+ * text, so `"IT: Chapter Two"` is one segment, not two.
+ *
+ * The shared constant unifies the NUMBER and nothing else — the two systems
+ * deliberately measure it over different strings and at different scope, and no
+ * import can reconcile that:
+ *
+ *  - `dedup.ts` applies it to the FIRST colon only, measured over
+ *    `normalizeTitleCore(title)` output — lowercased, whitespace-collapsed and
+ *    trailing-suffix-stripped before the colon is even located
+ *    (`buildTitleShape`).
+ *  - here it applies at EVERY colon (G3), measured over the RAW paren-stripped
+ *    segment text, before any normalization runs.
+ *
+ * Same number, different strings, different scope. A third hand-rolled copy
+ * lives at `src/server/services/tag-search-planner.ts` as a bare `>= 3` literal;
+ * consolidating it is #2102's job, not this import's.
  */
-const COLON_PREFIX_MIN = 3;
+import { COLON_PREFIX_MIN } from '@shared/dedup.js';
+
+/**
+ * The generator's input clamp (#2109). Past EITHER cap `titleVariants` skips the
+ * colon-segment loop entirely and emits only its FULL forms — see that
+ * function's docblock for the degrade rule and why dropping the derived axis is
+ * the safe direction.
+ *
+ * `MAX_VARIANT_TITLE_LENGTH` doubles as the source bound `hardcover.ts` applies
+ * to a member title before mapping it, so the two limits cannot drift apart.
+ * 2048 characters is roughly 25x the longest real book title; the values exist
+ * to bound adversarial or corrupt input, not to make a judgement about titles.
+ */
+export const MAX_VARIANT_TITLE_LENGTH = 2048;
+export const MAX_VARIANT_SEGMENTS = 32;
 
 /**
  * The scalar normalizer, and the SINGLE implementation home for it — a
@@ -91,22 +123,115 @@ const COLON_PREFIX_MIN = 3;
  * The generic parenthetical strip is NOT here — that is the derived axis.
  */
 export function normalizeTitleForVariantMatch(title: string): string {
-  return title
+  return applyCommonFolds(title, SCALAR_DIACRITIC_STRIP, SCALAR_KEEP_CLASS);
+}
+
+/**
+ * Every fold step the scalar and lossless pipelines GENUINELY share, in order,
+ * with the two steps they differ in passed in (#2109 AC8):
+ *
+ *   curly apostrophes → audio-edition tails (paren and bracket) → lowercase →
+ *   NFD → *diacriticStrip* → `&`/`+` → "and" → *keepClass* → collapse → trim
+ *
+ * PRIVATE, deliberately: this is internal DRY, not a new contract. Keeping it
+ * unexported is what leaves the #2104 AC30 export-freeze test a meaningful
+ * signal about the module's public surface.
+ *
+ * It cannot make the lockstep premise true BY CONSTRUCTION, and no extraction
+ * could: the two knobs stay independently editable, and the diacritic BAND
+ * asymmetry (`latin-bounded-combining-mark-strip`) is exactly the silent
+ * divergence that would follow a one-sided edit. The proof is the property test
+ * `asciiFold(normalizeTitleLosslessly(t)) === normalizeTitleForVariantMatch(t)`
+ * in `title-variants.test.ts`, which is required IN ADDITION to this extraction,
+ * not as an alternative to it.
+ */
+function applyCommonFolds(
+  title: string,
+  diacriticStrip: (decomposed: string) => string,
+  keepClass: RegExp,
+): string {
+  const decomposed = title
     .replace(/[’‘]/g, "'")
     .replace(/\(\s*(?:unabridged|audio|audible)\s*\)/gi, ' ')
     .replace(/\[\s*(?:unabridged|audio|audible)\s*\]/gi, ' ')
     .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .normalize('NFD');
+  return diacriticStrip(decomposed)
     .replace(/\s*[&+]\s*/g, ' and ')
-    .replace(/[^a-z0-9' ]+/g, ' ')
+    .replace(keepClass, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-/** Drop every `(...)` / `[...]` group. Runs on the RAW title, before segmentation. */
+/**
+ * The two knobs, one pair per pipeline. Both diacritic strips are bounded to
+ * U+0300–036F and that agreement is the lockstep premise
+ * `hasDegenerateFullForm` rests on — see `normalizeTitleLosslessly` for why the
+ * lossless one is additionally bounded to Latin bases, and why neither may be
+ * widened to `\p{M}`.
+ */
+const SCALAR_DIACRITIC_STRIP = (decomposed: string): string => decomposed.replace(/[̀-ͯ]/g, '');
+const SCALAR_KEEP_CLASS = /[^a-z0-9' ]+/g;
+const LOSSLESS_DIACRITIC_STRIP = (decomposed: string): string =>
+  decomposed.replace(/(\p{Script=Latin})[̀-ͯ]+/gu, '$1');
+const LOSSLESS_KEEP_CLASS = /[^\p{L}\p{N}\p{M}' ]+/gu;
+
+/**
+ * Drop every `(...)` / `[...]` group. Runs on the RAW title, before segmentation.
+ *
+ * A single left-to-right DEPTH-COUNTING scan, deliberately not a regex. `(` and
+ * `[` increment the depth, `)` and `]` decrement it with a floor at 0, and every
+ * bracket character plus every character at depth > 0 is emitted as a space.
+ * Both delimiter kinds share ONE counter, so `"Foo (Bar] Baz"` closes on the `]`
+ * and keeps `Baz`; a kind-aware stack would swallow the rest of the string.
+ *
+ * The contract the regex form could not honour (#2109):
+ *
+ *  - **An unterminated group strips to end-of-string.** A missing `)` is an
+ *    ordinary truncation artefact in community-edited metadata, and the old
+ *    `\([^)]*\)` simply did not match it — so the parenthetical's text and its
+ *    COLON stayed in the base and sheared a segment. `"The Spiral Path (World of
+ *    Warcraft: Traveler, Book 2"` emitted `prefix(1) = "the spiral path world of
+ *    warcraft"`, the exact G1 violation the two-axis rule above exists to forbid.
+ *  - **Nested groups strip as one unit.** `[^)]*` closed at the FIRST `)`, so the
+ *    inner group's tail leaked out: `"Dune (Deluxe (2nd) Edition: Annotated)"`
+ *    left `"Dune Edition: Annotated"` in the base and fabricated
+ *    `prefix(1) = "dune edition"`.
+ *
+ * The scan is also what makes the module linear on adversarial input: `\([^)]*\)`
+ * backtracks quadratically over a run of unmatched `(` (80 K chars → ~12 s
+ * measured), which the depth counter cannot do.
+ *
+ * One contiguous stripped RUN contributes exactly ONE space, not one space per
+ * character. That is byte-identical to what the regex form emitted for the input
+ * it did handle (a balanced group collapsed to a single space), which is what
+ * keeps `titleSegments` — documented as returning RAW, unnormalized text — from
+ * changing under callers for every well-formed title. Nothing downstream can see
+ * the difference either way (the sole production consumer,
+ * `search-query-ladder.ts:134`, normalizes each segment immediately, and every
+ * variant `raw` is whitespace-collapsed), so the cheaper-to-verify choice is the
+ * one that leaves the existing corpus untouched.
+ */
 function stripParentheticals(title: string): string {
-  return title.replace(/\([^)]*\)/g, ' ').replace(/\[[^\]]*\]/g, ' ');
+  let depth = 0;
+  let out = '';
+  let runEmitted = false;
+  for (const ch of title) {
+    const opener = ch === '(' || ch === '[';
+    const closer = ch === ')' || ch === ']';
+    if (!opener && !closer && depth === 0) {
+      out += ch;
+      runEmitted = false;
+      continue;
+    }
+    if (opener) depth++;
+    else if (closer && depth > 0) depth--;
+    if (!runEmitted) {
+      out += ' ';
+      runEmitted = true;
+    }
+  }
+  return out;
 }
 
 /**
@@ -155,6 +280,13 @@ function colonSegments(base: string): string[] {
  * {@link normalizeTitleForVariantMatch} then erases. Consumers that count
  * segments must normalize and drop empties FIRST and count that set — the raw
  * length is not the effective one.
+ *
+ * Explicitly NOT subject to the `titleVariants` clamp (#2109 AC6). This function
+ * is documented as returning the EXACT base slices the generator derives from,
+ * and capping it silently would break that contract; it is already linear, so
+ * there is nothing to bound. No inconsistency arises from the asymmetry either:
+ * once the generator degrades, the ladder's `admitVariants` finds no derived
+ * variant to floor and admits only the unfloored `full` forms.
  */
 export function titleSegments(title: string): string[] {
   return colonSegments(stripParentheticals(title));
@@ -208,18 +340,7 @@ export function titleSegments(title: string): string[] {
  * ordinary composed form.
  */
 export function normalizeTitleLosslessly(title: string): string {
-  return title
-    .replace(/[’‘]/g, "'")
-    .replace(/\(\s*(?:unabridged|audio|audible)\s*\)/gi, ' ')
-    .replace(/\[\s*(?:unabridged|audio|audible)\s*\]/gi, ' ')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/(\p{Script=Latin})[̀-ͯ]+/gu, '$1')
-    .replace(/\s*[&+]\s*/g, ' and ')
-    .replace(/[^\p{L}\p{N}\p{M}' ]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .normalize('NFC');
+  return applyCommonFolds(title, LOSSLESS_DIACRITIC_STRIP, LOSSLESS_KEEP_CLASS).normalize('NFC');
 }
 
 /**
@@ -302,6 +423,32 @@ export function hasDegenerateFullForm(title: string): boolean {
  * Variants whose normalized text is empty are discarded, so a title carrying no
  * alphanumerics (`'[ ]'`, `'   '`) yields `[]` — never an empty-string entry that
  * could pair with another empty-string entry.
+ *
+ * **The clamp (#2109).** Past `MAX_VARIANT_TITLE_LENGTH` raw characters, or
+ * `MAX_VARIANT_SEGMENTS` colon segments in the paren-stripped base, the derived
+ * loop is skipped and only the FULL forms are emitted. Everything else about the
+ * function is unchanged: the two FULL pushes and the first-key-wins dedup run
+ * exactly as they always do, so a clamped result carries 1 or 2 entries
+ * following the ordinary dedup contract — the clamp removes work, it does not
+ * add a return shape. The one property it owns is that no `prefix(n)`,
+ * `suffix(n)` or `first+last` variant is emitted.
+ *
+ * Why: the loop slices, joins and normalizes once per segment, each step O(L), so
+ * it is O(L²) on colon-dense input — 8 KB measured at ~360 ms, 64 KB at ~27 s of
+ * SYNCHRONOUS event-loop blocking. That work runs inside `persistMembers`'
+ * transaction, and libSQL serializes every transaction at the single connection,
+ * so one corrupt community-edited member title stalls all other writes. Post-
+ * clamp the function is O(L) at any length: the depth scan, the normalizers and
+ * `hasDegenerateFullForm` are each linear and the quadratic loop is unreachable.
+ *
+ * The title text is NEVER truncated. Truncation manufactures a sheared fragment
+ * that the matcher would then trust as a complete title — exactly what G1
+ * forbids, and durable on the bind path. Dropping the derived axis can only ever
+ * yield FEWER variants, so its failure mode is a false REFUSAL (a missing "In
+ * Library" badge, which position rescue already covers) and never a false pair.
+ * Same safety posture the module takes on `ß`/`ø`/`æ`.
+ *
+ * `titleSegments` is deliberately NOT clamped — see its docblock.
  */
 export function titleVariants(title: string): SharedVariant[] {
   const variants: SharedVariant[] = [];
@@ -338,7 +485,13 @@ export function titleVariants(title: string): SharedVariant[] {
   const base = stripParentheticals(title);
   push(base, 'full', true);
 
+  // Two separate returns, not one combined predicate: each cap then has its own
+  // observation point (T8 / T9), so deleting either check fails a test.
+  if (title.length > MAX_VARIANT_TITLE_LENGTH) return variants;
+
   const segments = colonSegments(base);
+  if (segments.length > MAX_VARIANT_SEGMENTS) return variants;
+
   const last = segments[segments.length - 1];
   for (let n = segments.length; n >= 1; n--) {
     push(segments.slice(0, n).join(' '), `prefix(${n})`, true);

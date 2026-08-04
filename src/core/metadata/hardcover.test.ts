@@ -160,6 +160,104 @@ describe('HardcoverClient', () => {
     });
   });
 
+  /**
+   * T13 / #2109 AC7 — bound the untrusted source by DROPPING the over-length
+   * member, never by truncating its title and never by rejecting the response.
+   *
+   * `mapSeries` is the sole producer of `HardcoverMember[]` — both
+   * `getSeriesMembers` and `getSeriesMembersById` route through it — so the one
+   * filter is a complete chokepoint. Titles here are community-edited UGC
+   * validated as a bare `z.string()`, and `persistMembers` runs variant
+   * generation for each one inside a transaction that serializes every other
+   * libSQL write.
+   *
+   * Three properties, one mocked response:
+   *
+   *  1. **Availability.** Every other member still comes back. This is the half
+   *     a `.max()` on `hardcoverBookSchema.title` would break: that schema nests
+   *     inside `seriesMembersResponseSchema`, whose `safeParse` failure throws
+   *     `MetadataError` — one absurd member would take down the ENTIRE series
+   *     card, converting a bounded perf problem into a hard outage.
+   *  2. **The over-length member is dropped**, not shortened.
+   *  3. **No sheared identity escapes.** A truncated title is a fragment the
+   *     matcher then trusts as a complete title: `persistMembers` passes
+   *     `member.title` straight to `findInLibraryMatch`, whose title tier treats
+   *     the member's FULL form as its complete identity, and on the manual-bind
+   *     path `bindHardcoverSeries` durably rewrites the claimed book's
+   *     `seriesName`/`seriesPosition`. This assertion is what fails if someone
+   *     later "helpfully" reintroduces truncation.
+   */
+  describe('over-length member titles (#2109 AC7)', () => {
+    const MAX_VARIANT_TITLE_LENGTH = 2048;
+
+    function memberEntry(id: number, title: string, position: number): unknown {
+      return { position, book: { id, slug: `book-${id}`, title, image: { url: `https://img/${id}` }, users_count: 1 } };
+    }
+
+    async function membersFrom(entries: unknown[]): Promise<{ title: string; hardcoverBookId: number }[]> {
+      fetchMock.mockResolvedValueOnce(buildJsonResponse({
+        data: { series: [{ id: 1, name: 'A', slug: 'a', author: { name: 'X' }, book_series: entries }] },
+      }));
+      const result = await new HardcoverClient('K').getSeriesMembers('A', 'X');
+      return result!.members;
+    }
+
+    const NORMAL = 'Book One';
+    const AT_CAP = 'A'.repeat(MAX_VARIANT_TITLE_LENGTH);
+    const OVER_CAP = 'B'.repeat(MAX_VARIANT_TITLE_LENGTH + 1);
+    const ABSURD = 'C'.repeat(64_000);
+
+    it('drops the over-length member and returns every other one (T13)', async () => {
+      const members = await membersFrom([
+        memberEntry(101, NORMAL, 1),
+        memberEntry(102, OVER_CAP, 2),
+        memberEntry(103, ABSURD, 3),
+      ]);
+
+      // 1 — availability: the response parsed and the normal member survived.
+      expect(members.map((m) => m.hardcoverBookId)).toEqual([101]);
+      expect(members[0]!.title).toBe(NORMAL);
+      // 2 — dropped, not shortened.
+      expect(members.some((m) => m.hardcoverBookId === 102 || m.hardcoverBookId === 103)).toBe(false);
+      // 3 — no sheared identity escaped.
+      for (const member of members) {
+        expect(member.title.length).toBeLessThanOrEqual(MAX_VARIANT_TITLE_LENGTH);
+        expect(OVER_CAP.startsWith(member.title)).toBe(false);
+        expect(ABSURD.startsWith(member.title)).toBe(false);
+      }
+    });
+
+    /**
+     * Spec-review F6 — the predicate's own boundary. AC7 implements the same
+     * numeric limit at a NEW predicate in a different module, so the generator's
+     * boundary quartet cannot observe it: a filter that mistakenly used `>=`
+     * would drop a perfectly valid member whose title is exactly at the cap and
+     * leave every other test in this repo green.
+     */
+    it('retains an exactly-at-cap member byte for byte and drops cap+1 (T13, F6)', async () => {
+      const members = await membersFrom([
+        memberEntry(201, AT_CAP, 1),
+        memberEntry(202, OVER_CAP, 2),
+      ]);
+
+      expect(members).toHaveLength(1);
+      expect(members[0]!.hardcoverBookId).toBe(201);
+      expect(members[0]!.title).toBe(AT_CAP);
+      expect(members[0]!.title.length).toBe(MAX_VARIANT_TITLE_LENGTH);
+    });
+
+    /**
+     * Every member over the cap resolves to `members: []` — an ALREADY-SUPPORTED
+     * shape (Hardcover legitimately returns `book_series: []` today, pinned
+     * above), so `persistMembers` iterates an empty list and writes no rows. No
+     * new state is introduced by the drop.
+     */
+    it('resolves the series with members: [] when every member is over the cap', async () => {
+      const members = await membersFrom([memberEntry(301, OVER_CAP, 1), memberEntry(302, ABSURD, 2)]);
+      expect(members).toEqual([]);
+    });
+  });
+
   describe('searchSeries — Typesense / Algolia hit extraction', () => {
     function buildSearchResponse(results: unknown): Response {
       return buildJsonResponse({ data: { search: { results } } });
