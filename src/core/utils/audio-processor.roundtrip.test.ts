@@ -402,9 +402,12 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
    * The output must carry the WHOLE book, not just the metadata donor's single part.
    *
    * A band rather than `toBeCloseTo`: an AAC re-encode adds encoder priming/padding that
-   * differs by ffmpeg version (~24 ms on copy, ~42 ms at 64 kbps here), which would sit right
-   * on `toBeCloseTo(…, 0)`'s 0.05 edge. Half a second still separates the 9 s whole from a
-   * truncated 3 s first part by a factor the assertion can never confuse.
+   * differs by ffmpeg version (~24 ms on copy, ~42 ms at 64 kbps here). `toBeCloseTo`'s window
+   * is `10**-precision / 2` — the default precision 2 is 0.005 and precision 1 is 0.05, both
+   * tighter than the padding; precision 0 happens to equal this ±0.5 band, but the explicit band
+   * states the intended tolerance instead of hiding it in a precision digit. Half a second still
+   * separates the 9 s whole from a truncated 3 s first part by a factor the assertion can never
+   * confuse.
    */
   function expectFullBookDuration(file: string): void {
     const total = PART_SECONDS * 3;
