@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
-import { existsSync, mkdtempSync, rmSync } from 'fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { sql } from 'drizzle-orm';
@@ -121,62 +121,102 @@ describe('series-title-match-blast-check — replay candidate order (#2108)', ()
 });
 
 /**
- * #2108 — the CLI entry guard has TWO arms and they need different observations.
+ * #2108 — the CLI entry guard has TWO arms, and each needs its OWN isolated
+ * child process. Neither is observable from inside the vitest worker:
  *
- * The FALSE arm is observed by this very file: importing the module for
- * `loadReplayCandidates` must not run the replay. Drop the guard and the import
- * executes `main()`, which — with no live library at the default path — prints
- * the refusal and sets `process.exitCode = 1`, failing the whole vitest run
- * regardless of assertions.
+ *  - The TRUE arm can't be, because this module is already imported, so nothing
+ *    a test does to `process.argv` re-evaluates the guard.
+ *  - The FALSE arm can't be either, and that is subtler. Asserting the worker's
+ *    ambient `process.exitCode` looks like an observation but is one only when
+ *    the host happens to have no database on `main()`'s resolution chain,
+ *    `process.argv[2] ?? process.env.DATABASE_PATH ?? './config/narratorr.db'`.
+ *    MEASURED: with a database at that documented default path — which every
+ *    developer who has run the app locally has — deleting the guard makes the
+ *    import run the entire replay, return normally, and leave the exit code at
+ *    0, so the whole suite stays green while the arm is broken.
  *
- * The TRUE arm cannot be observed in-process at all: the module is already
- * imported, so nothing a test does to `process.argv` re-evaluates the guard.
- * Only a real direct execution can see it, and without one, `if (false)` or a
- * wrong argv slot silently disables the documented
- * `pnpm exec tsx …blast-check.ts <db>` command while every test stays green.
+ * Both cases therefore spawn a child with every input on that chain CONTROLLED:
+ * no extra argv, `DATABASE_PATH` pointed at a path inside a directory created
+ * moments earlier, and — because `??` short-circuits on `DATABASE_PATH` — the
+ * `./config/narratorr.db` default made unreachable rather than merely assumed
+ * absent.
  */
 describe('series-title-match-blast-check — CLI entry guard (#2108)', () => {
   // Resolved through Node's resolver rather than `node_modules/.bin`, which is a
   // `.CMD` shim on Windows; `process.execPath` is the node already running us.
   const tsxCli = createRequire(import.meta.url).resolve('tsx/cli');
   const script = fileURLToPath(new URL('./series-title-match-blast-check.ts', import.meta.url));
+  /** Positive proof the child actually got to the end of its entry module. */
+  const SENTINEL = 'IMPORT-COMPLETED';
 
-  it('does not run the replay on import (the guard\'s false arm)', () => {
-    expect(process.exitCode ?? 0).toBe(0);
-  });
+  interface ChildRun { status: number | null; stdout: string; stderr: string }
 
-  it('still enters main when executed directly', () => {
-    // The missing-DB refusal is `main()`'s first observable, and it needs no
-    // library fixture: the script deliberately refuses a path it would otherwise
-    // create, so "did main run" is answerable without a live database.
-    //
-    // But that branch's precondition must be CONSTRUCTED, not assumed of shared
-    // host state. `main()` dispatches on `existsSync(dbPath)`, so a fixed
-    // `tmpdir()` filename left behind by an earlier run — or written by a
-    // concurrent process — would send the child down the live-replay path and
-    // make this regression signal nondeterministic. A fresh `mkdtempSync`
-    // directory (the same isolation the replay suite above uses) guarantees the
-    // path is absent, and the assertion below records that it is.
-    const cliDir = mkdtempSync(join(tmpdir(), 'blast-check-cli-'));
+  /**
+   * Run `node <tsx> <entry> [args]` with the database path forced to `dbPath`.
+   *
+   * `cwd` stays the repo root so tsx resolves the `@db/*` tsconfig aliases the
+   * script imports; the DB path is controlled through the environment instead,
+   * which is both sufficient and stronger — setting `DATABASE_PATH` removes the
+   * cwd-relative default from the chain entirely.
+   */
+  function runChild(entry: string, args: string[], dbPath: string): ChildRun {
     try {
-      const missing = join(cliDir, 'absent.db');
+      const stdout = execFileSync(process.execPath, [tsxCli, entry, ...args], {
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_PATH: dbPath },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return { status: 0, stdout, stderr: '' };
+    } catch (error: unknown) {
+      const failure = error as { status?: number | null; stdout?: string; stderr?: string };
+      return { status: failure.status ?? null, stdout: failure.stdout ?? '', stderr: failure.stderr ?? '' };
+    }
+  }
+
+  /** A directory that did not exist a moment ago, so nothing in it can be stale or contended. */
+  function withTempDir(run: (dir: string) => void): void {
+    const dir = mkdtempSync(join(tmpdir(), 'blast-check-cli-'));
+    try {
+      run(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('does not run the replay when the module is only imported', () => {
+    withTempDir((dir) => {
+      const missing = join(dir, 'absent.db');
       expect(existsSync(missing)).toBe(false);
 
-      let status: number | null = 0;
-      let stderr = '';
-      try {
-        execFileSync(process.execPath, [tsxCli, script, missing], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-      } catch (error: unknown) {
-        const failure = error as { status?: number | null; stderr?: string };
-        status = failure.status ?? null;
-        stderr = failure.stderr ?? '';
-      }
+      // `.mts`, not `.ts`: outside the repo no `"type": "module"` is in scope, so
+      // tsx compiles the imported module as CJS and its top-level `await main()`
+      // fails to transform — a load error that would satisfy "no replay ran"
+      // vacuously. The sentinel below is what catches that.
+      const probe = join(dir, 'probe.mts');
+      writeFileSync(probe, `import '${pathToFileURL(script).href}';\nprocess.stdout.write('${SENTINEL}');\n`);
+
+      const child = runChild(probe, [], missing);
+
+      expect(child.stdout).toContain(SENTINEL);
+      // Had `main()` run, the controlled-missing path guarantees this refusal.
+      expect(`${child.stdout}${child.stderr}`).not.toContain('No database at');
+      expect(child.status).toBe(0);
+    });
+  }, 60_000);
+
+  it('still enters main when executed directly', () => {
+    withTempDir((dir) => {
+      // The missing-DB refusal is `main()`'s first observable, and it needs no
+      // library fixture: the script deliberately refuses a path it would
+      // otherwise create, so "did main run" is answerable without a database.
+      const missing = join(dir, 'absent.db');
+      expect(existsSync(missing)).toBe(false);
+
+      const child = runChild(script, [missing], missing);
 
       // Both halves matter: a guard that never fires exits 0 with no output.
-      expect(stderr).toContain(`No database at ${missing}`);
-      expect(status).toBe(1);
-    } finally {
-      rmSync(cliDir, { recursive: true, force: true });
-    }
+      expect(child.stderr).toContain(`No database at ${missing}`);
+      expect(child.status).toBe(1);
+    });
   }, 60_000);
 });
