@@ -162,22 +162,34 @@ export async function classifyStagingDir(stagingDir: string): Promise<MergeStagi
     : 'ambiguous';
 }
 
-/** Resolve the library root, or `null` when it cannot be established (pass-level skip). */
-async function resolveLibraryRoot(deps: SettleInterruptedMergesDeps): Promise<string | null> {
+/**
+ * Resolve the library root, or `null` when it cannot be established (pass-level skip).
+ *
+ * Deliberately does NOT log: D6 gives the pass-level skip exactly ONE warn whether the settings
+ * read threw or simply yielded an empty path, so the caller owns the single record and this
+ * helper hands it the cause to attach. Logging here too would double-report one failure.
+ */
+async function resolveLibraryRoot(deps: SettleInterruptedMergesDeps): Promise<{ root: string | null; error?: unknown }> {
   try {
     const library = await deps.settingsService.get('library');
-    return library?.path || null;
+    return { root: library?.path || null };
   } catch (error: unknown) {
-    deps.log.warn({ error: serializeError(error) }, 'Merge boot recovery: failed to resolve library root — skipping this boot');
-    return null;
+    return { root: null, error };
   }
 }
 
-/** Outcome of one candidate's per-book work, folded into the plan by the caller. */
+/**
+ * Outcome of one candidate's per-book work, folded into the plan by the caller.
+ *
+ * `cleaned` rides on BOTH terminal kinds because the counters it feeds are step counters, not a
+ * partition of `candidates` (D6): a staging dir that was really deleted stays counted even when
+ * the settlement insert that followed it failed. Only `retryable` is a candidate-level outcome,
+ * and it is the one kind that carries no `cleaned` — by definition nothing was removed.
+ */
 type CandidateOutcome =
   | { kind: 'settled'; cleaned: boolean; requeue: boolean }
   | { kind: 'retryable' }
-  | { kind: 'failed' };
+  | { kind: 'failed'; cleaned: boolean };
 
 /**
  * Write the terminal `merge_failed` row. Settlement is TERMINAL FOR DETECTION — once this row
@@ -197,7 +209,10 @@ async function settleCandidate(
   });
 }
 
-/** Settle a candidate that has nothing left to clean, mapping a rejected insert to `failed`. */
+/**
+ * Settle a candidate that has nothing left to clean, mapping a rejected insert to `failed`.
+ * `cleaned` is carried through to the failure outcome too — the step already landed.
+ */
 async function settleOnly(
   deps: SettleInterruptedMergesDeps,
   candidate: InterruptedMergeCandidate,
@@ -214,7 +229,7 @@ async function settleOnly(
       { error: serializeError(error), bookId: candidate.bookId },
       'Merge boot recovery: could not record the merge_failed settlement — the dangling event survives for the next boot',
     );
-    return { kind: 'failed' };
+    return { kind: 'failed', cleaned };
   }
   return { kind: 'settled', cleaned, requeue };
 }
@@ -362,11 +377,18 @@ export async function settleInterruptedMerges(deps: SettleInterruptedMergesDeps)
   // Resolved FIRST, before detection: every destructive op below is containment-guarded against
   // this root, so without it none of them may run. A pass-level skip settles nothing and reports
   // all-zero counters — the whole pass retries on the next boot.
-  const libraryRoot = await resolveLibraryRoot(deps);
-  if (!libraryRoot) {
-    deps.log.warn('Merge boot recovery: no library root configured — skipping merge recovery this boot');
+  const resolved = await resolveLibraryRoot(deps);
+  if (!resolved.root) {
+    // EXACTLY one warn for the pass-level skip, whether the read threw or the path was empty
+    // (D6's first taxonomy row covers both with a single record). One call site is what enforces
+    // it — the cause rides along as `error` when there was one.
+    deps.log.warn(
+      resolved.error !== undefined ? { error: serializeError(resolved.error) } : {},
+      'Merge boot recovery: no library root resolved — skipping merge recovery this boot',
+    );
     return { requeue, counters };
   }
+  const libraryRoot = resolved.root;
 
   const candidates = await findInterruptedMergeCandidates(deps.db);
   counters.candidates = candidates.length;
@@ -375,13 +397,17 @@ export async function settleInterruptedMerges(deps: SettleInterruptedMergesDeps)
     const outcome = await recoverCandidate(deps, candidate, libraryRoot);
     if (outcome.kind === 'retryable') {
       counters.retryable++;
-    } else if (outcome.kind === 'failed') {
-      counters.failed++;
-    } else {
-      counters.settled++;
-      if (outcome.cleaned) counters.cleaned++;
-      if (outcome.requeue) requeue.push(candidate.bookId);
+      continue;
     }
+    // `cleaned` is a STEP counter: a staging dir that was really removed stays counted even when
+    // the settlement that followed it failed (D6 — the counters do not partition `candidates`).
+    if (outcome.cleaned) counters.cleaned++;
+    if (outcome.kind === 'failed') {
+      counters.failed++;
+      continue;
+    }
+    counters.settled++;
+    if (outcome.requeue) requeue.push(candidate.bookId);
   }
 
   return { requeue, counters };

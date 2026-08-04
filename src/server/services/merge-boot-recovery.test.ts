@@ -422,18 +422,27 @@ describe('#2099 merge boot recovery — settlement phase', () => {
       expect(realpath).not.toHaveBeenCalled();
       expect(rm).not.toHaveBeenCalled();
       expect(plan).toEqual({ requeue: [], counters: { candidates: 0, cleaned: 0, settled: 0, retryable: 0, failed: 0 } });
+      // Same single record as the rejecting-read branch, but with no cause to attach.
       expect(log.warn).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith({}, expect.any(String));
     });
 
-    it('a rejecting settings read skips the pass without throwing out of it', async () => {
+    it('a rejecting settings read skips the pass with ONE warn carrying the cause', async () => {
       await seedBook('Stormrage', 628, 'auto');
       settingsService.get.mockRejectedValue(new Error('settings unavailable'));
 
       const plan = await settleInterruptedMerges(deps());
 
       expect(eventHistory.create).not.toHaveBeenCalled();
+      expect(readdir).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
       expect(plan.counters).toEqual({ candidates: 0, cleaned: 0, settled: 0, retryable: 0, failed: 0 });
-      expect(log.warn).toHaveBeenCalled();
+      // D6 gives the pass-level skip a SINGLE record — a throwing read must not warn twice.
+      expect(log.warn).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        { error: expect.objectContaining({ message: 'settings unavailable' }) },
+        expect.any(String),
+      );
     });
   });
 
@@ -465,8 +474,10 @@ describe('#2099 merge boot recovery — settlement phase', () => {
 
     const first = await settleInterruptedMerges(deps());
 
-    expect(await exists(stagingDir)).toBe(false); // the clean landed; only the insert failed
-    expect(first.counters).toEqual({ candidates: 1, cleaned: 0, settled: 0, retryable: 0, failed: 1 });
+    // The clean landed; only the insert failed. `cleaned` is a STEP counter, so the removal the
+    // operator can see on disk stays reported even though the candidate's outcome is `failed`.
+    expect(await exists(stagingDir)).toBe(false);
+    expect(first.counters).toEqual({ candidates: 1, cleaned: 1, settled: 0, retryable: 0, failed: 1 });
     expect(first.requeue).toEqual([]);
 
     const second = await settleInterruptedMerges(deps());
