@@ -108,10 +108,24 @@ export class MergeService {
     return this.origins.get(bookId) ?? 'manual';
   }
 
-  private emitMergeStarted(bookId: number, bookTitle: string): void {
-    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_started', source: this.originFor(bookId) })
-      .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record merge_started event'));
+  /**
+   * Record the authoritative `merge_started` row and emit its SSE twin.
+   *
+   * The history insert is **awaited** (#2099 D2): boot recovery detects an interrupted merge
+   * purely from the event log, so a merge whose start row never committed while its staging
+   * dir survived would be an orphan no later pass could ever find. A rejection therefore
+   * aborts the merge through `executeMerge`'s catch, before `stagingOwned` is set — see the
+   * `stagingOwned` gate there.
+   *
+   * The insert is *invoked* before the SSE emit (unchanged call order) but the `await` sits
+   * after it, so `safeEmit` still runs synchronously ahead of the suspension point and live
+   * Activity/book-page behavior is identical. Terminal writes (`merged` / `merge_failed`)
+   * stay best-effort/fire-and-forget — only the start row is load-bearing for recovery.
+   */
+  private async emitMergeStarted(bookId: number, bookTitle: string): Promise<void> {
+    const recorded = this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_started', source: this.originFor(bookId) });
     safeEmit(this.eventBroadcaster, 'merge_started', { book_id: bookId, book_title: bookTitle }, this.log);
+    await recorded;
   }
 
   private emitMergeFailed(bookId: number, bookTitle: string, error: string, reason: MergeFailedReason = 'error'): void {
@@ -324,13 +338,25 @@ export class MergeService {
     const controller = new AbortController();
     this.abortControllers.set(bookId, controller);
 
-    this.emitMergeStarted(bookId, book.title);
     // Born-hidden staging dir (AC11): `.<book>.merge-tmp` — dot-led basename so its populated
     // multi-GB audio is invisible to ABS/scanners for the whole merge, yet stays a sibling on the
     // same filesystem (atomic finalize rename preserved). Its owner still enumerates it by identity.
     const stagingDir = dotPrefixBasename(bookPath + '.merge-tmp');
 
+    // Does THIS execution own `stagingDir`? Flipped true immediately before `runStaging`, whose
+    // first two statements are the staging `rm` + `mkdir` — from that point the path belongs to
+    // this merge and the catch may delete it. Before that point the path is deterministic but
+    // *unclaimed*, and may still hold a prior crash's orphan awaiting boot recovery (#2099 D2):
+    // deleting it there would downgrade a `pre-commit` recovery candidate to `no-staging` and
+    // silently forfeit its automatic re-queue.
+    let stagingOwned = false;
+
     try {
+      // The authoritative start row lands FIRST, before any filesystem mutation this execution
+      // owns (#2099 D2). A rejected insert routes straight to the catch → `merge_failed`, with
+      // `stagingOwned` still false, so the staging path is left exactly as it was found.
+      await this.emitMergeStarted(bookId, book.title);
+
       // Converge any interrupted commit-pending marker at bookPath BEFORE any staging
       // work (#1418). A killed import can leave bookPath with an armed marker + populated
       // `.import-bak`; without recovery, the merge output lands inside an armed path and a
@@ -356,6 +382,7 @@ export class MergeService {
       }
 
       this.emitMergeProgress(bookId, book.title, 'staging');
+      stagingOwned = true; // runStaging's first act is `rm` + `mkdir` on stagingDir — it is ours now
       const { stagedOutput, warnings: processingWarnings } = await this.runStaging(
         stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, { ...processingSettings, ffmpegPath },
         bookId, book.title, librarySettings.fileFormat, toNamingOptions(librarySettings), controller.signal,
@@ -400,7 +427,12 @@ export class MergeService {
       const errorMessage = getErrorMessage(error);
       const reason: MergeFailedReason = controller.signal.aborted ? 'cancelled' : 'error';
       this.emitMergeFailed(bookId, book.title, errorMessage, reason);
-      try { await rm(stagingDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      // Only clean what this execution claimed. An abort before `runStaging` (rejected start
+      // insert, `recoverInterruptedCommit` failure, the post-recovery `< 2 files` guard) leaves
+      // the path untouched — including a prior crash's orphan, which boot recovery still needs.
+      if (stagingOwned) {
+        try { await rm(stagingDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      }
       throw error;
     } finally {
       this.abortControllers.delete(bookId);
