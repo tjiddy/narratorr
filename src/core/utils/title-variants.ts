@@ -57,13 +57,31 @@ import type {
 export type { Variant, VariantTag } from '@shared/schemas/series-title-variants.js';
 
 /**
- * Min trimmed length of a segment's left context for a `:` to act as a
- * boundary. Same threshold, same intent as `COLON_PREFIX_MIN` in
- * `src/shared/dedup.ts` — generalized from "the first colon" to "every colon"
- * (G3). Below the threshold the `:` stays inside its segment as ordinary
- * separator text, so `"IT: Chapter Two"` is one segment, not two.
+ * The colon-boundary threshold, imported from its single home in
+ * `src/shared/dedup.ts` (#2109 AC12) rather than re-declared — a core→shared
+ * VALUE import, which the layer rules permit (`src/core/**` is restricted from
+ * `src/server/**` only) and which this tree already does widely.
+ *
+ * Here it is the min trimmed length of a segment's LEFT CONTEXT for a `:` to act
+ * as a boundary: below it the `:` stays inside its segment as ordinary separator
+ * text, so `"IT: Chapter Two"` is one segment, not two.
+ *
+ * The shared constant unifies the NUMBER and nothing else — the two systems
+ * deliberately measure it over different strings and at different scope, and no
+ * import can reconcile that:
+ *
+ *  - `dedup.ts` applies it to the FIRST colon only, measured over
+ *    `normalizeTitleCore(title)` output — lowercased, whitespace-collapsed and
+ *    trailing-suffix-stripped before the colon is even located
+ *    (`buildTitleShape`).
+ *  - here it applies at EVERY colon (G3), measured over the RAW paren-stripped
+ *    segment text, before any normalization runs.
+ *
+ * Same number, different strings, different scope. A third hand-rolled copy
+ * lives at `src/server/services/tag-search-planner.ts` as a bare `>= 3` literal;
+ * consolidating it is #2102's job, not this import's.
  */
-const COLON_PREFIX_MIN = 3;
+import { COLON_PREFIX_MIN } from '@shared/dedup.js';
 
 /**
  * The generator's input clamp (#2109). Past EITHER cap `titleVariants` skips the
