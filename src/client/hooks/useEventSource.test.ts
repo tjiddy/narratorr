@@ -802,7 +802,26 @@ describe('#257 merge observability — useEventSource', () => {
       setMergeProgress(42, null);
     });
 
-    it('merge_started sets progress to { phase: starting }', () => {
+    // #2129 — non-terminal state has ONE source now: the merge_state snapshot. The incremental
+    // events stay on the wire (toasts, event history, cache) but no longer write the store.
+    it('merge_queued / merge_started / merge_progress no longer write the store (AC8)', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result: progressResult } = renderHook(() => useMergeProgress(42));
+      const es = MockEventSource.instances[0];
+      act(() => es!.simulateOpen());
+
+      act(() => es!.simulateEvent('merge_queued', { book_id: 42, book_title: 'My Book', position: 2 }));
+      act(() => es!.simulateEvent('merge_queue_updated', { book_id: 42, book_title: 'My Book', position: 1 }));
+      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_progress', {
+        book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
+      }));
+
+      expect(progressResult.current).toBeNull();
+    });
+
+    it('merge_state sets phase and percentage in the store', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });
       const { result: progressResult } = renderHook(() => useMergeProgress(42));
@@ -811,20 +830,8 @@ describe('#257 merge observability — useEventSource', () => {
 
       expect(progressResult.current).toBeNull();
 
-      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
-
-      expect(progressResult.current).toEqual({ phase: 'starting' });
-    });
-
-    it('merge_progress updates phase and percentage in store', () => {
-      const { wrapper } = createWrapper();
-      renderHook(() => useEventSource('key'), { wrapper });
-      const { result: progressResult } = renderHook(() => useMergeProgress(42));
-      const es = MockEventSource.instances[0];
-      act(() => es!.simulateOpen());
-
-      act(() => es!.simulateEvent('merge_progress', {
-        book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5 }], queued: [],
       }));
 
       expect(progressResult.current).toEqual({ phase: 'processing', percentage: 0.5 });
@@ -837,7 +844,9 @@ describe('#257 merge observability — useEventSource', () => {
       const es = MockEventSource.instances[0];
       act(() => es!.simulateOpen());
 
-      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 42, book_title: 'My Book', phase: 'starting' }], queued: [],
+      }));
       expect(progressResult.current).not.toBeNull();
 
       act(() => es!.simulateEvent('merge_complete', {
@@ -855,7 +864,9 @@ describe('#257 merge observability — useEventSource', () => {
       const es = MockEventSource.instances[0];
       act(() => es!.simulateOpen());
 
-      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 42, book_title: 'My Book', phase: 'starting' }], queued: [],
+      }));
       expect(progressResult.current).not.toBeNull();
 
       act(() => es!.simulateEvent('merge_failed', {
@@ -872,43 +883,48 @@ describe('#257 merge observability — useEventSource', () => {
       resetMergeStore();
     });
 
-    it('merge_started passes bookTitle into activity store', () => {
+    it('merge_state passes bookTitle and phase into the activity store', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });
       const { result } = renderHook(() => useMergeActivityCards());
       const es = MockEventSource.instances[0];
       act(() => es!.simulateOpen());
 
-      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 42, book_title: 'My Book', phase: 'starting' }], queued: [],
+      }));
 
       expect(result.current).toHaveLength(1);
       expect(result.current[0]).toMatchObject({ bookId: 42, bookTitle: 'My Book', phase: 'starting' });
     });
 
-    it('merge_progress preserves bookTitle in activity store', () => {
+    it('merge_state preserves bookTitle across a phase/percentage change', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });
       const { result } = renderHook(() => useMergeActivityCards());
       const es = MockEventSource.instances[0];
       act(() => es!.simulateOpen());
 
-      act(() => es!.simulateEvent('merge_progress', {
-        book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5 }], queued: [],
       }));
 
       expect(result.current[0]).toMatchObject({ bookTitle: 'My Book', phase: 'processing', percentage: 0.5 });
     });
 
-    it('merge_queued passes bookTitle and position into activity store', () => {
+    it('merge_state passes bookTitle and FIFO position for a queued book', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });
       const { result } = renderHook(() => useMergeActivityCards());
       const es = MockEventSource.instances[0];
       act(() => es!.simulateOpen());
 
-      act(() => es!.simulateEvent('merge_queued', { book_id: 42, book_title: 'My Book', position: 2 }));
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 7, book_title: 'Runner', phase: 'processing' }],
+        queued: [{ book_id: 41, book_title: 'Ahead' }, { book_id: 42, book_title: 'My Book' }],
+      }));
 
-      expect(result.current[0]).toMatchObject({ bookTitle: 'My Book', phase: 'queued', position: 2 });
+      expect(result.current.find((c) => c.bookId === 42)).toMatchObject({ bookTitle: 'My Book', phase: 'queued', position: 2 });
     });
 
     it('merge_complete sets terminal success state instead of clearing', () => {
@@ -918,7 +934,9 @@ describe('#257 merge observability — useEventSource', () => {
       const es = MockEventSource.instances[0];
       act(() => es!.simulateOpen());
 
-      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 42, book_title: 'My Book', phase: 'committing' }], queued: [],
+      }));
       act(() => es!.simulateEvent('merge_complete', {
         book_id: 42, book_title: 'My Book', success: true, message: 'Merged 3 files',
       }));
@@ -939,7 +957,9 @@ describe('#257 merge observability — useEventSource', () => {
       const es = MockEventSource.instances[0];
       act(() => es!.simulateOpen());
 
-      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 42, book_title: 'My Book', phase: 'processing' }], queued: [],
+      }));
       act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
       }));
@@ -1114,7 +1134,7 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
   });
 
   describe('#368 merge queue — SSE event handling', () => {
-    it('handles merge_queued event by calling setMergeProgress with queued phase and position', () => {
+    it('does not write the store for merge_queued — the snapshot owns queued state (#2129 AC8)', () => {
       const queryClient = new QueryClient();
       queryClient.setQueryData(['auth', 'config'], { apiKey: 'test-key' });
       const wrapper = ({ children }: { children: ReactNode }) =>
@@ -1130,13 +1150,13 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       });
 
       const { result } = renderHook(() => useMergeProgress(42));
-      expect(result.current).toEqual({ phase: 'queued', position: 2 });
+      expect(result.current).toBeNull();
 
       // Clean up
       setMergeProgress(42, null);
     });
 
-    it('handles merge_queue_updated event by updating position', () => {
+    it('takes the queue position from the snapshot\'s FIFO order, not from merge_queue_updated', () => {
       const queryClient = new QueryClient();
       queryClient.setQueryData(['auth', 'config'], { apiKey: 'test-key' });
       const wrapper = ({ children }: { children: ReactNode }) =>
@@ -1148,15 +1168,19 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       es!.simulateOpen();
 
       act(() => {
-        es!.simulateEvent('merge_queued', { book_id: 42, book_title: 'Test Book', position: 3 });
+        es!.simulateEvent('merge_state', {
+          active: [],
+          queued: [{ book_id: 7, book_title: 'Ahead' }, { book_id: 42, book_title: 'Test Book' }],
+        });
       });
 
+      // The legacy position events stay on the wire and are simply ignored by the store.
       act(() => {
         es!.simulateEvent('merge_queue_updated', { book_id: 42, book_title: 'Test Book', position: 1 });
       });
 
       const { result } = renderHook(() => useMergeProgress(42));
-      expect(result.current).toEqual({ phase: 'queued', position: 1 });
+      expect(result.current).toEqual({ phase: 'queued', position: 2 });
 
       setMergeProgress(42, null);
     });
@@ -1348,7 +1372,9 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       const es = MockEventSource.instances[0];
       act(() => es!.simulateOpen());
 
-      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 42, book_title: 'My Book', phase: 'processing' }], queued: [],
+      }));
       act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'Cancelled by user', reason: 'cancelled',
       }));
@@ -1368,7 +1394,9 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       const es = MockEventSource.instances[0];
       act(() => es!.simulateOpen());
 
-      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 42, book_title: 'My Book', phase: 'processing' }], queued: [],
+      }));
       act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed', reason: 'error',
       }));
@@ -1414,7 +1442,9 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       const es = MockEventSource.instances[0];
       act(() => es!.simulateOpen());
 
-      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 42, book_title: 'My Book', phase: 'processing' }], queued: [],
+      }));
       act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
       }));
@@ -1662,6 +1692,7 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     merge_failed: { eventHistory: 'invalidate', books: 'invalidate' },
     merge_queued: {},
     merge_queue_updated: {},
+    merge_state: {},
     search_started: {},
     search_indexer_complete: {},
     search_indexer_error: {},
@@ -1686,6 +1717,7 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     merge_failed: { book_id: 42, book_title: 'Test', error: 'err', reason: 'error' },
     merge_queued: { book_id: 42, book_title: 'Test', position: 1 },
     merge_queue_updated: { book_id: 42, book_title: 'Test', position: 1 },
+    merge_state: { active: [], queued: [] },
     search_started: { book_id: 42, book_title: 'Test', indexers: [] },
     search_indexer_complete: { book_id: 42, indexer_id: 1, indexer_name: 'X', results_found: 0, elapsed_ms: 1 },
     search_indexer_error: { book_id: 42, indexer_id: 1, indexer_name: 'X', error: 'e', elapsed_ms: 1 },
@@ -2245,5 +2277,88 @@ describe('#1798 SSE liveness watchdog', () => {
     // stream (a leaked timer would fire on the now-closed stream and reconnect).
     act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 5));
     expect(MockEventSource.instances).toHaveLength(1);
+  });
+});
+
+// ============================================================================
+// #2129 — merge_state snapshot handling
+// ============================================================================
+
+describe('#2129 merge_state — snapshot handling in useEventSource', () => {
+  beforeEach(() => { resetMergeStore(); });
+  afterEach(() => { resetMergeStore(); });
+
+  it('updates the store without invalidating any query or raising a toast', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    renderHook(() => useEventSource('key'), { wrapper });
+    const { result } = renderHook(() => useMergeActivityCards());
+    const es = MockEventSource.instances[0];
+    act(() => es!.simulateOpen());
+    invalidateSpy.mockClear(); // the reconnect catch-up on open is a separate path
+
+    act(() => es!.simulateEvent('merge_state', {
+      active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'processing', percentage: 0.35 }],
+      queued: [{ book_id: 43, book_title: 'The Shining' }],
+    }));
+
+    expect(result.current).toEqual([
+      { bookId: 42, bookTitle: 'Dogs of War', phase: 'processing', percentage: 0.35 },
+      { bookId: 43, bookTitle: 'The Shining', phase: 'queued', position: 1 },
+    ]);
+    // A frame per progress tick must never refetch anything, and must never toast.
+    expect(invalidateSpy).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(toast.warning).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('drops a malformed payload and leaves the store untouched', () => {
+    const { wrapper } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+    const { result } = renderHook(() => useMergeActivityCards());
+    const es = MockEventSource.instances[0];
+    act(() => es!.simulateOpen());
+
+    act(() => es!.simulateEvent('merge_state', {
+      active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'staging' }], queued: [],
+    }));
+    expect(result.current).toHaveLength(1);
+
+    // A terminal phase in `active` is off-contract — safeParseSseEvent must drop the whole frame
+    // rather than let it clear the live chip.
+    act(() => es!.simulateEvent('merge_state', { active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'complete' }], queued: [] }));
+    act(() => es!.simulateEvent('merge_state', { active: [{ book_id: 42 }], queued: [] }));
+    act(() => es!.simulateEvent('merge_state', 'not-an-object'));
+
+    expect(result.current).toEqual([{ bookId: 42, bookTitle: 'Dogs of War', phase: 'staging' }]);
+  });
+
+  it('keeps a terminal card through the snapshot that clears it, then removes it on the timer', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es!.simulateOpen());
+
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'committing' }], queued: [],
+      }));
+      // The production order: the terminal event, then the snapshot that already excludes it.
+      act(() => es!.simulateEvent('merge_complete', {
+        book_id: 42, book_title: 'Dogs of War', success: true, message: 'Merged 3 files',
+      }));
+      act(() => es!.simulateEvent('merge_state', { active: [], queued: [] }));
+
+      expect(result.current[0]).toMatchObject({ phase: 'complete', outcome: 'success', message: 'Merged 3 files' });
+
+      act(() => { vi.advanceTimersByTime(3000); });
+      expect(result.current).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
