@@ -1,6 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { titleVariants, normalizeTitleForVariantMatch, hasDegenerateFullForm, normalizeTitleLosslessly } from './title-variants.js';
+import { titleVariants, titleSegments, normalizeTitleForVariantMatch, hasDegenerateFullForm, normalizeTitleLosslessly } from './title-variants.js';
 import type { Variant } from './title-variants.js';
+
+/**
+ * The EFFECTIVE segment set: `titleSegments` normalized and empty-dropped. This
+ * is the ONLY representation the ladder's segment budget divides (#2104 D3) —
+ * the raw list is not, because `colonSegments` keeps punctuation-only text that
+ * `normalizeTitleForVariantMatch` then erases.
+ */
+function effectiveSegments(title: string): string[] {
+  return titleSegments(title).map(normalizeTitleForVariantMatch).filter((s) => s.length > 0);
+}
 
 /** Every `raw` in a well-formed variant set is non-empty and already collapsed/lowercased. */
 function assertWellFormed(variants: Variant[]): void {
@@ -55,6 +65,64 @@ describe('normalizeTitleForVariantMatch', () => {
   it('folds combining diacritics without transliterating non-decomposing letters', () => {
     expect(normalizeTitleForVariantMatch('Les Misérables')).toBe('les miserables');
     expect(normalizeTitleForVariantMatch('Straße')).toBe('stra e');
+  });
+});
+
+/**
+ * `titleSegments` (#2104 D19) — the segment primitive, a pure composition of the
+ * two folds `titleVariants` already runs (`stripParentheticals` then
+ * `colonSegments`). This suite owns only GENERATOR-observable facts: the raw
+ * segment list, the effective set derived from it, and what the emitted tags do
+ * and do not reveal. Ladder ADMISSION is a server-side policy and its assertions
+ * live in `src/server/services/search-query-ladder.test.ts`.
+ */
+describe('titleSegments', () => {
+  it('splits the PAREN-STRIPPED base on qualifying colons, and its effective set is the count that matters', () => {
+    const title = 'star wars: the high republic: Light of the Jedi (New Order Series)';
+    // Raw: the parenthetical is gone before segmentation, so its text never
+    // becomes a segment and its (absent here) colon could never shear one.
+    expect(titleSegments(title)).toEqual(['star wars', ' the high republic', ' Light of the Jedi  ']);
+    // `E.length` is the `segmentCount` the ladder's budget divides — NOT the raw
+    // length. They agree here only because no segment normalizes away.
+    expect(effectiveSegments(title)).toEqual(['star wars', 'the high republic', 'light of the jedi']);
+  });
+
+  it('keeps punctuation-only segments raw — they are exactly what the effective set drops', () => {
+    // Each pair is (raw length, effective length). The divergence is the whole
+    // reason the ladder counts the effective set: `colonSegments` keeps any
+    // segment with non-whitespace text, `normalizeTitleForVariantMatch` erases
+    // punctuation-only text.
+    const cases: Array<[string, number, number]> = [
+      ['Star Wars: ---: The High Republic: Haunted Starlight', 4, 3],
+      ['---: Alpha: Beta: Gamma', 4, 3],
+      ['---: Beta: Gamma: Delta: Eps', 5, 4],
+      ['---: Alpha: Beta: Gamma: ---', 5, 3],
+    ];
+    for (const [title, rawLength, effectiveLength] of cases) {
+      expect(titleSegments(title)).toHaveLength(rawLength);
+      expect(effectiveSegments(title)).toHaveLength(effectiveLength);
+    }
+  });
+
+  it('exposes a count neither the emitted tags nor their maximum can recover', () => {
+    // Generator dedup makes the emitted `n` values NON-DENSE: five raw segments
+    // (three effective) all collapse onto the same `alpha beta gamma` text, so
+    // the largest tag emitted is `prefix(3)`. Neither 5 nor 3 is readable from
+    // the tag set — which is why D19 exports the segmenter instead of letting
+    // the ladder infer a budget from `max(emitted n) + 1`.
+    const title = '---: Alpha: Beta: Gamma: ---';
+    expect(titleSegments(title)).toHaveLength(5);
+    expect(effectiveSegments(title)).toEqual(['alpha', 'beta', 'gamma']);
+
+    const tags = titleVariants(title).map((v) => v.tag);
+    expect(tags).not.toContain('prefix(5)');
+    expect(tags).not.toContain('prefix(4)');
+    expect(tags).toContain('prefix(3)');
+  });
+
+  it('returns [] for a title with no segment-bearing text', () => {
+    expect(titleSegments('')).toEqual([]);
+    expect(titleSegments('   ')).toEqual([]);
   });
 });
 

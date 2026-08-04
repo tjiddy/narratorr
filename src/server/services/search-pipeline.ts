@@ -18,13 +18,12 @@ import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
 import { BYTES_PER_GB, BYTES_PER_MB } from '@shared/constants.js';
-import { cleanIndexerQuery } from './indexer-query.js';
-
-/** Build a search query string from a book's title and primary author. */
-export function buildSearchQuery(book: { title: string; authors?: Array<{ name: string }> | null }): string {
-  const raw = [book.title, book.authors?.[0]?.name].filter(Boolean).join(' ');
-  return cleanIndexerQuery(raw);
-}
+/**
+ * `buildSearchQuery` moved to `indexer-query.ts` (#2104 D1) so the query ladder
+ * can share it without an import cycle. Re-exported here — every pre-ladder
+ * import site keeps working.
+ */
+export { buildSearchQuery } from './indexer-query.js';
 
 /**
  * Build a NarratorPriority config from search settings and book narrators.
