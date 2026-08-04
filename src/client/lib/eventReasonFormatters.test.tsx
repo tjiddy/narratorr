@@ -53,6 +53,35 @@ describe('EventReasonDetails', () => {
     expect(screen.getByText('Size:')).toBeInTheDocument();
   });
 
+  // #2104 AC37 — a NAMED renderer, not GenericDetails. The generic fallback
+  // would render the raw snake_case keys ("Relaxed_query") as labels; the named
+  // one gives each field a readable label.
+  it('renders search_relaxed_held details with named labels rather than GenericDetails', () => {
+    render(
+      <EventReasonDetails
+        eventType="search_relaxed_held"
+        reason={{
+          relaxed_query: 'star wars haunted starlight George Mann',
+          variant_tag: 'first+last',
+          release_title: 'Star Wars: The High Republic: Cataclysm',
+        }}
+        indexerMap={emptyMap}
+      />,
+    );
+
+    expect(screen.getByText('Relaxed query:')).toBeInTheDocument();
+    expect(screen.getByText('star wars haunted starlight George Mann')).toBeInTheDocument();
+    expect(screen.getByText('Title variant:')).toBeInTheDocument();
+    expect(screen.getByText('first+last')).toBeInTheDocument();
+    expect(screen.getByText('Top candidate:')).toBeInTheDocument();
+    expect(screen.getByText('Star Wars: The High Republic: Cataclysm')).toBeInTheDocument();
+
+    // COUNTERFACTUAL: omit the DETAIL_RENDERERS entry and GenericDetails
+    // renders these snake_case labels instead.
+    expect(screen.queryByText('Relaxed_query:')).not.toBeInTheDocument();
+    expect(screen.queryByText('Variant_tag:')).not.toBeInTheDocument();
+  });
+
   it('renders imported auto details with path, file count, and size', () => {
     render(<EventReasonDetails eventType="imported" reason={{ targetPath: '/lib/Author/Book', fileCount: 5, totalSize: 1048576 }} indexerMap={emptyMap} />);
     expect(screen.getByText('/lib/Author/Book')).toBeInTheDocument();
