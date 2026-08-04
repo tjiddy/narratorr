@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -149,6 +149,17 @@ describe('series-title-match-blast-check — CLI entry guard (#2108)', () => {
   const script = fileURLToPath(new URL('./series-title-match-blast-check.ts', import.meta.url));
   /** Positive proof the child actually got to the end of its entry module. */
   const SENTINEL = 'IMPORT-COMPLETED';
+  /**
+   * The exact secret `CLAUDE.md`'s child-process rule names — stubbed into the
+   * parent so the allowlist observation has a KNOWN forbidden key on both sides
+   * rather than one borrowed from whatever the host happens to export.
+   */
+  const FORBIDDEN_KEY = 'NARRATORR_SECRET_KEY';
+  const FORBIDDEN_VALUE = 'canary-value-never-a-real-key';
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
   interface ChildRun { status: number | null; stdout: string; stderr: string }
 
@@ -202,8 +213,20 @@ describe('series-title-match-blast-check — CLI entry guard (#2108)', () => {
       // fails to transform — a load error that would satisfy "no replay ran"
       // vacuously. The sentinel below is what catches that.
       const probe = join(dir, 'probe.mts');
-      writeFileSync(probe, `import '${pathToFileURL(script).href}';\n`
-        + `process.stdout.write(JSON.stringify({ sentinel: '${SENTINEL}', envKeys: Object.keys(process.env).sort() }));\n`);
+      // Both interpolations go through `JSON.stringify`, which emits a properly
+      // escaped JS string literal. `pathToFileURL` does NOT percent-encode an
+      // apostrophe, so a hand-quoted `import '…'` generates broken TypeScript for
+      // a perfectly valid checkout path like `C:\\Users\\O'Brien\\narratorr`.
+      writeFileSync(probe, `import ${JSON.stringify(pathToFileURL(script).href)};\n`
+        + `process.stdout.write(JSON.stringify({ sentinel: ${JSON.stringify(SENTINEL)}, envKeys: Object.keys(process.env).sort() }));\n`);
+
+      // Stubbed, not borrowed from the host: the parent must be KNOWN to carry a
+      // key the allowlist withholds, or "no forbidden key reached the child" is
+      // satisfied vacuously — and on a minimal runner whose environment happens
+      // to hold only sanctioned keys, hoping for one would false-red against
+      // correct code. `vi.stubEnv` so `unstubAllEnvs` restores whatever was there.
+      vi.stubEnv(FORBIDDEN_KEY, FORBIDDEN_VALUE);
+      expect(process.env[FORBIDDEN_KEY]).toBe(FORBIDDEN_VALUE);
 
       const child = runChild(probe, [], missing);
 
@@ -216,16 +239,16 @@ describe('series-title-match-blast-check — CLI entry guard (#2108)', () => {
       // probe instead of spawning a third child: it already reports the exact
       // environment the child received, so a separate run would observe the same
       // thing a second time. `main()` never runs here, so stdout is only the JSON.
-      //
-      // The sanctioned set is DERIVED from `sanitizedEnv`, never re-listed, so
-      // this cannot drift from the allowlist it is checking.
       const report = JSON.parse(child.stdout) as { envKeys: string[] };
+
+      // The named secret CLAUDE.md's rule exists for — present in the parent one
+      // line above, absent here. Both sides of the observation are constructed.
+      expect(report.envKeys).not.toContain(FORBIDDEN_KEY);
+      // And the general statement, with the sanctioned set DERIVED from
+      // `sanitizedEnv` rather than re-listed, so it cannot drift from the
+      // allowlist it is checking.
       const sanctioned = new Set(Object.keys(sanitizedEnv({ DATABASE_PATH: missing })));
       expect(report.envKeys.filter((key) => !sanctioned.has(key))).toEqual([]);
-      // Non-vacuity: the parent really does carry keys the allowlist withholds,
-      // so the assertion above is a filter and not a tautology. Restoring a
-      // `...process.env` spread forwards every one of them.
-      expect(Object.keys(process.env).some((key) => !sanctioned.has(key))).toBe(true);
     });
   }, 60_000);
 
