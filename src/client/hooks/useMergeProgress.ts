@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { MergeDisplayPhase } from '@shared/schemas/sse-events.js';
+import type { MergeDisplayPhase, MergeStateSnapshot } from '@shared/schemas/sse-events.js';
 
 export type MergeOutcome = 'success' | 'error' | 'cancelled';
 
@@ -88,6 +88,63 @@ export function setMergeProgress(bookId: number, progress: Omit<MergeCardState, 
     }
   }
   notify();
+}
+
+/**
+ * Apply a `merge_state` snapshot (#2129) — the single source of truth for NON-terminal merge
+ * state. The server re-broadcasts it on every merge state change and writes it once to each
+ * newly connected client, so this REPLACES the store rather than accumulating into it: whatever
+ * is not in the snapshot is not merging.
+ *
+ * The one exception is a book inside its terminal dismiss window (`outcome` set). Its terminal
+ * card carries `message` / `error` / `enrichmentWarning`, none of which the snapshot has, and
+ * the server clears the book from the snapshot in the same breath as the terminal event — so
+ * the frame that arrives right after `merge_complete` / `merge_failed` always omits it. Keeping
+ * it until its existing 3s timer fires is what makes that ordering safe; the timer itself is
+ * untouched here.
+ */
+export function applyMergeStateSnapshot(snapshot: MergeStateSnapshot): void {
+  const present = new Set<number>();
+
+  for (const entry of snapshot.active) {
+    present.add(entry.book_id);
+    writeFromSnapshot(entry.book_id, {
+      bookTitle: entry.book_title,
+      phase: entry.phase,
+      ...(entry.percentage !== undefined && { percentage: entry.percentage }),
+    });
+  }
+
+  // FIFO — the queue position is the index, not a payload field.
+  snapshot.queued.forEach((entry, index) => {
+    present.add(entry.book_id);
+    writeFromSnapshot(entry.book_id, {
+      bookTitle: entry.book_title,
+      phase: 'queued',
+      position: index + 1,
+    });
+  });
+
+  for (const [bookId, state] of mergeProgressMap) {
+    if (present.has(bookId) || isTerminal(state)) continue;
+    mergeProgressMap.delete(bookId);
+  }
+
+  notify();
+}
+
+/**
+ * Snapshot-driven write for one book. Mirrors `setMergeProgress`'s non-terminal branch (drop any
+ * pending dismiss timer, replace the entry wholesale) minus the notify — the caller notifies once
+ * per snapshot rather than once per book.
+ */
+function writeFromSnapshot(bookId: number, state: Omit<MergeCardState, 'bookId'>): void {
+  const existingTimer = dismissTimers.get(bookId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    dismissTimers.delete(bookId);
+  }
+  mergeProgressMap.set(bookId, { bookId, ...state });
 }
 
 /** Reactive hook — returns all active merge progress entries for ActivityPage. */

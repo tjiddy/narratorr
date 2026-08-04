@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useBookActivity } from './useBookActivity.js';
-import { setMergeProgress, _resetForTesting } from './useMergeProgress.js';
+import { setMergeProgress, applyMergeStateSnapshot, _resetForTesting } from './useMergeProgress.js';
+import { BookActivityBadge } from '@/pages/library/BookActivityBadge.js';
 import { api } from '@/lib/api';
 import type { Mock } from 'vitest';
 
@@ -110,5 +111,62 @@ describe('useBookActivity', () => {
     const { result } = renderHook(() => useBookActivity(42), { wrapper });
     await waitFor(() => expect(api.getImportJobs).toHaveBeenCalled());
     expect(result.current).toEqual({ state: 'working', label: 'Encoding…', percentage: 30 });
+  });
+});
+
+// ============================================================================
+// #2129 — activity derived from the merge_state snapshot alone
+// ============================================================================
+
+describe('useBookActivity from a merge_state snapshot', () => {
+  it('reports a queued merge learned ONLY from the snapshot (the reported regression)', () => {
+    // The book was announced as queued once, before this client existed; the connect greeting
+    // is its only source. Pre-#2129 nothing rendered here at all.
+    applyMergeStateSnapshot({ active: [], queued: [{ book_id: 42, book_title: 'The Shining' }] });
+    const { result } = renderHook(() => useBookActivity(42), { wrapper });
+    expect(result.current).toEqual({ state: 'queued', label: 'Merge queued' });
+  });
+
+  it('renders the hourglass chip for that snapshot-only queued book', () => {
+    applyMergeStateSnapshot({ active: [], queued: [{ book_id: 42, book_title: 'The Shining' }] });
+    const { result } = renderHook(() => useBookActivity(42), { wrapper });
+
+    render(React.createElement(BookActivityBadge, { activity: result.current, variant: 'chip' as const }));
+
+    const chip = screen.getByTestId('activity-chip');
+    expect(chip).toHaveAccessibleName('Merge queued');
+    expect(chip.querySelector('[data-testid="loading-spinner"]')).not.toBeInTheDocument();
+  });
+
+  it('reports the working state with its percentage for an active snapshot entry', () => {
+    applyMergeStateSnapshot({
+      active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'processing', percentage: 0.35 }],
+      queued: [],
+    });
+    const { result } = renderHook(() => useBookActivity(42), { wrapper });
+    expect(result.current).toEqual({ state: 'working', label: 'Encoding…', percentage: 0.35 });
+  });
+
+  it('renders the spinner chip for that active book', () => {
+    applyMergeStateSnapshot({
+      active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'processing', percentage: 0.35 }],
+      queued: [],
+    });
+    const { result } = renderHook(() => useBookActivity(42), { wrapper });
+
+    render(React.createElement(BookActivityBadge, { activity: result.current, variant: 'chip' as const }));
+
+    expect(screen.getByTestId('activity-chip').querySelector('[data-testid="loading-spinner"]')).toBeInTheDocument();
+  });
+
+  it('shows no chip after the terminal sequence, while the Activity card is still in its dismiss window', () => {
+    setMergeProgress(42, { bookTitle: 'Dogs of War', phase: 'complete', outcome: 'success', message: 'Merged 3 files' });
+    applyMergeStateSnapshot({ active: [], queued: [] });
+
+    const { result } = renderHook(() => useBookActivity(42), { wrapper });
+
+    expect(result.current).toBeNull();
+    const { container } = render(React.createElement(BookActivityBadge, { activity: result.current, variant: 'chip' as const }));
+    expect(container).toBeEmptyDOMElement();
   });
 });

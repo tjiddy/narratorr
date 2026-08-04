@@ -387,4 +387,76 @@ describe('EventBroadcasterService', () => {
       expect(fresh.reply.raw.write).toHaveBeenCalledWith('event: hb\ndata: {}\n\n');
     });
   });
+  // ==========================================================================
+  // #2129 — per-client emit (the connect-time state greeting)
+  // ==========================================================================
+
+  describe('emitTo', () => {
+    const SNAPSHOT = { active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'processing' as const, percentage: 0.35 }], queued: [] };
+    const FRAME = `event: merge_state\ndata: ${JSON.stringify(SNAPSHOT)}\n\n`;
+
+    it('writes the framed event to the target client only', () => {
+      const target = createMockClient('target');
+      const bystander = createMockClient('bystander');
+      broadcaster.addClient(target);
+      broadcaster.addClient(bystander);
+
+      broadcaster.emitTo(target, 'merge_state', SNAPSHOT);
+
+      expect(target.reply.raw.write).toHaveBeenCalledWith(FRAME);
+      expect(bystander.reply.raw.write).not.toHaveBeenCalled();
+    });
+
+    it('frames identically to the broadcast path', () => {
+      const viaEmitTo = createMockClient('per-client');
+      const viaEmit = createMockClient('broadcast');
+      broadcaster.addClient(viaEmitTo);
+      broadcaster.addClient(viaEmit);
+
+      broadcaster.emitTo(viaEmitTo, 'merge_state', SNAPSHOT);
+      broadcaster.emit('merge_state', SNAPSHOT);
+
+      expect((viaEmitTo.reply.raw.write as ReturnType<typeof vi.fn>).mock.calls[0]![0])
+        .toBe((viaEmit.reply.raw.write as ReturnType<typeof vi.fn>).mock.calls[0]![0]);
+    });
+
+    it('is a no-op for a client that was never registered', () => {
+      const stranger = createMockClient('stranger');
+
+      expect(() => broadcaster.emitTo(stranger, 'merge_state', SNAPSHOT)).not.toThrow();
+      expect(stranger.reply.raw.write).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op for a client refused during the shutdown drain — its reply is already ended', () => {
+      // stop() latches `stopping`, so addClient ends the incoming reply instead of registering
+      // it (#1813). A write-after-end there must not throw out of a hijacked handler.
+      broadcaster.stop();
+      const lateClient = createMockClient('late');
+      broadcaster.addClient(lateClient);
+      (lateClient.reply.raw.write as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new Error('write after end');
+      });
+
+      expect(() => broadcaster.emitTo(lateClient, 'merge_state', SNAPSHOT)).not.toThrow();
+      expect(lateClient.reply.raw.write).not.toHaveBeenCalled();
+      expect(broadcaster.clientCount).toBe(0);
+    });
+
+    it('prunes the client and does not throw when the write fails', () => {
+      const broken = createMockClient('broken');
+      const healthy = createMockClient('healthy');
+      broadcaster.addClient(broken);
+      broadcaster.addClient(healthy);
+      (broken.reply.raw.write as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new Error('broken pipe');
+      });
+
+      expect(() => broadcaster.emitTo(broken, 'merge_state', SNAPSHOT)).not.toThrow();
+
+      expect(broadcaster.clientCount).toBe(1);
+      expect(log.warn).toHaveBeenCalledWith({ clientId: 'broken' }, 'SSE client removed after write failure');
+      broadcaster.emit('merge_state', SNAPSHOT);
+      expect(healthy.reply.raw.write).toHaveBeenCalled();
+    });
+  });
 });
