@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -115,4 +118,50 @@ describe('series-title-match-blast-check — replay candidate order (#2108)', ()
     expect(alphaPool.map((c) => c.id)).toEqual([alphaLateTitle, alphaEarlyTitle]);
     expect(candidates.filter((c) => c.seriesName === 'Zeta Series').map((c) => c.id)).toEqual([zeta]);
   });
+});
+
+/**
+ * #2108 — the CLI entry guard has TWO arms and they need different observations.
+ *
+ * The FALSE arm is observed by this very file: importing the module for
+ * `loadReplayCandidates` must not run the replay. Drop the guard and the import
+ * executes `main()`, which — with no live library at the default path — prints
+ * the refusal and sets `process.exitCode = 1`, failing the whole vitest run
+ * regardless of assertions.
+ *
+ * The TRUE arm cannot be observed in-process at all: the module is already
+ * imported, so nothing a test does to `process.argv` re-evaluates the guard.
+ * Only a real direct execution can see it, and without one, `if (false)` or a
+ * wrong argv slot silently disables the documented
+ * `pnpm exec tsx …blast-check.ts <db>` command while every test stays green.
+ */
+describe('series-title-match-blast-check — CLI entry guard (#2108)', () => {
+  // Resolved through Node's resolver rather than `node_modules/.bin`, which is a
+  // `.CMD` shim on Windows; `process.execPath` is the node already running us.
+  const tsxCli = createRequire(import.meta.url).resolve('tsx/cli');
+  const script = fileURLToPath(new URL('./series-title-match-blast-check.ts', import.meta.url));
+
+  it('does not run the replay on import (the guard\'s false arm)', () => {
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+
+  it('still enters main when executed directly', () => {
+    // The missing-DB refusal is `main()`'s first observable, and it needs no
+    // fixture: the script deliberately refuses a path it would otherwise create,
+    // so "did main run" is answerable without a live library.
+    const missing = join(tmpdir(), 'narratorr-blast-check-absent.db');
+    let status: number | null = 0;
+    let stderr = '';
+    try {
+      execFileSync(process.execPath, [tsxCli, script, missing], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error: unknown) {
+      const failure = error as { status?: number | null; stderr?: string };
+      status = failure.status ?? null;
+      stderr = failure.stderr ?? '';
+    }
+
+    // Both halves matter: a guard that never fires exits 0 with no output.
+    expect(stderr).toContain(`No database at ${missing}`);
+    expect(status).toBe(1);
+  }, 60_000);
 });
