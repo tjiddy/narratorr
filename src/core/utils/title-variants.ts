@@ -104,9 +104,62 @@ export function normalizeTitleForVariantMatch(title: string): string {
     .trim();
 }
 
-/** Drop every `(...)` / `[...]` group. Runs on the RAW title, before segmentation. */
+/**
+ * Drop every `(...)` / `[...]` group. Runs on the RAW title, before segmentation.
+ *
+ * A single left-to-right DEPTH-COUNTING scan, deliberately not a regex. `(` and
+ * `[` increment the depth, `)` and `]` decrement it with a floor at 0, and every
+ * bracket character plus every character at depth > 0 is emitted as a space.
+ * Both delimiter kinds share ONE counter, so `"Foo (Bar] Baz"` closes on the `]`
+ * and keeps `Baz`; a kind-aware stack would swallow the rest of the string.
+ *
+ * The contract the regex form could not honour (#2109):
+ *
+ *  - **An unterminated group strips to end-of-string.** A missing `)` is an
+ *    ordinary truncation artefact in community-edited metadata, and the old
+ *    `\([^)]*\)` simply did not match it — so the parenthetical's text and its
+ *    COLON stayed in the base and sheared a segment. `"The Spiral Path (World of
+ *    Warcraft: Traveler, Book 2"` emitted `prefix(1) = "the spiral path world of
+ *    warcraft"`, the exact G1 violation the two-axis rule above exists to forbid.
+ *  - **Nested groups strip as one unit.** `[^)]*` closed at the FIRST `)`, so the
+ *    inner group's tail leaked out: `"Dune (Deluxe (2nd) Edition: Annotated)"`
+ *    left `"Dune Edition: Annotated"` in the base and fabricated
+ *    `prefix(1) = "dune edition"`.
+ *
+ * The scan is also what makes the module linear on adversarial input: `\([^)]*\)`
+ * backtracks quadratically over a run of unmatched `(` (80 K chars → ~12 s
+ * measured), which the depth counter cannot do.
+ *
+ * One contiguous stripped RUN contributes exactly ONE space, not one space per
+ * character. That is byte-identical to what the regex form emitted for the input
+ * it did handle (a balanced group collapsed to a single space), which is what
+ * keeps `titleSegments` — documented as returning RAW, unnormalized text — from
+ * changing under callers for every well-formed title. Nothing downstream can see
+ * the difference either way (the sole production consumer,
+ * `search-query-ladder.ts:134`, normalizes each segment immediately, and every
+ * variant `raw` is whitespace-collapsed), so the cheaper-to-verify choice is the
+ * one that leaves the existing corpus untouched.
+ */
 function stripParentheticals(title: string): string {
-  return title.replace(/\([^)]*\)/g, ' ').replace(/\[[^\]]*\]/g, ' ');
+  let depth = 0;
+  let out = '';
+  let runEmitted = false;
+  for (const ch of title) {
+    const opener = ch === '(' || ch === '[';
+    const closer = ch === ')' || ch === ']';
+    if (!opener && !closer && depth === 0) {
+      out += ch;
+      runEmitted = false;
+      continue;
+    }
+    if (opener) depth++;
+    else if (closer && depth > 0) depth--;
+    if (!runEmitted) {
+      out += ' ';
+      runEmitted = true;
+    }
+  }
+  return out;
 }
 
 /**

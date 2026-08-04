@@ -189,6 +189,104 @@ describe('titleVariants', () => {
     ]);
   });
 
+  /**
+   * #2109 (a) — the strip is a depth-counting SCAN, so it is agnostic to whether
+   * the groups are balanced or nested. The regex form it replaced matched only
+   * balanced, non-nested groups, which meant a single missing `)` — an ordinary
+   * truncation artefact in community-edited metadata — let the parenthetical's
+   * text AND its colon back into the derived axis, emitting exactly the sheared
+   * `prefix(1)` that G1 exists to forbid.
+   *
+   * Every exclusion below is scoped to the DERIVED axis (`parensStripped: true`)
+   * for the reason the G1 control above already states: G1 mandates that the
+   * parens-INTACT `full` retain its parenthetical text, so a global exclusion
+   * would be unsatisfiable by any correct implementation. Each case therefore
+   * asserts the intact `full` is still present and byte-identical to today's.
+   */
+  describe('balanced-agnostic paren stripping (#2109 AC1-AC3)', () => {
+    const UNTERMINATED = 'The Spiral Path (World of Warcraft: Traveler, Book 2';
+    const TERMINATED = 'The Spiral Path (World of Warcraft: Traveler, Book 2)';
+
+    // T1 — the G1 shear an unterminated group used to produce.
+    it('strips an unterminated group to end-of-string (T1)', () => {
+      const variants = titleVariants(UNTERMINATED);
+      assertWellFormed(variants);
+
+      const derived = variants.filter((v) => v.parensStripped);
+      expect(derived.map((v) => v.raw)).toEqual(['the spiral path']);
+      // `world of warcraft` survives ONLY in the parens-intact full (G1).
+      expect(variants.filter((v) => v.raw.includes('world of warcraft'))).toEqual([
+        { raw: 'the spiral path world of warcraft traveler book 2', tag: 'full', parensStripped: false, lossy: false },
+      ]);
+    });
+
+    // T2 — AC2 as a RELATION rather than a literal: the missing `)` may change
+    // the parens-intact full, and nothing else.
+    it('derives the same set from an unterminated group as from its balanced twin (T2)', () => {
+      const strippedOf = (title: string): string[] =>
+        titleVariants(title).filter((v) => v.parensStripped).map((v) => v.raw);
+      expect(strippedOf(UNTERMINATED)).toEqual(strippedOf(TERMINATED));
+      expect(strippedOf(UNTERMINATED)).toEqual(['the spiral path']);
+    });
+
+    // T3 — a nested group strips as ONE unit. The regex form closed at the first
+    // `)`, so `Qux` and the inner colon leaked into the derived axis.
+    it('strips nested groups as a single unit (T3)', () => {
+      const variants = titleVariants('Foo (Bar (Baz): Qux) Quux');
+      assertWellFormed(variants);
+
+      const derived = variants.filter((v) => v.parensStripped);
+      for (const v of derived) {
+        expect(v.raw).not.toContain('qux');
+      }
+      expect(derived.find((v) => v.tag === 'full')!.raw).toBe('foo quux');
+      expect(variants.find((v) => v.tag === 'full' && !v.parensStripped)!.raw).toBe('foo bar baz qux quux');
+    });
+
+    // T4 — the fabricated-title form of the same defect: `dune edition` is a
+    // title no edition of Dune has ever carried.
+    it('does not fabricate a title from a nested group (T4)', () => {
+      const variants = titleVariants('Dune (Deluxe (2nd) Edition: Annotated)');
+      assertWellFormed(variants);
+
+      expect(variants.some((v) => v.tag === 'prefix(1)' && v.raw === 'dune edition')).toBe(false);
+      expect(variants.find((v) => v.parensStripped && v.tag === 'full')!.raw).toBe('dune');
+      expect(variants.find((v) => v.tag === 'full' && !v.parensStripped)!.raw).toBe('dune deluxe 2nd edition annotated');
+    });
+
+    // T5 — depth floors at 0, so a stray closer is inert: it folds to a space
+    // exactly as the regex form left it.
+    it.each([['Foo) Bar'], ['Foo] Bar']])('leaves a stray closer inert in %j (T5)', (title) => {
+      const variants = titleVariants(title);
+      assertWellFormed(variants);
+      expect(variants.find((v) => v.tag === 'full')!.raw).toBe('foo bar');
+    });
+
+    // T6 — the bracket form of T1. Both delimiter kinds share the counter.
+    it('strips an unterminated bracket group to end-of-string (T6)', () => {
+      const variants = titleVariants('Foo [Bar: Baz');
+      assertWellFormed(variants);
+      expect(variants.some((v) => v.tag === 'prefix(1)' && v.raw === 'foo bar')).toBe(false);
+      expect(variants.filter((v) => v.parensStripped).map((v) => v.raw)).toEqual(['foo']);
+    });
+
+    /**
+     * T7 (spec-review F4) — mismatched delimiter KINDS. This asserts AC1's
+     * answer, not whatever the implementation happens to do: one shared depth
+     * counter means `]` closes the `(`, so `Bar` is swallowed and `Baz` survives
+     * → `foo baz`. A delimiter-KIND stack (where `]` would not close a `(`, and
+     * the group therefore ran to end-of-string) yields `foo` instead and fails
+     * here — which is the entire reason the case is pinned.
+     */
+    it('closes a group on either delimiter kind — one shared depth counter (T7)', () => {
+      const variants = titleVariants('Foo (Bar] Baz');
+      assertWellFormed(variants);
+      expect(variants.find((v) => v.tag === 'full' && !v.parensStripped)!.raw).toBe('foo bar baz');
+      expect(variants.find((v) => v.parensStripped && v.tag === 'full')!.raw).toBe('foo baz');
+      expect(variants.some((v) => /^(?:prefix|suffix)\(/.test(v.tag) || v.tag === 'first+last')).toBe(false);
+    });
+  });
+
   it('keeps the parens-intact full and derives the rest from the stripped base', () => {
     const variants = titleVariants('Star Wars: The Rising Storm (The High Republic)');
     assertWellFormed(variants);
