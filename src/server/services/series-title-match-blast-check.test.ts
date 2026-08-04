@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { sql } from 'drizzle-orm';
@@ -147,21 +147,36 @@ describe('series-title-match-blast-check — CLI entry guard (#2108)', () => {
 
   it('still enters main when executed directly', () => {
     // The missing-DB refusal is `main()`'s first observable, and it needs no
-    // fixture: the script deliberately refuses a path it would otherwise create,
-    // so "did main run" is answerable without a live library.
-    const missing = join(tmpdir(), 'narratorr-blast-check-absent.db');
-    let status: number | null = 0;
-    let stderr = '';
+    // library fixture: the script deliberately refuses a path it would otherwise
+    // create, so "did main run" is answerable without a live database.
+    //
+    // But that branch's precondition must be CONSTRUCTED, not assumed of shared
+    // host state. `main()` dispatches on `existsSync(dbPath)`, so a fixed
+    // `tmpdir()` filename left behind by an earlier run — or written by a
+    // concurrent process — would send the child down the live-replay path and
+    // make this regression signal nondeterministic. A fresh `mkdtempSync`
+    // directory (the same isolation the replay suite above uses) guarantees the
+    // path is absent, and the assertion below records that it is.
+    const cliDir = mkdtempSync(join(tmpdir(), 'blast-check-cli-'));
     try {
-      execFileSync(process.execPath, [tsxCli, script, missing], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (error: unknown) {
-      const failure = error as { status?: number | null; stderr?: string };
-      status = failure.status ?? null;
-      stderr = failure.stderr ?? '';
-    }
+      const missing = join(cliDir, 'absent.db');
+      expect(existsSync(missing)).toBe(false);
 
-    // Both halves matter: a guard that never fires exits 0 with no output.
-    expect(stderr).toContain(`No database at ${missing}`);
-    expect(status).toBe(1);
+      let status: number | null = 0;
+      let stderr = '';
+      try {
+        execFileSync(process.execPath, [tsxCli, script, missing], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (error: unknown) {
+        const failure = error as { status?: number | null; stderr?: string };
+        status = failure.status ?? null;
+        stderr = failure.stderr ?? '';
+      }
+
+      // Both halves matter: a guard that never fires exits 0 with no output.
+      expect(stderr).toContain(`No database at ${missing}`);
+      expect(status).toBe(1);
+    } finally {
+      rmSync(cliDir, { recursive: true, force: true });
+    }
   }, 60_000);
 });
