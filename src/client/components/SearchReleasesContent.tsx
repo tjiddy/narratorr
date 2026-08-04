@@ -155,6 +155,8 @@ function ResultsPhase({
         </div>
       )}
 
+      <RelaxedQueryNotice relaxedQuery={searchResponse?.relaxedQuery} />
+
       {results && results.length > 0 && (
         <>
           <p className="text-sm text-muted-foreground">
@@ -186,6 +188,24 @@ function ResultsPhase({
         <UnsupportedSection titles={unsupportedResults.titles} count={unsupportedResults.count} />
       )}
     </>
+  );
+}
+
+/**
+ * The canonical query returned nothing and a relaxed one found these results
+ * (#2104). Rendered above the list so it is clear the results answer a looser
+ * question than the one asked; renders nothing whenever rung 1 hit, which is
+ * every search that worked normally.
+ */
+function RelaxedQueryNotice({ relaxedQuery }: { relaxedQuery?: string | undefined }) {
+  if (!relaxedQuery) return null;
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 border border-primary/20 text-sm text-muted-foreground">
+      <SearchIcon className="w-4 h-4 shrink-0" />
+      <span>
+        matched on relaxed query: &lsquo;<span className="font-medium text-foreground">{relaxedQuery}</span>&rsquo;
+      </span>
+    </div>
   );
 }
 

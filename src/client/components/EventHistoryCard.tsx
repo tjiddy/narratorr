@@ -44,6 +44,10 @@ const EVENT_CONFIG: Record<string, EventTypeConfig> = {
   book_added: { icon: BookOpenIcon, label: 'Book Added', color: 'text-emerald-400', bgColor: 'bg-emerald-500/10' },
   metadata_fixed: { icon: AlertTriangleIcon, label: 'Metadata Fixed', color: 'text-amber-400', bgColor: 'bg-amber-500/10' },
   grab_failed: { icon: XCircleIcon, label: 'Grab Failed', color: 'text-destructive', bgColor: 'bg-destructive/10' },
+  // #2104 — a relaxed-query rung found candidates but none corroborated the
+  // book's title segments, so nothing was grabbed. Shares the yellow
+  // needs-a-human styling of the other two Needs Review types.
+  search_relaxed_held: { icon: AlertTriangleIcon, label: 'Relaxed Match Held', color: 'text-yellow-400', bgColor: 'bg-yellow-500/10' },
 };
 
 const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted' };

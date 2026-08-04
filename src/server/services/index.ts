@@ -20,6 +20,7 @@ export { EventHistoryService, type CreateEventInput } from './event-history.serv
 export { TaggingService, RetagError, type RetagResult } from './tagging.service.js';
 export { QualityGateService, type QualityDecisionReason } from './quality-gate.service.js';
 export { RetryBudget } from './retry-budget.js';
+export { SearchLadderCooldown, LADDER_COOLDOWN_MS } from './search-ladder-cooldown.js';
 export { BackupService } from './backup.service.js';
 export { EventBroadcasterService } from './event-broadcaster.service.js';
 export { HealthCheckService } from './health-check.service.js';

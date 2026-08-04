@@ -31,6 +31,20 @@ export function cleanIndexerQuery(s: string): string {
 }
 
 /**
+ * Build a search query string from a book's title and primary author.
+ *
+ * Homed HERE rather than in `search-pipeline.ts` so the query ladder
+ * (`search-query-ladder.ts`) can build its rung 1 from the SAME function the
+ * pre-ladder pipeline used without importing the pipeline, which imports the
+ * ladder (#2104 D1). `search-pipeline.ts` re-exports it, so every existing
+ * import site is unchanged.
+ */
+export function buildSearchQuery(book: { title: string; authors?: Array<{ name: string }> | null }): string {
+  const raw = [book.title, book.authors?.[0]?.name].filter(Boolean).join(' ');
+  return cleanIndexerQuery(raw);
+}
+
+/**
  * Returns a new options object with `title` and `author` cleaned for indexer
  * transport. All other fields (`limit`, `languages`, `signal`, …) pass through
  * untouched. Returns `undefined` when input is `undefined`.

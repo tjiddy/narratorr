@@ -406,6 +406,45 @@ describe('#455 event reason rendering', () => {
     });
   });
 
+  // AC37 — the registry entry must exist. `EVENT_CONFIG[type] ?? { ...DEFAULT_CONFIG, label: event.eventType }`
+  // means an UNREGISTERED type does not render "Unknown": it renders the RAW
+  // literal `search_relaxed_held` with DEFAULT_CONFIG's clock icon and muted
+  // styling. An assertion phrased as "the label is not Unknown" would pass
+  // against that fallback and prove nothing.
+  describe('search_relaxed_held registration (#2104 AC37)', () => {
+    const relaxedHeldEvent = () => createMockEvent({
+      eventType: 'search_relaxed_held',
+      downloadId: null,
+      reason: {
+        relaxed_query: 'star wars haunted starlight George Mann',
+        variant_tag: 'first+last',
+        release_title: 'Star Wars: The High Republic: Cataclysm',
+      },
+    });
+
+    it('renders the registered label, never the raw event-type literal', () => {
+      renderWithProviders(<EventHistoryCard event={relaxedHeldEvent()} />);
+
+      expect(screen.getByText('Relaxed Match Held')).toBeInTheDocument();
+      expect(screen.queryByText('search_relaxed_held')).not.toBeInTheDocument();
+    });
+
+    it('renders the registered icon and colour pair, not DEFAULT_CONFIG', () => {
+      const { container } = renderWithProviders(<EventHistoryCard event={relaxedHeldEvent()} />);
+
+      const iconWrap = container.querySelector('.rounded-xl.shrink-0') ?? container.querySelector('[class*="bg-yellow-500/10"]');
+      expect(iconWrap?.className).toContain('bg-yellow-500/10');
+
+      const svg = container.querySelector('svg');
+      expect(svg?.getAttribute('class')).toContain('text-yellow-400');
+      // AlertTriangleIcon's outline path — present only for the registered
+      // icon. COUNTERFACTUAL: drop the EVENT_CONFIG entry and DEFAULT_CONFIG's
+      // ClockIcon renders `<circle r="10">` instead.
+      expect(svg?.querySelector('path[d^="m21.73 18-8-14"]')).not.toBeNull();
+      expect(svg?.querySelector('circle[r="10"]')).toBeNull();
+    });
+  });
+
   describe('held_for_review event details', () => {
     it('shows human-readable hold reasons', async () => {
       const user = userEvent.setup();

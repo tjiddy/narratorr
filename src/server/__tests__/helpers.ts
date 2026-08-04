@@ -11,6 +11,7 @@ import { registerRoutes } from '../routes/index.js';
 import type { AuthService } from '../services/auth.service.js';
 import { SERVICE_KEYS, type Services } from '../services/di.js';
 import { RetryBudget } from '../services/retry-budget.js';
+import { SearchLadderCooldown } from '../services/search-ladder-cooldown.js';
 import { createMockSettings, type DeepPartial } from '@shared/schemas/settings/create-mock-settings.fixtures.js';
 import type { AppSettings, SettingsCategory } from '@shared/schemas/settings/registry.js';
 import type { SettingsService } from '../services/settings.service.js';
@@ -378,6 +379,9 @@ export function createMockServices(overrides?: Partial<Record<keyof Services, Re
   }
   // RetryBudget is a real instance (not a proxy-based mock) since it's transient state
   services.retryBudget = new RetryBudget();
+  // Same rationale as RetryBudget: transient in-memory state, so the real class
+  // is more faithful (and simpler) than a proxy stub.
+  services.searchLadderCooldown = new SearchLadderCooldown();
   // Proxy-based mock can't be statically verified against Services interface.
   // Every property access returns a vi.fn() stub at runtime.
   return inject<Services>(services);

@@ -820,9 +820,17 @@ describe('IndexerSearchService', () => {
     it('excludes cancelled indexer results and calls onCancelled', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
 
+      // Cancelled IN FLIGHT: the adapter is reached, then the user cancels and
+      // the request rejects. Distinct from the pre-aborted case below, which the
+      // #2104 D11 guard now short-circuits before `getAdapter`.
       const controller = new AbortController();
-      controller.abort();
-      const adapter = { search: vi.fn().mockRejectedValue(new DOMException('aborted', 'AbortError')), test: vi.fn() };
+      const adapter = {
+        search: vi.fn().mockImplementation(() => {
+          controller.abort();
+          return Promise.reject(new DOMException('aborted', 'AbortError'));
+        }),
+        test: vi.fn(),
+      };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
 
       const controllers = new Map<number, AbortController>();
@@ -837,6 +845,37 @@ describe('IndexerSearchService', () => {
       expect(onComplete).not.toHaveBeenCalled();
       expect(onError).not.toHaveBeenCalled(); // Cancelled, not errored
       expect(onCancelled).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name);
+      expect(results).toHaveLength(0);
+    });
+
+    // AC27 — the query ladder re-enters `searchAllStreaming` per rung with the
+    // SAME sticky controllers, so an indexer the user cancelled on rung 1 must
+    // not be re-queried on rung 2. The abort classification below lives only in
+    // the catch block, which is reached AFTER `getAdapter` and `adapter.search`.
+    it('skips an already-cancelled indexer before the adapter, emitting no frame (AC27)', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+
+      const controller = new AbortController();
+      controller.abort();
+      const adapter = { search: vi.fn(), test: vi.fn() };
+      const getAdapter = vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+      const controllers = new Map<number, AbortController>();
+      controllers.set(mockIndexer.id, controller);
+
+      const onComplete = vi.fn();
+      const onError = vi.fn();
+      const onCancelled = vi.fn();
+
+      const results = await searchService.searchAllStreaming('test', undefined, controllers, { onComplete, onError, onCancelled });
+
+      // COUNTERFACTUAL: remove the pre-adapter guard and the adapter spy records
+      // a call (and `onCancelled` fires a duplicate frame).
+      expect(getAdapter).not.toHaveBeenCalled();
+      expect(adapter.search).not.toHaveBeenCalled();
+      expect(onComplete).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+      expect(onCancelled).not.toHaveBeenCalled();
       expect(results).toHaveLength(0);
     });
 
@@ -863,6 +902,92 @@ describe('IndexerSearchService', () => {
 
       expect(results[0]!.matchScore).toBeDefined();
       expect(results[0]!.matchScore).toBeGreaterThan(0);
+    });
+  });
+
+  // #2104 D16 — the settlement counts the query ladder needs to tell a real,
+  // answered zero from a total indexer outage. `searchAll` collapses both into
+  // `[]`, so without these counts the ladder would burn its whole rung budget
+  // and a 24-hour cooldown during an outage.
+  describe('searchAllWithStatus (#2104 D16)', () => {
+    const secondIndexer = createMockDbIndexer({ id: 2, name: 'MAM', type: 'myanonamouse' });
+
+    it('reports one succeeded and one failed when a single indexer rejects', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer, secondIndexer]));
+      vi.spyOn(service, 'getAdapter').mockImplementation(async (indexer: { id: number }) =>
+        (indexer.id === mockIndexer.id
+          ? { search: vi.fn().mockRejectedValue(new Error('boom')), test: vi.fn() }
+          : { search: vi.fn().mockResolvedValue(searchResponse([{ title: 'A', indexer: 'MAM' }])), test: vi.fn() }) as never,
+      );
+
+      const { results, succeeded, failed } = await searchService.searchAllWithStatus('test');
+
+      expect(succeeded).toBe(1);
+      expect(failed).toBe(1);
+      expect(results).toHaveLength(1);
+    });
+
+    it('reports succeeded > 0 with an empty aggregate for a genuine, answered zero', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      vi.spyOn(service, 'getAdapter').mockResolvedValue({ search: vi.fn().mockResolvedValue(searchResponse([])), test: vi.fn() } as never);
+
+      expect(await searchService.searchAllWithStatus('test')).toEqual({ results: [], succeeded: 1, failed: 0 });
+    });
+
+    it('reports succeeded 0 when every indexer rejects — indistinguishable from a zero without it', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer, secondIndexer]));
+      vi.spyOn(service, 'getAdapter').mockResolvedValue({ search: vi.fn().mockRejectedValue(new Error('boom')), test: vi.fn() } as never);
+
+      expect(await searchService.searchAllWithStatus('test')).toEqual({ results: [], succeeded: 0, failed: 2 });
+    });
+
+    it('reports succeeded 0 when the query normalizes away, preserving the short-circuit', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      expect(await searchService.searchAllWithStatus('...')).toEqual({ results: [], succeeded: 0, failed: 0 });
+    });
+
+    it('leaves searchAll returning the bare array so pre-#2104 callers are untouched', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      vi.spyOn(service, 'getAdapter').mockResolvedValue({
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'A', indexer: 'AudioBookBay' }])),
+        test: vi.fn(),
+      } as never);
+
+      const results = await searchService.searchAll('test');
+      expect(Array.isArray(results)).toBe(true);
+      expect(results).toHaveLength(1);
+    });
+  });
+
+  // AC17 / D8 — `author` is simultaneously the transport filter and the ranking
+  // context, so an author-dropping ladder rung must keep ranking canonical.
+  describe('rankingAuthor (#2104 D8)', () => {
+    const rank = async (options: Parameters<typeof searchService.searchAll>[1]) => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      vi.spyOn(service, 'getAdapter').mockResolvedValue({
+        search: vi.fn().mockResolvedValue(searchResponse([
+          { title: 'The Way of Kings', author: 'Someone Else', indexer: 'ABB' },
+          { title: 'The Way of Kings', author: 'Brandon Sanderson', indexer: 'ABB' },
+        ])),
+        test: vi.fn(),
+      } as never);
+      return (await searchService.searchAll('way of kings', options)).map((r) => r.author);
+    };
+
+    it('ranks an author-OFF transport rung exactly as rung 1 ranks it', async () => {
+      const rungOne = await rank({ title: 'The Way of Kings', author: 'Brandon Sanderson' });
+      const authorOff = await rank({ title: 'The Way of Kings', author: undefined, rankingAuthor: 'Brandon Sanderson' });
+
+      expect(rungOne).toEqual(['Brandon Sanderson', 'Someone Else']);
+      // COUNTERFACTUAL: drop `rankingAuthor` from applyMatchScore and this
+      // becomes title-only weight, so the two results tie and the order flips
+      // back to the adapter's.
+      expect(authorOff).toEqual(rungOne);
+    });
+
+    it('falls back to the transport author when rankingAuthor is absent', async () => {
+      expect(await rank({ title: 'The Way of Kings', author: 'Brandon Sanderson' }))
+        .toEqual(['Brandon Sanderson', 'Someone Else']);
     });
   });
 

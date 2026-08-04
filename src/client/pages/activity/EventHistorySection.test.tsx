@@ -193,7 +193,11 @@ describe('EventHistorySection', () => {
       );
     });
 
-    it('Needs Review chip sends both held_for_review and recording_review_skipped', async () => {
+    // #2104 AC37 — `search_relaxed_held` is the review surface for a relaxed
+    // rung whose candidates failed the corroboration floor. Without it in this
+    // value the event is only reachable under All-history, which is not "surfaces
+    // for review".
+    it('Needs Review chip sends held_for_review, recording_review_skipped AND search_relaxed_held', async () => {
       const user = userEvent.setup();
       mockDefaultHook();
 
@@ -201,7 +205,7 @@ describe('EventHistorySection', () => {
       await user.click(screen.getByText('Needs Review'));
 
       expect(mockUseEventHistory).toHaveBeenCalledWith(
-        expect.objectContaining({ eventType: 'held_for_review,recording_review_skipped' }),
+        expect.objectContaining({ eventType: 'held_for_review,recording_review_skipped,search_relaxed_held' }),
       );
     });
 

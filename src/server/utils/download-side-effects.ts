@@ -228,3 +228,43 @@ export function recordGrabFailedEvent(args: RecordGrabFailedEventArgs): void {
     reason: { error: errorMessage, release_title: releaseTitle },
   }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record grab_failed event'));
 }
+
+// ── recordSearchRelaxedHeldEvent ──────────────────────────────────────
+
+export interface RecordSearchRelaxedHeldEventArgs {
+  eventHistory: EventHistoryService;
+  book: {
+    id: number;
+    title: string;
+    authors?: Array<{ name: string }> | null;
+    narrators?: Array<{ name: string }> | null;
+  };
+  /** The relaxed rung's transport query. */
+  relaxedQuery: string;
+  /** The winning variant's tag — `prefix(2)`, `first+last`, … */
+  variantTag: string;
+  /** The highest-ranked DOWNLOADABLE candidate, which by construction failed the floor. */
+  releaseTitle: string;
+  log: FastifyBaseLogger;
+}
+
+/**
+ * Fire-and-forget `search_relaxed_held` recording (#2104 D9).
+ *
+ * A segment-cut rung found grabbable candidates but none corroborated the
+ * retained title segments, so the auto-grab was withheld and the operator gets
+ * the call. Persisted rather than broadcast: a scheduled cycle runs every 360
+ * minutes, so an SSE toast would simply be missed.
+ */
+export function recordSearchRelaxedHeldEvent(args: RecordSearchRelaxedHeldEventArgs): void {
+  const { eventHistory, book, relaxedQuery, variantTag, releaseTitle, log } = args;
+  eventHistory.create({
+    bookId: book.id,
+    bookTitle: book.title,
+    authorName: book.authors?.[0]?.name ?? null,
+    narratorName: book.narrators?.[0]?.name ?? null,
+    eventType: 'search_relaxed_held',
+    source: 'auto',
+    reason: { relaxed_query: relaxedQuery, variant_tag: variantTag, release_title: releaseTitle },
+  }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record search_relaxed_held event'));
+}

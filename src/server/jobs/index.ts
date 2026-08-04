@@ -109,7 +109,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger): J
       });
       await runGuarded(log, 'Import-maintenance: stale-receiving sweep failed', () => services.importStaging.sweepStaleReceiving());
     } },
-    { name: 'search', type: 'timeout', getIntervalMinutes: () => services.settings.get('search').then((s) => s.intervalMinutes), callback: () => runSearchJob(services.settings, services.bookList, services.indexerSearch, services.downloadOrchestrator, log, services.blacklist, services.indexer, services.eventHistory, services.retryBudget, services.eventBroadcaster) },
+    { name: 'search', type: 'timeout', getIntervalMinutes: () => services.settings.get('search').then((s) => s.intervalMinutes), callback: () => runSearchJob(services.settings, services.bookList, services.indexerSearch, services.downloadOrchestrator, log, services.blacklist, services.indexer, services.eventHistory, services.retryBudget, services.eventBroadcaster, services.searchLadderCooldown) },
     { name: 'rss', type: 'timeout', getIntervalMinutes: () => services.settings.get('rss').then((s) => s.intervalMinutes), callback: () => runRssJob(services.settings, services.bookList, services.indexerSearch, services.downloadOrchestrator, services.blacklist, services.indexer, log) },
     { name: 'backup', type: 'timeout', getIntervalMinutes: () => services.settings.get('system').then((s) => s.backupIntervalMinutes), callback: () => runBackupJob(services.backup, log) },
     { name: 'housekeeping', type: 'cron', schedule: '0 0 * * 0', callback: async () => {

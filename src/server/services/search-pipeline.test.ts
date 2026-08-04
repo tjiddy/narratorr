@@ -13,6 +13,20 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '@core/index.js';
 import { BYTES_PER_GB as GB, BYTES_PER_MB as MB } from '@shared/constants.js';
 import type { SearchResponsePayload, SearchResultPayload } from '@shared/schemas/search-stream.js';
+import { SearchLadderCooldown } from './search-ladder-cooldown.js';
+
+
+/**
+ * `searchAllWithStatus` value for ONE indexer that answered (#2104 D16).
+ *
+ * `succeeded: 1` is what makes an empty list a GENUINE zero rather than an
+ * outage, so the query ladder advances instead of aborting. Every pre-ladder
+ * fixture here answers identically on every rung, which keeps the outcome the
+ * same as before the ladder existed.
+ */
+function withStatus(results: SearchResult[]) {
+  return { results, succeeded: 1, failed: 0 };
+}
 
 const mockIndexer = {
   getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }),
@@ -183,7 +197,7 @@ describe('searchAndGrabForBook', () => {
 
   beforeEach(() => {
     indexerSearchService = {
-      searchAll: vi.fn().mockResolvedValue([makeResult()]),
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult()])),
     } as unknown as IndexerSearchService;
 
     downloadService = {
@@ -213,7 +227,7 @@ describe('searchAndGrabForBook', () => {
 
   it('forwards indexerId from best search result to downloadOrchestrator.grab', async () => {
     indexerSearchService = {
-      searchAll: vi.fn().mockResolvedValue([makeResult({ indexerId: 42 })]),
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ indexerId: 42 })])),
     } as unknown as IndexerSearchService;
 
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -232,7 +246,7 @@ describe('searchAndGrabForBook', () => {
 
   it('forwards isFreeleech=true from best search result to grab (#1156 F2)', async () => {
     indexerSearchService = {
-      searchAll: vi.fn().mockResolvedValue([makeResult({ indexerId: 7, isFreeleech: true })]),
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ indexerId: 7, isFreeleech: true })])),
     } as unknown as IndexerSearchService;
 
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -250,21 +264,21 @@ describe('searchAndGrabForBook', () => {
   });
 
   it('returns no_results when indexers return empty array', async () => {
-    vi.mocked(indexerSearchService.searchAll).mockResolvedValue([]);
+    vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(withStatus([]));
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(result).toEqual({ result: 'no_results' });
     expect(downloadService.grab).not.toHaveBeenCalled();
   });
 
   it('returns no_results when all results filtered out by grabFloor', async () => {
-    vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ size: 100 })]);
+    vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(withStatus([makeResult({ size: 100 })]));
     const settings = { ...defaultQualitySettings, grabFloor: 999 };
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: settings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(result).toEqual({ result: 'no_results' });
   });
 
   it('returns no_results when all results filtered out by word lists', async () => {
-    vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ title: 'bad book' })]);
+    vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(withStatus([makeResult({ title: 'bad book' })]));
     const settings = { ...defaultQualitySettings, rejectWords: 'bad' };
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: settings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(result).toEqual({ result: 'no_results' });
@@ -272,7 +286,7 @@ describe('searchAndGrabForBook', () => {
 
   it('returns no_results when all results filtered out by maxDownloadSize', async () => {
 
-    vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ size: 10 * GB })]);
+    vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(withStatus([makeResult({ size: 10 * GB })]));
     const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: settings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(result).toEqual({ result: 'no_results' });
@@ -280,10 +294,10 @@ describe('searchAndGrabForBook', () => {
 
   it('logs quality gate filtering when results are filtered by maxDownloadSize', async () => {
 
-    vi.mocked(indexerSearchService.searchAll).mockResolvedValue([
+    vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(withStatus([
       makeResult({ title: 'Small', size: 2 * GB }),
       makeResult({ title: 'Huge', size: 10 * GB }),
-    ]);
+    ]));
     const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
     await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: settings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(log.debug).toHaveBeenCalledWith(
@@ -293,7 +307,7 @@ describe('searchAndGrabForBook', () => {
   });
 
   it('does not log quality gate filtering when no results are filtered', async () => {
-    vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ size: 500 * 1024 * 1024 })]);
+    vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(withStatus([makeResult({ size: 500 * 1024 * 1024 })]));
     const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
     await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: settings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(log.debug).not.toHaveBeenCalledWith(
@@ -303,13 +317,13 @@ describe('searchAndGrabForBook', () => {
   });
 
   it('returns no_results when no result has downloadUrl', async () => {
-    vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ downloadUrl: undefined })]);
+    vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(withStatus([makeResult({ downloadUrl: undefined })]));
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(result).toEqual({ result: 'no_results' });
   });
 
   it('treats empty-string downloadUrl as no download URL', async () => {
-    vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ downloadUrl: '' })]);
+    vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(withStatus([makeResult({ downloadUrl: '' })]));
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(result).toEqual({ result: 'no_results' });
   });
@@ -431,7 +445,7 @@ describe('searchAndGrabForBook', () => {
   });
 
   it('passes guid from best result to grab()', async () => {
-    vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ guid: 'nzb-guid-abc' })]);
+    vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(withStatus([makeResult({ guid: 'nzb-guid-abc' })]));
     await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(downloadService.grab).toHaveBeenCalledWith(
       expect.objectContaining({ guid: 'nzb-guid-abc', bookId: 1 }),
@@ -439,7 +453,7 @@ describe('searchAndGrabForBook', () => {
   });
 
   it('passes undefined guid to grab() when result has no guid', async () => {
-    vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ guid: undefined })]);
+    vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(withStatus([makeResult({ guid: undefined })]));
     await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(downloadService.grab).toHaveBeenCalledWith(
       expect.objectContaining({ guid: undefined, bookId: 1 }),
@@ -448,7 +462,7 @@ describe('searchAndGrabForBook', () => {
 
   it('calls buildSearchQuery to construct the query', async () => {
     await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
-    expect(indexerSearchService.searchAll).toHaveBeenCalledWith('Test Book Author', expect.any(Object));
+    expect(indexerSearchService.searchAllWithStatus).toHaveBeenCalledWith('Test Book Author', expect.any(Object));
   });
 });
 
@@ -1827,7 +1841,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
     it('no events emitted when broadcaster is not provided', async () => {
       // Use searchAll mock since without broadcaster, the function should still work
       indexerSearchService = {
-        searchAll: vi.fn().mockResolvedValue([makeResult()]),
+        searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult()])),
       } as unknown as IndexerSearchService;
       const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
       expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
@@ -1878,7 +1892,7 @@ describe('#1310 searchAndGrabForBook broadcaster/non-broadcaster parity', () => 
   // (event sink + injected search call), not the raw result set.
   function makeParityIndexer(results: SearchResult[]): IndexerSearchService {
     return {
-      searchAll: vi.fn().mockResolvedValue(results),
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus(results)),
       searchAllStreaming: vi.fn().mockImplementation(
         async (_q: string, _o: unknown, _c: Map<number, AbortController>, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
           callbacks.onComplete(10, 'MAM', results.length, 500);
@@ -2289,7 +2303,7 @@ describe('#406 searchAndGrabForBook blacklist filtering', () => {
   it('filters blacklisted results before ranking — non-broadcaster path', async () => {
     const clean = makeResult({ infoHash: 'good', title: 'Clean', seeders: 5 });
     const blacklisted = makeResult({ infoHash: 'bad', title: 'Blacklisted', seeders: 100 });
-    indexerSearchService = { searchAll: vi.fn().mockResolvedValue([blacklisted, clean]) } as unknown as IndexerSearchService;
+    indexerSearchService = { searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([blacklisted, clean])) } as unknown as IndexerSearchService;
     vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
       blacklistedHashes: new Set(['bad']),
       blacklistedGuids: new Set(),
@@ -2302,7 +2316,7 @@ describe('#406 searchAndGrabForBook blacklist filtering', () => {
   });
 
   it('returns no_results when all results are blacklisted — non-broadcaster path', async () => {
-    indexerSearchService = { searchAll: vi.fn().mockResolvedValue([makeResult({ infoHash: 'h1' }), makeResult({ infoHash: 'h2' })]) } as unknown as IndexerSearchService;
+    indexerSearchService = { searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ infoHash: 'h1' }), makeResult({ infoHash: 'h2' })])) } as unknown as IndexerSearchService;
     vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
       blacklistedHashes: new Set(['h1', 'h2']),
       blacklistedGuids: new Set(),
@@ -2316,7 +2330,7 @@ describe('#406 searchAndGrabForBook blacklist filtering', () => {
   it('grabs only clean results when mix of blacklisted and clean — non-broadcaster path', async () => {
     const clean = makeResult({ guid: 'good-guid', title: 'Clean' });
     const blacklisted = makeResult({ guid: 'bad-guid', title: 'Blacklisted' });
-    indexerSearchService = { searchAll: vi.fn().mockResolvedValue([blacklisted, clean]) } as unknown as IndexerSearchService;
+    indexerSearchService = { searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([blacklisted, clean])) } as unknown as IndexerSearchService;
     vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
       blacklistedHashes: new Set(),
       blacklistedGuids: new Set(['bad-guid']),
@@ -2744,7 +2758,7 @@ describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
 
   it('calls enrichUsenetLanguages before filterAndRankResults', async () => {
     indexerSearchService = {
-      searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })]),
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })])),
     } as unknown as IndexerSearchService;
 
     await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -2759,7 +2773,7 @@ describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
 
   it('usenet result with reject word in NZB name is filtered out before grab', async () => {
     indexerSearchService = {
-      searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'usenet', title: 'Clean Title', downloadUrl: 'http://nzb.test/1' })]),
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ protocol: 'usenet', title: 'Clean Title', downloadUrl: 'http://nzb.test/1' })])),
     } as unknown as IndexerSearchService;
 
     // Simulate enrichment populating nzbName with reject word
@@ -2778,7 +2792,7 @@ describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
 
   it('torrent results are not enriched with nzbName', async () => {
     indexerSearchService = {
-      searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'torrent' })]),
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ protocol: 'torrent' })])),
     } as unknown as IndexerSearchService;
 
     await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -3054,7 +3068,11 @@ type TightenOptional<T> = {
 
 describe('postProcessSearchResults — search-complete payload schema compatibility (#734 AC1)', () => {
   it('return type is structurally compatible with searchResponseSchema', () => {
-    type TightSearchResponse = Omit<SearchResponsePayload, 'results'> & { results: TightenOptional<SearchResultPayload>[] };
+    // `relaxedQuery` is omitted deliberately: the query ladder's rung
+    // disclosure (#2104 D10) is added by the SSE ROUTE, which knows which rung
+    // won. `postProcessSearchResults` runs on one rung's results and has no way
+    // to know — so it is not part of its return contract.
+    type TightSearchResponse = Omit<SearchResponsePayload, 'results' | 'relaxedQuery'> & { results: TightenOptional<SearchResultPayload>[] };
     expectTypeOf<Awaited<ReturnType<typeof postProcessSearchResults>>>()
       .branded.toEqualTypeOf<TightSearchResponse>();
   });
@@ -3184,10 +3202,10 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
 
   it('does not grab a multi-part usenet post ranked ahead of a valid one — the valid candidate wins', async () => {
     indexerSearchService = {
-      searchAll: vi.fn().mockResolvedValue([
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([
         makeResult({ protocol: 'usenet', title: 'Book Part 2 of 5', downloadUrl: 'http://nzb.test/multi' }),
         makeResult({ protocol: 'usenet', title: 'Book Complete', downloadUrl: 'http://nzb.test/valid' }),
-      ]),
+      ])),
     } as unknown as IndexerSearchService;
 
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -3199,7 +3217,7 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
 
   it('returns no_results when every usenet candidate is multi-part', async () => {
     indexerSearchService = {
-      searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'usenet', title: 'Book Part 2 of 5', downloadUrl: 'http://nzb.test/multi' })]),
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ protocol: 'usenet', title: 'Book Part 2 of 5', downloadUrl: 'http://nzb.test/multi' })])),
     } as unknown as IndexerSearchService;
 
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -3210,7 +3228,7 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
 
   it('still grabs a torrent whose title matches the multi-part pattern (protocol scoping)', async () => {
     indexerSearchService = {
-      searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'torrent', title: 'Book Part 2 of 5', downloadUrl: 'magnet:?xt=urn:btih:tor' })]),
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ protocol: 'torrent', title: 'Book Part 2 of 5', downloadUrl: 'magnet:?xt=urn:btih:tor' })])),
     } as unknown as IndexerSearchService;
 
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -3226,7 +3244,7 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
       }
     });
     indexerSearchService = {
-      searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'usenet', title: 'Book Clean Title', downloadUrl: 'http://nzb.test/multi' })]),
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ protocol: 'usenet', title: 'Book Clean Title', downloadUrl: 'http://nzb.test/multi' })])),
     } as unknown as IndexerSearchService;
 
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -3261,7 +3279,7 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
     // Display leg: client sends true seconds derived from the book row.
     const display = await postProcessSearchResults(input(), parityBook.duration * 60, blacklistService, settingsFloor, mockIndexer, log);
 
-    indexerSearchService = { searchAll: vi.fn().mockResolvedValue(input()) } as unknown as IndexerSearchService;
+    indexerSearchService = { searchAllWithStatus: vi.fn().mockResolvedValue(withStatus(input())) } as unknown as IndexerSearchService;
     const grab = await searchAndGrabForBook(parityBook, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: { ...defaultQualitySettings, grabFloor: 30, minSeeders: 0 }, log, blacklistService, indexerService: mockIndexer, eventHistory });
 
     // Multi-part dropped on both legs; the remaining release is below the floor,
@@ -3277,7 +3295,7 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
     // 600 min = 10h; 100MB / 10h = 10 MB/h < 30 floor → reject.
     const floorBook = { id: 1, title: 'Test Book', duration: 600, authors: [{ name: 'Author' }] };
     indexerSearchService = {
-      searchAll: vi.fn().mockResolvedValue([makeResult({ size: 100 * MB, downloadUrl: 'magnet:?xt=urn:btih:below' })]),
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ size: 100 * MB, downloadUrl: 'magnet:?xt=urn:btih:below' })])),
     } as unknown as IndexerSearchService;
 
     const result = await searchAndGrabForBook(floorBook, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: { ...defaultQualitySettings, grabFloor: 30, minSeeders: 0 }, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -3293,7 +3311,7 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
     // duration 1 min would (wrongly) give a huge MB/h and pass; audioDuration must win.
     const precedenceBook = { id: 1, title: 'Test Book', duration: 1, audioDuration: 36000, authors: [{ name: 'Author' }] };
     indexerSearchService = {
-      searchAll: vi.fn().mockResolvedValue([makeResult({ size: 100 * MB, downloadUrl: 'magnet:?xt=urn:btih:prec' })]),
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ size: 100 * MB, downloadUrl: 'magnet:?xt=urn:btih:prec' })])),
     } as unknown as IndexerSearchService;
 
     const result = await searchAndGrabForBook(precedenceBook, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: { ...defaultQualitySettings, grabFloor: 30, minSeeders: 0 }, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -3329,5 +3347,425 @@ describe('#1777 postProcessSearchResults — durationUnknown passthrough survive
     const results = [makeResult({ protocol: 'usenet', title: 'A Book', downloadUrl: 'http://nzb.test/1' })];
     const output = await postProcessSearchResults(results, undefined, createBlacklist(), createSettings(), mockIndexer, createMockLogger());
     expect(output.durationUnknown).toBe(true);
+  });
+});
+
+// ============================================================================
+// #2104 — progressive query relaxation, execution half
+// ============================================================================
+
+describe('searchAndGrabForBook — query ladder (#2104)', () => {
+  /** Deep-franchise live example: 8-rung ladder, `first+last` at index 3. */
+  const franchiseBook = {
+    id: 1,
+    title: 'Star Wars: The High Republic: Haunted Starlight',
+    duration: 3600,
+    authors: [{ name: 'George Mann' }],
+  };
+  /** The Churn live example: 3-rung ladder, `prefix(1)` at index 1. */
+  const churnBook = {
+    id: 2,
+    title: 'The Churn: An Expanse Novella',
+    duration: 3600,
+    authors: [{ name: 'James S. A. Corey' }],
+  };
+  /** Rising Storm live example: the paren-stripped `full` wins at index 1. */
+  const risingStormBook = {
+    id: 3,
+    title: 'Star Wars: The Rising Storm (The High Republic)',
+    duration: 3600,
+    authors: [{ name: 'Cavan Scott' }],
+  };
+
+  let downloadService: DownloadOrchestrator;
+  let blacklistService: BlacklistService;
+  let eventHistory: EventHistoryService;
+  let log: FastifyBaseLogger;
+
+  beforeEach(() => {
+    downloadService = { grab: vi.fn().mockResolvedValue({ id: 1, status: 'downloading' }) } as unknown as DownloadOrchestrator;
+    blacklistService = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set<string>(), blacklistedGuids: new Set<string>() }),
+    } as unknown as BlacklistService;
+    eventHistory = createMockEventHistory();
+    log = createMockLogger();
+  });
+
+  /**
+   * Aggregate search whose answer depends on the transport query, so a test can
+   * pin exactly WHICH rung produced the hits. `succeeded` defaults to 1 — a
+   * genuine, answered zero — so the ladder advances rather than aborting.
+   */
+  function serviceAnswering(
+    byQuery: Record<string, SearchResult[]>,
+    opts: { succeeded?: number } = {},
+  ): IndexerSearchService {
+    return {
+      searchAllWithStatus: vi.fn().mockImplementation(async (query: string) => ({
+        results: byQuery[query] ?? [],
+        succeeded: opts.succeeded ?? 1,
+        failed: 0,
+      })),
+    } as unknown as IndexerSearchService;
+  }
+
+  const deps = (indexerSearchService: IndexerSearchService, extra: Record<string, unknown> = {}) => ({
+    indexerSearchService,
+    downloadOrchestrator: downloadService,
+    qualitySettings: defaultQualitySettings,
+    log,
+    blacklistService,
+    indexerService: mockIndexer,
+    eventHistory,
+    ...extra,
+  });
+
+  const queriesOf = (svc: IndexerSearchService): string[] =>
+    vi.mocked(svc.searchAllWithStatus).mock.calls.map((c) => c[0] as string);
+
+  // AC15 — the no-op pin. A book findable at rung 1 must issue byte-identically
+  // the query it issued before the ladder existed, exactly once per indexer.
+  // COUNTERFACTUAL: delete `runQueryLadder`'s "stop at first non-empty rung"
+  // guard and this fails while the rest stay green.
+  it('issues exactly ONE query, byte-identical to the pre-ladder one, when rung 1 answers (AC15)', async () => {
+    const svc = serviceAnswering({ 'Star Wars The High Republic Haunted Starlight George Mann': [makeResult()] });
+
+    const result = await searchAndGrabForBook(franchiseBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
+    expect(queriesOf(svc)).toEqual(['Star Wars The High Republic Haunted Starlight George Mann']);
+  });
+
+  // AC13 — all three live examples, at the rung the spec names.
+  it('finds the deep-franchise example at the first+last rung and grabs it (AC13)', async () => {
+    const svc = serviceAnswering({
+      'star wars haunted starlight George Mann': [makeResult({ title: 'Star Wars: Haunted Starlight' })],
+    });
+
+    const result = await searchAndGrabForBook(franchiseBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'Star Wars: Haunted Starlight' });
+    expect(queriesOf(svc)).toEqual([
+      'Star Wars The High Republic Haunted Starlight George Mann',
+      'star wars the high republic George Mann',
+      'the high republic haunted starlight George Mann',
+      'star wars haunted starlight George Mann',
+    ]);
+  });
+
+  it('finds The Churn at the prefix(1) rung and grabs it (AC13)', async () => {
+    const svc = serviceAnswering({
+      'the churn James S A Corey': [makeResult({ title: 'The Churn (Unabridged) [M4B]' })],
+    });
+
+    const result = await searchAndGrabForBook(churnBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'The Churn (Unabridged) [M4B]' });
+    expect(queriesOf(svc)).toEqual([
+      'The Churn An Expanse Novella James S A Corey',
+      'the churn James S A Corey',
+    ]);
+  });
+
+  it('finds Rising Storm at the paren-stripped full rung and grabs it (AC13)', async () => {
+    const svc = serviceAnswering({
+      'star wars the rising storm Cavan Scott': [makeResult({ title: 'Star Wars: The Rising Storm' })],
+    });
+
+    const result = await searchAndGrabForBook(risingStormBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'Star Wars: The Rising Storm' });
+    expect(queriesOf(svc)).toEqual([
+      'Star Wars The Rising Storm The High Republic Cavan Scott',
+      'star wars the rising storm Cavan Scott',
+    ]);
+  });
+
+  // AC16 — the existing gate chain must see ONLY the winning rung's results.
+  // COUNTERFACTUAL: move the gate chain inside the rung loop and every count
+  // below jumps to the number of rungs run.
+  it('runs the gate chain exactly once, on the winning rung, across a 4-rung ladder (AC16)', async () => {
+    const svc = serviceAnswering({
+      // A guid is what makes the blacklist gate actually issue its lookup —
+      // `filterBlacklistedResults` short-circuits when no result carries an
+      // identifier, which would make that spy a vacuous observation point.
+      'star wars haunted starlight George Mann': [makeResult({ title: 'Star Wars: Haunted Starlight', guid: 'g-1' })],
+    });
+    mockEnrichUsenet.mockClear();
+
+    await searchAndGrabForBook(franchiseBook, deps(svc));
+
+    expect(queriesOf(svc)).toHaveLength(4);
+    expect(blacklistService.getBlacklistedIdentifiers).toHaveBeenCalledTimes(1);
+    expect(mockEnrichUsenet).toHaveBeenCalledTimes(1);
+  });
+
+  // AC14, AC32 — the floor withholds the grab and records exactly ONE event
+  // naming the highest-ranked DOWNLOADABLE failure. Observed at the GRAB and
+  // EVENT spies, not the log.
+  it('withholds the grab and records one held event when every downloadable candidate fails the floor (AC14, AC32)', async () => {
+    const svc = serviceAnswering({
+      'star wars haunted starlight George Mann': [
+        makeResult({ title: 'Star Wars: The High Republic: Cataclysm', seeders: 99 }),
+        makeResult({ title: 'Star Wars: Haunted Totally Different Starlight', seeders: 1 }),
+      ],
+    });
+
+    const result = await searchAndGrabForBook(franchiseBook, deps(svc));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+    expect(eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      bookId: 1,
+      reason: {
+        relaxed_query: 'star wars haunted starlight George Mann',
+        variant_tag: 'first+last',
+        release_title: 'Star Wars: The High Republic: Cataclysm',
+      },
+    }));
+  });
+
+  // AC14 — the floor is NOT duration-conditional. COUNTERFACTUAL: gate it on
+  // `durationUnknown` and only this test fails.
+  it('applies the floor identically on a book with a KNOWN duration (AC14)', async () => {
+    const svc = serviceAnswering({
+      'star wars haunted starlight George Mann': [makeResult({ title: 'Star Wars: The High Republic: Cataclysm' })],
+    });
+
+    const result = await searchAndGrabForBook({ ...franchiseBook, duration: 600, audioDuration: 36000 }, deps(svc));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'search_relaxed_held' }));
+  });
+
+  // AC31 — a lower-ranked passing candidate IS grabbed, and nothing is held.
+  it('grabs a lower-ranked passing candidate past a failing top-ranked one (AC31)', async () => {
+    const svc = serviceAnswering({
+      'star wars haunted starlight George Mann': [
+        makeResult({ title: 'Star Wars: The High Republic: Cataclysm', seeders: 99 }),
+        makeResult({ title: 'Star Wars: Haunted Starlight', seeders: 5 }),
+      ],
+    });
+
+    const result = await searchAndGrabForBook(franchiseBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'Star Wars: Haunted Starlight' });
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // AC40, AC41 — a post-gate list with no downloadable candidate is not a floor
+  // rejection. COUNTERFACTUAL: name the top-ranked result regardless of
+  // downloadability and a held event appears naming a PASSING release.
+  it('records no held event when floor-passing results exist but none is downloadable (AC40, AC41)', async () => {
+    const svc = serviceAnswering({
+      'star wars haunted starlight George Mann': [makeResult({ title: 'Star Wars: Haunted Starlight', downloadUrl: undefined })],
+    });
+
+    const result = await searchAndGrabForBook(franchiseBook, deps(svc));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // AC40 — an empty post-gate list never names a release.
+  it('records no held event when the gates removed every result (AC40)', async () => {
+    const svc = serviceAnswering({
+      'star wars haunted starlight George Mann': [makeResult({ title: 'Dune EPUB' })],
+    });
+
+    const result = await searchAndGrabForBook(franchiseBook, deps(svc));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // AC33 — a `full` rung is not a segment cut, so nothing is corroborated.
+  it('never applies the floor or holds on a full-tagged winning rung (AC33)', async () => {
+    const svc = serviceAnswering({
+      'star wars the rising storm Cavan Scott': [makeResult({ title: 'Completely Unrelated Release' })],
+    });
+
+    const result = await searchAndGrabForBook(risingStormBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'Completely Unrelated Release' });
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // AC36 — every indexer rejected: an outage, not a zero. COUNTERFACTUAL: treat
+  // `[]` as a genuine zero and the call count jumps to the full ladder length
+  // AND a cooldown entry appears.
+  it('aborts the ladder after ONE rung when no indexer answered, recording no cooldown (AC36)', async () => {
+    const svc = serviceAnswering({}, { succeeded: 0 });
+    const searchLadderCooldown = new SearchLadderCooldown();
+    const recordExhausted = vi.spyOn(searchLadderCooldown, 'recordExhausted');
+
+    const result = await searchAndGrabForBook(franchiseBook, deps(svc, { searchLadderCooldown, ladderMode: 'scheduled' }));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(queriesOf(svc)).toHaveLength(1);
+    expect(recordExhausted).not.toHaveBeenCalled();
+  });
+
+  // AC35 — one indexer answering empty while another rejects is still a real,
+  // answered zero, so the ladder advances.
+  it('advances when at least one indexer answered but the aggregate is empty (AC35)', async () => {
+    const svc = {
+      searchAllWithStatus: vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 1 }),
+    } as unknown as IndexerSearchService;
+
+    await searchAndGrabForBook(churnBook, deps(svc));
+
+    expect(queriesOf(svc)).toEqual([
+      'The Churn An Expanse Novella James S A Corey',
+      'the churn James S A Corey',
+      'an expanse novella James S A Corey',
+      'the churn an expanse novella',
+      'the churn',
+      'an expanse novella',
+    ]);
+  });
+
+  // AC34 — mode gating. The default ('always') never consults the cooldown, so
+  // a person clicking Search is never handed a degraded ladder.
+  it('honours a live cooldown under ladderMode "scheduled" and ignores it under the default (AC34)', async () => {
+    const searchLadderCooldown = new SearchLadderCooldown();
+    const scheduledSvc = serviceAnswering({});
+
+    // Cycle 1 exhausts and records.
+    await searchAndGrabForBook(churnBook, deps(scheduledSvc, { searchLadderCooldown, ladderMode: 'scheduled' }));
+    expect(queriesOf(scheduledSvc)).toHaveLength(6);
+
+    // Cycle 2 is restricted to rung 1.
+    const cycle2 = serviceAnswering({});
+    await searchAndGrabForBook(churnBook, deps(cycle2, { searchLadderCooldown, ladderMode: 'scheduled' }));
+    expect(queriesOf(cycle2)).toEqual(['The Churn An Expanse Novella James S A Corey']);
+
+    // A manual caller (default 'always') still gets the FULL ladder for the
+    // same book while that entry is live.
+    const manual = serviceAnswering({});
+    await searchAndGrabForBook(churnBook, deps(manual, { searchLadderCooldown }));
+    expect(queriesOf(manual)).toHaveLength(6);
+  });
+
+  // AC23 — a rung-1 hit means the canonical query works again.
+  it('clears a live cooldown entry when rung 1 hits (AC23)', async () => {
+    const searchLadderCooldown = new SearchLadderCooldown();
+    await searchAndGrabForBook(churnBook, deps(serviceAnswering({}), { searchLadderCooldown, ladderMode: 'scheduled' }));
+
+    const hit = serviceAnswering({ 'The Churn An Expanse Novella James S A Corey': [makeResult()] });
+    await searchAndGrabForBook(churnBook, deps(hit, { searchLadderCooldown, ladderMode: 'scheduled' }));
+
+    const after = serviceAnswering({});
+    await searchAndGrabForBook(churnBook, deps(after, { searchLadderCooldown, ladderMode: 'scheduled' }));
+    expect(queriesOf(after)).toHaveLength(6);
+  });
+
+  // A restricted cycle must not refresh the window, or the cooldown would never
+  // expire and the ladder would be suppressed forever.
+  it('does not re-record exhaustion off a restricted (rung-1-only) cycle', async () => {
+    const searchLadderCooldown = new SearchLadderCooldown();
+    const recordExhausted = vi.spyOn(searchLadderCooldown, 'recordExhausted');
+
+    await searchAndGrabForBook(churnBook, deps(serviceAnswering({}), { searchLadderCooldown, ladderMode: 'scheduled' }));
+    await searchAndGrabForBook(churnBook, deps(serviceAnswering({}), { searchLadderCooldown, ladderMode: 'scheduled' }));
+
+    expect(recordExhausted).toHaveBeenCalledTimes(1);
+  });
+
+  // AC17 — ranking context stays canonical on an author-OFF rung.
+  // COUNTERFACTUAL: drop `rankingAuthor` and the transport author is the only
+  // ranking context left, so an author-OFF rung ranks title-only.
+  it('passes the canonical author as rankingAuthor on every rung, transport author only on author-ON ones (AC17)', async () => {
+    const svc = serviceAnswering({ 'the churn': [makeResult()] });
+
+    await searchAndGrabForBook(churnBook, deps(svc));
+
+    const calls = vi.mocked(svc.searchAllWithStatus).mock.calls;
+    for (const [, options] of calls) {
+      expect(options).toEqual(expect.objectContaining({
+        title: 'The Churn: An Expanse Novella',
+        rankingAuthor: 'James S. A. Corey',
+      }));
+    }
+    expect(calls.map(([query, options]) => [query, (options as { author?: string }).author])).toEqual([
+      ['The Churn An Expanse Novella James S A Corey', 'James S. A. Corey'],
+      ['the churn James S A Corey', 'James S. A. Corey'],
+      ['an expanse novella James S A Corey', 'James S. A. Corey'],
+      ['the churn an expanse novella', undefined],
+      ['the churn', undefined],
+    ]);
+  });
+});
+
+describe('searchAndGrabForBook — query ladder on the broadcaster path (#2104)', () => {
+  const churnBook = { id: 2, title: 'The Churn: An Expanse Novella', duration: 3600, authors: [{ name: 'James S. A. Corey' }] };
+
+  // AC18 — `search_started` is a per-CALL lifecycle event, not a per-rung one.
+  // COUNTERFACTUAL: leave `sink.searchStarted` inside the per-rung executor and
+  // the count becomes the number of rungs run.
+  it('emits search_started exactly once regardless of how many rungs run (AC18)', async () => {
+    const broadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+    const indexerSearchService = {
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 10, name: 'MAM' }]),
+      searchAllStreaming: vi.fn().mockImplementation(
+        async (_q: string, _o: unknown, _c: Map<number, AbortController>, cb: { onComplete: (id: number, n: string, count: number, ms: number) => void }) => {
+          cb.onComplete(10, 'MAM', 0, 5);
+          return [];
+        },
+      ),
+    } as unknown as IndexerSearchService;
+
+    await searchAndGrabForBook(churnBook, {
+      indexerSearchService,
+      downloadOrchestrator: { grab: vi.fn() } as unknown as DownloadOrchestrator,
+      qualitySettings: defaultQualitySettings,
+      log: createMockLogger(),
+      blacklistService: {
+        getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set<string>(), blacklistedGuids: new Set<string>() }),
+      } as unknown as BlacklistService,
+      indexerService: mockIndexer,
+      eventHistory: createMockEventHistory(),
+      broadcaster,
+    });
+
+    expect(indexerSearchService.searchAllStreaming).toHaveBeenCalledTimes(6);
+    const startedEmissions = vi.mocked(broadcaster.emit).mock.calls.filter(([event]) => event === 'search_started');
+    expect(startedEmissions).toHaveLength(1);
+  });
+
+  // D11 — the SAME controller map crosses every rung, which is what lets the
+  // pre-adapter abort guard skip an indexer cancelled on an earlier rung.
+  it('reuses one sticky controller map across every rung (AC27)', async () => {
+    const seen: Array<Map<number, AbortController>> = [];
+    const indexerSearchService = {
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 10, name: 'MAM' }]),
+      searchAllStreaming: vi.fn().mockImplementation(
+        async (_q: string, _o: unknown, controllers: Map<number, AbortController>, cb: { onComplete: (id: number, n: string, count: number, ms: number) => void }) => {
+          seen.push(controllers);
+          cb.onComplete(10, 'MAM', 0, 5);
+          return [];
+        },
+      ),
+    } as unknown as IndexerSearchService;
+
+    await searchAndGrabForBook(churnBook, {
+      indexerSearchService,
+      downloadOrchestrator: { grab: vi.fn() } as unknown as DownloadOrchestrator,
+      qualitySettings: defaultQualitySettings,
+      log: createMockLogger(),
+      blacklistService: {
+        getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set<string>(), blacklistedGuids: new Set<string>() }),
+      } as unknown as BlacklistService,
+      indexerService: mockIndexer,
+      eventHistory: createMockEventHistory(),
+      broadcaster: { emit: vi.fn() } as unknown as EventBroadcasterService,
+    });
+
+    expect(seen).toHaveLength(6);
+    expect(new Set(seen).size).toBe(1);
   });
 });

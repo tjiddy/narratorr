@@ -33,6 +33,7 @@ import type {
   TaggingService,
   QualityGateService,
   RetryBudget,
+  SearchLadderCooldown,
   EventBroadcasterService,
   BackupService,
   HealthCheckService,
@@ -81,6 +82,7 @@ export interface Services {
   qualityGate: QualityGateService;
   qualityGateOrchestrator: QualityGateOrchestrator;
   retryBudget: RetryBudget;
+  searchLadderCooldown: SearchLadderCooldown;
   eventBroadcaster: EventBroadcasterService;
   backup: BackupService;
   healthCheck: HealthCheckService;
@@ -132,6 +134,7 @@ export const SERVICE_KEYS = Object.keys({
   qualityGate: true,
   qualityGateOrchestrator: true,
   retryBudget: true,
+  searchLadderCooldown: true,
   eventBroadcaster: true,
   backup: true,
   healthCheck: true,

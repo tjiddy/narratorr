@@ -132,6 +132,35 @@ function colonSegments(base: string): string[] {
 }
 
 /**
+ * The segment primitive (#2104 D19) — the exact base `titleVariants` derives its
+ * `prefix(n)` / `suffix(n)` / `first+last` slices from, exported so a consumer can
+ * see the segment BOUNDARIES the generator's space-joined `raw` erases.
+ *
+ * Purely a composition of the two private folds above; no new logic, and no
+ * existing export changes behaviour. It is additive for two reasons the query
+ * ladder (#2104) needs and cannot get from `Variant` alone:
+ *
+ *  1. `raw` joins retained segments with spaces, so a predicate built on it is
+ *     either whole-string containment (which false-negatives the book's own
+ *     canonical title) or a non-contiguous token walk (which admits
+ *     `"Star Wars: Haunted Totally Different Starlight"` against a retained
+ *     `Haunted Starlight`). Real segments make per-segment containment possible.
+ *  2. `VariantTag` carries the RETAINED `n`, never the segment count, and dedup
+ *     makes the emitted tags non-dense — `"---: Alpha: Beta: Gamma: ---"` has 5
+ *     segments but tops out at `prefix(3)` because the wider slices all collapse
+ *     onto the same text. Neither the count nor its maximum is recoverable.
+ *
+ * Returns RAW segment text, unnormalized: `colonSegments` keeps any segment with
+ * non-whitespace content, including punctuation-only text like `---` that
+ * {@link normalizeTitleForVariantMatch} then erases. Consumers that count
+ * segments must normalize and drop empties FIRST and count that set — the raw
+ * length is not the effective one.
+ */
+export function titleSegments(title: string): string[] {
+  return colonSegments(stripParentheticals(title));
+}
+
+/**
  * The LOSSLESS twin of `normalizeTitleForVariantMatch`: identical folds (curly
  * apostrophes, audio-edition tails, case, `&`/`+` → "and", punctuation-to-space,
  * whitespace collapse) except that the character class is Unicode-aware, so
