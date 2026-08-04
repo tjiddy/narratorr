@@ -306,22 +306,36 @@ export class MergeService {
       });
   }
 
-  /** Re-validate a queued merge before executing. On failure, emit merge_failed and skip. */
+  /**
+   * Re-validate a queued merge before executing. On dequeue-time failure, emit merge_failed and skip.
+   *
+   * The two phases are caught separately so that exactly ONE handler owns the terminal event for
+   * any given failure. The revalidation gate owns its own rejections — the merge never started, so
+   * nothing else has reported it. Everything `executeMerge` throws is already terminal-reported by
+   * its own catch (which emits `merge_complete`/`merge_failed` and clears the snapshot before
+   * rethrowing), including the `MergeError` its post-recovery merge-minimum guard raises; a second
+   * emission here would send a duplicate failure toast and write a duplicate event-history row.
+   * Rethrown failures are therefore only logged, exactly like the non-`MergeError` ones.
+   */
   private async executeWithRevalidation(bookId: number): Promise<void> {
     try {
       await validateDequeueTime(this.bookService, bookId);
-      await this.executeMerge(bookId);
     } catch (error: unknown) {
       if (error instanceof MergeError) {
-        // Title resolution happens BEFORE the terminal sequence, never inside it. The snapshot
-        // holds it for the dequeue-validation failures this branch really owns; the book read is
-        // the fallback for the one case where the snapshot is already empty here — a MergeError
-        // rethrown by executeMerge, which emitted its own terminal event on the way out.
-        const bookTitle = this.mergeState.titleFor(bookId) ?? (await this.bookService.getById(bookId))?.title ?? `Book ${bookId}`;
+        // Title from the snapshot the promotion installed, so the terminal sequence below stays
+        // await-free (the book is always in `active` here — `startQueuedMerge` put it there).
+        const bookTitle = this.mergeState.titleFor(bookId) ?? `Book ${bookId}`;
         this.mergeState.finishTerminal(bookId, () => this.emitMergeFailed(bookId, bookTitle, error.message));
       } else {
-        this.log.error({ error: serializeError(error) }, 'Dequeue-time merge execution failed for book %d', bookId);
+        this.log.error({ error: serializeError(error) }, 'Dequeue-time merge revalidation failed for book %d', bookId);
       }
+      return;
+    }
+
+    try {
+      await this.executeMerge(bookId);
+    } catch (error: unknown) {
+      this.log.error({ error: serializeError(error) }, 'Dequeue-time merge execution failed for book %d', bookId);
     }
   }
 

@@ -3203,6 +3203,11 @@ describe('#2129 merge_state snapshot', () => {
       update: vi.fn().mockResolvedValue(undefined),
     };
 
+    const historyRows: Array<{ bookId: number; eventType: string }> = [];
+    const eventHistory = {
+      create: vi.fn(async (input: { bookId: number; eventType: string }) => { historyRows.push(input); }),
+    } as unknown as EventHistoryService;
+
     const service = new MergeService(
       inject<Db>(createMockDb()),
       inject<BookService>(bookService),
@@ -3210,7 +3215,7 @@ describe('#2129 merge_state snapshot', () => {
         processing: { ...processingOverrides.processing, ...(opts?.maxConcurrentProcessing !== undefined && { maxConcurrentProcessing: opts.maxConcurrentProcessing }) },
       }),
       inject<FastifyBaseLogger>(createMockLogger()),
-      undefined,
+      eventHistory,
       eventBroadcaster,
     );
     holder.service = service;
@@ -3221,7 +3226,10 @@ describe('#2129 merge_state snapshot', () => {
     const framesAfter = (event: string, bookId: number) =>
       frames.slice(frames.findIndex((f) => f.event === event && (f.payload as { book_id?: number }).book_id === bookId) + 1);
 
-    return { service, bookService, frames, snapshots, events, framesAfter, stateAtTerminal };
+    /** The event-history rows recorded for one book, by type. */
+    const historyFor = (bookId: number, eventType: string) => historyRows.filter((r) => r.bookId === bookId && r.eventType === eventType);
+
+    return { service, bookService, frames, snapshots, events, framesAfter, stateAtTerminal, historyFor };
   }
 
   /** Two visible source files everywhere, and a merge that never finishes unless told to. */
@@ -3447,8 +3455,13 @@ describe('#2129 merge_state snapshot', () => {
   });
 
   describe('terminal transitions', () => {
-    /** delete → discrete terminal event → one cleared snapshot, with nothing in between. */
+    /** delete → ONE discrete terminal event → one cleared snapshot, with nothing in between. */
     function expectTerminalOrder(harness: ReturnType<typeof createSnapshotHarness>, bookId: number, terminalEvent: string) {
+      // (0) the merge reports its outcome exactly once. Counting only the snapshot frames would
+      // miss a second emitter for the same failure (F1): the duplicate terminal event carries its
+      // own toast and event-history row even when the redundant snapshot is suppressed.
+      expect(harness.frames.filter((f) => f.event === terminalEvent && (f.payload as { book_id: number }).book_id === bookId)).toHaveLength(1);
+
       // (1) the state was already gone when the terminal event was emitted…
       const atTerminal = harness.stateAtTerminal.get(bookId);
       expect(atTerminal).toBeDefined();
@@ -3530,6 +3543,45 @@ describe('#2129 merge_state snapshot', () => {
       expect(harness.service.getMergeStateSnapshot().queued).toEqual([]);
       // The running merge is untouched.
       expect(harness.service.getMergeStateSnapshot().active.map((e) => e.book_id)).toEqual([42]);
+    });
+
+    it('reports a queued merge that fails INSIDE executeMerge exactly once (F1)', async () => {
+      // The post-recovery merge-minimum guard lives inside executeMerge and throws a MergeError,
+      // which executeMerge's own catch reports before rethrowing. The dequeue-revalidation catch
+      // that wraps it must NOT report it a second time: two merge_failed events mean two failure
+      // toasts and two event-history rows for one merge.
+      const { release } = setupBlockingMerge();
+      const harness = createSnapshotHarness({
+        books: [{ id: 42, title: 'Dogs of War' }, { id: 43, title: 'The Shining' }],
+      });
+
+      await harness.service.enqueueMerge(42);
+      await harness.service.enqueueMerge(43);
+
+      // /lib/43 passes dequeue-time revalidation with two files, then loses one before
+      // executeMerge re-reads it after recovery — the guard's live shape.
+      let reads43 = 0;
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['out.m4b'];
+        if (dir !== '/lib/43') return ['01.mp3', '02.mp3'];
+        reads43 += 1;
+        return reads43 === 1 ? ['01.mp3', '02.mp3'] : ['01.mp3'];
+      });
+
+      release();
+      await settle();
+
+      // It got far enough to start, so the inner guard — not the revalidation gate — is what failed it.
+      expect(harness.frames.some((f) => f.event === 'merge_started' && (f.payload as { book_id: number }).book_id === 43)).toBe(true);
+      const failures = harness.frames.filter((f) => f.event === 'merge_failed' && (f.payload as { book_id: number }).book_id === 43);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]!.payload).toMatchObject({ book_id: 43, book_title: 'The Shining', error: expect.stringContaining('No top-level audio files') });
+      // …and the same single-ownership rule holds for the durable record.
+      expect(harness.historyFor(43, 'merge_failed')).toHaveLength(1);
+
+      // Delete → one terminal event → one cleared snapshot still holds on this path.
+      expectTerminalOrder(harness, 43, 'merge_failed');
+      expect(harness.service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
     });
 
     it('does not add a second, backstop-driven frame on the normal terminal path', async () => {
