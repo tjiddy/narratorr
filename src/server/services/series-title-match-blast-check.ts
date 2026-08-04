@@ -53,8 +53,9 @@
  */
 
 import { existsSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { asc, eq } from 'drizzle-orm';
-import { createDb } from '@db/index.js';
+import { createDb, type Db } from '@db/index.js';
 import { books, series, seriesMembers } from '@db/schema.js';
 import {
   findInLibraryMatch,
@@ -232,6 +233,41 @@ function reachable(member: HardcoverMemberSummary, candidate: LibraryBookSummary
   );
 }
 
+/** A replay candidate — production's projection plus the `series_name` the pools filter on. */
+export interface ReplayCandidate extends LibraryBookSummary {
+  seriesName: string | null;
+}
+
+/**
+ * The replay's ENTIRE candidate universe, in production's pinned order. Every
+ * pool below is a `.filter()` of this list, and `Array.prototype.filter`
+ * preserves order, so pinning it here pins every replayed pool.
+ *
+ * `ORDER BY books.id`, matching the order production pins (#2108 —
+ * `loadLibraryBooksForSeriesNames` carries the same `asc(books.id)`), so each
+ * replayed pool presents candidates in the same sequence production's
+ * `WHERE series_name IN (…)` would. Load-bearing, because both matchers are
+ * first-claim-wins within a match-quality tier. Before #2108 both sides were
+ * unordered, which agreed only by planner accident; the replay must track
+ * production's contract, or its whole premise (replayed pool order equals
+ * production's) is false — and a blast check whose pools differ from
+ * production's reports planner-dependent deltas that production never sees.
+ *
+ * A `seriesName`-tombstoned book has `series_name = NULL` and SQL `IN` never
+ * matches it, so production can never pool one; they are dropped here.
+ *
+ * EXPORTED for `series-title-match-blast-check.test.ts`, which is the only
+ * executable signal on that ordering contract — the forced-index integration
+ * fixture observes production's loader, not this one.
+ */
+export async function loadReplayCandidates(db: Db): Promise<ReplayCandidate[]> {
+  const allBooks = await db
+    .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition, seriesName: books.seriesName })
+    .from(books)
+    .orderBy(asc(books.id));
+  return allBooks.filter((b) => b.seriesName !== null);
+}
+
 async function main(): Promise<void> {
   const dbPath = process.argv[2] ?? process.env.DATABASE_PATH ?? './config/narratorr.db';
   // libsql happily CREATES a missing file, which would turn "I pointed this at
@@ -246,21 +282,7 @@ async function main(): Promise<void> {
   const db = createDb(dbPath);
 
   const seriesRows = await db.select().from(series);
-  // `ORDER BY books.id`, pinning the order production now pins (#2108 —
-  // `loadLibraryBooksForSeriesNames` carries the same `asc(books.id)`).
-  // Filtering this list preserves that order, so each replayed pool presents
-  // candidates in the same sequence production's `WHERE series_name IN (…)`
-  // would — load-bearing, because both matchers are first-claim-wins within a
-  // match-quality tier. Before #2108 both sides were unordered, which agreed
-  // only by planner accident; the replay must track production's contract, or
-  // its whole premise (replayed pool order equals production's) is false.
-  const allBooks = await db
-    .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition, seriesName: books.seriesName })
-    .from(books)
-    .orderBy(asc(books.id));
-  // A `seriesName`-tombstoned book has `series_name = NULL` and SQL `IN` never
-  // matches it, so production can never pool one.
-  const named = allBooks.filter((b) => b.seriesName !== null);
+  const named = await loadReplayCandidates(db);
 
   const acc: Record<Scope, Accumulator> = {
     render: { full: [], titleOnly: [], pools: 0, pairings: 0 },
@@ -318,4 +340,13 @@ async function main(): Promise<void> {
   db.$client.close();
 }
 
-await main();
+// CLI entry point — only when run directly via `tsx <this file>`, mirroring
+// `src/db/migrate.ts`. The ordering drift guard imports this module for
+// `loadReplayCandidates`, and an unguarded top-level `await main()` would run
+// the whole replay on import — which, with no live library at the default path,
+// also sets `process.exitCode = 1` and would fail the entire vitest run. No
+// `isBundled` companion check is needed here: nothing imports this module from
+// the server, so tsup (entry `src/server/index.ts`) never inlines it.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  await main();
+}
