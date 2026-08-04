@@ -233,15 +233,19 @@ describe('#2099 merge boot recovery — settlement phase', () => {
     expect((await actualFs.readdir(bookPath)).sort()).toEqual(['01.mp3', '02.mp3']);
   });
 
-  it('settles a candidate whose book row is gone, without deriving a staging path', async () => {
+  it.each([
+    ['the book row is gone', null],
+    ['the book has no path', { id: 628, title: 'Stormrage', path: null }],
+  ])('settles permanently without deriving a staging path when %s', async (_label, row) => {
     setCandidates([{ bookId: 628, eventId: 1, source: 'auto', bookTitle: 'Stormrage' }]);
-    bookService.getById.mockResolvedValue(null);
+    bookService.getById.mockResolvedValue(row);
 
     const plan = await settleInterruptedMerges(deps());
 
     expect(readdir).not.toHaveBeenCalled();
     expect(rm).not.toHaveBeenCalled();
     expect(eventHistory.create).toHaveBeenCalledWith(settlementFor(628, 'auto'));
+    expect(plan.requeue).toEqual([]);
     expect(plan.counters).toEqual({ candidates: 1, cleaned: 0, settled: 1, retryable: 0, failed: 0 });
   });
 
