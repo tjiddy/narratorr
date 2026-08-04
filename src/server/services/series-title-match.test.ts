@@ -742,6 +742,29 @@ describe('findInLibraryMatch', () => {
       expect(findInLibraryMatch({ title: 'Chapterhouse: Dune', position: null }, candidates)?.id).toBe(1);
     });
 
+    // AC3, the DERIVED half — the mirror image of the cross-tier property above.
+    // With no exact candidate anywhere, first-claim-wins is the ONLY rule left,
+    // so pool order is decisive BY DESIGN and reversing the pool must reverse
+    // the claim. Two accepted DERIVED candidates are what makes that observable:
+    // every other no-exact case here has a single derived candidate, so
+    // `derived ??= candidate` and a plain `derived = candidate` (retain the LAST
+    // rather than the FIRST) are indistinguishable on them. Counterfactual run
+    // and recorded: that mutation flips both assertions and fails only here.
+    it('claims the FIRST derived candidate when several compete and no exact one exists', () => {
+      // Both pair `derived-equals-full` with the member: `dune` is its suffix(1)
+      // offer, `chapterhouse` its prefix(1) offer.
+      const candidates = [
+        { id: 1, title: 'Dune', seriesPosition: null },
+        { id: 2, title: 'Chapterhouse', seriesPosition: null },
+      ];
+      expect(candidates.map((c) => pairingArm('Chapterhouse: Dune', c.title))).toEqual([
+        'derived-equals-full',
+        'derived-equals-full',
+      ]);
+      expect(findInLibraryMatch({ title: 'Chapterhouse: Dune', position: null }, candidates)?.id).toBe(1);
+      expect(findInLibraryMatch({ title: 'Chapterhouse: Dune', position: null }, [...candidates].reverse())?.id).toBe(2);
+    });
+
     // AC6 — the position pass runs first and independently of BOTH tiers.
     it('position still outranks the exact tier and the derived tier alike', () => {
       const candidates = [
