@@ -233,9 +233,19 @@ function reachable(member: HardcoverMemberSummary, candidate: LibraryBookSummary
   );
 }
 
-/** A replay candidate — production's projection plus the `series_name` the pools filter on. */
+/**
+ * A replay candidate — production's projection plus the `series_name` the pools
+ * filter on.
+ *
+ * `seriesName` is NON-NULLABLE by construction, and that is a postcondition of
+ * `loadReplayCandidates` rather than of the column: a `seriesName`-tombstoned
+ * book stores `series_name = NULL`, SQL `IN` never matches one, so production
+ * can never pool it and the loader drops it. Encoding the guarantee in the type
+ * — instead of carrying `string | null` and casting at each use site — is what
+ * makes tombstone exclusion part of this module's API rather than a comment.
+ */
 export interface ReplayCandidate extends LibraryBookSummary {
-  seriesName: string | null;
+  seriesName: string;
 }
 
 /**
@@ -265,7 +275,9 @@ export async function loadReplayCandidates(db: Db): Promise<ReplayCandidate[]> {
     .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition, seriesName: books.seriesName })
     .from(books)
     .orderBy(asc(books.id));
-  return allBooks.filter((b) => b.seriesName !== null);
+  // A type PREDICATE, not a bare boolean: it is what carries the non-null
+  // guarantee out to `ReplayCandidate` so no caller has to assert it back.
+  return allBooks.filter((b): b is ReplayCandidate => b.seriesName !== null);
 }
 
 async function main(): Promise<void> {
@@ -311,7 +323,7 @@ async function main(): Promise<void> {
     const priorNames = new Set(
       named
         .filter((b) => b.seriesName !== row.name && members.some((m) => reachable(m, b)))
-        .map((b) => b.seriesName as string),
+        .map((b) => b.seriesName),
     );
 
     // One pool per prior name — canonical + exactly ONE extra, the shape
