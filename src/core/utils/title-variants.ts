@@ -105,18 +105,58 @@ export const MAX_VARIANT_SEGMENTS = 32;
  * The generic parenthetical strip is NOT here — that is the derived axis.
  */
 export function normalizeTitleForVariantMatch(title: string): string {
-  return title
+  return applyCommonFolds(title, SCALAR_DIACRITIC_STRIP, SCALAR_KEEP_CLASS);
+}
+
+/**
+ * Every fold step the scalar and lossless pipelines GENUINELY share, in order,
+ * with the two steps they differ in passed in (#2109 AC8):
+ *
+ *   curly apostrophes → audio-edition tails (paren and bracket) → lowercase →
+ *   NFD → *diacriticStrip* → `&`/`+` → "and" → *keepClass* → collapse → trim
+ *
+ * PRIVATE, deliberately: this is internal DRY, not a new contract. Keeping it
+ * unexported is what leaves the #2104 AC30 export-freeze test a meaningful
+ * signal about the module's public surface.
+ *
+ * It cannot make the lockstep premise true BY CONSTRUCTION, and no extraction
+ * could: the two knobs stay independently editable, and the diacritic BAND
+ * asymmetry (`latin-bounded-combining-mark-strip`) is exactly the silent
+ * divergence that would follow a one-sided edit. The proof is the property test
+ * `asciiFold(normalizeTitleLosslessly(t)) === normalizeTitleForVariantMatch(t)`
+ * in `title-variants.test.ts`, which is required IN ADDITION to this extraction,
+ * not as an alternative to it.
+ */
+function applyCommonFolds(
+  title: string,
+  diacriticStrip: (decomposed: string) => string,
+  keepClass: RegExp,
+): string {
+  const decomposed = title
     .replace(/[’‘]/g, "'")
     .replace(/\(\s*(?:unabridged|audio|audible)\s*\)/gi, ' ')
     .replace(/\[\s*(?:unabridged|audio|audible)\s*\]/gi, ' ')
     .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .normalize('NFD');
+  return diacriticStrip(decomposed)
     .replace(/\s*[&+]\s*/g, ' and ')
-    .replace(/[^a-z0-9' ]+/g, ' ')
+    .replace(keepClass, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+/**
+ * The two knobs, one pair per pipeline. Both diacritic strips are bounded to
+ * U+0300–036F and that agreement is the lockstep premise
+ * `hasDegenerateFullForm` rests on — see `normalizeTitleLosslessly` for why the
+ * lossless one is additionally bounded to Latin bases, and why neither may be
+ * widened to `\p{M}`.
+ */
+const SCALAR_DIACRITIC_STRIP = (decomposed: string): string => decomposed.replace(/[̀-ͯ]/g, '');
+const SCALAR_KEEP_CLASS = /[^a-z0-9' ]+/g;
+const LOSSLESS_DIACRITIC_STRIP = (decomposed: string): string =>
+  decomposed.replace(/(\p{Script=Latin})[̀-ͯ]+/gu, '$1');
+const LOSSLESS_KEEP_CLASS = /[^\p{L}\p{N}\p{M}' ]+/gu;
 
 /**
  * Drop every `(...)` / `[...]` group. Runs on the RAW title, before segmentation.
@@ -282,18 +322,7 @@ export function titleSegments(title: string): string[] {
  * ordinary composed form.
  */
 export function normalizeTitleLosslessly(title: string): string {
-  return title
-    .replace(/[’‘]/g, "'")
-    .replace(/\(\s*(?:unabridged|audio|audible)\s*\)/gi, ' ')
-    .replace(/\[\s*(?:unabridged|audio|audible)\s*\]/gi, ' ')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/(\p{Script=Latin})[̀-ͯ]+/gu, '$1')
-    .replace(/\s*[&+]\s*/g, ' and ')
-    .replace(/[^\p{L}\p{N}\p{M}' ]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .normalize('NFC');
+  return applyCommonFolds(title, LOSSLESS_DIACRITIC_STRIP, LOSSLESS_KEEP_CLASS).normalize('NFC');
 }
 
 /**

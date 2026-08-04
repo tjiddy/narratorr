@@ -855,3 +855,99 @@ describe('normalizeTitleLosslessly', () => {
     expect(normalizeTitleLosslessly('Перед бурей')).toBe('перед бурей');
   });
 });
+
+/**
+ * T14/T15 / #2109 AC9-AC10 — the LOCKSTEP property.
+ *
+ * `hasDegenerateFullForm` rests on one premise: "dropped by the ASCII fold" is
+ * exactly "outside the scalar keep class". That holds only while every preceding
+ * fold step is identical in both pipelines, and AC8's `applyCommonFolds`
+ * extraction cannot make it true by CONSTRUCTION — the two pipelines genuinely
+ * differ in two knobs (the diacritic strip and the keep class) plus the lossless
+ * form's trailing NFC, so both knobs stay independently editable. The extraction
+ * is DRY; this property is the proof. It is required in addition to it, not as
+ * an alternative.
+ *
+ * The relation asserted, over a corpus covering every fold trigger:
+ *
+ *   asciiFold(normalizeTitleLosslessly(t)) === normalizeTitleForVariantMatch(t)
+ *
+ * T15 — MUTATION-VERIFIED, not merely green. Widening the lossless diacritic
+ * strip to `(\p{Script=Latin})\p{M}+` makes this fail on `'Sa᷀ga: Book One'`: the
+ * mutant yields `'saga book one'` where the scalar yields `'sa ga book one'` (the
+ * scalar's own diacritic step is U+0300-036F-bounded too, so U+1DC0 falls
+ * through to `[^a-z0-9' ]+` and fragments the word). Confirmed by hand-applying
+ * the widened strip and watching this go red, then reverting. That widening is
+ * the exact trap `latin-bounded-combining-mark-strip` exists to catch, and this
+ * property is worthless if it does not catch it.
+ */
+describe('scalar/lossless fold lockstep (#2109 AC9)', () => {
+  const asciiFold = (s: string): string => s.replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // Literals, not escapes — the file's encoding is already the pinned contract,
+  // exactly as `mixedCorpus` above writes them.
+  const lockstepCorpus = [
+    // Plain ASCII, including the punctuation and threshold shapes.
+    'Chapterhouse: Dune',
+    'The Churn: An Expanse Novella',
+    'star wars: the high republic: Light of the Jedi (New Order Series)',
+    'IT: Chapter Two',
+    'Foundation (1951)',
+    'Foundation [1951]',
+    'Saga Book 1',
+    // Latin-accented — the drift the strip exists to tolerate.
+    'Café: A Novel',
+    'Les Misérables: Tome I',
+    'García: Un Cuento',
+    // Non-decomposing Latin (#1547 scope pin) — ß/ø/æ survive both folds intact.
+    'Straße: Beyond the Dark Portal',
+    'Sønner: Assassin\'s Apprentice',
+    'Star Wars: Æ',
+    // Non-Latin scripts, where the scalar fold erases and the lossless one must not.
+    'World of Warcraft: Перед бурей',
+    'World of Warcraft: май',
+    'World of Warcraft: маи',
+    'Star Wars: Επεισόδιο',
+    'Star Wars: 前夜Thrawn',
+    'A前夜',
+    'World of Warcraft: A前夜',
+    'World of Warcraft: A後夜',
+    'किताब',
+    'कितीब: Part Two',
+    'סֵפֶר',
+    'ספר',
+    'كِتاب',
+    'كتاب',
+    'Sạch: Vietnamese Tone Marks',
+    // The out-of-block mark — the T15 mutation's only observation point.
+    'Sa᷀ga: Book One',
+    // The remaining fold triggers: &/+, curly apostrophes, audio-edition tails.
+    'Night of Cake & Puppets',
+    'Cake + Puppets',
+    'Hitchhiker’s Guide',
+    '  WORLD  of   Warcraft (Unabridged) ',
+    'Foo [Audible]',
+    // Empty and degenerate inputs.
+    '',
+    '   ',
+    '[ ]',
+  ];
+
+  it('folds the lossless form onto the scalar form for every title in the corpus (T14/T15)', () => {
+    expect(lockstepCorpus.length).toBeGreaterThan(30);
+    for (const title of lockstepCorpus) {
+      // The title rides in the message so a failure identifies its own input.
+      expect(asciiFold(normalizeTitleLosslessly(title)), `lockstep broke on ${JSON.stringify(title)}`)
+        .toBe(normalizeTitleForVariantMatch(title));
+    }
+  });
+
+  // The corpus is only as good as its coverage of the ONE case the mutation
+  // moves. Pinned separately so a future edit to the array cannot silently
+  // remove the mutation's observation point.
+  it('covers the out-of-block combining mark the AC10 mutation moves (T15)', () => {
+    expect(lockstepCorpus).toContain('Sa᷀ga: Book One');
+    expect(normalizeTitleForVariantMatch('Sa᷀ga: Book One')).toBe('sa ga book one');
+    expect(asciiFold(normalizeTitleLosslessly('Sa᷀ga: Book One'))).toBe('sa ga book one');
+  });
+});
