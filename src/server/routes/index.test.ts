@@ -34,6 +34,7 @@ vi.mock('../services', () => ({
   TaggingService: vi.fn(),
   QualityGateService: vi.fn(),
   RetryBudget: vi.fn(),
+  SearchLadderCooldown: vi.fn(),
   DiscoveryService: vi.fn(),
   SeriesCardService: vi.fn(),
   ReferenceReadService: vi.fn(),

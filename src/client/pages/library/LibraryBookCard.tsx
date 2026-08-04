@@ -6,8 +6,25 @@ import { bookStatusConfig } from '@/lib/status';
 import { resolveCoverUrl } from '@/lib/url-utils';
 import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon, AlertTriangleIcon } from '@/components/icons';
 import { useRetryImportAvailable } from '@/hooks/useRetryImportAvailable.js';
+import { useBookActivity, type BookActivity } from '@/hooks/useBookActivity.js';
+import { BookActivityBadge } from './BookActivityBadge.js';
 import { BookContextMenu } from './BookContextMenu.js';
 import { requireDefined } from '@shared/utils/assert.js';
+
+/** Status accent line, or a determinate progress sliver while work runs (approved mock v4). */
+function CardStatusBar({ activity, barClass }: { activity: BookActivity | null; barClass: string }) {
+  if (activity?.state === 'working' && activity.percentage !== undefined) {
+    return (
+      <div className="h-0.5 bg-black/40" data-testid="activity-progress">
+        <div
+          className="h-full bg-amber-400 transition-[width] duration-500"
+          style={{ width: `${Math.min(100, Math.max(0, activity.percentage))}%` }}
+        />
+      </div>
+    );
+  }
+  return <div className={`h-0.5 ${barClass}`} data-testid="status-bar" />;
+}
 
 // eslint-disable-next-line complexity -- card has inherent conditional rendering: cover, missing chip, collapsed badge, status bar, menu, hover expand
 export const LibraryBookCard = memo(function LibraryBookCard({
@@ -37,6 +54,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
   const menuAreaRef = useRef<HTMLDivElement>(null);
   useClickOutside(menuAreaRef, onMenuClose, isMenuOpen);
   const canRetryImport = useRetryImportAvailable(book.id, book.status);
+  const activity = useBookActivity(book.id);
   // #1663: stop conflating `failed` with `missing`. `missing` keeps the broken-link
   // "files missing from disk" chip; `failed` renders a distinct import-failed chip whose
   // copy reflects retry availability (driven by the existing per-book retry signal).
@@ -74,9 +92,10 @@ export const LibraryBookCard = memo(function LibraryBookCard({
           </div>
         )}
 
-        {/* Top-left chip stack — missing / import-failed indicator + collapsed badge */}
-        {(isMissing || isFailed || (collapsedCount != null && collapsedCount > 0)) && (
+        {/* Top-left chip stack — activity indicator + missing / import-failed indicator + collapsed badge */}
+        {(activity != null || isMissing || isFailed || (collapsedCount != null && collapsedCount > 0)) && (
           <div className="absolute top-2 left-2 z-10 flex flex-col gap-1.5">
+            <BookActivityBadge activity={activity} variant="chip" />
             {isMissing && (
               <div
                 className="w-7 h-7 flex items-center justify-center rounded-lg backdrop-blur-md bg-black/40 ring-1 ring-red-500/20 shadow-[0_0_8px_-2px_rgba(239,68,68,0.3)]"
@@ -132,8 +151,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
 
         {/* Frosted info strip — always visible at bottom */}
         <div className="absolute inset-x-0 bottom-0 backdrop-blur-md bg-black/30 border-t border-white/5 transition-all duration-300 ease-out">
-          {/* Status bar */}
-          <div className={`h-0.5 ${statusBar.barClass}`} data-testid="status-bar" />
+          <CardStatusBar activity={activity} barClass={statusBar.barClass} />
           {/* Default: title + author */}
           <div className="px-3 py-2">
             <h3 className="text-sm font-semibold text-white leading-tight truncate drop-shadow-sm">{isCollapsed ? (book.seriesName || book.title) : book.title}</h3>

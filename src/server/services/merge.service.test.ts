@@ -328,8 +328,12 @@ describe('MergeService', () => {
       // No ffmpeg/staging work ran, and nothing was committed into bookPath.
       expect(processAudioFiles).not.toHaveBeenCalled();
       expect(rename).not.toHaveBeenCalled();
-      // The existing catch cleaned up the (unused) staging dir and surfaced merge_failed.
-      expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
+      // #2099 D2: the abort is BEFORE runStaging, so this execution never claimed the staging
+      // path — the catch leaves it exactly as found (it may hold a prior crash's orphan that
+      // boot recovery still needs to classify). Asserted on the staging path SPECIFICALLY:
+      // `recoverInterruptedCommit` is mocked here, but in production its convergence work
+      // legitimately `rm`s scratch siblings before throwing, which AC1 places outside the invariant.
+      expect(rm).not.toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
       expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_failed', expect.objectContaining({ book_id: 42, reason: 'error' }));
     });
 
@@ -1260,10 +1264,35 @@ describe('#257 merge observability — merge service', () => {
       expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ bookId: 42 }), expect.any(String));
     });
 
-    it('event history creation failure does not fail the merge operation', async () => {
+    // #2099 AC1 splits what used to be one blanket "history rejection never fails the merge"
+    // test. The two lifecycle writes now own DIFFERENT failure semantics, so each double is
+    // call-specific (keyed on `eventType`) and each test proves exactly one of them.
+    it('a rejected merge_started insert aborts the merge before staging (#2099 AC1)', async () => {
+      // This describe has no per-test reset, so the negative assertions below would otherwise
+      // see earlier tests' staging calls. Clear first, then re-establish the happy-path doubles.
+      vi.clearAllMocks();
       setupHappyPath();
       const eventHistory = {
-        create: vi.fn().mockRejectedValue(new Error('DB write failed')),
+        create: vi.fn().mockImplementation((input: { eventType: string }) =>
+          input.eventType === 'merge_started' ? Promise.reject(new Error('DB write failed')) : Promise.resolve(undefined)),
+      } as unknown as EventHistoryService;
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+      const { service } = createService({ eventHistory, eventBroadcaster });
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      expect(mkdir).not.toHaveBeenCalledWith(STAGING_DIR, expect.anything());
+      expect(processAudioFiles).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
+      expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_failed', expect.objectContaining({ book_id: 42 }));
+    });
+
+    it('a rejected terminal (merged) history write still does not fail the merge operation', async () => {
+      setupHappyPath();
+      const eventHistory = {
+        create: vi.fn().mockImplementation((input: { eventType: string }) =>
+          input.eventType === 'merge_started' ? Promise.resolve(undefined) : Promise.reject(new Error('DB write failed'))),
       } as unknown as EventHistoryService;
       const { service, log } = createService({ eventHistory });
 
@@ -1271,7 +1300,7 @@ describe('#257 merge observability — merge service', () => {
       expect(ack.bookId).toBe(42);
       await settle();
 
-      // Merge completed despite event history failures
+      // Merge completed despite the terminal event-history failure — those writes stay best-effort.
       expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ bookId: 42 }), expect.any(String));
     });
   });
@@ -3007,5 +3036,125 @@ describe('#2078 post-merge re-tag', () => {
     await settle();
 
     expect(enrichBookFromAudio).toHaveBeenCalled();
+  });
+});
+
+/**
+ * #2099 AC1 — the durable-start invariant.
+ *
+ * Boot recovery detects an interrupted merge purely from the event log, so for any
+ * MergeService constructed WITH an EventHistoryService (i.e. every production instance),
+ * no execution may create, write to or delete `.<book>.merge-tmp` unless its `merge_started`
+ * row is committed. Two mechanics enforce it: the awaited start insert, and the
+ * `stagingOwned` gate on the catch's cleanup.
+ *
+ * Assertions here target the STAGING PATH specifically, never a total filesystem-call count:
+ * admission has already `readdir`'d `book.path` before `executeMerge` is launched
+ * (merge.service.ts validateBookForMerge/validateDequeueTime) and `resolveFfmpegPath()` may
+ * probe on the cold path — both sit outside the invariant by design.
+ */
+describe('#2099 durable merge_started before staging (AC1)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('does not touch the staging path until the merge_started insert settles', async () => {
+    setupHappyPath();
+    let releaseInsert!: () => void;
+    const insertGate = new Promise<void>((res) => { releaseInsert = () => res(); });
+    const eventHistory = {
+      create: vi.fn().mockImplementation((input: { eventType: string }) =>
+        input.eventType === 'merge_started' ? insertGate : Promise.resolve(undefined)),
+    } as unknown as EventHistoryService;
+    const { service } = createService({ eventHistory });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    // The insert is still pending: nothing has been created in, copied into, or removed from
+    // the staging path — and recovery has not run either (it is downstream of the await).
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'merge_started' }));
+    expect(recoverInterruptedCommit).not.toHaveBeenCalled();
+    expect(mkdir).not.toHaveBeenCalledWith(STAGING_DIR, expect.anything());
+    expect(cp).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('.merge-tmp'));
+    expect(rm).not.toHaveBeenCalledWith(STAGING_DIR, expect.anything());
+
+    releaseInsert();
+    await settle();
+
+    // Once it commits, the merge proceeds through staging exactly as before.
+    expect(mkdir).toHaveBeenCalledWith(STAGING_DIR, { recursive: true });
+    expect(processAudioFiles).toHaveBeenCalled();
+  });
+
+  it('a rejected insert aborts with merge_failed and leaves a prior crash’s orphan intact', async () => {
+    // Pre-seed the staging path with an orphan from an earlier crash — the exact state boot
+    // recovery exists to classify. An unconditional catch-cleanup would delete it here,
+    // downgrading a `pre-commit` candidate to `no-staging` and forfeiting its re-queue.
+    (readdir as Mock).mockImplementation(async (dir: string) => {
+      if (dir.endsWith('.merge-tmp')) return ['orphan.m4b'];
+      return ['01.mp3', '02.mp3'];
+    });
+    (mkdir as Mock).mockResolvedValue(undefined);
+    (cp as Mock).mockResolvedValue(undefined);
+    (rm as Mock).mockResolvedValue(undefined);
+    (rename as Mock).mockResolvedValue(undefined);
+
+    const eventHistory = {
+      create: vi.fn().mockImplementation((input: { eventType: string }) =>
+        input.eventType === 'merge_started' ? Promise.reject(new Error('DB write failed')) : Promise.resolve(undefined)),
+    } as unknown as EventHistoryService;
+    const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+    const { service } = createService({ eventHistory, eventBroadcaster });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    expect(mkdir).not.toHaveBeenCalledWith(STAGING_DIR, expect.anything());
+    expect(cp).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('.merge-tmp'));
+    expect(rename).not.toHaveBeenCalledWith(expect.stringContaining('.merge-tmp'), expect.anything());
+    expect(rm).not.toHaveBeenCalledWith(STAGING_DIR, expect.anything());
+    // The orphan survives — nothing in this execution addressed the staging path at all.
+    expect(await readdir(STAGING_DIR)).toEqual(['orphan.m4b']);
+    expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_failed', expect.objectContaining({ book_id: 42 }));
+  });
+
+  it('emits the merge_started SSE synchronously even when the insert then rejects', async () => {
+    setupHappyPath();
+    const emitted: string[] = [];
+    const eventBroadcaster = {
+      emit: vi.fn((event: string) => { emitted.push(event); }),
+    } as unknown as EventBroadcasterService;
+    let insertInvoked = false;
+    const eventHistory = {
+      create: vi.fn().mockImplementation((input: { eventType: string }) => {
+        if (input.eventType !== 'merge_started') return Promise.resolve(undefined);
+        // The SSE emit runs BETWEEN the create() invocation and the await, so by the time this
+        // rejection is observed the emit has already been recorded.
+        insertInvoked = true;
+        return Promise.reject(new Error('DB write failed'));
+      }),
+    } as unknown as EventHistoryService;
+    const { service } = createService({ eventHistory, eventBroadcaster });
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    expect(insertInvoked).toBe(true);
+    expect(emitted[0]).toBe('merge_started');
+    expect(emitted).toContain('merge_failed');
+  });
+
+  it('out of domain: with no eventHistory wired the merge stages, commits and cleans as before', async () => {
+    setupHappyPath();
+    const { service } = createService(); // no eventHistory — outside AC1's domain entirely
+
+    await service.enqueueMerge(42);
+    await settle();
+
+    expect(mkdir).toHaveBeenCalledWith(STAGING_DIR, { recursive: true });
+    expect(processAudioFiles).toHaveBeenCalled();
+    expect(rename).toHaveBeenCalledWith(join(STAGING_DIR, 'The Way of Kings.m4b'), join(BOOK_PATH, 'The Way of Kings.m4b'));
+    expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
   });
 });

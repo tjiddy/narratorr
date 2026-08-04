@@ -3,7 +3,7 @@ import { generatePublicId } from '../utils/public-id.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books, bookAuthors, authors, series, seriesMembers } from '@db/schema.js';
@@ -521,9 +521,14 @@ describe('SeriesCardService — integration', () => {
     });
 
     /**
-     * AC2.4 + AC2.6: Two Hardcover members at the same position must not BOTH
-     * claim the same library book during persist; only one row gets the
-     * `bookId` populated.
+     * AC2.4 + AC2.6: Two Hardcover members must not BOTH claim the same library
+     * book during persist; only one row gets the `bookId` populated.
+     *
+     * The fixture uses two UNPOSITIONED members whose titles both pair with the
+     * library book: since #2097 the adapter keeps at most one work per finite
+     * position, so two same-position members no longer reach `persistMembers` —
+     * while unpositioned works, which used to collapse under `DISTINCT ON`, now
+     * all arrive, making the shared claim set more load-bearing than before.
      */
     it('AC2.6: persist path does not duplicate library bookId across rows in the same series', async () => {
       const bookId = await seedBookWithSeries(db, {
@@ -532,15 +537,14 @@ describe('SeriesCardService — integration', () => {
         seriesPosition: 2,
         authorName: 'Nicholas Eames',
       });
-      // Hardcover returns two members at position 2 (rare but legal)
       const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
         data: {
           series: [{
             id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' },
             book_series: [
               { position: 1, book: { id: 1001, slug: 'kings', title: 'Kings of the Wyld', image: null, users_count: 100 } },
-              { position: 2, book: { id: 1002, slug: 'bloody-a', title: 'Bloody Rose A', image: null, users_count: 80 } },
-              { position: 2, book: { id: 1003, slug: 'bloody-b', title: 'Bloody Rose B', image: null, users_count: 60 } },
+              { position: null, book: { id: 1002, slug: 'bloody-a', title: 'Bloody Rose: Part One', image: null, users_count: 80 } },
+              { position: null, book: { id: 1003, slug: 'bloody-b', title: 'Bloody Rose: Part Two', image: null, users_count: 60 } },
             ],
           }],
         },
@@ -587,6 +591,95 @@ describe('SeriesCardService — integration', () => {
     });
 
     /**
+     * #2097 AC14 — the live prod case (2026-08-03), end to end against a real
+     * migrated DB: World of Warcraft (hardcover_series_id 2375) position 15
+     * carries the Russian work "…: Перед бурей" (62 readers) alongside the
+     * English "Before the Storm" (7). Hasura used to collapse the pair by
+     * readership, so the cached row and the card both showed the Cyrillic title.
+     *
+     * The assertions walk the whole chain — persisted row, its `book_id` link,
+     * and the rendered member — because a picker that only fixed the mapped
+     * member would still leave the wrong title in `series_members`.
+     */
+    it('#2097 AC14: persists and renders the English work at WoW position 15, not the more-read Russian one', async () => {
+      const bookId = await seedBookWithSeries(db, {
+        title: 'Before the Storm',
+        seriesName: 'World of Warcraft',
+        seriesPosition: 15,
+        authorName: 'Christie Golden',
+      });
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        data: {
+          series: [{
+            id: 2375, name: 'World of Warcraft', slug: 'world-of-warcraft', author: { name: 'Christie Golden' },
+            book_series: [
+              { position: 14, book: { id: 300, slug: 'illidan', title: 'Illidan', image: null, users_count: 200 } },
+              { position: 15, book: { id: 465829, slug: 'pered-burey', title: 'World of Warcraft: Перед бурей', image: null, users_count: 62 } },
+              { position: 15, book: { id: 331, slug: 'before-the-storm', title: 'Before the Storm', image: null, users_count: 7 } },
+            ],
+          }],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof globalThis.fetch;
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(bookId);
+
+      const persisted = await db.select().from(series).where(eq(series.hardcoverSeriesId, 2375));
+      const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, persisted[0]!.id));
+      const atFifteen = memberRows.filter((m) => m.position === 15);
+      expect(atFifteen).toHaveLength(1);
+      expect(atFifteen[0]!.title).toBe('Before the Storm');
+      expect(atFifteen[0]!.hardcoverBookId).toBe(331);
+      expect(atFifteen[0]!.bookId).toBe(bookId);
+
+      const rendered = card!.members.filter((m) => m.position === 15);
+      expect(rendered).toHaveLength(1);
+      expect(rendered[0]!.title).toBe('Before the Storm');
+      expect(rendered[0]!.inLibrary).toBe(true);
+      expect(rendered[0]!.libraryBookId).toBe(bookId);
+    });
+
+    /**
+     * #2097 AC3 + AC12 — `DISTINCT ON` treated SQL NULLs as equal, so several
+     * unpositioned works in one series used to arrive as a single row. Each now
+     * persists on its own: `series_members` has no unique index on
+     * `(series_id, position)` (the two unique indexes are keyed by Hardcover id
+     * and by local book id), so there is no constraint violation and no silent
+     * overwrite.
+     */
+    it('#2097 AC3: persists one row per unpositioned work instead of collapsing them', async () => {
+      const bookId = await seedBookWithSeries(db, {
+        title: 'Kings of the Wyld',
+        seriesName: 'The Band',
+        seriesPosition: 1,
+        authorName: 'Nicholas Eames',
+      });
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        data: {
+          series: [{
+            id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' },
+            book_series: [
+              { position: 1, book: { id: 1001, slug: 'kings', title: 'Kings of the Wyld', image: null, users_count: 100 } },
+              { position: null, book: { id: 2001, slug: 'art-book', title: 'The Art of the Band', image: null, users_count: 9 } },
+              { position: null, book: { id: 2002, slug: 'companion', title: 'A Band Companion', image: null, users_count: 4 } },
+              { position: null, book: { id: 2003, slug: 'sketches', title: 'Sketches from the Road', image: null, users_count: 1 } },
+            ],
+          }],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof globalThis.fetch;
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(bookId);
+
+      const persisted = await db.select().from(series).where(eq(series.hardcoverSeriesId, 5523));
+      const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, persisted[0]!.id));
+      expect(memberRows).toHaveLength(4);
+      const unpositioned = memberRows.filter((m) => m.position === null);
+      expect(unpositioned.map((m) => m.hardcoverBookId).sort((a, b) => a! - b!)).toEqual([2001, 2002, 2003]);
+      expect(card!.members).toHaveLength(4);
+    });
+
+    /**
      * AC3.1: Cache mode places NULL positions LAST.
      */
     it('AC3.1: cache mode renders [1, 2.5, 4, null] order regardless of insertion order', async () => {
@@ -623,6 +716,222 @@ describe('SeriesCardService — integration', () => {
       // Anchor is position=1, then 2.5, then 4, then NULL Companion
       expect(card!.members.map((m) => m.position)).toEqual([1, 2.5, 4, null]);
       expect(card!.members.map((m) => m.title)).toEqual(['Anchor', 'Book Two-Five', 'Book Four', 'Companion']);
+    });
+  });
+
+  // #2096: the live production case. A Hardcover member "Chapterhouse: Dune" at
+  // position 6 against a library "Chapterhouse Dune" carrying a stale position 17
+  // failed BOTH signals — the member colon-truncated to `chapterhouse`, and the
+  // positions disagreed — so the bind left the stale position and the Series panel
+  // offered "+Add" for a book the user already owned.
+  describe('#2096 — colon-separated member titles', () => {
+    function mockFetchHardcover(payload: unknown): ReturnType<typeof vi.fn> {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      globalThis.fetch = fetchMock as typeof globalThis.fetch;
+      return fetchMock;
+    }
+
+    function chapterhousePayload() {
+      return {
+        data: {
+          series: [{
+            id: 7701,
+            name: 'Dune',
+            slug: 'dune',
+            author: { name: 'Frank Herbert' },
+            book_series: [
+              { position: 6, book: { id: 2001, slug: 'chapterhouse-dune', title: 'Chapterhouse: Dune', image: null, users_count: 50 } },
+            ],
+          }],
+        },
+      };
+    }
+
+    it('binds Chapterhouse: Dune to a stale-position library Chapterhouse Dune and syncs both fields', async () => {
+      const bookId = await seedBookWithSeries(db, {
+        title: 'Chapterhouse Dune',
+        seriesName: 'Dune Chronicles',
+        seriesPosition: 17,
+        authorName: 'Frank Herbert',
+      });
+      mockFetchHardcover(chapterhousePayload());
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const bound = await svc.bindHardcoverSeries(bookId, 7701);
+
+      expect(bound).not.toBeNull();
+      const member = bound!.card.members.find((m) => m.title === 'Chapterhouse: Dune')!;
+      expect(member.inLibrary).toBe(true);
+      expect(member.libraryBookId).toBe(bookId);
+
+      // The bind syncs BOTH durable fields — the stale 17 is rewritten to 6.
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.seriesName).toBe('Dune');
+      expect(row!.seriesPosition).toBe(6);
+    });
+
+    it('persistMembers writes the new colon-separated normalized form (no migration needed)', async () => {
+      const bookId = await seedBookWithSeries(db, {
+        title: 'Chapterhouse Dune',
+        seriesName: 'Dune',
+        seriesPosition: 17,
+        authorName: 'Frank Herbert',
+      });
+      mockFetchHardcover(chapterhousePayload());
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(bookId);
+
+      const memberRows = await db.select().from(seriesMembers);
+      expect(memberRows).toHaveLength(1);
+      // Pre-#2096 this column received `chapterhouse`; it now receives the full
+      // separator form. The column has zero production read sites, so the value
+      // simply changes shape with no backfill.
+      expect(memberRows[0]!.normalizedTitle).toBe('chapterhouse dune');
+    });
+
+    it('inserts a member whose normalized title is empty (notNull but not non-empty)', async () => {
+      const bookId = await seedBookWithSeries(db, {
+        title: 'Anchor',
+        seriesName: 'Odd Series',
+        seriesPosition: 1,
+        authorName: 'Some Author',
+      });
+      mockFetchHardcover({
+        data: {
+          series: [{
+            id: 7702,
+            name: 'Odd Series',
+            slug: 'odd',
+            author: { name: 'Some Author' },
+            book_series: [
+              { position: 1, book: { id: 3001, slug: 'anchor', title: 'Anchor', image: null, users_count: 10 } },
+              { position: null, book: { id: 3002, slug: 'art', title: '[ ]', image: null, users_count: 5 } },
+            ],
+          }],
+        },
+      });
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(bookId);
+
+      const rows = await db.select().from(seriesMembers);
+      expect(rows).toHaveLength(2);
+      expect(rows.find((r) => r.title === '[ ]')!.normalizedTitle).toBe('');
+      // An empty variant set never claims a candidate on the title path, and this
+      // member has no position to be rescued by either.
+      expect(card!.members.find((m) => m.title === '[ ]')!.inLibrary).toBe(false);
+    });
+  });
+
+  // #2108: `loadLibraryBooksForSeriesNames` pins `ORDER BY books.id`, because
+  // `findInLibraryMatch` is first-claim-wins WITHIN a match-quality tier — so
+  // pool order is the only deciding input when two candidates pair on the same
+  // tier, and unordered that sequence is a query-planner accident.
+  describe('#2108 — pinned candidate claim order', () => {
+    // Both traps that would make this test green-but-vacuous are closed here:
+    //
+    //  - WITHOUT the forced index the planner emits `SCAN books` and rowid order
+    //    falls out anyway, so the pool is id-ascending with or without the
+    //    `.orderBy()`. The `CREATE INDEX` drives it onto
+    //    `SEARCH … USING COVERING INDEX (series_name=?)`, which returns rows in
+    //    series_name order instead — hence the deliberately INVERTED seeding
+    //    (lower id → 'Zeta Series', higher id → 'Alpha Series').
+    //  - With CROSS-TIER candidates the arm ranking would pick the winner
+    //    regardless of order, and the `.orderBy()` could be deleted with the test
+    //    still green. Both books therefore pair `full-equals-full` with the same
+    //    member (both titles normalize to `chapterhouse dune`) — one tier, so
+    //    only the SQL order decides.
+    //
+    // Counterfactuals, both run and recorded: deleting `.orderBy(asc(books.id))`
+    // flips the claim to the higher id and this test FAILS; deleting the
+    // `CREATE INDEX` below leaves it passing on both branches, which is exactly
+    // what makes the index non-optional here.
+    it('claims the lower-id book when two same-tier candidates compete under an index', async () => {
+      const lowerId = await seedBookWithSeries(db, {
+        title: 'Chapterhouse Dune',
+        seriesName: 'Zeta Series',
+        seriesPosition: null,
+        authorName: 'Frank Herbert',
+      });
+      const higherId = await seedBookWithSeries(db, {
+        title: 'Chapterhouse: Dune',
+        seriesName: 'Alpha Series',
+        seriesPosition: null,
+        authorName: 'Frank Herbert',
+      });
+      expect(higherId).toBeGreaterThan(lowerId);
+
+      // Not in the production schema (#2108 does not add it) — created here so
+      // the planner reorders the pool, which is the whole point of the fixture.
+      await db.run(sql`CREATE INDEX idx_books_series_name_2108 ON books (series_name)`);
+
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        data: {
+          series: [{
+            id: 7703,
+            name: 'Zeta Series',
+            slug: 'zeta-series',
+            author: { name: 'Frank Herbert' },
+            book_series: [
+              // Position null, so the position pass never fires and the title
+              // pass — the pass this issue changes — is what decides.
+              { position: null, book: { id: 4001, slug: 'chapterhouse-dune', title: 'Chapterhouse: Dune', image: null, users_count: 50 } },
+            ],
+          }],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+      // Bind from the HIGHER-id book, whose prior series name is 'Alpha Series':
+      // `bindHardcoverSeries` passes `resolved.name` plus the initiating book's
+      // prior name to `persistMembers`, so the pool is
+      // `IN ('Zeta Series','Alpha Series')` and spans both books.
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const bound = await svc.bindHardcoverSeries(higherId, 7703);
+
+      expect(bound).not.toBeNull();
+      const memberRows = await db.select().from(seriesMembers);
+      expect(memberRows).toHaveLength(1);
+      expect(memberRows[0]!.bookId).toBe(lowerId);
+      expect(bound!.card.members[0]!.libraryBookId).toBe(lowerId);
+    });
+  });
+
+  // #2098 — the route's post-bind sidecar pass iterates `syncedIds`, so the list must agree with
+  // the COMMITTED artifact (the `books` rows whose series_name actually moved), not with a mock.
+  describe('#2098 — the committed synced set', () => {
+    it('a real bind over a seeded 3-book series reports all three ids', async () => {
+      const ids = [
+        await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' }),
+        await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'The Earthsea Cycle', seriesPosition: 2, authorName: 'Ursula K. Le Guin' }),
+        await seedBookWithSeries(db, { title: 'The Farthest Shore', seriesName: 'The Earthsea Cycle', seriesPosition: 3, authorName: 'Ursula K. Le Guin' }),
+      ];
+      // A fourth book in an unrelated series — it must NOT be reported.
+      const unrelated = await seedBookWithSeries(db, { title: 'The Dispossessed', seriesName: 'Hainish Cycle', seriesPosition: 5, authorName: 'Ursula K. Le Guin' });
+
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        data: {
+          series: [{
+            id: 7801, name: 'The Earthsea Quartet', slug: 'earthsea-quartet', author: { name: 'Ursula K. Le Guin' },
+            book_series: [
+              { position: 1, book: { id: 5001, slug: 'wizard', title: 'A Wizard of Earthsea', image: null, users_count: 90 } },
+              { position: 2, book: { id: 5002, slug: 'tombs', title: 'The Tombs of Atuan', image: null, users_count: 80 } },
+              { position: 3, book: { id: 5003, slug: 'shore', title: 'The Farthest Shore', image: null, users_count: 70 } },
+            ],
+          }],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof globalThis.fetch;
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const bound = await svc.bindHardcoverSeries(ids[0]!, 7801);
+
+      expect(bound!.syncedIds).toEqual(ids);
+      // Observed against the committed rows, not against the member set the bind built.
+      const rewritten = (await db.select().from(books))
+        .filter((b) => b.seriesName === 'The Earthsea Quartet').map((b) => b.id).sort((a, b) => a - b);
+      expect([...bound!.syncedIds].sort((a, b) => a - b)).toEqual(rewritten);
+      expect(bound!.syncedIds).not.toContain(unrelated);
     });
   });
 });

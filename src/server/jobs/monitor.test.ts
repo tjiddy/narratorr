@@ -742,7 +742,7 @@ describe('monitor job', () => {
     let retryDeps: {
       blacklistService: { create: ReturnType<typeof vi.fn> };
       retrySearchDeps: {
-        indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
+        indexerSearchService: { searchAllWithStatus: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
         downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasGrabBlocker: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
@@ -758,7 +758,7 @@ describe('monitor job', () => {
       retryDeps = {
         blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
         retrySearchDeps: {
-          indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
+          indexerSearchService: { searchAllWithStatus: vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 }) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
@@ -881,7 +881,7 @@ describe('monitor job', () => {
 
     it('sets errorMessage to "Retrying" when retry search succeeds', async () => {
       const searchResult = { title: 'New Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new123', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
-      retryDeps.retrySearchDeps.indexerSearchService.searchAll.mockResolvedValue([searchResult]);
+      retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue({ results: [searchResult], succeeded: 1, failed: 0 });
 
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
@@ -898,7 +898,7 @@ describe('monitor job', () => {
     });
 
     it('sets errorMessage to "Retry failed" on retry_error', async () => {
-      retryDeps.retrySearchDeps.indexerSearchService.searchAll.mockRejectedValue(new Error('Indexer down'));
+      retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus.mockRejectedValue(new Error('Indexer down'));
 
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
@@ -915,7 +915,7 @@ describe('monitor job', () => {
 
     it('deletes old failed record when retry search succeeds', async () => {
       const searchResult = { title: 'New Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new123', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
-      retryDeps.retrySearchDeps.indexerSearchService.searchAll.mockResolvedValue([searchResult]);
+      retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue({ results: [searchResult], succeeded: 1, failed: 0 });
 
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
@@ -931,7 +931,7 @@ describe('monitor job', () => {
     });
 
     it('does not corrupt book status on retry_error', async () => {
-      retryDeps.retrySearchDeps.indexerSearchService.searchAll.mockRejectedValue(new Error('Indexer down'));
+      retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus.mockRejectedValue(new Error('Indexer down'));
 
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
@@ -950,7 +950,7 @@ describe('monitor job', () => {
 
     it('writes adapter errorMessage before retry-state overwrite when retry succeeds via processDownloadUpdate', async () => {
       const searchResult = { title: 'New Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new123', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
-      retryDeps.retrySearchDeps.indexerSearchService.searchAll.mockResolvedValue([searchResult]);
+      retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue({ results: [searchResult], succeeded: 1, failed: 0 });
 
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42, title: 'Test Book', infoHash: null },
@@ -1011,7 +1011,7 @@ describe('monitor job', () => {
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
       expect(retryDeps.retrySearchDeps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
-      expect(retryDeps.retrySearchDeps.indexerSearchService.searchAll).not.toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus).not.toHaveBeenCalled();
       expect(retryDeps.retrySearchDeps.retryBudget.hasRemaining(42)).toBe(budgetBefore);
     });
   });
@@ -1138,7 +1138,7 @@ describe('monitor job', () => {
     let retryDeps: {
       blacklistService: { create: ReturnType<typeof vi.fn> };
       retrySearchDeps: {
-        indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
+        indexerSearchService: { searchAllWithStatus: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
         downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasGrabBlocker: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
@@ -1154,7 +1154,7 @@ describe('monitor job', () => {
       retryDeps = {
         blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
         retrySearchDeps: {
-          indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
+          indexerSearchService: { searchAllWithStatus: vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 }) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
@@ -1182,7 +1182,7 @@ describe('monitor job', () => {
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
       expect(retryDeps.blacklistService.create).not.toHaveBeenCalled();
-      expect(retryDeps.retrySearchDeps.indexerSearchService.searchAll).not.toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus).not.toHaveBeenCalled();
     });
 
     it('still marks download as failed and calls recoverBookStatus when redownloadFailed is false', async () => {
@@ -1249,7 +1249,7 @@ describe('monitor job', () => {
       expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
         expect.objectContaining({ infoHash: 'abc123' }),
       );
-      expect(retryDeps.retrySearchDeps.indexerSearchService.searchAll).toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus).toHaveBeenCalled();
     });
 
     it('skips blacklist and retry via error-status transition path when redownloadFailed is false', async () => {
@@ -1270,7 +1270,7 @@ describe('monitor job', () => {
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
       expect(retryDeps.blacklistService.create).not.toHaveBeenCalled();
-      expect(retryDeps.retrySearchDeps.indexerSearchService.searchAll).not.toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus).not.toHaveBeenCalled();
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
       expect(setCalls).toContainEqual(expect.objectContaining({ errorMessage: 'Redownload disabled' }));
       expect(log.info).toHaveBeenCalledWith(
@@ -1293,7 +1293,7 @@ describe('monitor job', () => {
       expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
         expect.objectContaining({ infoHash: 'abc123' }),
       );
-      expect(retryDeps.retrySearchDeps.indexerSearchService.searchAll).toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus).toHaveBeenCalled();
     });
   });
 
@@ -1301,7 +1301,7 @@ describe('monitor job', () => {
     let retryDeps: {
       blacklistService: { create: ReturnType<typeof vi.fn> };
       retrySearchDeps: {
-        indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
+        indexerSearchService: { searchAllWithStatus: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
         downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasGrabBlocker: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
@@ -1317,7 +1317,7 @@ describe('monitor job', () => {
       retryDeps = {
         blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
         retrySearchDeps: {
-          indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
+          indexerSearchService: { searchAllWithStatus: vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 }) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },

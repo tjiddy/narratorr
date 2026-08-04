@@ -327,13 +327,22 @@ async function mergeFiles(
     // would emit the first part alone as a file that still probes as valid.
     args.push('-map', '0:a');
     args.push('-map_metadata', String(metadataInput));
-    if (chapterInput !== undefined) {
-      // -map_chapters pins the GENERATED chapters over whatever the concat demuxer propagates
-      // from the source parts (and now over the metadata donor's own internal chapters):
-      // ffmpeg's default picks the input with the most chapters, so source m4b parts carrying
-      // internal chapters could otherwise outvote the generated set. Both copy and encode modes.
-      args.push('-map_chapters', String(chapterInput));
-    }
+    // Always emitted, on both formats and in both copy and encode modes — ffmpeg's DEFAULT
+    // chapter mapping copies from the FIRST input that carries chapters, and since #2078 that
+    // default is never the right answer:
+    //
+    //  - m4b: pin the GENERATED set (input 1) explicitly. Otherwise whatever the concat demuxer
+    //    propagates from the source parts, or the metadata donor's own internal chapters, can
+    //    be the first chapter-bearing input and win.
+    //  - mp3: there IS no generated set to map, so the only correct answer is suppression. The
+    //    concat input exposes no chapters, which makes the donor opened for `-map_metadata` the
+    //    first chapter-bearing input — #2083: part 01's internal CHAP set landed verbatim on the
+    //    merged output, spanning only its own first-part span of a whole-book file.
+    //
+    // `-1` is the ONE deliberately-literal map operand in this argv: it is ffmpeg's "copy no
+    // chapters" sentinel, not an input index, so it is exempt from the derive-from-argv
+    // discipline `lastInputIndex` enforces. Do not "fix" it into a computed index.
+    args.push('-map_chapters', chapterInput !== undefined ? String(chapterInput) : '-1');
 
     args.push(...await resolveCodecArgs(config, audioFiles, warnings, callbacks?.onStderr));
 

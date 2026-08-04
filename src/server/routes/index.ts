@@ -21,6 +21,7 @@ import {
   TaggingService,
   QualityGateService,
   RetryBudget,
+  SearchLadderCooldown,
   DiscoveryService,
   SeriesCardService,
   ReferenceReadService,
@@ -152,6 +153,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const qualityGateService = new QualityGateService(db, log);
   const renameService = new RenameService(db, book, settings, log, eventHistory, connector);
   const retryBudget = new RetryBudget();
+  const searchLadderCooldown = new SearchLadderCooldown();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
   const importList = new ImportListService(db, log, book, metadata, {
     indexerSearchService: indexerSearch,
@@ -190,7 +192,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
 
   // Build retry-search deps bag now that all required services exist
   const retrySearchDeps = createRetrySearchDeps(
-    { indexerSearch, indexer, downloadOrchestrator, blacklist: blacklistService, book, settings, retryBudget },
+    { indexerSearch, indexer, downloadOrchestrator, blacklist: blacklistService, book, settings, retryBudget, eventHistory },
     log,
   );
 
@@ -226,7 +228,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   registerImportAdapter(new ManualImportAdapter(libraryScan.importDeps));
   registerImportAdapter(new AutoImportAdapter(importOrchestrator));
 
-  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, connector, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, bookDeletion, importQueueWorker, importStaging, importSubmissionReport, importSubmissionRunner, retrySearchDeps, seriesCard, referenceRead, companionEbook };
+  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, connector, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, searchLadderCooldown, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, bookDeletion, importQueueWorker, importStaging, importSubmissionReport, importSubmissionRunner, retrySearchDeps, seriesCard, referenceRead, companionEbook };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;

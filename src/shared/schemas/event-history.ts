@@ -15,6 +15,11 @@ export const eventTypeSchema = z.enum([
   'metadata_fixed',
   'grab_failed',
   'recording_review_skipped',
+  // #2104 — a relaxed query rung found candidates but none corroborated the
+  // retained title segments, so nothing was auto-grabbed. Persisted (not an SSE
+  // toast) because a scheduled cycle runs every 360 minutes and a toast would be
+  // missed; it surfaces under Activity → Needs Review.
+  'search_relaxed_held',
 ]);
 
 export type EventType = z.infer<typeof eventTypeSchema>;

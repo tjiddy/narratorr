@@ -199,6 +199,53 @@ describe('useSearchStream', () => {
     expect(es!.closed).toBe(true);
   });
 
+  // #2104 AC39 — the client's `SearchResponse` is an INDEPENDENT interface, not
+  // an inference of `searchResponseSchema`, so a field added on the server can
+  // silently never reach component state. Two layers close that, and both were
+  // mutation-verified:
+  //  - drop `relaxedQuery` from the SHARED schema and Zod strips the key during
+  //    `search-complete` validation, so THIS test fails;
+  //  - drop it from the CLIENT interface and `search-stream.test.ts`'s
+  //    compile-time compatibility guard fails at `pnpm typecheck`.
+  it('carries relaxedQuery from the search-complete payload into state (AC39)', async () => {
+    const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+    await waitForAuth(result);
+    act(() => {
+      result.current.actions.start();
+    });
+
+    act(() => {
+      MockEventSource.instances[0]!.emit('search-complete', {
+        results: [{ title: 'Star Wars: Haunted Starlight', indexer: 'ABB', protocol: 'torrent' as const }],
+        durationUnknown: false,
+        unsupportedResults: { count: 0, titles: [] },
+        relaxedQuery: 'star wars haunted starlight',
+      });
+    });
+
+    expect(result.current.state.results?.relaxedQuery).toBe('star wars haunted starlight');
+  });
+
+  it('leaves relaxedQuery undefined when the payload omits it', async () => {
+    const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+    await waitForAuth(result);
+    act(() => {
+      result.current.actions.start();
+    });
+
+    act(() => {
+      MockEventSource.instances[0]!.emit('search-complete', {
+        results: [],
+        durationUnknown: false,
+        unsupportedResults: { count: 0, titles: [] },
+      });
+    });
+
+    expect(result.current.state.results?.relaxedQuery).toBeUndefined();
+  });
+
   describe('removeResult', () => {
     type Fixture = {
       title: string;

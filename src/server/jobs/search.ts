@@ -5,6 +5,7 @@ import type { IndexerSearchService } from '../services/indexer-search.service.js
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { RetryBudget } from '../services/retry-budget.js';
+import type { SearchLadderCooldown } from '../services/search-ladder-cooldown.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { EventHistoryService } from '../services/event-history.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
@@ -38,6 +39,7 @@ export async function runSearchJob(
   eventHistory: EventHistoryService,
   retryBudget?: RetryBudget,
   broadcaster?: EventBroadcasterService,
+  searchLadderCooldown?: SearchLadderCooldown,
 ): Promise<SearchJobResult> {
   // Reset retry budget at the start of every search cycle (any caller)
   retryBudget?.resetAll();
@@ -68,6 +70,10 @@ export async function runSearchJob(
         indexerSearchService, downloadOrchestrator,
         qualitySettings: buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
         log, blacklistService, indexerService, eventHistory, broadcaster,
+        // The scheduled cycle is the ONLY caller that consults and records the
+        // query-ladder exhaustion cooldown (#2104 D15) — an unattended cycle
+        // must not degrade a later user-initiated search.
+        searchLadderCooldown, ladderMode: 'scheduled',
       });
       searched++;
       if (result.result === 'grabbed') grabbed++;

@@ -102,6 +102,26 @@ function GrabFailedDetails({ reason }: { reason: Record<string, unknown> }) {
   );
 }
 
+/**
+ * `search_relaxed_held` (#2104): a relaxed query rung found grabbable
+ * candidates, but none of them corroborated the retained title segments, so the
+ * auto-grab was withheld and the operator gets the call. Naming all three parts
+ * is what makes that call possible — WHICH looser query ran, HOW loose it was,
+ * and WHICH release it declined.
+ */
+function SearchRelaxedHeldDetails({ reason }: { reason: Record<string, unknown> }) {
+  const relaxedQuery = reason.relaxed_query as string | undefined;
+  const variantTag = reason.variant_tag as string | undefined;
+  const releaseTitle = reason.release_title as string | undefined;
+  return (
+    <div className="space-y-1">
+      {relaxedQuery && <KeyValueRow label="Relaxed query" value={relaxedQuery} />}
+      {variantTag && <KeyValueRow label="Title variant" value={variantTag} />}
+      {releaseTitle && <KeyValueRow label="Top candidate" value={releaseTitle} />}
+    </div>
+  );
+}
+
 function GenericDetails({ reason }: { reason: Record<string, unknown> }) {
   const entries = Object.entries(reason).filter(([, v]) => v != null);
   if (entries.length === 0) return null;
@@ -127,6 +147,7 @@ const DETAIL_RENDERERS: Record<string, React.FC<{ reason: Record<string, unknown
   download_failed: ({ reason }) => <ErrorDetails reason={reason} />,
   held_for_review: ({ reason }) => <HeldForReviewDetails reason={reason} />,
   grab_failed: ({ reason }) => <GrabFailedDetails reason={reason} />,
+  search_relaxed_held: ({ reason }) => <SearchRelaxedHeldDetails reason={reason} />,
 };
 
 /** Renders formatted event reason details based on event type. */

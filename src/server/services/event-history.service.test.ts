@@ -326,10 +326,10 @@ describe('EventHistoryService', () => {
         .mockReturnValueOnce(mockDbChain([download]));
 
       const { RetryBudget } = await import('./retry-budget.js');
-      const mockSearchAll = vi.fn().mockResolvedValue([]);
+      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
-        indexerSearchService: { searchAll: mockSearchAll },
+        indexerSearchService: { searchAllWithStatus: mockSearchAll },
         downloadOrchestrator: { grabForRetry: vi.fn(), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
@@ -361,7 +361,7 @@ describe('EventHistoryService', () => {
       const mockSearchAll = vi.fn().mockRejectedValue(new Error('Indexer down'));
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
-        indexerSearchService: { searchAll: mockSearchAll },
+        indexerSearchService: { searchAllWithStatus: mockSearchAll },
         downloadOrchestrator: { grabForRetry: vi.fn(), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
@@ -430,10 +430,10 @@ describe('EventHistoryService', () => {
       );
 
       const { RetryBudget } = await import('./retry-budget.js');
-      const mockSearchAll = vi.fn().mockResolvedValue([]);
+      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
-        indexerSearchService: { searchAll: mockSearchAll },
+        indexerSearchService: { searchAllWithStatus: mockSearchAll },
         downloadOrchestrator: { grabForRetry: vi.fn(), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
@@ -475,7 +475,7 @@ describe('EventHistoryService', () => {
       const { RetryBudget } = await import('./retry-budget.js');
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
-        indexerSearchService: { searchAll: vi.fn() },
+        indexerSearchService: { searchAllWithStatus: vi.fn() },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
         bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, path: null, author: { name: 'Author' } }) },
@@ -508,12 +508,12 @@ describe('EventHistoryService', () => {
 
       const { RetryBudget } = await import('./retry-budget.js');
       const retryBudget = new RetryBudget();
-      const mockSearchAll = vi.fn().mockResolvedValue([]);
+      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
       const mockGrab = vi.fn();
 
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
-        indexerSearchService: { searchAll: mockSearchAll },
+        indexerSearchService: { searchAllWithStatus: mockSearchAll },
         downloadOrchestrator: { grab: mockGrab, grabForRetry: mockGrab, hasGrabBlocker: vi.fn().mockResolvedValue(false) },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },

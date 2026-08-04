@@ -226,3 +226,29 @@ describe('SearchReleasesContent', () => {
     });
   });
 });
+
+// ============================================================================
+// #2104 — relaxed-query disclosure
+// ============================================================================
+
+describe('SearchReleasesContent — relaxed-query disclosure (#2104 AC25)', () => {
+  const responseWith = (relaxedQuery?: string): SearchResponse => ({
+    results: [mockResult],
+    durationUnknown: false,
+    unsupportedResults: { count: 0, titles: [] },
+    ...(relaxedQuery !== undefined && { relaxedQuery }),
+  });
+
+  it('renders the disclosure with the winning rung query when relaxedQuery is present', () => {
+    renderContent({ phase: 'results', searchResponse: responseWith('star wars haunted starlight'), resultKeys: ['k0'] });
+
+    expect(screen.getByText(/matched on relaxed query/i)).toBeInTheDocument();
+    expect(screen.getByText('star wars haunted starlight')).toBeInTheDocument();
+  });
+
+  it('renders nothing when relaxedQuery is absent — the normal case', () => {
+    renderContent({ phase: 'results', searchResponse: responseWith(), resultKeys: ['k0'] });
+
+    expect(screen.queryByText(/matched on relaxed query/i)).not.toBeInTheDocument();
+  });
+});

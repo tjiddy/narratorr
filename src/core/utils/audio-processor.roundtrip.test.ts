@@ -402,9 +402,12 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
    * The output must carry the WHOLE book, not just the metadata donor's single part.
    *
    * A band rather than `toBeCloseTo`: an AAC re-encode adds encoder priming/padding that
-   * differs by ffmpeg version (~24 ms on copy, ~42 ms at 64 kbps here), which would sit right
-   * on `toBeCloseTo(…, 0)`'s 0.05 edge. Half a second still separates the 9 s whole from a
-   * truncated 3 s first part by a factor the assertion can never confuse.
+   * differs by ffmpeg version (~24 ms on copy, ~42 ms at 64 kbps here). `toBeCloseTo`'s window
+   * is `10**-precision / 2` — the default precision 2 is 0.005 and precision 1 is 0.05, both
+   * tighter than the padding; precision 0 happens to equal this ±0.5 band, but the explicit band
+   * states the intended tolerance instead of hiding it in a precision digit. Half a second still
+   * separates the 9 s whole from a truncated 3 s first part by a factor the assertion can never
+   * confuse.
    */
   function expectFullBookDuration(file: string): void {
     const total = PART_SECONDS * 3;
@@ -487,6 +490,32 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     expectSourceTagsPreserved(merged, 'Part 1');
     // Pinned, not implied: `withCoverArtPipeline` gains no MP3 reattach arm in this issue.
     expect(hasAttachedPic(merged)).toBe(false);
+    // #2083 AC3 — the missing observation point. Part 01 is built with 5 internal CHAP chapters
+    // and is opened as the metadata donor, so before the `-map_chapters -1` fix ffmpeg's default
+    // chapter mapping copied all 5 onto a 9 s output where they spanned the first 3 s.
+    expect(chapterTitles(merged)).toEqual([]);
+    // #2083 AC7 — the suppression introduces no new warning on the copy path.
+    expect(result.warnings ?? []).toEqual([]);
+  });
+
+  it('mp3 encode mode: chapters stay suppressed, tags and full duration survive (#2083 AC4–AC6)', async () => {
+    const dir = caseDir();
+    // aac/`.m4b` sources are structurally copy-ineligible for an mp3 output, so `libmp3lame`
+    // genuinely runs. Building mp3/libmp3lame parts and ASSUMING the encode branch would leave
+    // this case silently duplicating the copy-mode one above.
+    buildParts(dir, 'm4b', ['-c:a', 'aac', '-b:a', '128k']);
+
+    const result = await processAudioFiles(dir, keepOriginal('mp3'), CONTEXT);
+    expect(result.success).toBe(true);
+
+    const merged = outputIn(dir, '.mp3');
+    expect(probeStream(merged).codecName).toBe('mp3'); // the encode branch really ran
+    expect(chapterTitles(merged)).toEqual([]);         // AC4
+    expectSourceTagsPreserved(merged, 'Part 1');       // AC5
+    expectFullBookDuration(merged);                    // AC6
+    // Deliberately NOT `toEqual([])`: an encode legitimately emits bitrate-legalization
+    // notices here, which are pre-existing #2068 behaviour, not something this fix introduced.
+    expect((result.warnings ?? []).filter((w) => /chapter/i.test(w))).toEqual([]);
   });
 
   it('sources with no embedded art merge cleanly, with no spurious cover warning', async () => {

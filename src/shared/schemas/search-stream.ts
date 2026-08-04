@@ -67,6 +67,12 @@ export const searchResponseSchema = z.object({
     count: z.number(),
     titles: z.array(z.string()),
   }),
+  /**
+   * The winning rung's query when progressive relaxation (#2104) produced the
+   * hits — absent when rung 1 (the query the user actually asked for) did.
+   * Additive and optional, so an existing client parse is unaffected.
+   */
+  relaxedQuery: z.string().optional(),
 });
 
 export type SearchStartEvent = z.infer<typeof searchStartEventSchema>;

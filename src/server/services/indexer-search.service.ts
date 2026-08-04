@@ -128,10 +128,16 @@ export class IndexerSearchService {
    * split — scoreResult runs Dice on the result side raw, so cleaning the
    * context side asymmetrically would drop matchScore by 0.4-0.7 on
    * punctuated cases. See #1015.
+   *
+   * `rankingAuthor ?? author` (#2104 D8) is the same split applied one level
+   * deeper: a query-relaxation rung that drops the author for TRANSPORT still
+   * ranks against the canonical author, so results rank in the same order on an
+   * author-OFF rung as on rung 1.
    */
   private applyMatchScore(results: SearchResult[], options: SearchOptions | undefined): void {
     if (!options?.title) return;
-    const context = { title: options.title, ...(options.author !== undefined && { author: options.author }) };
+    const rankingAuthor = options.rankingAuthor ?? options.author;
+    const context = { title: options.title, ...(rankingAuthor !== undefined && { author: rankingAuthor }) };
     for (const result of results) {
       result.matchScore = scoreResult(
         { title: result.title, ...(result.author !== undefined && { author: result.author }) },
@@ -141,9 +147,34 @@ export class IndexerSearchService {
     results.sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
   }
 
+  /**
+   * Aggregate search, results only. Thin wrapper over
+   * {@link searchAllWithStatus} — the settlement counts are what the query
+   * ladder needs and every pre-#2104 caller ignores.
+   */
   async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+    return (await this.searchAllWithStatus(query, options)).results;
+  }
+
+  /**
+   * Aggregate search plus how many indexers ANSWERED.
+   *
+   * The fold below collapses a rejected indexer into `[]`, so an empty aggregate
+   * cannot be distinguished from "everything failed" — and the query ladder
+   * (#2104 D16) must not burn eight queries and a 24-hour cooldown during an
+   * outage. `succeeded === 0` is an outage; `succeeded > 0 && results.length === 0`
+   * is a real, answered zero.
+   *
+   * A query that normalizes away short-circuits with `succeeded: 0`, which the
+   * ladder reads as "stop" — preserving the pre-ladder `prepareSearch`
+   * short-circuit exactly.
+   */
+  async searchAllWithStatus(
+    query: string,
+    options?: SearchOptions,
+  ): Promise<{ results: SearchResult[]; succeeded: number; failed: number }> {
     const prep = await this.prepareSearch(query, options, 'searchAll');
-    if (!prep) return [];
+    if (!prep) return { results: [], succeeded: 0, failed: 0 };
     const { transportQuery, searchOptions, enabledIndexers } = prep;
 
     this.log.debug({ query: transportQuery, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Searching enabled indexers');
@@ -168,13 +199,17 @@ export class IndexerSearchService {
 
     const perIndexerCounts: Record<string, number> = {};
     const results: SearchResult[] = [];
+    let succeeded = 0;
+    let failed = 0;
     for (let i = 0; i < settlements.length; i++) {
       const settlement = settlements[i]!;
       const name = enabledIndexers[i]!.name;
       if (settlement.status === 'fulfilled') {
+        succeeded++;
         perIndexerCounts[name] = settlement.value.length;
         results.push(...settlement.value);
       } else {
+        failed++;
         perIndexerCounts[name] = 0;
         this.log.warn({ indexer: name, query: transportQuery, error: serializeError(settlement.reason) }, 'Error searching indexer');
       }
@@ -185,7 +220,7 @@ export class IndexerSearchService {
     this.applyMatchScore(results, options);
 
     this.log.debug({ totalResults: results.length }, 'Search complete');
-    return results;
+    return { results, succeeded, failed };
   }
 
   /**
@@ -216,6 +251,17 @@ export class IndexerSearchService {
         const indexerStartMs = Date.now();
         const controller = controllers.get(indexer.id);
         const signal = controller?.signal;
+
+        // Pre-adapter abort guard (#2104 D11). Controllers are STICKY across the
+        // query ladder's rungs, but the `signal?.aborted` classification below
+        // lives only in the catch block — so without this an indexer the user
+        // cancelled on rung 1 would be re-queried on every later rung. Emits no
+        // callback: the indexer already displays as cancelled from the rung that
+        // cancelled it, and a duplicate `indexer-cancelled` frame is noise.
+        if (signal?.aborted) {
+          this.log.debug({ indexer: indexer.name }, 'Indexer skipped — already cancelled');
+          return;
+        }
 
         try {
           const adapter = await this.indexerService.getAdapter(indexer);

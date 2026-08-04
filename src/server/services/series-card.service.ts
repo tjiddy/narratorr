@@ -34,6 +34,21 @@ export interface BookSeriesCardData {
   members: BookSeriesMemberCard[];
 }
 
+/**
+ * What a successful {@link SeriesCardService.bindHardcoverSeries} hands back (#2098).
+ *
+ * The card is what the route responds with; `syncedIds` is what the route's
+ * post-commit pass iterates to refresh each rewritten book's `metadata.opf` and
+ * embedded tags. It carries EXACTLY the ids the transaction issued an
+ * `UPDATE books SET series_name/series_position` for — every member-matched
+ * library book, plus the initiating book when it matched no member — with no
+ * duplicates, and is never empty on a non-null return.
+ */
+export interface BindHardcoverSeriesResult {
+  card: BookSeriesCardData;
+  syncedIds: number[];
+}
+
 export interface BookForSeriesCard {
   id: number;
   title: string;
@@ -373,10 +388,18 @@ export class SeriesCardService {
    * position (0 is valid). The initiating book always adopts the canonical name
    * even when unmatched, keeping its position; (3) re-links every synced book
    * off old series rows and deletes any left empty. Any failure rolls all of it
-   * back. Returns the rebuilt (id-sourced) card, or null when the book is
-   * missing, no key is configured, or the fetch fails.
+   * back. Returns the rebuilt (id-sourced) card **alongside the ids the
+   * transaction actually rewrote**, or null when the book is missing, no key is
+   * configured, or the fetch fails.
+   *
+   * `syncedIds` is returned OUT of the transaction callback rather than
+   * accumulated in an outer variable (#2098 AC2): a rolled-back bind must be
+   * structurally incapable of reporting ids for writes that never landed, and
+   * the route's post-commit sidecar/tag pass reads only what the resolved
+   * transaction handed back. Order is matched-member order, followed by the
+   * initiating book when that book was unmatched.
    */
-  async bindHardcoverSeries(bookId: number, hardcoverSeriesId: number): Promise<BookSeriesCardData | null> {
+  async bindHardcoverSeries(bookId: number, hardcoverSeriesId: number): Promise<BindHardcoverSeriesResult | null> {
     const book = await this.loadBook(bookId);
     if (!book) return null;
 
@@ -388,7 +411,7 @@ export class SeriesCardService {
 
     const priorSeriesName = book.seriesName;
 
-    const persistedRow = await this.db.transaction(async (tx) => {
+    const committed = await this.db.transaction(async (tx) => {
       // Binding is a deliberate operator assertion that THIS book belongs to that
       // series, so it removes the initiating book's `seriesName` tombstone (#2069
       // AC24) — otherwise a stored series would coexist with a live tombstone,
@@ -439,11 +462,13 @@ export class SeriesCardService {
       for (const id of syncedIds) {
         await relinkBookToBoundSeries(tx, id, row.id);
       }
-      return row;
+      // The id list crosses the boundary INSIDE the transaction's resolved
+      // value — never via an outer `let` — so a rollback yields no ids at all.
+      return { row, syncedIds: [...syncedIds] };
     });
 
     this.log.info({ bookId, hardcoverSeriesId, seriesName: resolved.name }, 'Bound Hardcover series to book');
-    return this.buildCardFromCache(persistedRow, resolved.name);
+    return { card: await this.buildCardFromCache(committed.row, resolved.name), syncedIds: committed.syncedIds };
   }
 
   /**
@@ -468,10 +493,24 @@ export class SeriesCardService {
   private async loadLibraryBooksForSeriesNames(seriesNames: string[], executor: DbOrTx = this.db): Promise<LibraryBookSummary[]> {
     const unique = [...new Set(seriesNames)];
     if (unique.length === 0) return [];
+    // `ORDER BY books.id` is a MATCHER CONTRACT, not cosmetic (#2108).
+    // `findInLibraryMatch` is greedy and first-claim-wins WITHIN a match-quality
+    // tier, so the sequence these rows arrive in decides which book a member
+    // claims whenever two candidates pair on the same tier. Unordered, that
+    // sequence is a query-planner accident: today the planner emits `SCAN books`
+    // and rowid order happens to fall out, but adding an index on
+    // `books.series_name` flips it to `SEARCH … USING COVERING INDEX` and the
+    // rows come back in series_name order — silently changing which book each
+    // member claims, and on the bind path durably rewriting the wrong book's
+    // series_name/series_position. Pinning it here makes such an index safe to
+    // add later. Both callers inherit this: `buildCardFromCache` via
+    // `loadLibraryBooksForSeries` (the render path) and `persistMembers` (the
+    // bind path), so the two present candidates in the same sequence.
     const rows = await executor
       .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition })
       .from(books)
-      .where(inArray(books.seriesName, unique));
+      .where(inArray(books.seriesName, unique))
+      .orderBy(asc(books.id));
     return rows;
   }
 }

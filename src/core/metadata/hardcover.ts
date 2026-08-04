@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { HARDCOVER_TIMEOUT_MS } from '../utils/constants.js';
+import { MAX_VARIANT_TITLE_LENGTH } from '../utils/title-variants.js';
+import { normalizeMemberPosition, pickPreferredMembersByPosition } from './hardcover-member-dedup.js';
 import { RateLimitError, TransientError, MetadataError } from './errors.js';
 
 const HARDCOVER_PROVIDER = 'hardcover';
@@ -19,7 +21,6 @@ const GET_SERIES_MEMBERS_QUERY = `
       slug
       author { name }
       book_series(
-        distinct_on: position
         order_by: [{position: asc}, {book: {users_count: desc}}]
         where: {
           book: {
@@ -48,7 +49,6 @@ const GET_SERIES_MEMBERS_BY_ID_QUERY = `
       slug
       author { name }
       book_series(
-        distinct_on: position
         order_by: [{position: asc}, {book: {users_count: desc}}]
         where: {
           book: {
@@ -167,7 +167,9 @@ function mapNetworkError(error: unknown): never {
 }
 
 function mapMember(entry: z.infer<typeof hardcoverBookSeriesSchema>): HardcoverMember {
-  const position = typeof entry.position === 'number' && Number.isFinite(entry.position) ? entry.position : null;
+  // Shared with the dedup picker's grouping key so the two notions of "same
+  // position" cannot drift apart (#2097).
+  const position = normalizeMemberPosition(entry.position);
   return {
     hardcoverBookId: entry.book.id,
     slug: entry.book.slug ?? null,
@@ -177,8 +179,64 @@ function mapMember(entry: z.infer<typeof hardcoverBookSeriesSchema>): HardcoverM
   };
 }
 
+/**
+ * The sole producer of `HardcoverMember[]` — both `getSeriesMembers` and
+ * `getSeriesMembersById` route through it — which is what makes the one length
+ * filter below a complete chokepoint (#2109 AC7).
+ *
+ * A member whose title exceeds `MAX_VARIANT_TITLE_LENGTH` is DROPPED; every
+ * other member in the same response is returned normally. Titles here are
+ * community-edited UGC arriving as a bare `z.string()`, and the consuming
+ * `persistMembers` generates title variants for each one inside a transaction
+ * that libSQL serializes against every other write.
+ *
+ * Three deliberate choices, each ruling out a worse degrade:
+ *
+ *  - **Never truncate.** A truncated title is a sheared fragment that
+ *    `findInLibraryMatch` then treats as a member's COMPLETE identity, so it can
+ *    FULL≡FULL a different library book named by the retained prefix — and on
+ *    the manual-bind path `bindHardcoverSeries` durably rewrites that book's
+ *    series fields. Dropping cannot produce that: the sheared string is never
+ *    constructed. Dropping can only ever yield FEWER members and therefore fewer
+ *    matches, so its failure mode is a false refusal, never a false pair.
+ *  - **Never reject the response.** `hardcoverBookSchema` nests inside
+ *    `seriesMembersResponseSchema`, whose `safeParse` failure throws
+ *    `MetadataError` — a `.max()` there would let one absurd member take down the
+ *    entire series card, converting a bounded perf problem into a hard outage.
+ *  - **Silent, deliberately.** `src/core/**` holds no logger and may not import
+ *    fastify, so surfacing the drop would mean plumbing a count out of the
+ *    adapter into the calling service — machinery a 2048-character threshold no
+ *    real title reaches does not warrant. `hardcover.test.ts` pins the drop so it
+ *    stays visible to developers.
+ *
+ * The same-position PICKER (#2097) runs next, and the order of the two steps is
+ * deliberate: the length filter first, so a position whose most-read work has an
+ * absurd title still yields its surviving sibling rather than losing the slot.
+ * Hardcover registers some translations as their own WORK rather than as an
+ * edition, so a series can carry several works at one position; the queries used
+ * to hand that to Hasura via `distinct_on: position`, which kept the MOST-READ
+ * row regardless of script (live: the Russian "…: Перед бурей" beat the English
+ * "Before the Storm" at WoW position 15). `pickPreferredMembersByPosition`
+ * replaces that with an explicit Latin-script-first preference, readership only
+ * as the tie-break.
+ *
+ * Two consequences worth knowing here:
+ *
+ *  - **Unpositioned works no longer collapse.** `DISTINCT ON` treats SQL NULLs
+ *    as equal, so every position-less work in a series used to come back as one
+ *    row; each one now surfaces. That is a member-count increase on such series
+ *    and is correct — those are different books, not duplicates.
+ *  - **Retained rows keep their source order**, because `persistMembers` walks
+ *    this array and claims library books greedily through a shared
+ *    `matchedLibraryIds` set (the #2108 pinned claim order), so a reordering
+ *    picker would change which book claims which member. Note that the RENDER
+ *    path does not observe this order: `buildCardFromCache` reloads the
+ *    persisted rows unordered and sorts them by position then title.
+ */
 function mapSeries(entry: z.infer<typeof hardcoverSeriesSchema>): HardcoverSeriesData {
-  const members = (entry.book_series ?? []).map(mapMember);
+  const withinLengthCap = (entry.book_series ?? [])
+    .filter((member) => member.book.title.length <= MAX_VARIANT_TITLE_LENGTH);
+  const members = pickPreferredMembersByPosition(withinLengthCap).map(mapMember);
   return {
     id: entry.id,
     name: entry.name,

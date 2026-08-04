@@ -25,8 +25,19 @@ import { canonicalizeAsin } from './asin.js';
 export const TAG_TITLE_SERIES_MARKER_REGEX =
   /[\s,]+(?:saga|trilogy|series|cycle|chronicles)?\s*(?:book|vol(?:ume)?)\s+\d+\s*$/i;
 
-/** Min trimmed prefix length before a `:` for the colon-subtitle boundary to fire. */
-const COLON_PREFIX_MIN = 3;
+/**
+ * Min trimmed prefix length before a `:` for the colon-subtitle boundary to fire.
+ *
+ * EXPORTED as the single home for the threshold (#2109 AC12):
+ * `src/core/utils/title-variants.ts` imports it rather than re-declaring the
+ * literal. It lives here because `src/shared` may not import `src/core`, while
+ * core importing shared values is permitted and already routine.
+ *
+ * What the shared constant does and does NOT unify: it is the same NUMBER, and
+ * deliberately not the same policy. See the importing docblock in
+ * `title-variants.ts` for the two ways the threshold is measured.
+ */
+export const COLON_PREFIX_MIN = 3;
 
 /** Trailing `(...)` series/edition parenthetical group. */
 const TRAILING_PAREN_REGEX = /\s*\([^)]*\)\s*$/;

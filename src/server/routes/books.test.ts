@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
-import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi, type Mock } from 'vitest';
+import { createTestApp, createMockServices, installMockAppLog, resetMockServices } from '../__tests__/helpers.js';
 import { booksRoutes, type BookRouteDeps } from './books.js';
 import { DEFAULT_SETTINGS } from '@shared/schemas/settings/registry.js';
 import { DEFAULT_LIMITS } from '@shared/schemas.js';
@@ -975,6 +975,23 @@ describe('books routes', () => {
       const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
       expect(res.statusCode).toBe(200);
       expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ bookFolder: '/audiobooks/Doctor Sleep.m4b' }));
+      await app2.close();
+    });
+
+    // #2098 AC16/AC17 — the Edit Metadata row of the mutation matrix in `opf-refresh.ts` is
+    // OPF-yes / retag-NO, and nothing pinned the "no" half until now. An audio re-tag is a
+    // destructive in-place ffmpeg rewrite; this route has no `retagFiles` opt-in in its schema or
+    // its UI, and `POST /api/books/:id/retag` is the operator's explicit path for it.
+    it('never re-tags — the PUT route has no retagFiles opt-in', async () => {
+      const deps = {
+        ...depsFor({ writeOpf: true, path: '/lib/Author/Book' }),
+        settingsService: createMockSettingsService({ tagging: { enabled: true, writeOpf: true } }),
+      };
+      const app2 = await createAppFromDeps(deps);
+      const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
+      expect(res.statusCode).toBe(200);
+      // Tag Embedding is globally ON and the book is imported — still no re-tag.
+      expect(deps.taggingService.retagBook).not.toHaveBeenCalled();
       await app2.close();
     });
 
@@ -3225,6 +3242,9 @@ describe('POST /api/books/:id/cover', () => {
 
       expect(res.statusCode).toBe(200);
       expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, bookId: 1, bookFolder: '/library/book' }));
+      // #2098 AC17 — the cover-upload row of the mutation matrix is OPF-yes / retag-NO. A cover
+      // swap changes no tag field, so it never touches the audio files.
+      expect(services.tagging.retagBook).not.toHaveBeenCalled();
     });
 
     it('still returns 200 when the OPF refresh throws (nonfatal)', async () => {
@@ -3517,6 +3537,12 @@ describe('#1558 makeBookRouteDeps factory', () => {
   });
 });
 
+/** The one `info` record the #2098 post-bind pass emits, filtered out of everything else logged. */
+const POST_BIND_SUMMARY_MSG = 'Series bind: post-bind sidecar refresh complete';
+function summaryRecords(spies: ReturnType<typeof installMockAppLog>['spies']) {
+  return spies.info.mock.calls.filter(([, msg]) => msg === POST_BIND_SUMMARY_MSG);
+}
+
 describe('#1071 series routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
@@ -3532,6 +3558,15 @@ describe('#1071 series routes', () => {
 
   beforeEach(() => {
     resetMockServices(services);
+    // #2098 Hazard 2 — the bind route now reads the tagging settings and (when Tag Embedding is
+    // on) re-tags each synced book. `resetMockServices` re-applies the canonical REJECTING default
+    // to both, so without these the pre-existing bind tests would silently start taking the
+    // degraded path. Configured AFTER the reset, per `shared-test-double-defaults-ripple`.
+    (services.settings.get as Mock).mockImplementation((cat: string) =>
+      Promise.resolve(cat === 'tagging' ? { enabled: false, writeOpf: true } : {}));
+    (services.tagging.retagBook as Mock).mockResolvedValue({
+      bookId: 0, tagged: 0, skipped: 0, failed: 0, warnings: [], refreshItem: null,
+    });
   });
 
   it('GET /api/books/:id/series returns { series: null } when no cache/local data', async () => {
@@ -3669,12 +3704,16 @@ describe('#1071 series routes', () => {
   it('POST /api/books/:id/series/bind returns the rebuilt card and forwards the id', async () => {
     (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Earthsea Cycle' });
     (services.seriesCard.bindHardcoverSeries as Mock).mockResolvedValue({
-      id: 9, name: 'The Earthsea Quartet', hardcoverSeriesId: 4242, seriesAuthor: 'Ursula K. Le Guin', lastFetchedAt: null, members: [],
+      card: { id: 9, name: 'The Earthsea Quartet', hardcoverSeriesId: 4242, seriesAuthor: 'Ursula K. Le Guin', lastFetchedAt: null, members: [] },
+      syncedIds: [1],
     });
 
     const res = await app.inject({ method: 'POST', url: '/api/books/1/series/bind', payload: { hardcoverSeriesId: 4242 } });
 
     expect(res.statusCode).toBe(200);
+    // The response shape did NOT move with the widened service result — still `{ series }`,
+    // with no `warnings` key, so `RefreshBookSeriesResponse` and its two consumers are untouched.
+    expect(Object.keys(res.json())).toEqual(['series']);
     expect(res.json().series.hardcoverSeriesId).toBe(4242);
     expect(services.seriesCard.bindHardcoverSeries).toHaveBeenCalledWith(1, 4242);
   });
@@ -3682,22 +3721,462 @@ describe('#1071 series routes', () => {
   it('POST /api/books/:id/series/bind returns 502 when binding fails', async () => {
     (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
     (services.seriesCard.bindHardcoverSeries as Mock).mockResolvedValue(null);
+    const { spies, restore } = installMockAppLog(app);
 
-    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/bind', payload: { hardcoverSeriesId: 4242 } });
+    try {
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/series/bind', payload: { hardcoverSeriesId: 4242 } });
 
-    expect(res.statusCode).toBe(502);
+      expect(res.statusCode).toBe(502);
+      // The 502 exit returns BEFORE the pass, so it emits no summary (#2098 AC12).
+      expect(summaryRecords(spies)).toHaveLength(0);
+    } finally {
+      restore();
+    }
   });
 
   it('POST /api/books/:id/series/bind returns 404 for a missing book', async () => {
     (services.book.getById as Mock).mockResolvedValue(null);
-    const res = await app.inject({ method: 'POST', url: '/api/books/999/series/bind', payload: { hardcoverSeriesId: 4242 } });
-    expect(res.statusCode).toBe(404);
+    const { spies, restore } = installMockAppLog(app);
+
+    try {
+      const res = await app.inject({ method: 'POST', url: '/api/books/999/series/bind', payload: { hardcoverSeriesId: 4242 } });
+      expect(res.statusCode).toBe(404);
+      expect(summaryRecords(spies)).toHaveLength(0);
+    } finally {
+      restore();
+    }
   });
 
   it('POST /api/books/:id/series/bind rejects a non-positive hardcoverSeriesId', async () => {
     (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
     const res = await app.inject({ method: 'POST', url: '/api/books/1/series/bind', payload: { hardcoverSeriesId: 0 } });
     expect(res.statusCode).toBe(400);
+  });
+
+  // ===================================================================================
+  // #2098 — a bind rewrites series_name/series_position on EVERY member-matched sibling,
+  // so every one of them gets the post-mutation treatment Fix Match gives its single book:
+  // (gated) re-tag, then OPF sidecar refresh. Best-effort and nonfatal per book.
+  //
+  // This suite mocks the WRITER (`writeOpfSidecar`), not `refreshOpfForBook`, so "M OPF
+  // calls" is asserted as M writer invocations carrying the expected `enabled` flag.
+  // ===================================================================================
+  describe('POST /api/books/:id/series/bind — post-bind sidecar + tag refresh (#2098)', () => {
+    const writeOpfMock = vi.mocked(writeOpfSidecar);
+    let logSpies: ReturnType<typeof installMockAppLog>['spies'];
+    let restoreLog: () => void;
+
+    /** A distinct folder per id, so the writer's argument set identifies WHICH books were refreshed. */
+    const folderFor = (id: number) => `/library/book-${id}`;
+
+    function retagResult(over: Record<string, unknown> = {}) {
+      return { bookId: 0, tagged: 0, skipped: 0, failed: 0, warnings: [], refreshItem: null, ...over };
+    }
+
+    /** Resolve every synced book as an imported book with its own folder; bind reports `syncedIds`. */
+    function primeBind(syncedIds: number[]) {
+      (services.book.getById as Mock).mockImplementation((id: number) =>
+        Promise.resolve({ ...mockBook, id, title: `Book ${id}`, path: folderFor(id) }));
+      (services.seriesCard.bindHardcoverSeries as Mock).mockResolvedValue({
+        card: { id: 9, name: 'The Earthsea Quartet', hardcoverSeriesId: 4242, seriesAuthor: 'Ursula K. Le Guin', lastFetchedAt: null, members: [] },
+        syncedIds,
+      });
+    }
+
+    function primeTagging(tagging: { enabled: boolean; writeOpf: boolean }) {
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(cat === 'tagging' ? tagging : {}));
+    }
+
+    const bind = (id = 1) =>
+      app.inject({ method: 'POST', url: `/api/books/${id}/series/bind`, payload: { hardcoverSeriesId: 4242 } });
+
+    /** The `(bookId, bookFolder)` pairs the writer was actually called with, in call order. */
+    const opfTargets = () => writeOpfMock.mock.calls.map(([a]) => ({ bookId: a.bookId, bookFolder: a.bookFolder }));
+    const retagIds = () => (services.tagging.retagBook as Mock).mock.calls.map((c) => c[0]);
+    const notify = () => services.connector.notifyRefresh as Mock;
+    /** Warnings this route owns — the ones carrying a `bookId`, excluding the helper's own record. */
+    const routeWarnings = () => logSpies.warn.mock.calls.filter(([, msg]) => String(msg).startsWith('Series bind:'));
+
+    beforeEach(() => {
+      writeOpfMock.mockReset();
+      writeOpfMock.mockResolvedValue('written');
+      (services.connector.notifyRefresh as Mock).mockResolvedValue(undefined);
+      primeTagging({ enabled: false, writeOpf: true });
+      const installed = installMockAppLog(app);
+      logSpies = installed.spies;
+      restoreLog = installed.restore;
+    });
+
+    afterEach(() => {
+      restoreLog();
+      // The module-level writer mock is shared with the PUT/cover suites — restore its default.
+      writeOpfMock.mockReset();
+      writeOpfMock.mockResolvedValue('written');
+    });
+
+    it('bind refreshes the OPF for every synced book, not just the initiating one', async () => {
+      primeBind([1, 7, 9]);
+
+      expect((await bind()).statusCode).toBe(200);
+      // The ARGUMENT SET, not just the count — a count-only assertion cannot see whether the
+      // three calls were the three siblings or the initiating book three times.
+      expect(opfTargets()).toEqual([
+        { bookId: 1, bookFolder: '/library/book-1' },
+        { bookId: 7, bookFolder: '/library/book-7' },
+        { bookId: 9, bookFolder: '/library/book-9' },
+      ]);
+    });
+
+    it('bind re-tags every synced book when tagging.enabled', async () => {
+      primeTagging({ enabled: true, writeOpf: true });
+      primeBind([1, 7, 9]);
+      (services.tagging.retagBook as Mock).mockResolvedValue(retagResult());
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(retagIds()).toEqual([1, 7, 9]);
+      // No excludeFields, no overrides — the same no-argument call the bulk job makes.
+      expect((services.tagging.retagBook as Mock).mock.calls[0]).toEqual([1]);
+    });
+
+    it('bind does not re-tag when tagging.enabled is false', async () => {
+      primeTagging({ enabled: false, writeOpf: true });
+      primeBind([1, 7, 9]);
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(services.tagging.retagBook).not.toHaveBeenCalled();
+      expect(writeOpfMock).toHaveBeenCalledTimes(3);
+      expect(writeOpfMock.mock.calls.every(([a]) => a.enabled === true)).toBe(true);
+    });
+
+    it('bind reaches the OPF helper with enabled:false when tagging.writeOpf is off', async () => {
+      primeTagging({ enabled: true, writeOpf: false });
+      primeBind([1, 7, 9]);
+      (services.tagging.retagBook as Mock).mockResolvedValue(retagResult());
+      writeOpfMock.mockResolvedValue('skipped'); // what the real writer does with `enabled: false`
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(writeOpfMock).toHaveBeenCalledTimes(3);
+      expect(writeOpfMock.mock.calls.every(([a]) => a.enabled === false)).toBe(true);
+      expect(notify()).not.toHaveBeenCalled();
+    });
+
+    it('neither gate on: bind performs no file work', async () => {
+      primeTagging({ enabled: false, writeOpf: false });
+      primeBind([1, 7, 9]);
+      writeOpfMock.mockResolvedValue('skipped');
+
+      const res = await bind();
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().series.hardcoverSeriesId).toBe(4242);
+      expect(services.tagging.retagBook).not.toHaveBeenCalled();
+      expect(writeOpfMock).toHaveBeenCalledTimes(3);
+      expect(writeOpfMock.mock.calls.every(([a]) => a.enabled === false)).toBe(true);
+      expect(notify()).not.toHaveBeenCalled();
+    });
+
+    it('a legitimate OPF skip is neither a failure nor a refresh', async () => {
+      primeBind([1, 7, 9]);
+      // The writer legitimately skips a foreign OPF / pointer path / vanished book. It is mocked
+      // here, so this fixture stands for ANY legitimate skip — the real foreign-OPF path logs its
+      // own `warn` inside the writer, which this suite can neither see nor contradict. The
+      // assertion is scoped to the ROUTE: the pass adds no warning of its own for a skip.
+      writeOpfMock.mockImplementation(async (a) => (a.bookId === 7 ? 'skipped' : 'written'));
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(notify().mock.calls.flatMap(([, items]) => items).map((b: { bookId: number }) => b.bookId)).toEqual([1, 9]);
+      expect(routeWarnings()).toHaveLength(0);
+      expect(summaryRecords(logSpies)[0]![0]).toMatchObject({ eligible: 3, opfWritten: 2, failed: 0 });
+    });
+
+    it('a retag throw on one book does not fail the bind nor skip the rest', async () => {
+      primeTagging({ enabled: true, writeOpf: true });
+      primeBind([1, 7, 9]);
+      (services.tagging.retagBook as Mock).mockImplementation((id: number) =>
+        id === 7 ? Promise.reject(new Error('ffmpeg exploded')) : Promise.resolve(retagResult({ bookId: id })));
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(retagIds()).toEqual([1, 7, 9]);
+      // The failing book still gets its OPF refresh, and the loop reaches book 9.
+      expect(opfTargets().map((t) => t.bookId)).toEqual([1, 7, 9]);
+      expect(routeWarnings()).toHaveLength(1);
+      const logged = routeWarnings()[0]![0] as { error: unknown };
+      expect(logged.error).not.toBeInstanceOf(Error);
+      // `type` is what a raw Error lacks — `objectContaining({ message })` would pass for one.
+      expect(logged.error).toMatchObject({ type: 'Error', message: 'ffmpeg exploded' });
+    });
+
+    it('RetagError NO_PATH is skipped silently', async () => {
+      primeTagging({ enabled: true, writeOpf: true });
+      primeBind([1, 7, 9]);
+      (services.tagging.retagBook as Mock).mockImplementation((id: number) =>
+        id === 7 ? Promise.reject(new RetagError('NO_PATH', 'no path')) : Promise.resolve(retagResult({ bookId: id })));
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(routeWarnings()).toHaveLength(0);
+      expect(opfTargets().map((t) => t.bookId)).toEqual([1, 7, 9]);
+      expect(summaryRecords(logSpies)[0]![0]).toMatchObject({ eligible: 3, failed: 0 });
+    });
+
+    it("an OPF 'failed' outcome on one book does not stop the pass", async () => {
+      primeBind([1, 7, 9]);
+      writeOpfMock.mockImplementation(async (a) => (a.bookId === 7 ? 'failed' : 'written'));
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(opfTargets().map((t) => t.bookId)).toEqual([1, 7, 9]);
+      expect(summaryRecords(logSpies)[0]![0]).toMatchObject({ synced: 3, eligible: 3, opfWritten: 2, failed: 1 });
+      // No route-level warning assertion: the `'failed'` record belongs to the writer (which is
+      // mocked out here), and a route warning would DUPLICATE it.
+    });
+
+    it('a rejecting per-book preload does not abort the pass', async () => {
+      primeBind([1, 7, 9]);
+      const good = (id: number) => Promise.resolve({ ...mockBook, id, title: `Book ${id}`, path: folderFor(id) });
+      let guardServed = false;
+      (services.book.getById as Mock).mockImplementation((id: number) => {
+        if (id === 1 && !guardServed) { guardServed = true; return good(1); }   // the route's own 404 guard
+        return id === 7 ? Promise.reject(new Error('db read blew up')) : good(id);
+      });
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(retagIds()).toEqual([]);
+      expect(opfTargets().map((t) => t.bookId)).toEqual([1, 9]);
+      expect(routeWarnings()).toHaveLength(1);
+      expect((routeWarnings()[0]![0] as { error: unknown }).error).toMatchObject({ type: 'Error', message: 'db read blew up' });
+      expect(summaryRecords(logSpies)[0]![0]).toMatchObject({ synced: 3, eligible: 2, failed: 1 });
+    });
+
+    it('a preload that resolves null does not abort the pass', async () => {
+      primeBind([1, 7, 9]);
+      let guardServed = false;
+      (services.book.getById as Mock).mockImplementation((id: number) => {
+        if (id === 1 && !guardServed) { guardServed = true; return Promise.resolve({ ...mockBook, id: 1, path: folderFor(1) }); }
+        // The row was deleted between the commit and this preload.
+        return Promise.resolve(id === 7 ? null : { ...mockBook, id, title: `Book ${id}`, path: folderFor(id) });
+      });
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(opfTargets().map((t) => t.bookId)).toEqual([1, 9]);
+      expect(routeWarnings()).toHaveLength(1);
+      // Same accounting as a REJECTED preload: a refresh this pass owed could not be attempted.
+      expect(summaryRecords(logSpies)[0]![0]).toMatchObject({ synced: 3, eligible: 2, failed: 1 });
+    });
+
+    it('a book with a null path is skipped entirely and is not a failure', async () => {
+      primeBind([1, 7, 9]);
+      primeTagging({ enabled: true, writeOpf: true });
+      (services.tagging.retagBook as Mock).mockResolvedValue(retagResult());
+      (services.book.getById as Mock).mockImplementation((id: number) =>
+        // Never imported — the ordinary wanted-but-undownloaded series member.
+        Promise.resolve({ ...mockBook, id, title: `Book ${id}`, path: id === 7 ? null : folderFor(id) }));
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(retagIds()).toEqual([1, 9]);
+      expect(opfTargets().map((t) => t.bookId)).toEqual([1, 9]);
+      expect(routeWarnings()).toHaveLength(0);
+      expect(summaryRecords(logSpies)[0]![0]).toMatchObject({ synced: 3, eligible: 2, failed: 0 });
+    });
+
+    it('two failing operations on ONE book count as a single failure', async () => {
+      primeTagging({ enabled: true, writeOpf: true });
+      primeBind([1]);
+      (services.tagging.retagBook as Mock).mockRejectedValue(new Error('ffmpeg exploded'));
+      writeOpfMock.mockResolvedValue('failed');
+
+      expect((await bind()).statusCode).toBe(200);
+      // The OPF step still ran despite the retag throw.
+      expect(opfTargets().map((t) => t.bookId)).toEqual([1]);
+      // Exactly ONE warning: the retag's. The OPF `'failed'` record belongs to the mocked writer.
+      expect(routeWarnings()).toHaveLength(1);
+      expect(summaryRecords(logSpies)[0]![0]).toMatchObject({ synced: 1, eligible: 1, failed: 1 });
+    });
+
+    describe('exactly one metadata refresh per book', () => {
+      beforeEach(() => {
+        primeTagging({ enabled: true, writeOpf: true });
+        primeBind([1]);
+      });
+
+      const refreshItem = { bookId: 1, title: 'Pre-tag Title', authorName: 'A', libraryPath: '/library/book-1' };
+
+      it('fires once — from the retag item — when BOTH the retag and the OPF wrote', async () => {
+        (services.tagging.retagBook as Mock).mockResolvedValue(retagResult({ bookId: 1, tagged: 2, refreshItem }));
+        writeOpfMock.mockResolvedValue('written');
+
+        expect((await bind()).statusCode).toBe(200);
+        expect(notify()).toHaveBeenCalledTimes(1);
+        expect(notify()).toHaveBeenCalledWith('metadata', [refreshItem]);
+      });
+
+      it('still fires from the retag when the OPF was skipped', async () => {
+        (services.tagging.retagBook as Mock).mockResolvedValue(retagResult({ bookId: 1, tagged: 2, refreshItem }));
+        writeOpfMock.mockResolvedValue('skipped');
+
+        expect((await bind()).statusCode).toBe(200);
+        expect(notify()).toHaveBeenCalledTimes(1);
+      });
+
+      it('fires from the OPF write when the retag tagged nothing', async () => {
+        (services.tagging.retagBook as Mock).mockResolvedValue(retagResult({ bookId: 1, tagged: 0 }));
+        writeOpfMock.mockResolvedValue('written');
+
+        expect((await bind()).statusCode).toBe(200);
+        expect(notify()).toHaveBeenCalledTimes(1);
+        // No retag item, so it is built from the preloaded book.
+        expect(notify()).toHaveBeenCalledWith('metadata', [{ bookId: 1, title: 'Book 1', authorName: 'Brandon Sanderson', libraryPath: '/library/book-1' }]);
+      });
+
+      it('fires not at all when both were inert', async () => {
+        (services.tagging.retagBook as Mock).mockResolvedValue(retagResult({ bookId: 1, tagged: 0 }));
+        writeOpfMock.mockResolvedValue('skipped');
+
+        expect((await bind()).statusCode).toBe(200);
+        expect(notify()).not.toHaveBeenCalled();
+      });
+    });
+
+    it('a gate read that rejects once does not degrade the independent OPF reads', async () => {
+      primeBind([1, 7, 9]);
+      // The pass's FIRST `tagging` read is necessarily the retag gate (retag precedes OPF within a
+      // book), so the rejection lands on the gate and the three helper reads recover.
+      (services.settings.get as Mock)
+        .mockRejectedValueOnce(new Error('db blip'))
+        .mockResolvedValue({ enabled: true, writeOpf: true });
+      (services.tagging.retagBook as Mock).mockResolvedValue(retagResult());
+
+      expect((await bind()).statusCode).toBe(200);
+      // ZERO retags across ALL THREE ids: the gate is ONE pass-level decision. An implementation
+      // that re-derived it per book would see the rejection only on book 1 and retag 7 and 9.
+      expect(services.tagging.retagBook).not.toHaveBeenCalled();
+      expect(writeOpfMock).toHaveBeenCalledTimes(3);
+      expect(writeOpfMock.mock.calls.every(([a]) => a.enabled === true)).toBe(true);
+      // `failed: 0` — a gate rejection contributes nothing of its own to the failure count.
+      expect(summaryRecords(logSpies)[0]![0]).toMatchObject({
+        bookId: 1, synced: 3, eligible: 3, retagged: 0, opfWritten: 3, failed: 0, taggingGateDegraded: true,
+      });
+      // The degradation is not summary-only: it carries its own diagnostic, logged EXACTLY once
+      // for the pass and carrying a SERIALIZED error. `type` is the load-bearing term — a raw
+      // `Error` would satisfy a `message`-only matcher, so the assertion pins what it lacks.
+      expect(routeWarnings()).toHaveLength(1);
+      const gateWarn = routeWarnings()[0]![0] as { bookId: number; error: unknown };
+      expect(gateWarn.bookId).toBe(1);
+      expect(gateWarn.error).not.toBeInstanceOf(Error);
+      expect(gateWarn.error).toMatchObject({ type: 'Error', message: 'db blip' });
+    });
+
+    it('a sustained settings outage fails every OPF but adds no failure of its own', async () => {
+      primeBind([1, 7, 9]);
+      (services.settings.get as Mock).mockRejectedValue(new Error('settings table gone'));
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(services.tagging.retagBook).not.toHaveBeenCalled();
+      // Each helper catches its OWN rejection before reaching the writer.
+      expect(writeOpfMock).not.toHaveBeenCalled();
+      // `failed: 3` — exactly M. Three ordinary OPF failures; the gate rejection adds no fourth.
+      expect(summaryRecords(logSpies)[0]![0]).toMatchObject({
+        bookId: 1, synced: 3, eligible: 3, retagged: 0, opfWritten: 0, failed: 3, taggingGateDegraded: true,
+      });
+      // ONE gate warning even though every read of the pass rejected — the gate is decided once,
+      // so its diagnostic cannot multiply per book. (The three per-book OPF rejections are the
+      // HELPER's own records, which carry a different message and are excluded by `routeWarnings`.)
+      expect(routeWarnings()).toHaveLength(1);
+      expect((routeWarnings()[0]![0] as { error: unknown }).error).toMatchObject({ type: 'Error', message: 'settings table gone' });
+    });
+
+    it('the pass emits exactly one summary info record after every id settles', async () => {
+      primeTagging({ enabled: true, writeOpf: true });
+      primeBind([1, 7, 9]);
+      let guardServed = false;
+      (services.book.getById as Mock).mockImplementation((id: number) => {
+        if (id === 1 && !guardServed) { guardServed = true; return Promise.resolve({ ...mockBook, id: 1, path: folderFor(1) }); }
+        return id === 7
+          ? Promise.reject(new Error('preload blew up'))
+          : Promise.resolve({ ...mockBook, id, title: `Book ${id}`, path: folderFor(id) });
+      });
+      (services.tagging.retagBook as Mock).mockImplementation((id: number) =>
+        // Book 9's retag fails on THREE files — the book still counts once.
+        Promise.resolve(retagResult(id === 9 ? { bookId: 9, tagged: 0, failed: 3 } : { bookId: id, tagged: 1 })));
+
+      expect((await bind()).statusCode).toBe(200);
+
+      const records = summaryRecords(logSpies);
+      expect(records).toHaveLength(1);
+      const summary = records[0]![0] as Record<string, unknown>;
+      expect(Object.keys(summary).sort()).toEqual(
+        ['bookId', 'eligible', 'failed', 'opfWritten', 'retagged', 'synced', 'taggingGateDegraded'],
+      );
+      expect(summary).toEqual({
+        bookId: 1, synced: 3, eligible: 2, retagged: 1, opfWritten: 2, failed: 2, taggingGateDegraded: false,
+      });
+    });
+
+    it('an empty synced list warns rather than passing silently', async () => {
+      // A non-null bind always rewrote at least the initiating book, so this is a bug shape
+      // (Hazard 1: a stale double, or a regression in the transaction's return value) — it must
+      // not read as a quiet zero-book pass.
+      primeBind([]);
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(routeWarnings()).toHaveLength(1);
+      expect(writeOpfMock).not.toHaveBeenCalled();
+      expect(summaryRecords(logSpies)[0]![0]).toMatchObject({ synced: 0, eligible: 0, failed: 0 });
+    });
+
+    it('each synced book fully settles before the next one starts', async () => {
+      // Invocation-order arrays cannot see this: under `Promise.all(syncedIds.map(...))` the three
+      // per-book chains interleave and still yield `[1, 7, 9]` in every array. Park book 1
+      // mid-pass instead — a parallel loop would have preloaded 7 and 9 by then.
+      primeTagging({ enabled: true, writeOpf: true });
+      primeBind([1, 7, 9]);
+      let releaseBookOne!: () => void;
+      const bookOneParked = new Promise<void>((resolve) => { releaseBookOne = resolve; });
+      (services.tagging.retagBook as Mock).mockImplementation(async (id: number) => {
+        if (id === 1) await bookOneParked;
+        return retagResult({ bookId: id });
+      });
+      const preloadIds = () => (services.book.getById as Mock).mock.calls.map((c) => c[0]);
+
+      const pending = bind();
+      await new Promise((resolve) => setTimeout(resolve, 10)); // drain everything that CAN proceed
+
+      // Book 1 is held inside its own retag: its OPF has not run, and books 7 and 9 have not even
+      // been preloaded. `[1, 1]` is the route's own 404 guard plus book 1's preload — nothing more.
+      expect(preloadIds()).toEqual([1, 1]);
+      expect(retagIds()).toEqual([1]);
+      expect(opfTargets()).toEqual([]);
+
+      releaseBookOne();
+      expect((await pending).statusCode).toBe(200);
+
+      // Released, the remaining ids run to completion in order.
+      expect(preloadIds()).toEqual([1, 1, 7, 9]);
+      expect(retagIds()).toEqual([1, 7, 9]);
+      expect(opfTargets().map((t) => t.bookId)).toEqual([1, 7, 9]);
+    });
+
+    it('the post-bind pass runs after the service resolves', async () => {
+      primeTagging({ enabled: true, writeOpf: true });
+      const order: string[] = [];
+      (services.book.getById as Mock).mockImplementation((id: number) =>
+        Promise.resolve({ ...mockBook, id, title: `Book ${id}`, path: folderFor(id) }));
+      (services.seriesCard.bindHardcoverSeries as Mock).mockImplementation(async () => {
+        // Held open across several macrotasks so the observation point is the service call's
+        // RESOLUTION (the commit), not the statement that issued it — a pass sequenced before
+        // the resolution would get its retag/OPF in ahead of this push.
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        order.push('bind-resolved');
+        return {
+          card: { id: 9, name: 'The Earthsea Quartet', hardcoverSeriesId: 4242, seriesAuthor: null, lastFetchedAt: null, members: [] },
+          syncedIds: [1],
+        };
+      });
+      (services.tagging.retagBook as Mock).mockImplementation(async () => { order.push('retag'); return retagResult(); });
+      writeOpfMock.mockImplementation(async () => { order.push('opf'); return 'written'; });
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(order).toEqual(['bind-resolved', 'retag', 'opf']);
+    });
   });
 
   it('POST /api/books no longer enqueues an async series refresh (#1133 — lazy via GET)', async () => {

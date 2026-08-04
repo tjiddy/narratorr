@@ -182,7 +182,7 @@ describe('SeriesCardService — unit', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it('orders positions [1, 2.5, null, 4] with null last and localeCompare tie-break on equal positions', async () => {
+    it('orders positions [1, 2.5, 4, null] with null last regardless of payload order', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Anchor', seriesName: 'Test Series', seriesPosition: 1, authorName: 'Some Author' });
       mockFetchOnce(hardcoverSeriesPayload({
         id: 9999,
@@ -193,15 +193,38 @@ describe('SeriesCardService — unit', () => {
           { position: 4, id: 4, slug: 'four', title: 'Book Four' },
           { position: 1, id: 1, slug: 'one', title: 'Book One' },
           { position: 2.5, id: 2, slug: 'two-five', title: 'Book Two-Five' },
-          // Equal positions → title tie-break (Alpha before Beta).
-          { position: 1, id: 6, slug: 'alpha', title: 'Alpha' },
         ],
       }));
 
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
       const card = await svc.getSeriesForBook(bookId);
 
-      expect(card!.members.map((m) => m.position)).toEqual([1, 1, 2.5, 4, null]);
+      expect(card!.members.map((m) => m.position)).toEqual([1, 2.5, 4, null]);
+      expect(card!.members.at(-1)!.title).toBe('Companion');
+    });
+
+    /**
+     * The comparator's equal-position title tie-break, seeded straight into the
+     * cache. It cannot be driven from a Hardcover payload any more: since #2097
+     * the adapter keeps at most one work per finite position, so two same-position
+     * members only ever reach the card from rows persisted by an earlier version.
+     * The comparator still has to order them, hence this test.
+     */
+    it('breaks an equal-position tie on title when the cache holds two rows at one position', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'Anchor', seriesName: 'Test Series', seriesPosition: 1, authorName: 'Some Author' });
+      const [seedRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 9999, name: 'Test Series', normalizedName: normalizeSeriesName('Test Series'), authorName: 'Some Author', lastFetchedAt: new Date(),
+      }).returning();
+      await db.insert(seriesMembers).values([
+        { seriesId: seedRow!.id, hardcoverBookId: 1, slug: 'one', title: 'Book One', normalizedTitle: 'book one', authorName: 'Some Author', position: 1, source: 'hardcover' },
+        { seriesId: seedRow!.id, hardcoverBookId: 6, slug: 'alpha', title: 'Alpha', normalizedTitle: 'alpha', authorName: 'Some Author', position: 1, source: 'hardcover' },
+        { seriesId: seedRow!.id, hardcoverBookId: 5, slug: 'companion', title: 'Companion', normalizedTitle: 'companion', authorName: 'Some Author', position: null, source: 'hardcover' },
+      ]);
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(bookId);
+
+      expect(card!.members.map((m) => m.position)).toEqual([1, 1, null]);
       // Position 1 tie broken by title: 'Alpha' < 'Book One'
       expect(card!.members.slice(0, 2).map((m) => m.title)).toEqual(['Alpha', 'Book One']);
       expect(card!.members.at(-1)!.title).toBe('Companion');
@@ -503,7 +526,14 @@ describe('SeriesCardService — unit', () => {
   // --- Scenario 7 & 8: member dedup + omnibus collapse (service boundary) ------
 
   describe('member dedup and no card inflation', () => {
-    it('two Hardcover members at the same position never both claim one library book', async () => {
+    /**
+     * The shared `matchedLibraryIds` claim set, driven from a payload shape the
+     * adapter still emits. Two members at ONE position can no longer reach the
+     * service (#2097 collapses them in `mapSeries`), but two UNPOSITIONED members
+     * whose titles both pair with the same library book can — and #2097 made that
+     * shape MORE common, because unpositioned works no longer collapse either.
+     */
+    it('two Hardcover members whose titles both pair never both claim one library book', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
       mockFetchOnce(hardcoverSeriesPayload({
         id: 5523,
@@ -511,9 +541,10 @@ describe('SeriesCardService — unit', () => {
         author: 'Nicholas Eames',
         members: [
           { position: 1, id: 1001, slug: 'kings', title: 'Kings of the Wyld' },
-          // Two members at position 2 — only one may claim the single library book.
-          { position: 2, id: 1002, slug: 'bloody-a', title: 'Bloody Rose A' },
-          { position: 2, id: 1003, slug: 'bloody-b', title: 'Bloody Rose B' },
+          // Both carry 'Bloody Rose' as their prefix(1) variant, so both pair with
+          // the library book on the title tier — only one may claim it.
+          { position: null, id: 1002, slug: 'bloody-a', title: 'Bloody Rose: Part One' },
+          { position: null, id: 1003, slug: 'bloody-b', title: 'Bloody Rose: Part Two' },
         ],
       }));
 
@@ -664,10 +695,10 @@ describe('SeriesCardService — unit', () => {
       }));
 
       const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
-      const card = await svc.bindHardcoverSeries(bookId, 4242);
+      const bound = await svc.bindHardcoverSeries(bookId, 4242);
 
-      expect(card!.hardcoverSeriesId).toBe(4242);
-      expect(card!.name).toBe('The Earthsea Quartet');
+      expect(bound!.card.hardcoverSeriesId).toBe(4242);
+      expect(bound!.card.name).toBe('The Earthsea Quartet');
       const rows = await db.select().from(series).where(eq(series.hardcoverSeriesId, 4242));
       expect(rows).toHaveLength(1);
 
@@ -859,6 +890,109 @@ describe('SeriesCardService — unit', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
       const book = (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
       expect(book.seriesName).toBe('The Earthsea Cycle');
+    });
+  });
+
+  // ─── #2098: the ids the transaction actually rewrote cross the boundary ───
+  //
+  // The route's post-commit pass refreshes each rewritten book's `metadata.opf` and
+  // embedded tags, so it needs to know WHICH books the transaction touched — and it
+  // must learn that from the transaction's own resolved value, never from an outer
+  // accumulator that would survive a rollback.
+  describe('bindHardcoverSeries — the synced id list (#2098)', () => {
+    it('returns the card alongside the ids it rewrote', async () => {
+      const bookA = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      const bookB = await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'The Earthsea Cycle', seriesPosition: 2, authorName: 'Ursula K. Le Guin' });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [
+          { position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' },
+          { position: 5, id: 2, slug: 'tombs', title: 'The Tombs of Atuan' },
+        ],
+      }));
+
+      const bound = await new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(bookA, 4242);
+
+      expect(bound!.card.name).toBe('The Earthsea Quartet');
+      // Both siblings were rewritten, in matched-member order.
+      expect(bound!.syncedIds).toEqual([bookA, bookB]);
+      // The ids are exactly the rows whose series_name moved to the canonical name.
+      const rewritten = (await db.select().from(books)).filter((b) => b.seriesName === 'The Earthsea Quartet').map((b) => b.id);
+      expect([...bound!.syncedIds].sort()).toEqual([...rewritten].sort());
+    });
+
+    it('an unmatched initiating book still appears in syncedIds', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'Unrelated Book', seriesName: 'Earthsea', seriesPosition: 7, authorName: 'Ursula K. Le Guin' });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [{ position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' }],
+      }));
+
+      const bound = await new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(bookId, 4242);
+
+      // It matched no member, but the bind still adopted the canonical name for it — so its
+      // sidecar is stale too and the pass owes it a refresh.
+      expect(bound!.syncedIds).toEqual([bookId]);
+      expect(bound!.card).not.toBeNull();
+    });
+
+    it('syncedIds carries no duplicate when the initiating book is itself a matched member', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [{ position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' }],
+      }));
+
+      const bound = await new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(bookId, 4242);
+
+      expect(bound!.syncedIds).toEqual([bookId]);
+      expect(new Set(bound!.syncedIds).size).toBe(bound!.syncedIds.length);
+    });
+
+    it('a rolled-back bind returns no synced ids', async () => {
+      const seed = async () => seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      const payload = () => hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [{ position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' }],
+      });
+      const link = await import('./book-series-link.js');
+
+      // Positive control FIRST, so the negative below is not vacuous: this fixture DOES report
+      // an id when the transaction commits.
+      const okId = await seed();
+      mockFetchOnce(payload());
+      const ok = await new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(okId, 4242);
+      expect(ok!.syncedIds).toEqual([okId]);
+
+      // Now fail the transaction at `relinkBookToBoundSeries` — AFTER the id-collecting
+      // `UPDATE books` has been issued, which is the only point at which a returned-from-tx list
+      // is distinguishable from an outer accumulator.
+      const rollbackId = await seed();
+      mockFetchOnce(payload());
+      vi.spyOn(link, 'relinkBookToBoundSeries').mockRejectedValueOnce(new Error('relink boom'));
+
+      const call = new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(rollbackId, 4242);
+      await expect(call).rejects.toThrow('relink boom');
+      // Nothing observable reports a synced id: the call produced no value at all, and the
+      // book's series fields are back where they were.
+      const row = (await db.select().from(books).where(eq(books.id, rollbackId)))[0]!;
+      expect(row.seriesName).toBe('The Earthsea Cycle');
+    });
+
+    it('the three null exits still resolve null, not a result object', async () => {
+      const svc = (key: string) => new SeriesCardService(db, log, settingsServiceWith(key));
+
+      // 1. Book missing.
+      expect(await svc('K').bindHardcoverSeries(999_999, 4242)).toBeNull();
+
+      // 2. No Hardcover key configured.
+      const noKeyId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'Earthsea', authorName: 'Ursula K. Le Guin' });
+      globalThis.fetch = vi.fn() as typeof globalThis.fetch;
+      expect(await svc('').bindHardcoverSeries(noKeyId, 4242)).toBeNull();
+
+      // 3. `fetchById` returned nothing.
+      mockFetchOnce({ data: { series: [] } });
+      expect(await svc('K').bindHardcoverSeries(noKeyId, 4242)).toBeNull();
     });
   });
   // ─── #2069 AC24: binding is an operator re-assertion of the SERIES ───

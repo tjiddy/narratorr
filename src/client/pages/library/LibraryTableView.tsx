@@ -6,6 +6,19 @@ import type { DisplayBook, SortField, SortDirection } from './helpers.js';
 import { computeMbPerHour } from './helpers.js';
 import { bookStatusChipStyles } from '@/lib/status';
 import { requireDefined } from '@shared/utils/assert.js';
+import { useBookActivity } from '@/hooks/useBookActivity.js';
+import { BookActivityBadge } from './BookActivityBadge.js';
+
+/** Hook-per-row seam: rows render inside a map, so the activity hook needs its own component. */
+function RowActivity({ bookId }: { bookId: number }) {
+  const activity = useBookActivity(bookId);
+  if (!activity) return null;
+  return (
+    <div className="mt-1">
+      <BookActivityBadge activity={activity} variant="inline" />
+    </div>
+  );
+}
 
 function formatMbHr(book: DisplayBook): string {
   const val = computeMbPerHour(book);
@@ -149,6 +162,7 @@ export function LibraryTableView({
                     <span className={`inline-flex items-center capitalize text-[11px] font-semibold px-2 py-0.5 rounded-md ${style.text} ${style.bg}`}>
                       {book.status}
                     </span>
+                    <RowActivity bookId={book.id} />
                   </td>
                   <td className="px-3 py-2.5">
                     <span className="font-medium truncate block max-w-[240px]">

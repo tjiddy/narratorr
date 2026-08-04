@@ -10,6 +10,7 @@ import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { BookService } from './book.service.js';
 import type { IndexerService } from './indexer.service.js';
 import type { RetrySearchDeps } from './retry-search.js';
+import type { EventHistoryService } from './event-history.service.js';
 
 // NOTE: This file is intentionally separate from rejection-helpers.test.ts
 // because that file vi.mocks retrySearch — which means deleting the real
@@ -19,10 +20,10 @@ import type { RetrySearchDeps } from './retry-search.js';
 // the rejection-helpers caller surface (B5 in the AC).
 
 function makeImportedBookDeps(retryBudget: RetryBudget) {
-  const mockSearchAll = vi.fn().mockResolvedValue([]);
+  const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
   const mockGrab = vi.fn();
   const deps: RetrySearchDeps = {
-    indexerSearchService: inject<IndexerSearchService>({ searchAll: mockSearchAll }),
+    indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus: mockSearchAll }),
     indexerService: inject<IndexerService>({
       getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }),
     }),
@@ -44,6 +45,7 @@ function makeImportedBookDeps(retryBudget: RetryBudget) {
     }),
     settingsService: createMockSettingsService(),
     retryBudget,
+    eventHistory: inject<EventHistoryService>({ create: vi.fn().mockResolvedValue(undefined) }),
     log: inject<FastifyBaseLogger>(createMockLogger()),
   };
   return { deps, mockSearchAll, mockGrab };

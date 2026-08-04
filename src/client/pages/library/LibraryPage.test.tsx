@@ -15,6 +15,7 @@ vi.mock('@/lib/api', async () => {
     api: {
       ...(actual as { api: object }).api,
       listLibraryBooks: vi.fn(),
+      getImportJobs: vi.fn().mockResolvedValue([]),
       getBookStats: vi.fn(),
       getSettings: vi.fn(),
       deleteBook: vi.fn(),

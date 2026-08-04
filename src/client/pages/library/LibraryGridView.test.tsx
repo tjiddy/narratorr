@@ -2,6 +2,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { LibraryGridView } from './LibraryGridView';
+
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...(actual as Record<string, unknown>),
+    api: {
+      ...(actual as { api: Record<string, unknown> }).api,
+      checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
+      getImportJobs: vi.fn().mockResolvedValue([]),
+    },
+  };
+});
 import type { LibraryGridViewProps } from './LibraryGridView';
 import type { DisplayBook } from './helpers';
 

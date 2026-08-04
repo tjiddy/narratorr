@@ -1,1 +1,0 @@
-ALTER TABLE `books` ADD `user_cleared_fields` text;
