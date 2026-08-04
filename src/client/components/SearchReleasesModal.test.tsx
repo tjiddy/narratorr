@@ -63,7 +63,7 @@ let mockStreamState: {
   phase: 'idle' | 'searching' | 'results';
   sessionId: string | null;
   indexers: Array<{ id: number; name: string; status: string; resultCount?: number; error?: string }>;
-  results: { results: SearchResult[]; durationUnknown: boolean; unsupportedResults: { count: number; titles: string[] } } | null;
+  results: { results: SearchResult[]; durationUnknown: boolean; unsupportedResults: { count: number; titles: string[] }; relaxedQuery?: string } | null;
   error: string | null;
   hasResults: boolean;
   authReady: boolean;
@@ -120,7 +120,7 @@ const mockResults: SearchResult[] = [
 
 
 /** Helper: set stream state to Phase 2 (results) with given data */
-function setStreamResults(results: SearchResult[], unsupported?: { count: number; titles: string[] }, durationUnknown = false) {
+function setStreamResults(results: SearchResult[], unsupported?: { count: number; titles: string[] }, durationUnknown = false, relaxedQuery?: string) {
   mockStreamState = {
     phase: 'results',
     sessionId: 'test-session',
@@ -129,6 +129,7 @@ function setStreamResults(results: SearchResult[], unsupported?: { count: number
       results,
       durationUnknown,
       unsupportedResults: unsupported ?? { count: 0, titles: [] },
+      ...(relaxedQuery !== undefined && { relaxedQuery }),
     },
     error: null,
     hasResults: results.length > 0,
@@ -2157,3 +2158,74 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
   });
 });
 
+
+// ============================================================================
+// #2104 relaxed-query adoption — the BOX shows the string that actually matched
+// (UAT feedback 2026-08-04: no banner; the winning query replaces the canonical)
+// ============================================================================
+
+describe('SearchReleasesModal — relaxed-query adoption into the search box', () => {
+  // Module-level mock state does not re-render on mutation (mock-rerender trap),
+  // and renderWithProviders wraps JSX manually so ITS rerender would drop the
+  // providers — this local harness re-wraps identically on every rerender.
+  function renderModal() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onClose = vi.fn();
+    // The element MUST be built fresh per wrap(): a shared element reference
+    // triggers React's identical-element bailout on rerender, the mocked hook
+    // is never re-invoked, and mutated mockStreamState never reaches the tree.
+    const wrap = () => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    const utils = render(wrap());
+    return { rerenderModal: () => utils.rerender(wrap()) };
+  }
+
+  it('adopts the winning relaxed query into the box after an untouched search', async () => {
+    const { rerenderModal } = renderModal();
+    await waitFor(() => expect(mockStreamActions.start).toHaveBeenCalled());
+    expect((screen.getByLabelText('Search query') as HTMLInputElement).value)
+      .toBe('The Way of Kings Brandon Sanderson');
+
+    setStreamResults(mockResults, undefined, false, 'way of kings Brandon Sanderson');
+    rerenderModal();
+    await waitFor(() => {
+      expect((screen.getByLabelText('Search query') as HTMLInputElement).value)
+        .toBe('way of kings Brandon Sanderson');
+    });
+  });
+
+  it('never clobbers a hand-edited query when relaxed results land', async () => {
+    const { rerenderModal } = renderModal();
+    await waitFor(() => expect(mockStreamActions.start).toHaveBeenCalled());
+    // Mirror the real hook: start() flips phase to 'searching' synchronously,
+    // which is what stops the auto-start effect re-firing after the hand-edit.
+    // Leaving the mock on 'idle' would let auto-start re-run and move the
+    // lastSearchedRef — a refire that is unreachable in production.
+    setStreamSearching();
+    rerenderModal();
+    fireEvent.change(screen.getByLabelText('Search query'), { target: { value: 'my hand-tuned query' } });
+
+    setStreamResults(mockResults, undefined, false, 'way of kings Brandon Sanderson');
+    rerenderModal();
+    await waitFor(() => {
+      expect((screen.getByLabelText('Search query') as HTMLInputElement).value).toBe('my hand-tuned query');
+    });
+  });
+
+  it('leaves the box on the canonical query when no relaxedQuery is present (rung 1 or empty)', async () => {
+    const { rerenderModal } = renderModal();
+    await waitFor(() => expect(mockStreamActions.start).toHaveBeenCalled());
+
+    setStreamResults([]);
+    rerenderModal();
+    await waitFor(() => {
+      expect((screen.getByLabelText('Search query') as HTMLInputElement).value)
+        .toBe('The Way of Kings Brandon Sanderson');
+    });
+  });
+});

@@ -228,27 +228,20 @@ describe('SearchReleasesContent', () => {
 });
 
 // ============================================================================
-// #2104 — relaxed-query disclosure
+// #2104 — relaxed-query handling moved to the query box (UAT feedback 2026-08-04)
 // ============================================================================
 
-describe('SearchReleasesContent — relaxed-query disclosure (#2104 AC25)', () => {
-  const responseWith = (relaxedQuery?: string): SearchResponse => ({
-    results: [mockResult],
-    durationUnknown: false,
-    unsupportedResults: { count: 0, titles: [] },
-    ...(relaxedQuery !== undefined && { relaxedQuery }),
-  });
-
-  it('renders the disclosure with the winning rung query when relaxedQuery is present', () => {
-    renderContent({ phase: 'results', searchResponse: responseWith('star wars haunted starlight'), resultKeys: ['k0'] });
-
-    expect(screen.getByText(/matched on relaxed query/i)).toBeInTheDocument();
-    expect(screen.getByText('star wars haunted starlight')).toBeInTheDocument();
-  });
-
-  it('renders nothing when relaxedQuery is absent — the normal case', () => {
-    renderContent({ phase: 'results', searchResponse: responseWith(), resultKeys: ['k0'] });
+describe('SearchReleasesContent — no relaxed-query banner (superseded disclosure)', () => {
+  it('renders results with relaxedQuery present and NO disclosure banner — the box owns the winning query now', () => {
+    const searchResponse: SearchResponse = {
+      results: [mockResult],
+      durationUnknown: false,
+      unsupportedResults: { count: 0, titles: [] },
+      relaxedQuery: 'star wars haunted starlight',
+    };
+    renderContent({ phase: 'results', searchResponse, resultKeys: ['k0'] });
 
     expect(screen.queryByText(/matched on relaxed query/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('star wars haunted starlight')).not.toBeInTheDocument();
   });
 });
