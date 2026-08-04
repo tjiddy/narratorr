@@ -191,7 +191,7 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     expect(result.current).toEqual([]);
   });
 
-  it('returns entry with bookTitle, phase, percentage after merge_started', () => {
+  it('returns entry with bookTitle, phase, percentage for a starting merge', () => {
     const { result } = renderHook(() => useMergeActivityCards());
 
     act(() => {
@@ -206,7 +206,7 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     });
   });
 
-  it('updates phase and percentage on merge_progress (preserves bookTitle)', () => {
+  it('updates phase and percentage in place (preserves bookTitle)', () => {
     const { result } = renderHook(() => useMergeActivityCards());
 
     act(() => {
@@ -324,7 +324,7 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     });
   });
 
-  it('updates queue position on merge_queue_updated', () => {
+  it('updates queue position in place', () => {
     const { result } = renderHook(() => useMergeActivityCards());
 
     act(() => {
@@ -337,7 +337,7 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     expect(result.current[0]).toMatchObject({ phase: 'queued', position: 1 });
   });
 
-  it('transitions from queued to starting on merge_started', () => {
+  it('transitions from queued to starting', () => {
     const { result } = renderHook(() => useMergeActivityCards());
 
     act(() => {
