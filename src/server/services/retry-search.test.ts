@@ -14,6 +14,7 @@ import type { EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '@core/index.js';
 import { BYTES_PER_GB } from '@shared/constants.js';
+import { MAX_SEARCH_RUNGS } from './search-query-ladder.js';
 
 /**
  * `searchAllWithStatus` mock returning one successful indexer (#2104 D16).
@@ -989,5 +990,119 @@ describe('retrySearch — multi-part usenet filter (#1777)', () => {
 
     expect(result.outcome).toBe('no_candidates');
     expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// #2104 — progressive query relaxation on the retry path
+// ============================================================================
+
+describe('retrySearch — query ladder (#2104)', () => {
+  /** Deep-franchise book: 8-rung ladder, `first+last` at index 3. */
+  const franchiseBook: BookWithAuthor = {
+    ...createMockDbBook({ duration: 3600, title: 'Star Wars: The High Republic: Haunted Starlight' }),
+    authors: [{ ...createMockDbAuthor(), name: 'George Mann' }],
+    narrators: [],
+  };
+
+  /** Search whose answer depends on the transport query, so the winning rung is pinnable. */
+  function answering(byQuery: Record<string, unknown[]>) {
+    return vi.fn().mockImplementation(async (query: string) => ({
+      results: byQuery[query] ?? [],
+      succeeded: 1,
+      failed: 0,
+    }));
+  }
+
+  const franchiseDeps = (searchAllWithStatus: ReturnType<typeof vi.fn>) =>
+    createDeps({
+      indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus }),
+      bookService: inject<BookService>({ getById: vi.fn().mockResolvedValue(franchiseBook) }),
+    });
+
+  // AC19 — the WHOLE ladder costs exactly ONE RetryBudget attempt, not one per
+  // rung. COUNTERFACTUAL: consume inside the rung loop and this reads 4.
+  it('finds a book at a deep rung while consuming exactly ONE budget attempt (AC19)', async () => {
+    const searchAllWithStatus = answering({
+      'star wars haunted starlight George Mann': [{ ...mockSearchResult, title: 'Star Wars: Haunted Starlight' }],
+    });
+    const deps = franchiseDeps(searchAllWithStatus);
+    const consumeAttempt = vi.spyOn(deps.retryBudget, 'consumeAttempt');
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retried');
+    expect(consumeAttempt).toHaveBeenCalledTimes(1);
+    expect(searchAllWithStatus.mock.calls.map((c) => c[0])).toEqual([
+      'Star Wars The High Republic Haunted Starlight George Mann',
+      'star wars the high republic George Mann',
+      'the high republic haunted starlight George Mann',
+      'star wars haunted starlight George Mann',
+    ]);
+  });
+
+  // Carried obligation F16 / AC14 — retry owns an INDEPENDENT filter/rank/grab
+  // chain, so its failed-floor behaviour needs its own pin. It routes through
+  // the same shared `selectRelaxedCandidate`, so the two paths cannot drift.
+  it('withholds the grab and records ONE held event when every downloadable candidate fails the floor (AC14)', async () => {
+    const deps = franchiseDeps(answering({
+      'star wars haunted starlight George Mann': [
+        { ...mockSearchResult, title: 'Star Wars: The High Republic: Cataclysm', seeders: 99 },
+        { ...mockSearchResult, title: 'Star Wars: Haunted Totally Different Starlight', seeders: 1 },
+      ],
+    }));
+    const consumeAttempt = vi.spyOn(deps.retryBudget, 'consumeAttempt');
+
+    const result = await retrySearch(1, deps);
+
+    expect(result).toEqual({ outcome: 'no_candidates' });
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+    expect(consumeAttempt).toHaveBeenCalledTimes(1);
+    expect(deps.eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(deps.eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      reason: {
+        relaxed_query: 'star wars haunted starlight George Mann',
+        variant_tag: 'first+last',
+        release_title: 'Star Wars: The High Republic: Cataclysm',
+      },
+    }));
+  });
+
+  it('grabs a lower-ranked passing candidate past a failing top-ranked one, holding nothing (AC31)', async () => {
+    const deps = franchiseDeps(answering({
+      'star wars haunted starlight George Mann': [
+        { ...mockSearchResult, title: 'Star Wars: The High Republic: Cataclysm', seeders: 99 },
+        { ...mockSearchResult, title: 'Star Wars: Haunted Starlight', seeders: 5 },
+      ],
+    }));
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retried');
+    expect(deps.eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // AC34 — retry is already bounded by RetryBudget's 3 attempts, so it never
+  // consults the scheduled-cycle cooldown; a live entry cannot degrade it.
+  it('runs the FULL ladder — it never consults the scheduled-cycle cooldown (AC34)', async () => {
+    const searchAllWithStatus = answering({});
+    await retrySearch(1, franchiseDeps(searchAllWithStatus));
+
+    expect(searchAllWithStatus.mock.calls.map((c) => c[0])).toHaveLength(MAX_SEARCH_RUNGS);
+  });
+
+  // AC17 — ranking context stays canonical when the transport author is dropped.
+  it('passes the canonical author as rankingAuthor on every rung (AC17)', async () => {
+    const searchAllWithStatus = answering({});
+    await retrySearch(1, franchiseDeps(searchAllWithStatus));
+
+    for (const [, options] of searchAllWithStatus.mock.calls) {
+      expect(options).toEqual(expect.objectContaining({
+        title: 'Star Wars: The High Republic: Haunted Starlight',
+        rankingAuthor: 'George Mann',
+      }));
+    }
+    expect(searchAllWithStatus.mock.calls.slice(4).every(([, o]) => (o as { author?: string }).author === undefined)).toBe(true);
   });
 });

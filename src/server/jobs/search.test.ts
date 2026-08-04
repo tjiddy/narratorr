@@ -11,6 +11,8 @@ import type { EventHistoryService } from '../services/event-history.service.js';
 import type { SearchResult } from '@core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BYTES_PER_GB } from '@shared/constants.js';
+import { SearchLadderCooldown } from '../services/search-ladder-cooldown.js';
+import { RetryBudget } from '../services/retry-budget.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
   ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
@@ -972,3 +974,83 @@ describe('searchAllWanted — narrator priority wiring (#439)', () => {
   });
 });
 
+
+// ============================================================================
+// #2104 — the query-ladder exhaustion cooldown, at the scheduled-cycle seam
+// ============================================================================
+
+describe('runSearchJob — query-ladder cooldown (#2104)', () => {
+  // "Book One" / "Author A": colon-free and paren-free, so the ladder is
+  // rung 1 plus exactly ONE author-dropped rung.
+  const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
+  const enabledSearch = () => createMockSettingsService({ search: { enabled: true, intervalMinutes: 360 } });
+  const log = createMockLogger();
+
+  const cycle = (indexer: IndexerSearchService, searchLadderCooldown: SearchLadderCooldown, retryBudget?: RetryBudget) =>
+    runSearchJob(
+      enabledSearch(),
+      createMockBookListService(wantedBooks),
+      indexer,
+      createMockDownloadOrchestrator(),
+      inject<FastifyBaseLogger>(log),
+      createMockBlacklistService(),
+      mockIndexer,
+      mockEventHistory,
+      retryBudget,
+      undefined,
+      searchLadderCooldown,
+    );
+
+  const queriesOf = (svc: IndexerSearchService) =>
+    vi.mocked(svc.searchAllWithStatus).mock.calls.map((c) => c[0] as string);
+
+  // AC20 — cycle 1 exhausts, cycle 2 within the window runs rung 1 only.
+  it('runs the full ladder on the exhausting cycle and rung 1 only on the next (AC20)', async () => {
+    const searchLadderCooldown = new SearchLadderCooldown();
+
+    const first = createMockIndexerService([]);
+    await cycle(first, searchLadderCooldown);
+    expect(queriesOf(first)).toEqual(['Book One Author A', 'book one']);
+
+    const second = createMockIndexerService([]);
+    await cycle(second, searchLadderCooldown);
+    expect(queriesOf(second)).toEqual(['Book One Author A']);
+  });
+
+  // AC21 — `runSearchJob` calls `retryBudget.resetAll()` at every cycle entry.
+  // COUNTERFACTUAL: store the cooldown on RetryBudget instead and that reset
+  // wipes it, so cycle 2 issues the full ladder again and this fails.
+  it('survives the per-cycle retryBudget.resetAll() (AC21)', async () => {
+    const searchLadderCooldown = new SearchLadderCooldown();
+    const retryBudget = new RetryBudget();
+    const resetAll = vi.spyOn(retryBudget, 'resetAll');
+
+    await cycle(createMockIndexerService([]), searchLadderCooldown, retryBudget);
+    const second = createMockIndexerService([]);
+    await cycle(second, searchLadderCooldown, retryBudget);
+
+    expect(resetAll).toHaveBeenCalledTimes(2);
+    expect(queriesOf(second)).toEqual(['Book One Author A']);
+  });
+
+  // AC34 — `searchAllWanted` is an explicitly manual trigger and records
+  // nothing, so it must not inherit an unattended cycle's exhaustion.
+  it('leaves searchAllWanted running the FULL ladder while a cooldown entry is live (AC34)', async () => {
+    const searchLadderCooldown = new SearchLadderCooldown();
+    await cycle(createMockIndexerService([]), searchLadderCooldown);
+
+    const manual = createMockIndexerService([]);
+    await searchAllWanted(
+      enabledSearch(),
+      createMockBookListService(wantedBooks),
+      manual,
+      createMockDownloadOrchestrator(),
+      inject<FastifyBaseLogger>(log),
+      createMockBlacklistService(),
+      mockIndexer,
+      mockEventHistory,
+    );
+
+    expect(queriesOf(manual)).toEqual(['Book One Author A', 'book one']);
+  });
+});
