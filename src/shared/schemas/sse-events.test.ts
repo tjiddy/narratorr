@@ -15,6 +15,7 @@ import {
   mergeStartedPayload,
   mergeProgressPayload,
   mergeFailedPayload,
+  mergeStatePayload,
   searchStartedPayload,
   searchIndexerCompletePayload,
   searchIndexerErrorPayload,
@@ -42,14 +43,14 @@ describe('bookStatusSchema widening', () => {
 });
 
 describe('SSE event schemas', () => {
-  it('defines all 20 event types', () => {
+  it('defines all 21 event types', () => {
     const types = sseEventTypeSchema.options;
     expect(types).toEqual([
       'download_progress', 'download_status_change', 'book_status_change',
       'import_complete', 'import_phase_change', 'import_progress', 'import_failed',
       'grab_started', 'review_needed', 'merge_complete',
       'merge_started', 'merge_progress', 'merge_failed',
-      'merge_queued', 'merge_queue_updated',
+      'merge_queued', 'merge_queue_updated', 'merge_state',
       'search_started', 'search_indexer_complete', 'search_indexer_error',
       'search_grabbed', 'search_complete',
     ]);
@@ -263,9 +264,9 @@ describe('#257 merge observability — SSE payload schemas', () => {
 // ============================================================================
 
 describe('#392 search progress — SSE event schemas', () => {
-  it('defines all 20 event types (12 existing + 5 search + 3 import events)', () => {
+  it('defines all 21 event types (12 existing + 5 search + 3 import events + merge_state)', () => {
     const types = sseEventTypeSchema.options;
-    expect(types).toHaveLength(20);
+    expect(types).toHaveLength(21);
     expect(types).toContain('search_started');
     expect(types).toContain('search_indexer_complete');
     expect(types).toContain('search_indexer_error');
@@ -561,5 +562,60 @@ describe('#707 nullable book_id / download_id in import event payloads', () => {
   it('importCompletePayload still accepts numeric ids (orchestrator path)', () => {
     const valid = { download_id: 7, book_id: 42, book_title: 'Test' };
     expect(importCompletePayload.parse(valid)).toEqual(valid);
+  });
+});
+
+// ============================================================================
+// #2129 — merge_state: the full-state merge snapshot
+// ============================================================================
+
+describe('#2129 merge_state snapshot payload', () => {
+  const active = (over: Record<string, unknown> = {}) => ({
+    book_id: 42, book_title: 'The Way of Kings', phase: 'processing', ...over,
+  });
+
+  it('accepts an empty snapshot (nothing merging — the greeting that clears stale chips)', () => {
+    const valid = { active: [], queued: [] };
+    expect(mergeStatePayload.parse(valid)).toEqual(valid);
+  });
+
+  it('accepts an active entry with percentage omitted', () => {
+    const valid = { active: [active()], queued: [] };
+    expect(mergeStatePayload.parse(valid)).toEqual(valid);
+  });
+
+  it('accepts the 0..1 wire unit at both ends of its range', () => {
+    for (const percentage of [0, 1]) {
+      const valid = { active: [active({ percentage })], queued: [] };
+      expect(mergeStatePayload.parse(valid)).toEqual(valid);
+    }
+  });
+
+  it('accepts every in-flight display phase and rejects the queued/terminal ones', () => {
+    for (const phase of ['starting', 'staging', 'processing', 'verifying', 'committing']) {
+      expect(mergeStatePayload.parse({ active: [active({ phase })], queued: [] }).active[0]!.phase).toBe(phase);
+    }
+    // A terminal merge has already left the snapshot — a frame carrying one back would
+    // overwrite the terminal card the client just installed.
+    for (const phase of ['complete', 'failed', 'cancelled', 'queued']) {
+      expect(() => mergeStatePayload.parse({ active: [active({ phase })], queued: [] })).toThrow();
+    }
+  });
+
+  it('requires book_title on both lists — a late joiner has no other title source', () => {
+    expect(() => mergeStatePayload.parse({ active: [{ book_id: 42, phase: 'staging' }], queued: [] })).toThrow();
+    expect(() => mergeStatePayload.parse({ active: [], queued: [{ book_id: 43 }] })).toThrow();
+  });
+
+  it('keeps queued entries positionless — FIFO order is the position', () => {
+    const valid = { active: [], queued: [{ book_id: 43, book_title: 'B' }, { book_id: 44, book_title: 'C' }] };
+    const parsed = mergeStatePayload.parse(valid);
+    expect(parsed.queued.map((q) => q.book_id)).toEqual([43, 44]);
+    expect(parsed.queued[0]).not.toHaveProperty('position');
+  });
+
+  it('carries an empty cache rule and no toast — a per-tick snapshot must not invalidate or notify', () => {
+    expect(CACHE_INVALIDATION_MATRIX.merge_state).toEqual({});
+    expect(TOAST_EVENT_CONFIG.merge_state).toBeUndefined();
   });
 });

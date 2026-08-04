@@ -2,10 +2,12 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import {
   setMergeProgress,
+  applyMergeStateSnapshot,
   useMergeProgress,
   useMergeActivityCards,
   _resetForTesting,
 } from './useMergeProgress';
+import type { MergeStateSnapshot } from '@shared/schemas/sse-events.js';
 
 beforeEach(() => {
   _resetForTesting();
@@ -189,7 +191,7 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     expect(result.current).toEqual([]);
   });
 
-  it('returns entry with bookTitle, phase, percentage after merge_started', () => {
+  it('returns entry with bookTitle, phase, percentage for a starting merge', () => {
     const { result } = renderHook(() => useMergeActivityCards());
 
     act(() => {
@@ -204,7 +206,7 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     });
   });
 
-  it('updates phase and percentage on merge_progress (preserves bookTitle)', () => {
+  it('updates phase and percentage in place (preserves bookTitle)', () => {
     const { result } = renderHook(() => useMergeActivityCards());
 
     act(() => {
@@ -322,7 +324,7 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     });
   });
 
-  it('updates queue position on merge_queue_updated', () => {
+  it('updates queue position in place', () => {
     const { result } = renderHook(() => useMergeActivityCards());
 
     act(() => {
@@ -335,7 +337,7 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     expect(result.current[0]).toMatchObject({ phase: 'queued', position: 1 });
   });
 
-  it('transitions from queued to starting on merge_started', () => {
+  it('transitions from queued to starting', () => {
     const { result } = renderHook(() => useMergeActivityCards());
 
     act(() => {
@@ -420,5 +422,162 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     });
 
     expect(result.current[0]!.enrichmentWarning).toBe('Metadata update failed');
+  });
+});
+
+// ============================================================================
+// #2129 — applyMergeStateSnapshot: replace-from-snapshot for non-terminal state
+// ============================================================================
+
+describe('applyMergeStateSnapshot', () => {
+  const snapshot = (over: Partial<MergeStateSnapshot> = {}): MergeStateSnapshot => ({
+    active: [], queued: [], ...over,
+  });
+
+  it('installs active entries with their phase and percentage', () => {
+    const { result } = renderHook(() => useMergeProgress(42));
+
+    act(() => {
+      applyMergeStateSnapshot(snapshot({
+        active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'processing', percentage: 0.35 }],
+      }));
+    });
+
+    expect(result.current).toEqual({ phase: 'processing', percentage: 0.35 });
+  });
+
+  it('derives queued positions from FIFO index, not from a payload field', () => {
+    const { result } = renderHook(() => useMergeActivityCards());
+
+    act(() => {
+      applyMergeStateSnapshot(snapshot({
+        queued: [
+          { book_id: 43, book_title: 'The Shining' },
+          { book_id: 44, book_title: 'It' },
+        ],
+      }));
+    });
+
+    expect(result.current).toEqual([
+      { bookId: 43, bookTitle: 'The Shining', phase: 'queued', position: 1 },
+      { bookId: 44, bookTitle: 'It', phase: 'queued', position: 2 },
+    ]);
+  });
+
+  it('removes a book the snapshot no longer mentions', () => {
+    const { result } = renderHook(() => useMergeProgress(42));
+
+    act(() => {
+      applyMergeStateSnapshot(snapshot({ active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'staging' }] }));
+    });
+    expect(result.current).not.toBeNull();
+
+    act(() => { applyMergeStateSnapshot(snapshot()); });
+
+    expect(result.current).toBeNull();
+  });
+
+  it('moves a book from queued to active in place', () => {
+    const { result } = renderHook(() => useMergeProgress(43));
+
+    act(() => {
+      applyMergeStateSnapshot(snapshot({ queued: [{ book_id: 43, book_title: 'The Shining' }] }));
+    });
+    expect(result.current).toEqual({ phase: 'queued', position: 1 });
+
+    act(() => {
+      applyMergeStateSnapshot(snapshot({ active: [{ book_id: 43, book_title: 'The Shining', phase: 'starting' }] }));
+    });
+
+    expect(result.current).toEqual({ phase: 'starting' });
+  });
+
+  it('keeps a book inside its terminal dismiss window even though the snapshot omits it', () => {
+    const { result } = renderHook(() => useMergeProgress(42));
+
+    act(() => {
+      setMergeProgress(42, { bookTitle: 'Dogs of War', phase: 'complete', outcome: 'success', message: 'Merged 3 files' });
+    });
+
+    act(() => { applyMergeStateSnapshot(snapshot()); });
+
+    expect(result.current).toMatchObject({ phase: 'complete', outcome: 'success' });
+
+    // The existing 3s timer is untouched — it still fires and removes the card.
+    act(() => { vi.advanceTimersByTime(3000); });
+    expect(result.current).toBeNull();
+  });
+
+  it('survives the production terminal sequence: terminal event, then the cleared snapshot', () => {
+    const { result } = renderHook(() => useMergeActivityCards());
+
+    act(() => {
+      applyMergeStateSnapshot(snapshot({ active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'committing' }] }));
+    });
+
+    // The server's order: drop the state, emit the terminal event, broadcast the snapshot that
+    // already excludes the book.
+    act(() => {
+      setMergeProgress(42, { bookTitle: 'Dogs of War', phase: 'complete', outcome: 'success', message: 'Merged 3 files' });
+      applyMergeStateSnapshot(snapshot());
+    });
+
+    expect(result.current).toEqual([{
+      bookId: 42, bookTitle: 'Dogs of War', phase: 'complete', outcome: 'success', message: 'Merged 3 files',
+    }]);
+
+    // Still there for the whole window, gone the moment it closes.
+    act(() => { vi.advanceTimersByTime(2999); });
+    expect(result.current).toHaveLength(1);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(result.current).toEqual([]);
+  });
+
+  it('is clobbered by the inverse sequence — which is why the server must never send it', () => {
+    // A snapshot that STILL contains the book after its terminal event overwrites the outcome,
+    // cancels the dismiss timer, and lets the next snapshot delete the card outright. The guard
+    // lives on the server (it clears the state before emitting); this pins that the damage is
+    // real rather than theoretical.
+    const { result } = renderHook(() => useMergeActivityCards());
+
+    act(() => {
+      setMergeProgress(42, { bookTitle: 'Dogs of War', phase: 'complete', outcome: 'success', message: 'Merged 3 files' });
+      applyMergeStateSnapshot(snapshot({ active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'committing' }] }));
+    });
+
+    expect(result.current[0]).toEqual({ bookId: 42, bookTitle: 'Dogs of War', phase: 'committing' });
+
+    act(() => { vi.advanceTimersByTime(3000); }); // the dismiss timer was cancelled
+    expect(result.current).toHaveLength(1);
+
+    act(() => { applyMergeStateSnapshot(snapshot()); });
+    expect(result.current).toEqual([]);
+  });
+
+  it('notifies subscribers exactly once per snapshot, however many books it carries', () => {
+    let renders = 0;
+    renderHook(() => { renders += 1; return useMergeActivityCards(); });
+    const before = renders;
+
+    act(() => {
+      applyMergeStateSnapshot(snapshot({
+        active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'processing', percentage: 0.5 }],
+        queued: [{ book_id: 43, book_title: 'The Shining' }, { book_id: 44, book_title: 'It' }],
+      }));
+    });
+
+    expect(renders).toBe(before + 1);
+  });
+
+  it('does not churn subscribers on a repeated identical snapshot beyond its single notify', () => {
+    let renders = 0;
+    renderHook(() => { renders += 1; return useMergeActivityCards(); });
+    const identical = snapshot({ active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'staging' }] });
+
+    act(() => { applyMergeStateSnapshot(identical); });
+    const afterFirst = renders;
+    act(() => { applyMergeStateSnapshot(identical); });
+
+    expect(renders).toBe(afterFirst + 1);
   });
 });

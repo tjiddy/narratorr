@@ -26,6 +26,11 @@ export interface SSEClient {
  */
 export const MAX_STREAM_AGE_MS = 45 * 60 * 1_000;
 
+/** The single SSE framing — shared by the broadcast and per-client paths so they cannot drift. */
+function frameEvent<T extends SSEEventType>(type: T, data: SSEEventPayloads[T]): string {
+  return `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
 export class EventBroadcasterService {
   private clients = new Set<SSEClient>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -68,7 +73,26 @@ export class EventBroadcasterService {
   /** Broadcast an SSE event to all connected clients. Fire-and-forget. */
   emit<T extends SSEEventType>(type: T, data: SSEEventPayloads[T]): void {
     if (this.clients.size === 0) return;
-    this.writeToAll(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    this.writeToAll(frameEvent(type, data));
+  }
+
+  /**
+   * Write one event to ONE registered client — the connect-time state greeting (#2129).
+   *
+   * A no-op when the client is not in the registered set: during the shutdown drain window
+   * `addClient` refuses the client and ends its reply, and a write to that ended reply would
+   * throw from a hijacked handler with no caller to catch it. Write failure prunes the client
+   * exactly as `writeToAll` does, so a client that dies between registration and greeting is
+   * cleaned up rather than heartbeated forever.
+   */
+  emitTo<T extends SSEEventType>(client: SSEClient, type: T, data: SSEEventPayloads[T]): void {
+    if (!this.clients.has(client)) return;
+    try {
+      client.reply.raw.write(frameEvent(type, data));
+    } catch {
+      this.clients.delete(client);
+      this.log.warn({ clientId: client.id }, 'SSE client removed after write failure');
+    }
   }
 
   /**

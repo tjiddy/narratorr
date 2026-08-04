@@ -95,7 +95,7 @@ function resolveRetryCandidate(
     log.info({
       bookId: book.id, title: book.title, attempt,
       relaxedQuery: ran.rung.query, variantTag: ran.rung.variant?.tag, releaseTitle: selection.releaseTitle,
-    }, 'Retry search: relaxed-query candidates held for review — none corroborated the retained title segments');
+    }, 'Retry search: relaxed-query candidates held for review — none carried the canonical title anchors');
     recordSearchRelaxedHeldEvent({
       book, eventHistory, log,
       relaxedQuery: ran.rung.query,

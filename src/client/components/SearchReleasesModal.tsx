@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type SearchResult } from '@/lib/api';
@@ -207,9 +207,32 @@ function SearchReleasesBody({
   // `useSearchStream.start()` has no length/phase guard of its own.
   const trimmedLength = query.trim().length;
   const canSearch = trimmedLength >= 2 && trimmedLength <= 500 && state.phase !== 'searching';
+  // Snapshot of the query each search actually ran with, so the relaxed-query
+  // adoption below can tell "untouched since firing" from "user edited mid-search".
+  const lastSearchedRef = useRef<string | null>(null);
   const runSearch = useCallback(() => {
-    if (canSearch) startSearch();
-  }, [canSearch, startSearch]);
+    if (canSearch) {
+      lastSearchedRef.current = query;
+      startSearch();
+    }
+  }, [canSearch, query, startSearch]);
+
+  // When a relaxed rung won (#2104), the box adopts the query that actually
+  // produced these results — the canonical string it replaces provably returned
+  // nothing, and the winning string is the honest editing base for a re-search.
+  // Guarded so a mid-search hand-edit is never clobbered, and a no-result or
+  // rung-1 search (no relaxedQuery) leaves the box exactly as typed.
+  const relaxedQuery = state.results?.relaxedQuery;
+  useEffect(() => {
+    if (relaxedQuery === undefined || relaxedQuery === query) return;
+    // Adopt only when the box still holds exactly what this search ran with —
+    // a mid-search hand-edit wins. The ref write stays OUT of the setQuery
+    // updater: updaters must be pure (dev-mode double-invocation re-runs them,
+    // and an in-updater ref mutation makes the second run revert the adoption).
+    if (lastSearchedRef.current === null || query !== lastSearchedRef.current) return;
+    lastSearchedRef.current = relaxedQuery;
+    setQuery(relaxedQuery);
+  }, [relaxedQuery, query]);
 
   const results = state.results?.results;
   const resultKeys = useMemo(() => deduplicateKeys((results ?? []).map(searchResultKey)), [results]);

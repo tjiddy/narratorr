@@ -1005,6 +1005,45 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
+  // #2133 AC11 — discovery applies NO corroboration floor, and must not start.
+  // The modal is correct today: it lists the franchise siblings and lets a
+  // person make the call. The very rung whose auto-grab #2133 now HOLDS still
+  // surfaces every one of them here, with no hold and no held event.
+  it('still surfaces the franchise siblings the auto path now holds (#2133 AC11)', async () => {
+    const FRANCHISE_TITLE = 'Star Wars: The High Republic: Haunted Starlight';
+    const FRANCHISE_Q = 'Star Wars The High Republic Haunted Starlight George Mann';
+    const PREFIX2_Q = 'star wars the high republic George Mann';
+    const siblings = [
+      { title: '01 Star Wars-The High Republic-The Eye of Darkness', protocol: 'usenet', indexer: 'AudioBookBay' },
+      { title: 'Star Wars: The High Republic: Cataclysm', protocol: 'usenet', indexer: 'AudioBookBay' },
+    ];
+    const service = {
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 1, name: 'AudioBookBay' }]),
+      searchAllStreaming: vi.fn().mockImplementation(
+        async (query: string, _o: unknown, _c: Map<number, AbortController>, cb: {
+          onComplete: (id: number, name: string, count: number, ms: number) => void;
+        }) => {
+          const hit = query === PREFIX2_Q;
+          cb.onComplete(1, 'AudioBookBay', hit ? siblings.length : 0, 10);
+          return hit ? siblings : [];
+        },
+      ),
+    } as unknown as IndexerSearchService;
+
+    const app = await buildApp(service);
+    try {
+      const { events } = await fetchSseEvents(app, url({ q: FRANCHISE_Q, title: FRANCHISE_TITLE, author: 'George Mann' }));
+      const complete = events.find((e) => e.event === 'search-complete')!;
+
+      expect(queriesOf(service)).toEqual([FRANCHISE_Q, PREFIX2_Q]);
+      expect((complete.data as { results: Array<{ title: string }> }).results.map((r) => r.title))
+        .toEqual(siblings.map((s) => s.title));
+      expect((complete.data as { relaxedQuery?: string }).relaxedQuery).toBe(PREFIX2_Q);
+    } finally {
+      await app.close();
+    }
+  });
+
   // AC26 — per-indexer counts need NO buffering: the client replaces its entry
   // by `indexerId`, so the LAST frame per indexer is the winning rung's.
   it('leaves the winning rung as the last indexer-complete frame per indexer (AC26)', async () => {

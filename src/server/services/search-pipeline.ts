@@ -508,7 +508,7 @@ async function runSearchAndGrab(
     log.info({
       bookId: book.id, title: book.title,
       relaxedQuery: ran.rung.query, variantTag: ran.rung.variant?.tag, releaseTitle: selection.releaseTitle,
-    }, 'Relaxed-query candidates held for review — none corroborated the retained title segments');
+    }, 'Relaxed-query candidates held for review — none carried the canonical title anchors');
     recordSearchRelaxedHeldEvent({
       book, eventHistory, log,
       relaxedQuery: ran.rung.query,

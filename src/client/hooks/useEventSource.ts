@@ -12,7 +12,7 @@ import {
   TOAST_EVENT_CONFIG,
   sseEventTypeSchema,
 } from '@shared/schemas.js';
-import { setMergeProgress } from './useMergeProgress.js';
+import { setMergeProgress, applyMergeStateSnapshot } from './useMergeProgress.js';
 import { handleSearchEvent } from './useSearchProgress.js';
 import { safeParseSseEvent } from '@/lib/sse/safe-parse-event';
 import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_EVENT } from '@shared/sse-constants.js';
@@ -351,24 +351,20 @@ function dispatchToasts(type: SSEEventType, data: SSEEventPayloads[typeof type])
   }
 }
 
+/**
+ * Merge store writes (#2129). Non-terminal state — queued, starting, and every in-flight phase —
+ * comes exclusively from the `merge_state` snapshot, which is authoritative and complete; the
+ * incremental `merge_queued` / `merge_queue_updated` / `merge_started` / `merge_progress` events
+ * stay on the wire for toasts, event history and cache invalidation but no longer touch the
+ * store, so the two sources can't fight over the same books.
+ *
+ * The terminal events keep writing it: they carry `message` / `error` / `enrichmentWarning` /
+ * `outcome`, none of which the snapshot has, and the snapshot that follows deliberately omits
+ * the book (the store retains it for its dismiss window).
+ */
 function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
-  if (type === 'merge_queued' || type === 'merge_queue_updated') {
-    const d = asPayload<'merge_queued'>(data);
-    setMergeProgress(d.book_id, {
-      bookTitle: d.book_title,
-      phase: 'queued',
-      position: d.position,
-    });
-  } else if (type === 'merge_started') {
-    const d = asPayload<'merge_started'>(data);
-    setMergeProgress(d.book_id, { bookTitle: d.book_title, phase: 'starting' });
-  } else if (type === 'merge_progress') {
-    const d = asPayload<'merge_progress'>(data);
-    setMergeProgress(d.book_id, {
-      bookTitle: d.book_title,
-      phase: d.phase,
-      ...(d.percentage !== undefined && { percentage: d.percentage }),
-    });
+  if (type === 'merge_state') {
+    applyMergeStateSnapshot(asPayload<'merge_state'>(data));
   } else if (type === 'merge_complete') {
     const d = asPayload<'merge_complete'>(data);
     setMergeProgress(d.book_id, {

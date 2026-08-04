@@ -50,12 +50,30 @@ export const MAX_SEARCH_RUNGS = 8;
  * not a relaxation and is never floored. On a relaxed rung `segments` holds the
  * variant's RETAINED segments, normalized and provably all non-empty, with
  * `segments.join(' ') === variant.raw` exact by construction.
+ *
+ * `segments` is the TRANSPORT record — what this rung actually carried into the
+ * query — and is the disclosure/debug view, nothing more. It is deliberately NOT
+ * the corroboration floor: a prefix rung's retained segments ARE its query, and
+ * every result of an AND-semantics indexer search contains its own query terms,
+ * so flooring a rung on its own retained set is circular (#2133). The floor is
+ * {@link Rung.floorSegments}, derived from the CANONICAL title and identical on
+ * every segment-cut rung of that title. `Rung` is internal — nothing serializes
+ * it — so the extra field is not an API surface.
  */
 export interface Rung {
   query: string;
   author: string | undefined;
   variant: Variant | null;
   segments: string[];
+  /**
+   * The corroboration floor: the canonical title's first and last effective
+   * segments, each repeated as many times as it occurs in the canonical title's
+   * own effective text (#2133 AC3). Empty on rung 1 and on `full` rungs, which
+   * are never floored; identical across every segment-cut rung of one title,
+   * whatever that rung transported. NOT bounded to two or three entries —
+   * `"Alpha: Beta Gamma: Gamma"` already yields three.
+   */
+  floorSegments: string[];
 }
 
 export interface LadderInput {
@@ -87,6 +105,88 @@ export function rungDedupKey(rung: Rung): string {
 }
 
 /**
+ * The ONE reduction both sides of every floor comparison go through (#2133 AC0):
+ * `titleSegments` → the scalar normalizer per segment → drop empties.
+ *
+ * The symmetry is load-bearing, not stylistic. `titleSegments` strips generic
+ * `(...)`/`[...]` groups before segmenting while `normalizeTitleForVariantMatch`
+ * deliberately KEEPS parenthetical content, so deriving anchors on one axis and
+ * evaluating releases on the other breaks a book's own title:
+ * `"Star (Deluxe) Wars: Haunted Starlight"` anchors on `star wars`, its own
+ * release normalizes (scalar-only) to `star deluxe wars haunted starlight`, and
+ * the anchor is not contiguous — the book holds on its own release. One axis,
+ * both sides.
+ */
+function effectiveSegments(title: string): string[] {
+  return titleSegments(title).map(normalizeTitleForVariantMatch).filter((segment) => segment.length > 0);
+}
+
+/** {@link effectiveSegments} joined — the text occurrences are counted in. */
+function effectiveText(title: string): string {
+  return effectiveSegments(title).join(' ');
+}
+
+/**
+ * Non-overlapping, space-bounded occurrences of `segment` in `text`.
+ *
+ * Each scan restarts at the match's TRAILING delimiter (`at + length + 1`), so
+ * two adjacent occurrences SHARE one space and `"star wars star wars"` counts 2.
+ * Restarting past that space instead counts 1, which makes a title whose two
+ * anchors collapse (`"Star Wars: The High Republic: Star Wars"`) fail its own
+ * floor. Self-overlapping segments count conservatively — `"a a a"` yields 1 for
+ * `"a a"` — which errs toward `hold`.
+ *
+ * The SAME function derives the required counts (over the canonical text) and
+ * evaluates them (over the release text), so the two sides cannot drift.
+ */
+function countOccurrences(text: string, segment: string): number {
+  const haystack = ` ${text} `;
+  const needle = ` ${segment} `;
+  let count = 0;
+  let from = 0;
+  for (;;) {
+    const at = haystack.indexOf(needle, from);
+    if (at === -1) return count;
+    count++;
+    from = at + segment.length + 1;
+  }
+}
+
+/**
+ * The floor every segment-cut rung of one title carries (#2133 AC3).
+ *
+ * The anchors are the canonical title's FIRST and LAST effective segments — its
+ * two identity-bearing ends. Built over the DISTINCT anchor values, first then
+ * last, each appended as many times as it occurs in the canonical title's own
+ * effective text. Both halves of that are load-bearing:
+ *
+ *  - **Distinct values, not positions.** `"Star Wars: The High Republic:
+ *    Star Wars"` has ONE distinct anchor occurring twice, so the floor is two
+ *    copies. A positional reading would emit four and hold the book's own title.
+ *  - **Canonical multiplicity, not one-each.** An anchor demanded once is
+ *    worthless whenever the canonical title already carries that text elsewhere:
+ *    for `"Alpha: Beta Gamma: Gamma"` the retained segment `beta gamma` supplies
+ *    a space-bounded `gamma` all by itself, so the `prefix(2)` query clears a
+ *    one-each floor from its own tokens — and so does the sibling
+ *    `"Alpha: Beta Gamma: Delta"`.
+ *
+ * Empty below two effective segments, where no segment cut is admitted anyway
+ * (a `prefix(1)`/`suffix(1)` at n === the segment count dedups onto `full`).
+ */
+function anchorFloor(segments: string[]): string[] {
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  if (segments.length < 2 || first === undefined || last === undefined) return [];
+
+  const canonicalText = segments.join(' ');
+  const floor: string[] = [];
+  for (const anchor of first === last ? [first] : [first, last]) {
+    for (let i = countOccurrences(canonicalText, anchor); i > 0; i--) floor.push(anchor);
+  }
+  return floor;
+}
+
+/**
  * The retained slice a segment-cut tag names, as indices into the effective
  * segment list. Returns null for tags that are not segment cuts.
  */
@@ -103,7 +203,17 @@ function retainedSlice(tag: Variant['tag'], segments: string[]): string[] | null
 }
 
 /**
- * Which variants may become rungs, and what each one's floor is.
+ * Which variants may become rungs, plus the ONE floor they all share.
+ *
+ * The budget decides ADMISSION — which queries the ladder issues — and #2133
+ * deliberately leaves it alone: `prefix(2)` still enters and still gets issued.
+ * What changed is what corroborates a grab from it. The budget was written to
+ * suppress "exactly the pure-franchise rung", but a segment COUNT conflates
+ * "retained half the segments" with "retained the identity": on a 3-segment
+ * title whose first TWO segments are franchise, `prefix(2)` clears the count
+ * carrying zero distinguishing power. {@link anchorFloor} is what now answers
+ * that, and it is derived from the canonical title once, here, so every admitted
+ * cut of one title carries a byte-identical floor.
  *
  * Segments are counted in exactly ONE representation — normalized and
  * empty-dropped — on BOTH sides of the comparison. Raw segment text is never
@@ -130,7 +240,10 @@ function retainedSlice(tag: Variant['tag'], segments: string[]): string[] | null
  *
  * A `full` variant (either `parensStripped`) is unconditional and never floored.
  */
-function admitVariants(title: string): Array<{ variant: Variant; segments: string[] }> {
+function admitVariants(title: string): {
+  admitted: Array<{ variant: Variant; segments: string[] }>;
+  floorSegments: string[];
+} {
   const effective = titleSegments(title).map(normalizeTitleForVariantMatch);
   const nonEmpty = effective.filter((s) => s.length > 0);
   const budget = Math.ceil(nonEmpty.length / 2);
@@ -147,7 +260,9 @@ function admitVariants(title: string): Array<{ variant: Variant; segments: strin
     if (variant.tag !== 'first+last' && slice.length < budget) continue; // step 2
     admitted.push({ variant, segments: slice });
   }
-  return admitted;
+  // `nonEmpty` IS `effectiveSegments(title)`, so the floor reuses the raw-vs-
+  // normalized decision recorded above rather than introducing a second axis.
+  return { admitted, floorSegments: anchorFloor(nonEmpty) };
 }
 
 /**
@@ -177,13 +292,14 @@ export function buildQueryLadder(input: LadderInput): Rung[] {
     author,
     variant: null,
     segments: [],
+    floorSegments: [],
   };
 
   const ladder: Rung[] = [rung1];
   if (hasDegenerateFullForm(title)) return ladder;
 
   const seen = new Set([rungDedupKey(rung1)]);
-  const admitted = admitVariants(title);
+  const { admitted, floorSegments } = admitVariants(title);
 
   for (const rungAuthor of [author, undefined]) {
     for (const { variant, segments } of admitted) {
@@ -193,6 +309,7 @@ export function buildQueryLadder(input: LadderInput): Rung[] {
         author: rungAuthor,
         variant,
         segments,
+        floorSegments: variant.tag === 'full' ? [] : floorSegments,
       };
       const key = rungDedupKey(rung);
       if (seen.has(key)) continue;
@@ -206,31 +323,64 @@ export function buildQueryLadder(input: LadderInput): Rung[] {
 /**
  * Does a parsed release title corroborate a segment-cut rung?
  *
- * Every retained segment must appear in the normalized release title as a
- * CONTIGUOUS, space-bounded token run. Segments are required individually;
- * their relative order is not.
+ * {@link Rung.floorSegments} is the ONLY input read — never `segments`, which is
+ * what this rung transported and would make the test circular (#2133). The floor
+ * is treated as a MULTISET: each distinct entry must appear in the reduced
+ * release text at least as many times as the floor carries copies of it, each
+ * occurrence CONTIGUOUS and space-bounded. Their relative order is not required.
  *
  * Contiguity is the point — it is what makes this genuine corroboration rather
  * than a token-scatter test. A non-contiguous ordered walk admits
- * `"Star Wars: Haunted Totally Different Starlight"` against retained
+ * `"Star Wars: Haunted Totally Different Starlight"` against anchors
  * `["star wars", "haunted starlight"]`; whole-string containment of
- * `variant.raw` false-negatives the book's OWN canonical title. Per-segment
- * contiguous containment is the only shape that gets both right.
+ * `variant.raw` false-negatives the book's OWN canonical title. Per-anchor
+ * contiguous containment is the only shape that gets both right, and it is why a
+ * rung whose query happens to BE the anchor text is still a real test.
  *
  * A whole-string dice floor provably cannot substitute: the measured true
  * positive `"The Churn"` vs `"The Churn: An Expanse Novella"` scores 0.444 while
  * the wrong book `"The Expanse: Nemesis Games"` scores 0.453.
  *
- * `full` rungs (and rung 1) short-circuit true — a surviving `prefix(n)` /
- * `suffix(n)` at n === the segment count dedups onto `full` by construction, so
- * any surviving non-`full` tag IS a segment cut. Runs on the PARSED title:
- * `parseReleaseNames` rewrites `result.title` from the raw release name before
- * ranking.
+ * An empty floor short-circuits true — that is rung 1 and every `full` rung, and
+ * nothing else: a surviving `prefix(n)` / `suffix(n)` at n === the segment count
+ * dedups onto `full` by construction, and a title with fewer than two effective
+ * segments admits no cut at all. Runs on the PARSED title (`parseReleaseNames`
+ * rewrites `result.title` from the raw release name before ranking), reduced
+ * through {@link effectiveText} — the same axis the anchors came from, NOT the
+ * scalar normalizer alone, which keeps parenthetical content and would fail a
+ * book's own paren-intact release against its own floor (AC0).
+ *
+ * **The character-survival gate is TWO-SIDED.** `buildQueryLadder` already
+ * refuses to relax a canonical title whose distinguishing characters the ASCII
+ * fold erases; the OFFERED release needs the same refusal, and for the same
+ * reason. The anchors are ASCII by construction, so a lossy release can supply
+ * them out of what merely SURVIVED the fold and wear the wanted book's identity:
+ * for a canonical `"World of Warcraft: A"`, the different books
+ * `"World of Warcraft: A前夜"` and `"World of Warcraft: A後夜"` both reduce to
+ * `world of warcraft a` and clear the floor. That is the mixed-token collision
+ * `degenerate-full-form-under-lossy-fold` names (#2103/#2110) one layer down —
+ * partial loss is loss, so the question is asked at CHARACTER granularity by
+ * `hasDegenerateFullForm`, not of the structure and not of the tokens.
+ *
+ * The gate runs on the RAW release title, deliberately matching the canonical
+ * side's own call rather than the floor's paren-stripped axis: a release naming
+ * the wanted book only alongside erased content is not identity evidence either.
+ * It costs a book nothing at rung 1 or on a `full` rung (both short-circuit
+ * above), and the failure direction is the safe one this whole module takes — a
+ * false refusal costs a surfaced hold, a false pass costs the wrong book.
  */
 export function passesSegmentFloor(parsedReleaseTitle: string, rung: Rung): boolean {
-  if (rung.variant === null || rung.variant.tag === 'full') return true;
-  const haystack = ` ${normalizeTitleForVariantMatch(parsedReleaseTitle)} `;
-  return rung.segments.every((segment) => haystack.includes(` ${segment} `));
+  if (rung.floorSegments.length === 0) return true;
+  if (hasDegenerateFullForm(parsedReleaseTitle)) return false;
+
+  const demanded = new Map<string, number>();
+  for (const segment of rung.floorSegments) demanded.set(segment, (demanded.get(segment) ?? 0) + 1);
+
+  const releaseText = effectiveText(parsedReleaseTitle);
+  for (const [segment, count] of demanded) {
+    if (countOccurrences(releaseText, segment) < count) return false;
+  }
+  return true;
 }
 
 /** What an auto-grab path should do with a winning rung's ranked results. */
@@ -263,6 +413,11 @@ export type RelaxedSelection =
  *
  * Because `hold` is scalar and fires only in the last row, the named release
  * always exists and always genuinely failed.
+ *
+ * Unchanged by #2133 and deliberately so: no rung is hold-only by tag and none
+ * is exempted by tag. What a segment-cut rung must corroborate moved from its
+ * own retained set to {@link Rung.floorSegments}; WHICH rungs are floored, and
+ * what happens when one fails, did not.
  */
 export function selectRelaxedCandidate(ranked: SearchResult[], rung: Rung): RelaxedSelection {
   const eligible = ranked.filter((r) => r.downloadUrl);
