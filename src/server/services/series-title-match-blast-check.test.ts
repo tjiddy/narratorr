@@ -244,11 +244,22 @@ describe('series-title-match-blast-check — CLI entry guard (#2108)', () => {
       // The named secret CLAUDE.md's rule exists for — present in the parent one
       // line above, absent here. Both sides of the observation are constructed.
       expect(report.envKeys).not.toContain(FORBIDDEN_KEY);
+      // Windows injects infrastructure vars (SYSTEMROOT, USERNAME, HOMEDRIVE, …)
+      // into every child regardless of the env block passed to CreateProcess, so
+      // "child env ⊆ allowlist" is unsatisfiable there as an exact statement.
+      // The floor is OBSERVED, not hardcoded: a child spawned with an EMPTY env
+      // can only contain OS-injected keys, and subtracting an observed-empty-env
+      // floor cannot mask an allowlist leak — proven by the containment check on
+      // the floor itself. On Linux the floor is empty and nothing changes.
+      const osInjectedFloor = new Set(JSON.parse(execFileSync(process.execPath,
+        ['-p', 'JSON.stringify(Object.keys(process.env).sort())'],
+        { encoding: 'utf8', env: {}, stdio: ['ignore', 'pipe', 'pipe'] }) ) as string[]);
+      expect(osInjectedFloor).not.toContain(FORBIDDEN_KEY);
       // And the general statement, with the sanctioned set DERIVED from
       // `sanitizedEnv` rather than re-listed, so it cannot drift from the
       // allowlist it is checking.
       const sanctioned = new Set(Object.keys(sanitizedEnv({ DATABASE_PATH: missing })));
-      expect(report.envKeys.filter((key) => !sanctioned.has(key))).toEqual([]);
+      expect(report.envKeys.filter((key) => !sanctioned.has(key) && !osInjectedFloor.has(key))).toEqual([]);
     });
   }, 60_000);
 
