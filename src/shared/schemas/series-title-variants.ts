@@ -115,6 +115,27 @@ export type TitleVariantsDebugSide = z.infer<typeof titleVariantsDebugSideSchema
  * in shared, because both the server-side rule and the debug-route response
  * need it and `src/shared/**` may not import `src/server/**`.
  *
+ * The rule, in evaluation order — this file used to describe it as "FULL≡FULL,
+ * or one side's DERIVED variant equalling the other's FULL", which omits the
+ * degeneracy, lossy and empty-form conditions the matcher actually applies and
+ * therefore predicts MATCH where production refuses (#2110):
+ *
+ *   1. both FULL forms empty, both lossless non-empty and equal
+ *                                                      → `lossless-equals-lossless`
+ *   2. both FULL forms empty, otherwise                 → `none`
+ *   3. exactly one FULL form empty                      → `none`
+ *   4. FULLs equal, neither side degenerate             → `full-equals-full`
+ *   5. FULLs equal, either degenerate, lossless equal   → `full-equals-full`
+ *   6. FULLs equal, either degenerate, lossless differ  → `none`
+ *   7. FULLs differ, some non-lossy DERIVED variant of one side equals the
+ *      other side's FULL, and that other side is not degenerate
+ *                                                       → `derived-equals-full`
+ *   8. otherwise                                        → `none`
+ *
+ * Its single implementation home is `explainShapePairing`
+ * (`src/server/services/series-title-match.ts`); nothing else may re-implement
+ * it.
+ *
  * No drift guard watches this one (unlike `Variant` / `VariantTag`): the
  * server's `explainShapePairing` is ANNOTATED with the inferred
  * `TitlePairVerdict`, so divergence is a typecheck error at the definition site

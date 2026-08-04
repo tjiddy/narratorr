@@ -1,8 +1,18 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { idParamSchema, titleVariantsDebugBodySchema } from '@shared/schemas.js';
-import type { TitleVariantsDebugBody, TitleVariantsDebugResponse } from '@shared/schemas.js';
-import { titleVariants, normalizeTitleForVariantMatch } from '@core/utils/title-variants.js';
+import type {
+  TitleVariantsDebugBody,
+  TitleVariantsDebugResponse,
+  TitleVariantsDebugSide,
+} from '@shared/schemas.js';
+import {
+  titleVariants,
+  normalizeTitleForVariantMatch,
+  normalizeTitleLosslessly,
+  hasDegenerateFullForm,
+} from '@core/utils/title-variants.js';
+import { explainTitlePairing } from '../services/series-title-match.js';
 import type { BookService, SeriesCardService } from '../services/index.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
@@ -84,11 +94,37 @@ export function registerSeriesRoutes(app: FastifyInstance, bookService: BookServ
   );
 
   // POST /api/series/title-variants-debug — the member-matcher parse tester
-  // (#2096), the series-side counterpart to `POST /api/library/scan-debug`. Take
-  // a bare title, return its FULL normalized form plus the tagged variant array,
-  // so a "why isn't this member marked In Library?" question can be answered from
-  // one response per side: the acceptance rule is FULL≡FULL, or one side's
-  // DERIVED variant equalling the other's FULL.
+  // (#2096), the series-side counterpart to `POST /api/library/scan-debug`.
+  //
+  // Take a bare title, return everything the acceptance rule keys on for that
+  // side: the FULL normalized form, the Unicode-preserving `lossless` form, the
+  // `degenerateFull` verdict, and the tagged variant array (each variant now
+  // carrying its own `lossy` flag).
+  //
+  // Supply `other` as well and the response also carries the PRODUCTION verdict
+  // — `{ pairs, arm, reason }` straight from `explainTitlePairing`, the same
+  // function the matcher runs. That delegation is the point (#2110): the
+  // endpoint used to return `{ input, full, variants }` and document the rule as
+  // "FULL≡FULL, or one side's DERIVED variant equalling the other's FULL", which
+  // omitted the degeneracy, lossy and empty-form conditions entirely. On the
+  // live class (two franchise siblings whose non-Latin subtitles both fold away,
+  // so both sides report `full: 'world of warcraft'`) that stated rule predicts
+  // MATCH and production refuses — the diagnostic reached the opposite
+  // conclusion from the matcher on exactly the hardest class to eyeball. The
+  // rule now lives in ONE place; this route re-implements no part of it.
+  //
+  // The real rule, in evaluation order:
+  //   1. both FULL forms empty, both lossless non-empty and equal
+  //                                                     → lossless-equals-lossless
+  //   2. both FULL forms empty, otherwise                → none
+  //   3. exactly one FULL form empty                     → none
+  //   4. FULLs equal, neither side degenerate            → full-equals-full
+  //   5. FULLs equal, either degenerate, lossless equal  → full-equals-full
+  //   6. FULLs equal, either degenerate, lossless differ → none
+  //   7. FULLs differ, some non-lossy DERIVED variant of one side equals the
+  //      other side's FULL, and that other side is not degenerate
+  //                                                      → derived-equals-full
+  //   8. otherwise                                       → none
   //
   // Deliberately NOT under the `/api/books/:id/...` prefix every other route in
   // this file uses — the input is a bare title, not a book. A title that
@@ -98,12 +134,26 @@ export function registerSeriesRoutes(app: FastifyInstance, bookService: BookServ
     '/api/series/title-variants-debug',
     { schema: { body: titleVariantsDebugBodySchema } },
     (request): TitleVariantsDebugResponse => {
-      const { title } = request.body;
+      const { title, other } = request.body;
+      // `comparison` is ABSENT, not null, when `other` is omitted — the
+      // single-title response keeps exactly the five top-level keys it has
+      // always had, so this widening is a strict superset of the old shape.
+      if (other === undefined) return debugSide(title);
       return {
-        input: title,
-        full: normalizeTitleForVariantMatch(title),
-        variants: titleVariants(title),
+        ...debugSide(title),
+        comparison: { ...explainTitlePairing(title, other), other: debugSide(other) },
       };
     },
   );
+}
+
+/** One side of the diagnostic, from the same three pure functions the matcher derives from. */
+function debugSide(title: string): TitleVariantsDebugSide {
+  return {
+    input: title,
+    full: normalizeTitleForVariantMatch(title),
+    lossless: normalizeTitleLosslessly(title),
+    degenerateFull: hasDegenerateFullForm(title),
+    variants: titleVariants(title),
+  };
 }
