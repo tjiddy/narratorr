@@ -69,7 +69,13 @@ export async function createStreamingExecutor(
   };
 }
 
-/** Per-rung search executor for the silent aggregate path. */
+/**
+ * Per-rung search executor for the silent aggregate path — the SINGLE home,
+ * shared by `searchAndGrabForBook`, `retrySearch`, and the public v1 discovery
+ * route. Those three are separate chains with separate gates; sharing the
+ * executor is what keeps the transport/ranking split (`author` vs
+ * `rankingAuthor`) from drifting between them.
+ */
 export function createAggregateExecutor(
   book: SearchBook,
   indexerSearchService: IndexerSearchService,

@@ -10,6 +10,7 @@ import type { RetryBudget } from './retry-budget.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from './search-pipeline.js';
 import { buildQueryLadder, runQueryLadder, selectRelaxedCandidate, type LadderRun } from './search-query-ladder.js';
+import { createAggregateExecutor } from './search-ladder-execution.js';
 import type { SearchResult } from '@core/index.js';
 import { recordSearchRelaxedHeldEvent } from '../utils/download-side-effects.js';
 import { resolveBookQualityInputs } from '@core/utils/index.js';
@@ -163,14 +164,7 @@ export async function retrySearch(
     // scheduled-cycle cooldown (D15) — and the whole ladder costs exactly the ONE
     // attempt consumed above, not one per rung.
     const ladder = buildQueryLadder({ title: book.title, author: book.authors?.[0]?.name });
-    const ran = await runQueryLadder(ladder, async (rung) => {
-      const { results, succeeded } = await indexerSearchService.searchAllWithStatus(rung.query, {
-        title: book.title,
-        author: rung.author,
-        rankingAuthor: book.authors?.[0]?.name,
-      });
-      return { results, succeeded };
-    });
+    const ran = await runQueryLadder(ladder, createAggregateExecutor(book, indexerSearchService));
     const rawResults = ran.results;
 
     if (rawResults.length === 0) {

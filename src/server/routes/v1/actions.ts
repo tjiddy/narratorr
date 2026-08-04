@@ -15,6 +15,7 @@ import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutErro
 import { resolveBookQualityInputs } from '@core/utils/index.js';
 import { buildSearchQuery, postProcessSearchResults } from '../../services/search-pipeline.js';
 import { buildQueryLadder, runQueryLadder } from '../../services/search-query-ladder.js';
+import { createAggregateExecutor } from '../../services/search-ladder-execution.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
 import { downloadV1Schema, toDownloadV1 } from '@shared/schemas/v1/downloads.js';
 import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
@@ -239,14 +240,10 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
           // contract (the `.strict()` release DTO is the enforcement point).
           const author = book.authors?.[0]?.name;
           const ladder = buildQueryLadder({ title: book.title, author, query });
-          const { results: allResults } = await runQueryLadder(ladder, async (rung) => {
-            const { results, succeeded } = await deps.indexerSearchService.searchAllWithStatus(rung.query, {
-              title: book.title,
-              author: rung.author,
-              rankingAuthor: author,
-            });
-            return { results, succeeded };
-          });
+          const { results: allResults } = await runQueryLadder(
+            ladder,
+            createAggregateExecutor(book, deps.indexerSearchService),
+          );
 
           // #1800 — v1 search filtering contract. Route raw `searchAll` output
           // through the SAME display post-processing wrapper the UI/SSE path

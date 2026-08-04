@@ -126,6 +126,29 @@ describe('titleSegments', () => {
   });
 });
 
+/**
+ * #2104 AC30 — `titleSegments` is the ONE export this module gains. Everything
+ * else #2096 froze here stays exactly as it was, so a consumer of the generator
+ * cannot quietly become a co-owner of it.
+ *
+ * Sorted before comparison: a module namespace in native Node ESM sorts its own
+ * keys, but under Vitest a dynamic import resolves through Vite's SSR transform
+ * to an ordinary object in SOURCE order. Sorting is ordering-agnostic and
+ * asserts exactly the property under test — the SET of exports.
+ */
+describe('public export surface (#2104 AC30)', () => {
+  it('exports exactly the #2096 surface plus titleSegments', async () => {
+    const ns = await import('./title-variants.js');
+    expect(Object.keys(ns).sort()).toEqual([
+      'hasDegenerateFullForm',
+      'normalizeTitleForVariantMatch',
+      'normalizeTitleLosslessly',
+      'titleSegments',
+      'titleVariants',
+    ]);
+  });
+});
+
 describe('titleVariants', () => {
   // AC5 — the full worked array. Pins membership, tags, `parensStripped` flags
   // and the G4 total order end to end in one assertion.
