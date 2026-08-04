@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "da2e0e86-9129-415d-8fb9-fdda6efd33a2",
+  "id": "3f82e13e-2abb-4f48-845f-91945bef314e",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "authors": {
@@ -637,6 +637,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
+        },
+        "user_cleared_fields": {
+          "name": "user_cleared_fields",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "path": {
           "name": "path",

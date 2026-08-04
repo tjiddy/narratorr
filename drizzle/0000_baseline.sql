@@ -87,6 +87,7 @@ CREATE TABLE `books` (
 	`production_type` text DEFAULT 'unknown' NOT NULL,
 	`edition_label` text,
 	`enrichment_attempts` integer DEFAULT 0 NOT NULL,
+	`user_cleared_fields` text,
 	`path` text,
 	`size` integer,
 	`audio_codec` text,
