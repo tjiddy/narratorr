@@ -53,7 +53,7 @@
  */
 
 import { existsSync } from 'fs';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { createDb } from '@db/index.js';
 import { books, series, seriesMembers } from '@db/schema.js';
 import {
@@ -246,13 +246,18 @@ async function main(): Promise<void> {
   const db = createDb(dbPath);
 
   const seriesRows = await db.select().from(series);
-  // No ORDER BY, matching `loadLibraryBooksForSeriesNames`. Filtering this list
-  // preserves rowid order, so each replayed pool presents candidates in the same
-  // sequence production's `WHERE series_name IN (…)` would — load-bearing,
-  // because both matchers are first-claim-wins.
+  // `ORDER BY books.id`, pinning the order production now pins (#2108 —
+  // `loadLibraryBooksForSeriesNames` carries the same `asc(books.id)`).
+  // Filtering this list preserves that order, so each replayed pool presents
+  // candidates in the same sequence production's `WHERE series_name IN (…)`
+  // would — load-bearing, because both matchers are first-claim-wins within a
+  // match-quality tier. Before #2108 both sides were unordered, which agreed
+  // only by planner accident; the replay must track production's contract, or
+  // its whole premise (replayed pool order equals production's) is false.
   const allBooks = await db
     .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition, seriesName: books.seriesName })
-    .from(books);
+    .from(books)
+    .orderBy(asc(books.id));
   // A `seriesName`-tombstoned book has `series_name = NULL` and SQL `IN` never
   // matches it, so production can never pool one.
   const named = allBooks.filter((b) => b.seriesName !== null);
