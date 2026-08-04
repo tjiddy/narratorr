@@ -3,7 +3,7 @@ import { generatePublicId } from '../utils/public-id.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books, bookAuthors, authors, series, seriesMembers } from '@db/schema.js';
@@ -728,6 +728,80 @@ describe('SeriesCardService — integration', () => {
       // An empty variant set never claims a candidate on the title path, and this
       // member has no position to be rescued by either.
       expect(card!.members.find((m) => m.title === '[ ]')!.inLibrary).toBe(false);
+    });
+  });
+
+  // #2108: `loadLibraryBooksForSeriesNames` pins `ORDER BY books.id`, because
+  // `findInLibraryMatch` is first-claim-wins WITHIN a match-quality tier — so
+  // pool order is the only deciding input when two candidates pair on the same
+  // tier, and unordered that sequence is a query-planner accident.
+  describe('#2108 — pinned candidate claim order', () => {
+    // Both traps that would make this test green-but-vacuous are closed here:
+    //
+    //  - WITHOUT the forced index the planner emits `SCAN books` and rowid order
+    //    falls out anyway, so the pool is id-ascending with or without the
+    //    `.orderBy()`. The `CREATE INDEX` drives it onto
+    //    `SEARCH … USING COVERING INDEX (series_name=?)`, which returns rows in
+    //    series_name order instead — hence the deliberately INVERTED seeding
+    //    (lower id → 'Zeta Series', higher id → 'Alpha Series').
+    //  - With CROSS-TIER candidates the arm ranking would pick the winner
+    //    regardless of order, and the `.orderBy()` could be deleted with the test
+    //    still green. Both books therefore pair `full-equals-full` with the same
+    //    member (both titles normalize to `chapterhouse dune`) — one tier, so
+    //    only the SQL order decides.
+    //
+    // Counterfactuals, both run and recorded: deleting `.orderBy(asc(books.id))`
+    // flips the claim to the higher id and this test FAILS; deleting the
+    // `CREATE INDEX` below leaves it passing on both branches, which is exactly
+    // what makes the index non-optional here.
+    it('claims the lower-id book when two same-tier candidates compete under an index', async () => {
+      const lowerId = await seedBookWithSeries(db, {
+        title: 'Chapterhouse Dune',
+        seriesName: 'Zeta Series',
+        seriesPosition: null,
+        authorName: 'Frank Herbert',
+      });
+      const higherId = await seedBookWithSeries(db, {
+        title: 'Chapterhouse: Dune',
+        seriesName: 'Alpha Series',
+        seriesPosition: null,
+        authorName: 'Frank Herbert',
+      });
+      expect(higherId).toBeGreaterThan(lowerId);
+
+      // Not in the production schema (#2108 does not add it) — created here so
+      // the planner reorders the pool, which is the whole point of the fixture.
+      await db.run(sql`CREATE INDEX idx_books_series_name_2108 ON books (series_name)`);
+
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        data: {
+          series: [{
+            id: 7703,
+            name: 'Zeta Series',
+            slug: 'zeta-series',
+            author: { name: 'Frank Herbert' },
+            book_series: [
+              // Position null, so the position pass never fires and the title
+              // pass — the pass this issue changes — is what decides.
+              { position: null, book: { id: 4001, slug: 'chapterhouse-dune', title: 'Chapterhouse: Dune', image: null, users_count: 50 } },
+            ],
+          }],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+      // Bind from the HIGHER-id book, whose prior series name is 'Alpha Series':
+      // `bindHardcoverSeries` passes `resolved.name` plus the initiating book's
+      // prior name to `persistMembers`, so the pool is
+      // `IN ('Zeta Series','Alpha Series')` and spans both books.
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.bindHardcoverSeries(higherId, 7703);
+
+      expect(card).not.toBeNull();
+      const memberRows = await db.select().from(seriesMembers);
+      expect(memberRows).toHaveLength(1);
+      expect(memberRows[0]!.bookId).toBe(lowerId);
+      expect(card!.members[0]!.libraryBookId).toBe(lowerId);
     });
   });
 });

@@ -468,10 +468,24 @@ export class SeriesCardService {
   private async loadLibraryBooksForSeriesNames(seriesNames: string[], executor: DbOrTx = this.db): Promise<LibraryBookSummary[]> {
     const unique = [...new Set(seriesNames)];
     if (unique.length === 0) return [];
+    // `ORDER BY books.id` is a MATCHER CONTRACT, not cosmetic (#2108).
+    // `findInLibraryMatch` is greedy and first-claim-wins WITHIN a match-quality
+    // tier, so the sequence these rows arrive in decides which book a member
+    // claims whenever two candidates pair on the same tier. Unordered, that
+    // sequence is a query-planner accident: today the planner emits `SCAN books`
+    // and rowid order happens to fall out, but adding an index on
+    // `books.series_name` flips it to `SEARCH … USING COVERING INDEX` and the
+    // rows come back in series_name order — silently changing which book each
+    // member claims, and on the bind path durably rewriting the wrong book's
+    // series_name/series_position. Pinning it here makes such an index safe to
+    // add later. Both callers inherit this: `buildCardFromCache` via
+    // `loadLibraryBooksForSeries` (the render path) and `persistMembers` (the
+    // bind path), so the two present candidates in the same sequence.
     const rows = await executor
       .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition })
       .from(books)
-      .where(inArray(books.seriesName, unique));
+      .where(inArray(books.seriesName, unique))
+      .orderBy(asc(books.id));
     return rows;
   }
 }
