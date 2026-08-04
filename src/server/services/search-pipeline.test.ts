@@ -3758,6 +3758,45 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
+  // F1 — the offered side of the character-survival gate, on the auto path. The
+  // canonical title is pure ASCII, so it is NOT caught by the rung-1-only
+  // degenerate short-circuit and does build a floor; the two siblings are
+  // DIFFERENT books whose distinguishing characters the ASCII fold erases, so
+  // before the gate they supplied the anchors from what survived and the
+  // top-ranked one was auto-sent to the download client as the wrong book.
+  const lossyBook = { id: 7, title: 'World of Warcraft: A', duration: 3600, authors: [{ name: 'Christie Golden' }] };
+
+  it('holds a lossy-fold sibling found at the prefix(1) rung rather than grabbing it (F1)', async () => {
+    const svc = serviceAnswering({
+      'world of warcraft Christie Golden': [
+        makeResult({ title: 'World of Warcraft: A前夜', seeders: 99 }),
+        makeResult({ title: 'World of Warcraft: A後夜', seeders: 1 }),
+      ],
+    });
+
+    const result = await searchAndGrabForBook(lossyBook, deps(svc));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+    expect(eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      bookId: 7,
+      reason: expect.objectContaining({ variant_tag: 'prefix(1)', release_title: 'World of Warcraft: A前夜' }),
+    }));
+  });
+
+  it('still grabs the lossy-gated book own ASCII release at the prefix(1) rung (F1)', async () => {
+    const svc = serviceAnswering({
+      'world of warcraft Christie Golden': [makeResult({ title: 'World of Warcraft: A' })],
+    });
+
+    const result = await searchAndGrabForBook(lossyBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'World of Warcraft: A' });
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
   it('holds the sibling of a split-anchor title at the prefix(1) rung (AC16)', async () => {
     const svc = serviceAnswering({
       'star wars George Mann': [makeResult({ title: 'Star (Deluxe) Wars: Cataclysm' })],

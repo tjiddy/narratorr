@@ -349,9 +349,29 @@ export function buildQueryLadder(input: LadderInput): Rung[] {
  * through {@link effectiveText} — the same axis the anchors came from, NOT the
  * scalar normalizer alone, which keeps parenthetical content and would fail a
  * book's own paren-intact release against its own floor (AC0).
+ *
+ * **The character-survival gate is TWO-SIDED.** `buildQueryLadder` already
+ * refuses to relax a canonical title whose distinguishing characters the ASCII
+ * fold erases; the OFFERED release needs the same refusal, and for the same
+ * reason. The anchors are ASCII by construction, so a lossy release can supply
+ * them out of what merely SURVIVED the fold and wear the wanted book's identity:
+ * for a canonical `"World of Warcraft: A"`, the different books
+ * `"World of Warcraft: A前夜"` and `"World of Warcraft: A後夜"` both reduce to
+ * `world of warcraft a` and clear the floor. That is the mixed-token collision
+ * `degenerate-full-form-under-lossy-fold` names (#2103/#2110) one layer down —
+ * partial loss is loss, so the question is asked at CHARACTER granularity by
+ * `hasDegenerateFullForm`, not of the structure and not of the tokens.
+ *
+ * The gate runs on the RAW release title, deliberately matching the canonical
+ * side's own call rather than the floor's paren-stripped axis: a release naming
+ * the wanted book only alongside erased content is not identity evidence either.
+ * It costs a book nothing at rung 1 or on a `full` rung (both short-circuit
+ * above), and the failure direction is the safe one this whole module takes — a
+ * false refusal costs a surfaced hold, a false pass costs the wrong book.
  */
 export function passesSegmentFloor(parsedReleaseTitle: string, rung: Rung): boolean {
   if (rung.floorSegments.length === 0) return true;
+  if (hasDegenerateFullForm(parsedReleaseTitle)) return false;
 
   const demanded = new Map<string, number>();
   for (const segment of rung.floorSegments) demanded.set(segment, (demanded.get(segment) ?? 0) + 1);

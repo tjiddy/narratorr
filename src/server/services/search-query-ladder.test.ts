@@ -441,6 +441,10 @@ describe('passesSegmentFloor', () => {
   const collapsedPrefix2 = rungFor(buildQueryLadder({ title: 'Star Wars: The High Republic: Star Wars', author: 'George Mann' }), 'prefix(2)');
   const neighbourPrefix2 = rungFor(buildQueryLadder({ title: 'Alpha: Beta Gamma: Gamma', author: 'A' }), 'prefix(2)');
   const parenPrefix1 = rungFor(buildQueryLadder({ title: 'Star (Deluxe) Wars: Haunted Starlight', author: 'George Mann' }), 'prefix(1)');
+  // F1 — a canonical title that is itself pure ASCII (so it is NOT caught by the
+  // rung-1-only degenerate short-circuit) and whose anchors are short enough to
+  // be supplied by a lossy release's surviving characters.
+  const wowPrefix1 = rungFor(buildQueryLadder({ title: 'World of Warcraft: A', author: 'Christie Golden' }), 'prefix(1)');
 
   // AC10 — a `full` rung is not a segment cut, so there is nothing to corroborate.
   it('short-circuits true for a full-tagged rung without inspecting the title (AC10, #2133 AC2)', () => {
@@ -523,6 +527,22 @@ describe('passesSegmentFloor', () => {
     ['Star (Deluxe) Wars: Haunted Starlight', parenPrefix1, true],
     // The accepted hold: a different book naming the wanted one only in an aside.
     ['Cataclysm (Star Wars: Haunted Starlight)', parenPrefix1, false],
+
+    // F1 — the OFFERED side of the character-survival gate. The floor's anchors
+    // are ASCII by construction, so a release whose distinguishing characters
+    // the fold erases can supply them from what SURVIVED and masquerade as the
+    // wanted book. `"A前夜"` and `"A後夜"` are different books that both reduce
+    // to the anchor `a` — the mixed-token collision `degenerate-full-form-under-
+    // lossy-fold` names, one layer down from #2103.
+    // COUNTERFACTUAL: drop the `hasDegenerateFullForm` guard and both flip true.
+    ['World of Warcraft: A前夜', wowPrefix1, false],
+    ['World of Warcraft: A後夜', wowPrefix1, false],
+    // The gate runs on the RAW release title, matching the canonical side's own
+    // `hasDegenerateFullForm` call — so lossy content inside a stripped
+    // parenthetical still refuses, even though the floor's axis would drop it.
+    ['World of Warcraft: A (Перед бурей)', wowPrefix1, false],
+    // …and it costs the book nothing: its own ASCII release still grabs.
+    ['World of Warcraft: A', wowPrefix1, true],
   ])('verdict for %s', (releaseTitle, rung, expected) => {
     expect(passesSegmentFloor(releaseTitle, rung)).toBe(expected);
   });
