@@ -12,7 +12,10 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import { recordGrabFailedEvent } from '../utils/download-side-effects.js';
+import { recordGrabFailedEvent, recordSearchRelaxedHeldEvent } from '../utils/download-side-effects.js';
+import { selectRelaxedCandidate, type LadderRun } from './search-query-ladder.js';
+import { runBookQueryLadder } from './search-ladder-execution.js';
+import type { SearchLadderCooldown } from './search-ladder-cooldown.js';
 import { type SearchBook, type SearchEventSink, NOOP_SINK, createBroadcasterSink } from './search-event-sink.js';
 import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
@@ -440,36 +443,20 @@ export interface SearchAndGrabDeps {
   indexerService: IndexerService;
   eventHistory: EventHistoryService;
   broadcaster?: EventBroadcasterService | undefined;
-}
-
-/**
- * Streaming search executor for the broadcaster path: emits `search_started`,
- * sets up per-indexer abort controllers, and forwards per-indexer completion /
- * error callbacks into the sink (streaming-only events stay off the other path).
- */
-async function streamingSearch(
-  query: string,
-  book: SearchBook,
-  indexerSearchService: IndexerSearchService,
-  sink: SearchEventSink,
-): Promise<SearchResult[]> {
-  const enabledIndexers = await indexerSearchService.getEnabledIndexers();
-  sink.searchStarted(enabledIndexers);
-
-  const controllers = new Map<number, AbortController>();
-  for (const indexer of enabledIndexers) {
-    controllers.set(indexer.id, new AbortController());
-  }
-
-  return indexerSearchService.searchAllStreaming(
-    query,
-    { title: book.title, author: book.authors?.[0]?.name },
-    controllers,
-    {
-      onComplete: (indexerId, name, resultCount, elapsedMs) => sink.indexerComplete(indexerId, name, resultCount, elapsedMs),
-      onError: (indexerId, name, error, elapsedMs) => sink.indexerError(indexerId, name, error, elapsedMs),
-    },
-  );
+  searchLadderCooldown?: SearchLadderCooldown | undefined;
+  /**
+   * Who is calling, for query-ladder cooldown purposes (#2104 D15).
+   *
+   * `'scheduled'` — consults the cooldown before building the ladder and records
+   * exhaustion. `runSearchJob` is the ONLY caller that passes it.
+   *
+   * `'always'` (the default when omitted, so a future caller fails open to the
+   * generous behaviour) — never consults, never records. That covers
+   * `searchAllWanted` (an explicitly manual trigger), the per-book route, the
+   * immediate trigger, and the SSE modal: a person clicking Search never gets a
+   * degraded ladder because an unattended cycle exhausted six hours ago.
+   */
+  ladderMode?: 'scheduled' | 'always' | undefined;
 }
 
 /**
@@ -484,11 +471,11 @@ async function runSearchAndGrab(
   book: SearchBook,
   deps: SearchAndGrabDeps,
   sink: SearchEventSink,
-  searchExecutor: () => Promise<SearchResult[]>,
+  ran: LadderRun,
 ): Promise<SingleBookSearchResult> {
   const { downloadOrchestrator, qualitySettings, log, blacklistService, indexerService, eventHistory } = deps;
 
-  const rawResults = await searchExecutor();
+  const rawResults = ran.results;
 
   if (rawResults.length === 0) {
     log.debug({ bookId: book.id, title: book.title }, 'No results found');
@@ -512,11 +499,30 @@ async function runSearchAndGrab(
   const { durationSeconds } = resolveBookQualityInputs(book);
   const { results } = applyMultiPartFilterAndRank(afterBlacklist, durationSeconds ?? undefined, qualitySettings, log);
 
-  const best = results.find((r) => r.downloadUrl);
-  if (!best) {
+  // Candidate selection on the winning rung, through the SHARED pure selector so
+  // this path and `retrySearch` cannot drift on floor policy (#2104 D14). On
+  // rung 1 and on a `full` rung it degenerates to the pre-ladder
+  // `results.find(r => r.downloadUrl)`.
+  const selection = selectRelaxedCandidate(results, ran.rung);
+  if (selection.kind === 'hold') {
+    log.info({
+      bookId: book.id, title: book.title,
+      relaxedQuery: ran.rung.query, variantTag: ran.rung.variant?.tag, releaseTitle: selection.releaseTitle,
+    }, 'Relaxed-query candidates held for review — none corroborated the retained title segments');
+    recordSearchRelaxedHeldEvent({
+      book, eventHistory, log,
+      relaxedQuery: ran.rung.query,
+      variantTag: ran.rung.variant?.tag ?? 'full',
+      releaseTitle: selection.releaseTitle,
+    });
     sink.searchComplete('no_results');
     return { result: 'no_results' };
   }
+  if (selection.kind === 'none') {
+    sink.searchComplete('no_results');
+    return { result: 'no_results' };
+  }
+  const best = selection.result;
 
   const grabResult = await tryGrab(best, book, downloadOrchestrator, log);
   if (grabResult.result === 'grabbed') {
@@ -539,21 +545,28 @@ async function runSearchAndGrab(
  * Pass `deps.broadcaster` to drive the streaming/SSE path (per-indexer events
  * plus `search_complete`); omit it for the silent non-streaming path. Both paths
  * run the identical {@link runSearchAndGrab} core, differing only in the injected
- * search call and event sink.
+ * per-rung executor and event sink.
+ *
+ * The QUERY LADDER (#2104) sits between the two: rung 1 is today's canonical
+ * query verbatim, so a book findable at rung 1 issues exactly one query per
+ * indexer and nothing below this line sees a difference. Only a genuine,
+ * answered zero advances a rung; the gate chain below runs ONCE, on the winning
+ * rung's results.
  */
 export async function searchAndGrabForBook(
   book: SearchBook,
   deps: SearchAndGrabDeps,
 ): Promise<SingleBookSearchResult> {
   const { indexerSearchService, broadcaster, log } = deps;
-  const query = buildSearchQuery(book);
 
-  if (broadcaster) {
-    const sink = createBroadcasterSink(book, broadcaster, log);
-    return runSearchAndGrab(book, deps, sink, () => streamingSearch(query, book, indexerSearchService, sink));
-  }
+  const sink = broadcaster ? createBroadcasterSink(book, broadcaster, log) : NOOP_SINK;
+  const ran = await runBookQueryLadder(book, {
+    indexerSearchService,
+    streaming: broadcaster !== undefined,
+    sink,
+    searchLadderCooldown: deps.searchLadderCooldown,
+    ladderMode: deps.ladderMode ?? 'always',
+  });
 
-  return runSearchAndGrab(book, deps, NOOP_SINK, () =>
-    indexerSearchService.searchAll(query, { title: book.title, author: book.authors?.[0]?.name }),
-  );
+  return runSearchAndGrab(book, deps, sink, ran);
 }

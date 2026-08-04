@@ -22,8 +22,17 @@ function rungFor(ladder: Rung[], tag: string): Rung {
   return found;
 }
 
-function makeResult(overrides: Partial<SearchResult> & { title: string }): SearchResult {
-  return { protocol: 'usenet', indexer: 'Test', downloadUrl: 'https://x/1', ...overrides };
+/**
+ * Overrides that may carry an explicit `undefined` to STRIP a default field —
+ * `Partial<T>` rejects that under `exactOptionalPropertyTypes`. Same mapped-type
+ * shape as `MakeResultOverrides` in `search-pipeline.test.ts`.
+ */
+type MakeResultOverrides = { [K in keyof SearchResult]?: SearchResult[K] | undefined } & { title: string };
+
+const RESULT_DEFAULTS = { protocol: 'usenet', indexer: 'Test', downloadUrl: 'https://x/1' } as const;
+
+function makeResult(overrides: MakeResultOverrides): SearchResult {
+  return { ...RESULT_DEFAULTS, ...overrides } as SearchResult;
 }
 
 describe('buildQueryLadder', () => {
@@ -31,7 +40,7 @@ describe('buildQueryLadder', () => {
   // rung 1 issues byte-identically the same query it did before the ladder.
   it('opens with the canonical query, byte-identical to buildSearchQuery (AC1)', () => {
     const book = { title: 'Star Wars: The High Republic: Haunted Starlight', authors: [{ name: 'George Mann' }] };
-    const ladder = buildQueryLadder({ title: book.title, author: book.authors[0].name });
+    const ladder = buildQueryLadder({ title: book.title, author: book.authors[0]!.name });
 
     expect(ladder[0]).toEqual({
       query: buildSearchQuery(book),

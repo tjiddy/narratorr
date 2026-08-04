@@ -17,6 +17,17 @@ vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
   enrichUsenetLanguages: vi.fn(),
 }));
 
+
+/**
+ * `searchAllWithStatus` value for ONE indexer that answered (#2104 D16).
+ * `succeeded: 1` makes an empty list a GENUINE zero rather than an outage, so
+ * the query ladder advances; every fixture here answers identically on every
+ * rung, leaving the pre-ladder outcomes unchanged.
+ */
+function withStatus(results: SearchResult[]) {
+  return { results, succeeded: 1, failed: 0 };
+}
+
 function createMockBookListService(books: unknown[] = []): BookListService {
   return inject<BookListService>({
     getAll: vi.fn().mockResolvedValue({ data: books, total: books.length }),
@@ -27,7 +38,7 @@ function createMockBookListService(books: unknown[] = []): BookListService {
 
 function createMockIndexerService(results: SearchResult[] = []): IndexerSearchService {
   return inject<IndexerSearchService>({
-    searchAll: vi.fn().mockResolvedValue(results),
+    searchAllWithStatus: vi.fn().mockResolvedValue(withStatus(results)),
     searchAllStreaming: vi.fn().mockResolvedValue(results),
     getEnabledIndexers: vi.fn().mockResolvedValue([]),
     getRssCapableIndexers: vi.fn().mockResolvedValue([]),
@@ -123,9 +134,13 @@ describe('runSearchJob', () => {
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(2);
-    expect(indexer.searchAll).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(indexer.searchAll).mock.calls[0]![0]).toBe('Book One Author A');
-    expect(vi.mocked(indexer.searchAll).mock.calls[1]![0]).toBe('Book Two Author B');
+    // Both books answer a GENUINE zero at rung 1, so each relaxes once more: a
+    // colon-free, paren-free title costs exactly ONE extra rung (#2104 AC6) —
+    // the author-dropped one. Rung 1 stays byte-identical to the pre-ladder query.
+    expect(vi.mocked(indexer.searchAllWithStatus).mock.calls.map((c) => c[0])).toEqual([
+      'Book One Author A', 'book one',
+      'Book Two Author B', 'book two',
+    ]);
   });
 
   it('grabs best result when search finds matches', async () => {
@@ -183,10 +198,9 @@ describe('runSearchJob', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    vi.mocked(indexer.searchAll)
-      .mockResolvedValueOnce(results)     // Book A succeeds with results
+    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results))     // Book A succeeds with results
       .mockRejectedValueOnce(new Error('Network error'))  // Book B throws
-      .mockResolvedValueOnce(results);    // Book C succeeds with results
+      .mockResolvedValueOnce(withStatus(results));    // Book C succeeds with results
     const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
@@ -199,7 +213,7 @@ describe('runSearchJob', () => {
       'Search failed for book',
     );
     // All three books should have been attempted
-    expect(indexer.searchAll).toHaveBeenCalledTimes(3);
+    expect(indexer.searchAllWithStatus).toHaveBeenCalledTimes(3);
   });
 
   it('handles book with no author gracefully', async () => {
@@ -215,7 +229,7 @@ describe('runSearchJob', () => {
 
     expect(result.searched).toBe(1);
     // Query should just be the title without author
-    expect(vi.mocked(indexer.searchAll).mock.calls[0]![0]).toBe('Anonymous Work');
+    expect(vi.mocked(indexer.searchAllWithStatus).mock.calls[0]![0]).toBe('Anonymous Work');
   });
 
   it('skips grab when book already has active download', async () => {
@@ -302,9 +316,9 @@ describe('runSearchJob', () => {
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
-    vi.mocked(indexer.searchAll)
+    vi.mocked(indexer.searchAllWithStatus)
       .mockRejectedValueOnce(new Error('Indexer down'))
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce(withStatus([]));
     const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
@@ -473,9 +487,13 @@ describe('searchAllWanted', () => {
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(2);
-    expect(indexer.searchAll).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(indexer.searchAll).mock.calls[0]![0]).toBe('Book One Author A');
-    expect(vi.mocked(indexer.searchAll).mock.calls[1]![0]).toBe('Book Two Author B');
+    // Both books answer a GENUINE zero at rung 1, so each relaxes once more: a
+    // colon-free, paren-free title costs exactly ONE extra rung (#2104 AC6) —
+    // the author-dropped one. Rung 1 stays byte-identical to the pre-ladder query.
+    expect(vi.mocked(indexer.searchAllWithStatus).mock.calls.map((c) => c[0])).toEqual([
+      'Book One Author A', 'book one',
+      'Book Two Author B', 'book two',
+    ]);
   });
 
   it('grabs the best ranked result per book', async () => {
@@ -521,10 +539,9 @@ describe('searchAllWanted', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    vi.mocked(indexer.searchAll)
-      .mockResolvedValueOnce(results)
+    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results))
       .mockRejectedValueOnce(new Error('Network error'))
-      .mockResolvedValueOnce(results);
+      .mockResolvedValueOnce(withStatus(results));
     const download = createMockDownloadOrchestrator();
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
@@ -532,7 +549,7 @@ describe('searchAllWanted', () => {
     expect(result.searched).toBe(2);
     expect(result.grabbed).toBe(2);
     expect(result.errors).toBe(1);
-    expect(indexer.searchAll).toHaveBeenCalledTimes(3);
+    expect(indexer.searchAllWithStatus).toHaveBeenCalledTimes(3);
   });
 
   it('does NOT check searchSettings.enabled — manual trigger always runs', async () => {
@@ -558,10 +575,9 @@ describe('searchAllWanted', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    vi.mocked(indexer.searchAll)
-      .mockResolvedValueOnce(results) // Book A — grab succeeds
-      .mockResolvedValueOnce(results) // Book B — grab fails (active download)
-      .mockResolvedValueOnce(results); // Book C — grab succeeds
+    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results)) // Book A — grab succeeds
+      .mockResolvedValueOnce(withStatus(results)) // Book B — grab fails (active download)
+      .mockResolvedValueOnce(withStatus(results)); // Book C — grab succeeds
     const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab)
       .mockResolvedValueOnce({ id: 1 } as never)
@@ -672,7 +688,7 @@ describe('searchAllWanted', () => {
 
     await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
-    expect(vi.mocked(indexer.searchAll).mock.calls[0]![0]).toBe('Anonymous Work');
+    expect(vi.mocked(indexer.searchAllWithStatus).mock.calls[0]![0]).toBe('Anonymous Work');
   });
 
   it('mixed success/failure: accurate partial counts', async () => {
@@ -686,11 +702,10 @@ describe('searchAllWanted', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?aaa')];
-    vi.mocked(indexer.searchAll)
-      .mockResolvedValueOnce(results) // Book A — grab succeeds
+    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results)) // Book A — grab succeeds
       .mockRejectedValueOnce(new Error('Timeout')) // Book B — search fails
-      .mockResolvedValueOnce(results) // Book C — active download
-      .mockResolvedValueOnce([]); // Book D — no results
+      .mockResolvedValueOnce(withStatus(results)) // Book C — active download
+      .mockResolvedValueOnce(withStatus([])); // Book D — no results
     const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab)
       .mockResolvedValueOnce({ id: 1 } as never) // Book A
@@ -843,7 +858,7 @@ describe('searchAllWanted', () => {
 
 function createStreamingIndexerService(results: SearchResult[] = []): IndexerSearchService {
   return inject<IndexerSearchService>({
-    searchAll: vi.fn().mockResolvedValue(results),
+    searchAllWithStatus: vi.fn().mockResolvedValue(withStatus(results)),
     searchAllStreaming: vi.fn().mockImplementation(async (_q: string, _o: unknown, _c: Map<number, AbortController>, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
       callbacks.onComplete(10, 'MAM', results.length, 500);
       return results;

@@ -30,10 +30,28 @@ export interface SearchResult {
 
 export interface SearchOptions {
   limit?: number | undefined;
+  /**
+   * TRANSPORT filter. Newznab/Torznab emit it as `author=`; MAM/ABB ignore it.
+   * A query-relaxation rung that drops the author (#2104) must pass `undefined`
+   * here or the rung is inert on exactly the publisher-as-author cases it exists
+   * to fix — but see {@link rankingAuthor}, which keeps ranking canonical.
+   */
   author?: string | undefined;
   title?: string | undefined;
   signal?: AbortSignal | undefined;
   languages?: readonly string[] | undefined;
+  /**
+   * Ranking-only author context, read ONLY by the match scorer as
+   * `rankingAuthor ?? author`. No adapter reads it, so it is transport-inert by
+   * construction — a direct extension of the #1015 transport/ranking split.
+   *
+   * Exists because `author` is simultaneously the transport filter and the
+   * ranking context: passing `undefined` for transport would silently drop the
+   * author from ranking too, and `scoreResult` re-normalizes by `totalWeight`,
+   * so the score does not merely shrink — it changes shape, and
+   * `canonicalCompare` gates on it at a 0.1 band.
+   */
+  rankingAuthor?: string | undefined;
 }
 
 export interface IndexerTestResult {

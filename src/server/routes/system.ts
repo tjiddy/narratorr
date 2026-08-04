@@ -56,6 +56,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
         services.eventHistory,
         services.retryBudget,
         services.eventBroadcaster,
+        services.searchLadderCooldown,
       ),
     );
   });

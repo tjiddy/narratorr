@@ -7,7 +7,11 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
-import { buildSearchQuery, buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from './search-pipeline.js';
+import type { EventHistoryService } from './event-history.service.js';
+import { buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from './search-pipeline.js';
+import { buildQueryLadder, runQueryLadder, selectRelaxedCandidate, type LadderRun } from './search-query-ladder.js';
+import type { SearchResult } from '@core/index.js';
+import { recordSearchRelaxedHeldEvent } from '../utils/download-side-effects.js';
 import { resolveBookQualityInputs } from '@core/utils/index.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
@@ -34,6 +38,13 @@ export interface RetrySearchDeps {
   bookService: BookService;
   settingsService: SettingsService;
   retryBudget: RetryBudget;
+  /**
+   * Needed for the query ladder's failed-floor `search_relaxed_held` event
+   * (#2104 D9/D14). Retry owns an independent filter/rank/grab chain, so
+   * without this dependency it could reach a segment-cut rung and be unable to
+   * record why it declined to grab.
+   */
+  eventHistory: EventHistoryService;
   log: FastifyBaseLogger;
 }
 
@@ -46,6 +57,7 @@ export function createRetrySearchDeps(services: {
   book: BookService;
   settings: SettingsService;
   retryBudget: RetryBudget;
+  eventHistory: EventHistoryService;
 }, log: FastifyBaseLogger): RetrySearchDeps {
   return {
     indexerSearchService: services.indexerSearch,
@@ -55,8 +67,47 @@ export function createRetrySearchDeps(services: {
     bookService: services.book,
     settingsService: services.settings,
     retryBudget: services.retryBudget,
+    eventHistory: services.eventHistory,
     log,
   };
+}
+
+/**
+ * Resolve the winning rung's ranked results to a grabbable candidate, or to the
+ * `no_candidates` outcome — recording the failed-floor held event on the way out
+ * when a segment-cut rung had grabbable candidates that none corroborated.
+ *
+ * Extracted from {@link retrySearch} so both auto-grab paths call the SAME pure
+ * {@link selectRelaxedCandidate} and neither exceeds the complexity cap.
+ */
+function resolveRetryCandidate(
+  results: SearchResult[],
+  ran: LadderRun,
+  book: { id: number; title: string; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
+  deps: Pick<RetrySearchDeps, 'eventHistory' | 'log'>,
+  attempt: number,
+): { best: SearchResult } | { outcome: RetryOutcome } {
+  const { eventHistory, log } = deps;
+  const selection = selectRelaxedCandidate(results, ran.rung);
+
+  if (selection.kind === 'hold') {
+    log.info({
+      bookId: book.id, title: book.title, attempt,
+      relaxedQuery: ran.rung.query, variantTag: ran.rung.variant?.tag, releaseTitle: selection.releaseTitle,
+    }, 'Retry search: relaxed-query candidates held for review — none corroborated the retained title segments');
+    recordSearchRelaxedHeldEvent({
+      book, eventHistory, log,
+      relaxedQuery: ran.rung.query,
+      variantTag: ran.rung.variant?.tag ?? 'full',
+      releaseTitle: selection.releaseTitle,
+    });
+    return { outcome: { outcome: 'no_candidates' } };
+  }
+  if (selection.kind === 'none') {
+    log.debug({ bookId: book.id, title: book.title, attempt }, 'No viable candidates after filtering');
+    return { outcome: { outcome: 'no_candidates' } };
+  }
+  return { best: selection.result };
 }
 
 /**
@@ -72,7 +123,7 @@ export async function retrySearch(
   bookId: number,
   deps: RetrySearchDeps,
 ): Promise<RetryOutcome> {
-  const { indexerSearchService, indexerService, downloadOrchestrator, blacklistService, bookService, settingsService, retryBudget, log } = deps;
+  const { indexerSearchService, indexerService, downloadOrchestrator, blacklistService, bookService, settingsService, retryBudget, eventHistory, log } = deps;
 
   // Check retry budget
   if (!retryBudget.hasRemaining(bookId)) {
@@ -107,11 +158,20 @@ export async function retrySearch(
   const attempt = retryBudget.consumeAttempt(bookId);
 
   try {
-    const query = buildSearchQuery(book);
-    const rawResults = await indexerSearchService.searchAll(query, {
-      title: book.title,
-      author: book.authors?.[0]?.name,
+    // Progressive query relaxation (#2104). Retry runs the FULL ladder — it is
+    // already bounded by RetryBudget's 3 attempts, so it never consults the
+    // scheduled-cycle cooldown (D15) — and the whole ladder costs exactly the ONE
+    // attempt consumed above, not one per rung.
+    const ladder = buildQueryLadder({ title: book.title, author: book.authors?.[0]?.name });
+    const ran = await runQueryLadder(ladder, async (rung) => {
+      const { results, succeeded } = await indexerSearchService.searchAllWithStatus(rung.query, {
+        title: book.title,
+        author: rung.author,
+        rankingAuthor: book.authors?.[0]?.name,
+      });
+      return { results, succeeded };
     });
+    const rawResults = ran.results;
 
     if (rawResults.length === 0) {
       log.debug({ bookId, title: book.title }, 'Retry search returned no results');
@@ -140,12 +200,13 @@ export async function retrySearch(
       log,
     );
 
-    // Take best downloadable result
-    const best = results.find((r) => r.downloadUrl);
-    if (!best) {
-      log.debug({ bookId, title: book.title, attempt }, 'No viable candidates after filtering');
-      return { outcome: 'no_candidates' };
-    }
+    // Candidate selection on the winning rung, through the SHARED pure selector
+    // the auto-grab pipeline also uses, so the two paths cannot drift on floor
+    // policy (#2104 D14). On rung 1 and on a `full` rung it degenerates to the
+    // pre-ladder `results.find(r => r.downloadUrl)`.
+    const candidate = resolveRetryCandidate(results, ran, book, { eventHistory, log }, attempt);
+    if ('outcome' in candidate) return candidate.outcome;
+    const best = candidate.best;
 
     // Grab the best candidate via the retry seam: acquires the per-book admission
     // mutex ONCE and rechecks for ANY grab blocker inside it (#1857 AC17 / #1861 — a
