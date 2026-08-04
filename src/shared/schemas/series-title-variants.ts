@@ -50,11 +50,18 @@ export type VariantTag = z.infer<typeof variantTagSchema>;
  * as the case-insensitive collapsed dedup key. `parensStripped` records whether
  * the variant was derived from the paren-stripped base — every colon-derived
  * variant is, by construction (G1).
+ *
+ * `lossy` (#2110) records whether THIS slice lost identity-bearing characters to
+ * the ASCII fold — the same character-survival question `hasDegenerateFullForm`
+ * asks of a whole title, asked per slice. The pairing rule refuses a lossy
+ * variant as offered evidence, so a fragment whose distinguishing content the
+ * fold ate can never claim another book.
  */
 export const variantSchema = z.object({
   raw: z.string(),
   tag: variantTagSchema,
   parensStripped: z.boolean(),
+  lossy: z.boolean(),
 });
 export type Variant = z.infer<typeof variantSchema>;
 

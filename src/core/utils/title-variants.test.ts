@@ -63,13 +63,13 @@ describe('titleVariants', () => {
   // and the G4 total order end to end in one assertion.
   it('emits the full ordered array for a deep-franchise title (AC5)', () => {
     expect(titleVariants('star wars: the high republic: Light of the Jedi (New Order Series)')).toEqual([
-      { raw: 'star wars the high republic light of the jedi new order series', tag: 'full', parensStripped: false },
-      { raw: 'star wars the high republic light of the jedi', tag: 'full', parensStripped: true },
-      { raw: 'star wars the high republic', tag: 'prefix(2)', parensStripped: true },
-      { raw: 'the high republic light of the jedi', tag: 'suffix(2)', parensStripped: true },
-      { raw: 'star wars light of the jedi', tag: 'first+last', parensStripped: true },
-      { raw: 'star wars', tag: 'prefix(1)', parensStripped: true },
-      { raw: 'light of the jedi', tag: 'suffix(1)', parensStripped: true },
+      { raw: 'star wars the high republic light of the jedi new order series', tag: 'full', parensStripped: false, lossy: false },
+      { raw: 'star wars the high republic light of the jedi', tag: 'full', parensStripped: true, lossy: false },
+      { raw: 'star wars the high republic', tag: 'prefix(2)', parensStripped: true, lossy: false },
+      { raw: 'the high republic light of the jedi', tag: 'suffix(2)', parensStripped: true, lossy: false },
+      { raw: 'star wars light of the jedi', tag: 'first+last', parensStripped: true, lossy: false },
+      { raw: 'star wars', tag: 'prefix(1)', parensStripped: true, lossy: false },
+      { raw: 'light of the jedi', tag: 'suffix(1)', parensStripped: true, lossy: false },
     ]);
   });
 
@@ -94,7 +94,7 @@ describe('titleVariants', () => {
     // No sheared variant exists at all: the paren-stripped base has no colon.
     expect(derived.map((v) => v.raw)).toEqual(['the spiral path']);
     expect(variants.filter((v) => v.raw.includes('world of warcraft'))).toEqual([
-      { raw: 'the spiral path world of warcraft traveler book 2', tag: 'full', parensStripped: false },
+      { raw: 'the spiral path world of warcraft traveler book 2', tag: 'full', parensStripped: false, lossy: false },
     ]);
   });
 
@@ -119,14 +119,14 @@ describe('titleVariants', () => {
       ['IT: Chapter Two', 'it chapter two'],
     ])('does not segment %s (left context < 3)', (title, expectedFull) => {
       const variants = titleVariants(title);
-      expect(variants).toEqual([{ raw: expectedFull, tag: 'full', parensStripped: false }]);
+      expect(variants).toEqual([{ raw: expectedFull, tag: 'full', parensStripped: false, lossy: false }]);
     });
 
     it('segments `A B: C` — internal whitespace counts toward the 3-char left context', () => {
       expect(titleVariants('A B: C')).toEqual([
-        { raw: 'a b c', tag: 'full', parensStripped: false },
-        { raw: 'a b', tag: 'prefix(1)', parensStripped: true },
-        { raw: 'c', tag: 'suffix(1)', parensStripped: true },
+        { raw: 'a b c', tag: 'full', parensStripped: false, lossy: false },
+        { raw: 'a b', tag: 'prefix(1)', parensStripped: true, lossy: false },
+        { raw: 'c', tag: 'suffix(1)', parensStripped: true, lossy: false },
       ]);
     });
   });
@@ -146,7 +146,7 @@ describe('titleVariants', () => {
     );
 
     it('yields no colon-derived variant when the only colon fails the threshold', () => {
-      expect(titleVariants('a::b')).toEqual([{ raw: 'a b', tag: 'full', parensStripped: false }]);
+      expect(titleVariants('a::b')).toEqual([{ raw: 'a b', tag: 'full', parensStripped: false, lossy: false }]);
     });
   });
 
@@ -156,9 +156,9 @@ describe('titleVariants', () => {
     const variants = titleVariants('Foo: Subtitle');
     assertWellFormed(variants);
     expect(variants).toEqual([
-      { raw: 'foo subtitle', tag: 'full', parensStripped: false },
-      { raw: 'foo', tag: 'prefix(1)', parensStripped: true },
-      { raw: 'subtitle', tag: 'suffix(1)', parensStripped: true },
+      { raw: 'foo subtitle', tag: 'full', parensStripped: false, lossy: false },
+      { raw: 'foo', tag: 'prefix(1)', parensStripped: true, lossy: false },
+      { raw: 'subtitle', tag: 'suffix(1)', parensStripped: true, lossy: false },
     ]);
     // `prefix(2)` equalled the full and was dropped, not re-emitted under a second tag.
     expect(variants.some((v) => v.tag === 'prefix(2)')).toBe(false);
@@ -202,6 +202,93 @@ describe('titleVariants', () => {
       expect(Number.isInteger(n)).toBe(true);
       expect(n).toBeGreaterThan(0);
     }
+  });
+
+  /**
+   * #2110 — per-SLICE character survival. `hasDegenerateFullForm` answers "did
+   * the ASCII fold eat identity-bearing content?" for a whole title; `lossy`
+   * asks it of every slice, computed on the RAW slice text before
+   * normalization. The pairing rule refuses a lossy variant as OFFERED
+   * evidence, which is the variant-level form of the guard #2096 applied only
+   * to whole FULL forms.
+   */
+  describe('per-variant lossy flag (#2110)', () => {
+    // The verified D3 table, asserted as full arrays so membership, order and
+    // the flag are all pinned together.
+    it('flags the paren-stripped full of a Russian-edition-with-translation title', () => {
+      // `prefix(1)` ('World of Warcraft') would be non-lossy, but it collapses
+      // onto the earlier lossy entry and dedup keeps the FIRST occurrence — so
+      // the bare franchise prefix is never offered as evidence at all.
+      expect(titleVariants('World of Warcraft: Тревелер (Traveler)')).toEqual([
+        { raw: 'world of warcraft traveler', tag: 'full', parensStripped: false, lossy: true },
+        { raw: 'world of warcraft', tag: 'full', parensStripped: true, lossy: true },
+      ]);
+    });
+
+    it('flags only the slice that lost characters, leaving its siblings usable', () => {
+      expect(titleVariants('Star Wars: 前夜Thrawn')).toEqual([
+        { raw: 'star wars thrawn', tag: 'full', parensStripped: false, lossy: true },
+        { raw: 'star wars', tag: 'prefix(1)', parensStripped: true, lossy: false },
+        { raw: 'thrawn', tag: 'suffix(1)', parensStripped: true, lossy: true },
+      ]);
+    });
+
+    it('leaves the pinned #2096 true positive non-lossy', () => {
+      // 'Sønner' is degenerate as a WHOLE title (ø does not decompose), but the
+      // fragment it offers lost nothing, so the pairing survives.
+      expect(titleVariants("Sønner: Assassin's Apprentice")).toEqual([
+        { raw: "s nner assassin's apprentice", tag: 'full', parensStripped: false, lossy: true },
+        { raw: 's nner', tag: 'prefix(1)', parensStripped: true, lossy: true },
+        { raw: "assassin's apprentice", tag: 'suffix(1)', parensStripped: true, lossy: false },
+      ]);
+    });
+
+    /**
+     * Mixed corpus for the two flag properties — ASCII, Latin-accented,
+     * Cyrillic, CJK-mixed, non-decomposing Latin and an out-of-block mark.
+     */
+    const mixedCorpus = [
+      'Chapterhouse: Dune',
+      'The Churn: An Expanse Novella',
+      'star wars: the high republic: Light of the Jedi (New Order Series)',
+      'Les Misérables: Tome I',
+      'Café: A Novel',
+      'World of Warcraft: Перед бурей',
+      'World of Warcraft: Тревелер (Traveler)',
+      'Star Wars: 前夜Thrawn',
+      'World of Warcraft: A前夜',
+      "Sønner: Assassin's Apprentice",
+      'Straße: Beyond the Dark Portal',
+      'Sa᷀ga: Book One',
+      'Foundation (1951)',
+      'Перед бурей',
+      '[ ]',
+    ];
+
+    // AC13 (D5) — the parens-intact FULL variant is pushed first, from the whole
+    // title, so its flag IS `hasDegenerateFullForm` by construction. Inert for
+    // the derived arms, but it makes the flag self-consistent.
+    it('sets the parens-intact full variant flag to hasDegenerateFullForm(title)', () => {
+      const withFull = mixedCorpus.filter((title) => normalizeTitleForVariantMatch(title).length > 0);
+      expect(withFull.length).toBeGreaterThan(0);
+      for (const title of withFull) {
+        const full = titleVariants(title).find((v) => v.tag === 'full' && !v.parensStripped);
+        expect(full).toBeDefined();
+        expect(full!.lossy).toBe(hasDegenerateFullForm(title));
+      }
+    });
+
+    // AC14 (D3 invariant) — a slice cannot drop a character the whole title
+    // kept, so "the whole title is non-degenerate" implies every slice is
+    // non-lossy. This is what makes first-wins dedup safe: "first non-lossy,
+    // later lossy" is impossible.
+    it('emits no lossy variant for a title that is not degenerate as a whole', () => {
+      const nonDegenerate = mixedCorpus.filter((title) => !hasDegenerateFullForm(title));
+      expect(nonDegenerate.length).toBeGreaterThan(0);
+      for (const title of nonDegenerate) {
+        expect(titleVariants(title).filter((v) => v.lossy)).toEqual([]);
+      }
+    });
   });
 });
 
@@ -291,6 +378,48 @@ describe('hasDegenerateFullForm', () => {
     expect(hasDegenerateFullForm('The Spiral Path (World of Warcraft: Traveler, Book 2)')).toBe(false);
   });
 
+  /**
+   * #2110 AC8 — the AC1 rewrite of `normalizeTitleLosslessly` moves this
+   * guard's evidence, so every verdict pinned before it is re-asserted after
+   * it, in BOTH polarities. `'Sạch'` is the pin that Vietnamese tone marks live
+   * INSIDE U+0300–036F on a Latin base and therefore still fold away.
+   */
+  describe('verdicts unchanged by the #2110 lossless rewrite (AC8)', () => {
+    it.each([['Straße'], ['World of Warcraft: A前夜'], ['World of Warcraft: Перед бурей']])(
+      'still flags %j',
+      (title) => {
+        expect(hasDegenerateFullForm(title)).toBe(true);
+      },
+    );
+
+    it.each([
+      ['Chapterhouse: Dune'],
+      ['Foundation (1951)'],
+      ['Les Misérables'],
+      ["Hitchhiker's Guide"],
+      ['Sạch'],
+    ])('still does not flag %j', (title) => {
+      expect(hasDegenerateFullForm(title)).toBe(false);
+    });
+  });
+
+  /**
+   * #2110 AC9 / D1a — the strip is bounded to U+0300–036F, not to `\p{M}`.
+   * U+1DC0 sits on a Latin base but outside the band, and the SCALAR fold does
+   * not remove it either: it falls through to `[^a-z0-9' ]+` and fragments the
+   * word. Keeping it in the lossless form is what makes the loss visible.
+   *
+   * Counterfactual (run, verified): widen the strip to
+   * `(\p{Script=Latin})\p{M}+` and this fixture is the ONLY failure — every
+   * in-block fixture (AC2, AC5, AC7) stays green while a genuinely lossy title
+   * is silently trusted as complete.
+   */
+  it('flags an out-of-block combining mark on a Latin base (AC9)', () => {
+    expect(normalizeTitleForVariantMatch('Sa᷀ga: Book One')).toBe('sa ga book one');
+    expect(normalizeTitleLosslessly('Sa᷀ga: Book One')).toContain('᷀');
+    expect(hasDegenerateFullForm('Sa᷀ga: Book One')).toBe(true);
+  });
+
   it('does not flag a title that normalizes away entirely (the empty guard owns that)', () => {
     expect(hasDegenerateFullForm('[ ]')).toBe(false);
     expect(hasDegenerateFullForm('')).toBe(false);
@@ -303,15 +432,47 @@ describe('hasDegenerateFullForm', () => {
 
 describe('normalizeTitleLosslessly', () => {
   it('preserves every script while applying the same folds as the scalar form', () => {
-    // NOTE the trailing `и`: the combining-diacritic fold is script-agnostic, so
-    // Cyrillic `й` decomposes to `и` + breve and loses the breve exactly as `é`
-    // loses its acute. That is the intended behaviour — one consistent fold — and
-    // it costs nothing here, because the surviving letters still tell the two
-    // subtitles apart, which is all this form is used for.
-    expect(normalizeTitleLosslessly('World of Warcraft: Перед бурей')).toBe('world of warcraft перед буреи');
-    expect(normalizeTitleLosslessly('World of Warcraft: Последний страж')).toBe('world of warcraft последнии страж');
+    // #2110 AC7 / D10: the trailing `й` SURVIVES. This fixture used to pin
+    // `буреи`, under a comment calling the breve loss "the intended behaviour" —
+    // that comment was the defect. The combining-mark strip is script-agnostic
+    // only for LATIN bases now: Cyrillic `й` is `и` + breve, and the breve is
+    // identity-bearing, not a drift-tolerance nicety. This form is the SOLE
+    // evidence backing the degenerate FULL≡FULL arm, so a fold that erases an
+    // identity-bearing mark pairs exactly the titles that arm exists to refuse.
+    expect(normalizeTitleLosslessly('World of Warcraft: Перед бурей')).toBe('world of warcraft перед бурей');
+    expect(normalizeTitleLosslessly('World of Warcraft: Последний страж')).toBe('world of warcraft последний страж');
     expect(normalizeTitleLosslessly('World of Warcraft')).toBe('world of warcraft');
   });
+
+  // AC2/AC3 — the refusals the fold exists to make. Each pair differs ONLY by a
+  // combining mark outside the Latin-base band, so a script-agnostic strip
+  // collapses them together.
+  it.each([
+    ['World of Warcraft: май', 'World of Warcraft: маи', 'Cyrillic й is и + breve'],
+    ['किताब', 'कितीब', 'Devanagari matra ी is identity-bearing'],
+    ['סֵפֶר', 'ספר', 'Hebrew niqqud: pointed is not the unpointed spelling (D2)'],
+    ['كِتاب', 'كتاب', 'Arabic harakat: pointed is not the unpointed spelling (D2)'],
+  ])('refuses to fold %j onto %j — %s', (a, b) => {
+    expect(normalizeTitleLosslessly(a)).not.toBe(normalizeTitleLosslessly(b));
+  });
+
+  // AC4 — the keep class includes `\p{M}`, so an out-of-`\p{L}` mark is no
+  // longer punctuation. Before #2110 this produced `'क त ब'`: three word
+  // fragments, which both false-paired and false-refused.
+  it('does not fragment a word whose vowels are combining marks (AC4)', () => {
+    expect(normalizeTitleLosslessly('किताब')).not.toContain(' ');
+    expect(normalizeTitleLosslessly('किताब')).toBe('किताब');
+  });
+
+  // AC6 — the trailing `.normalize('NFC')` is load-bearing, not cosmetic:
+  // without it an ordinary (NFC) test literal would not equal the function's
+  // decomposed output for any title carrying a surviving mark.
+  it.each([['World of Warcraft: Перед бурей'], ['किताब'], ['Les Misérables']])(
+    'is independent of the input normalization form for %j (AC6)',
+    (title) => {
+      expect(normalizeTitleLosslessly(title.normalize('NFC'))).toBe(normalizeTitleLosslessly(title.normalize('NFD')));
+    },
+  );
 
   it('distinguishes titles the scalar form collapses together', () => {
     // The property the FULL≡FULL arm actually relies on: three titles that are
@@ -331,12 +492,15 @@ describe('normalizeTitleLosslessly', () => {
     expect(new Set(lossless).size).toBe(3);
   });
 
+  // AC5 — Latin accent drift is still tolerated, byte for byte. The mark strip
+  // narrowed to Latin bases; it did not narrow on Latin bases.
   it('tolerates exactly the drift the scalar form tolerates — and no more', () => {
     expect(normalizeTitleLosslessly('  WORLD  of   Warcraft (Unabridged) ')).toBe('world of warcraft');
     expect(normalizeTitleLosslessly('Cake & Puppets')).toBe('cake and puppets');
     expect(normalizeTitleLosslessly('Hitchhiker’s Guide')).toBe("hitchhiker's guide");
     expect(normalizeTitleLosslessly('Les Misérables')).toBe('les miserables');
+    expect(normalizeTitleLosslessly('Café')).toBe('cafe');
     // But it does NOT erase a non-Latin script, which is the whole point.
-    expect(normalizeTitleLosslessly('Перед бурей')).toBe('перед буреи');
+    expect(normalizeTitleLosslessly('Перед бурей')).toBe('перед бурей');
   });
 });
