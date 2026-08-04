@@ -182,7 +182,7 @@ describe('SeriesCardService — unit', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it('orders positions [1, 2.5, null, 4] with null last and localeCompare tie-break on equal positions', async () => {
+    it('orders positions [1, 2.5, 4, null] with null last regardless of payload order', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Anchor', seriesName: 'Test Series', seriesPosition: 1, authorName: 'Some Author' });
       mockFetchOnce(hardcoverSeriesPayload({
         id: 9999,
@@ -193,15 +193,38 @@ describe('SeriesCardService — unit', () => {
           { position: 4, id: 4, slug: 'four', title: 'Book Four' },
           { position: 1, id: 1, slug: 'one', title: 'Book One' },
           { position: 2.5, id: 2, slug: 'two-five', title: 'Book Two-Five' },
-          // Equal positions → title tie-break (Alpha before Beta).
-          { position: 1, id: 6, slug: 'alpha', title: 'Alpha' },
         ],
       }));
 
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
       const card = await svc.getSeriesForBook(bookId);
 
-      expect(card!.members.map((m) => m.position)).toEqual([1, 1, 2.5, 4, null]);
+      expect(card!.members.map((m) => m.position)).toEqual([1, 2.5, 4, null]);
+      expect(card!.members.at(-1)!.title).toBe('Companion');
+    });
+
+    /**
+     * The comparator's equal-position title tie-break, seeded straight into the
+     * cache. It cannot be driven from a Hardcover payload any more: since #2097
+     * the adapter keeps at most one work per finite position, so two same-position
+     * members only ever reach the card from rows persisted by an earlier version.
+     * The comparator still has to order them, hence this test.
+     */
+    it('breaks an equal-position tie on title when the cache holds two rows at one position', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'Anchor', seriesName: 'Test Series', seriesPosition: 1, authorName: 'Some Author' });
+      const [seedRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 9999, name: 'Test Series', normalizedName: normalizeSeriesName('Test Series'), authorName: 'Some Author', lastFetchedAt: new Date(),
+      }).returning();
+      await db.insert(seriesMembers).values([
+        { seriesId: seedRow!.id, hardcoverBookId: 1, slug: 'one', title: 'Book One', normalizedTitle: 'book one', authorName: 'Some Author', position: 1, source: 'hardcover' },
+        { seriesId: seedRow!.id, hardcoverBookId: 6, slug: 'alpha', title: 'Alpha', normalizedTitle: 'alpha', authorName: 'Some Author', position: 1, source: 'hardcover' },
+        { seriesId: seedRow!.id, hardcoverBookId: 5, slug: 'companion', title: 'Companion', normalizedTitle: 'companion', authorName: 'Some Author', position: null, source: 'hardcover' },
+      ]);
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(bookId);
+
+      expect(card!.members.map((m) => m.position)).toEqual([1, 1, null]);
       // Position 1 tie broken by title: 'Alpha' < 'Book One'
       expect(card!.members.slice(0, 2).map((m) => m.title)).toEqual(['Alpha', 'Book One']);
       expect(card!.members.at(-1)!.title).toBe('Companion');
@@ -503,7 +526,14 @@ describe('SeriesCardService — unit', () => {
   // --- Scenario 7 & 8: member dedup + omnibus collapse (service boundary) ------
 
   describe('member dedup and no card inflation', () => {
-    it('two Hardcover members at the same position never both claim one library book', async () => {
+    /**
+     * The shared `matchedLibraryIds` claim set, driven from a payload shape the
+     * adapter still emits. Two members at ONE position can no longer reach the
+     * service (#2097 collapses them in `mapSeries`), but two UNPOSITIONED members
+     * whose titles both pair with the same library book can — and #2097 made that
+     * shape MORE common, because unpositioned works no longer collapse either.
+     */
+    it('two Hardcover members whose titles both pair never both claim one library book', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
       mockFetchOnce(hardcoverSeriesPayload({
         id: 5523,
@@ -511,9 +541,10 @@ describe('SeriesCardService — unit', () => {
         author: 'Nicholas Eames',
         members: [
           { position: 1, id: 1001, slug: 'kings', title: 'Kings of the Wyld' },
-          // Two members at position 2 — only one may claim the single library book.
-          { position: 2, id: 1002, slug: 'bloody-a', title: 'Bloody Rose A' },
-          { position: 2, id: 1003, slug: 'bloody-b', title: 'Bloody Rose B' },
+          // Both carry 'Bloody Rose' as their prefix(1) variant, so both pair with
+          // the library book on the title tier — only one may claim it.
+          { position: null, id: 1002, slug: 'bloody-a', title: 'Bloody Rose: Part One' },
+          { position: null, id: 1003, slug: 'bloody-b', title: 'Bloody Rose: Part Two' },
         ],
       }));
 

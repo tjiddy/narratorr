@@ -521,9 +521,14 @@ describe('SeriesCardService — integration', () => {
     });
 
     /**
-     * AC2.4 + AC2.6: Two Hardcover members at the same position must not BOTH
-     * claim the same library book during persist; only one row gets the
-     * `bookId` populated.
+     * AC2.4 + AC2.6: Two Hardcover members must not BOTH claim the same library
+     * book during persist; only one row gets the `bookId` populated.
+     *
+     * The fixture uses two UNPOSITIONED members whose titles both pair with the
+     * library book: since #2097 the adapter keeps at most one work per finite
+     * position, so two same-position members no longer reach `persistMembers` —
+     * while unpositioned works, which used to collapse under `DISTINCT ON`, now
+     * all arrive, making the shared claim set more load-bearing than before.
      */
     it('AC2.6: persist path does not duplicate library bookId across rows in the same series', async () => {
       const bookId = await seedBookWithSeries(db, {
@@ -532,15 +537,14 @@ describe('SeriesCardService — integration', () => {
         seriesPosition: 2,
         authorName: 'Nicholas Eames',
       });
-      // Hardcover returns two members at position 2 (rare but legal)
       const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
         data: {
           series: [{
             id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' },
             book_series: [
               { position: 1, book: { id: 1001, slug: 'kings', title: 'Kings of the Wyld', image: null, users_count: 100 } },
-              { position: 2, book: { id: 1002, slug: 'bloody-a', title: 'Bloody Rose A', image: null, users_count: 80 } },
-              { position: 2, book: { id: 1003, slug: 'bloody-b', title: 'Bloody Rose B', image: null, users_count: 60 } },
+              { position: null, book: { id: 1002, slug: 'bloody-a', title: 'Bloody Rose: Part One', image: null, users_count: 80 } },
+              { position: null, book: { id: 1003, slug: 'bloody-b', title: 'Bloody Rose: Part Two', image: null, users_count: 60 } },
             ],
           }],
         },
@@ -584,6 +588,95 @@ describe('SeriesCardService — integration', () => {
       const inLibraryMembers = card!.members.filter((m) => m.inLibrary);
       expect(inLibraryMembers).toHaveLength(1);
       expect(inLibraryMembers[0]!.libraryBookId).toBe(bookId);
+    });
+
+    /**
+     * #2097 AC14 — the live prod case (2026-08-03), end to end against a real
+     * migrated DB: World of Warcraft (hardcover_series_id 2375) position 15
+     * carries the Russian work "…: Перед бурей" (62 readers) alongside the
+     * English "Before the Storm" (7). Hasura used to collapse the pair by
+     * readership, so the cached row and the card both showed the Cyrillic title.
+     *
+     * The assertions walk the whole chain — persisted row, its `book_id` link,
+     * and the rendered member — because a picker that only fixed the mapped
+     * member would still leave the wrong title in `series_members`.
+     */
+    it('#2097 AC14: persists and renders the English work at WoW position 15, not the more-read Russian one', async () => {
+      const bookId = await seedBookWithSeries(db, {
+        title: 'Before the Storm',
+        seriesName: 'World of Warcraft',
+        seriesPosition: 15,
+        authorName: 'Christie Golden',
+      });
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        data: {
+          series: [{
+            id: 2375, name: 'World of Warcraft', slug: 'world-of-warcraft', author: { name: 'Christie Golden' },
+            book_series: [
+              { position: 14, book: { id: 300, slug: 'illidan', title: 'Illidan', image: null, users_count: 200 } },
+              { position: 15, book: { id: 465829, slug: 'pered-burey', title: 'World of Warcraft: Перед бурей', image: null, users_count: 62 } },
+              { position: 15, book: { id: 331, slug: 'before-the-storm', title: 'Before the Storm', image: null, users_count: 7 } },
+            ],
+          }],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof globalThis.fetch;
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(bookId);
+
+      const persisted = await db.select().from(series).where(eq(series.hardcoverSeriesId, 2375));
+      const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, persisted[0]!.id));
+      const atFifteen = memberRows.filter((m) => m.position === 15);
+      expect(atFifteen).toHaveLength(1);
+      expect(atFifteen[0]!.title).toBe('Before the Storm');
+      expect(atFifteen[0]!.hardcoverBookId).toBe(331);
+      expect(atFifteen[0]!.bookId).toBe(bookId);
+
+      const rendered = card!.members.filter((m) => m.position === 15);
+      expect(rendered).toHaveLength(1);
+      expect(rendered[0]!.title).toBe('Before the Storm');
+      expect(rendered[0]!.inLibrary).toBe(true);
+      expect(rendered[0]!.libraryBookId).toBe(bookId);
+    });
+
+    /**
+     * #2097 AC3 + AC12 — `DISTINCT ON` treated SQL NULLs as equal, so several
+     * unpositioned works in one series used to arrive as a single row. Each now
+     * persists on its own: `series_members` has no unique index on
+     * `(series_id, position)` (the two unique indexes are keyed by Hardcover id
+     * and by local book id), so there is no constraint violation and no silent
+     * overwrite.
+     */
+    it('#2097 AC3: persists one row per unpositioned work instead of collapsing them', async () => {
+      const bookId = await seedBookWithSeries(db, {
+        title: 'Kings of the Wyld',
+        seriesName: 'The Band',
+        seriesPosition: 1,
+        authorName: 'Nicholas Eames',
+      });
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        data: {
+          series: [{
+            id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' },
+            book_series: [
+              { position: 1, book: { id: 1001, slug: 'kings', title: 'Kings of the Wyld', image: null, users_count: 100 } },
+              { position: null, book: { id: 2001, slug: 'art-book', title: 'The Art of the Band', image: null, users_count: 9 } },
+              { position: null, book: { id: 2002, slug: 'companion', title: 'A Band Companion', image: null, users_count: 4 } },
+              { position: null, book: { id: 2003, slug: 'sketches', title: 'Sketches from the Road', image: null, users_count: 1 } },
+            ],
+          }],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof globalThis.fetch;
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(bookId);
+
+      const persisted = await db.select().from(series).where(eq(series.hardcoverSeriesId, 5523));
+      const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, persisted[0]!.id));
+      expect(memberRows).toHaveLength(4);
+      const unpositioned = memberRows.filter((m) => m.position === null);
+      expect(unpositioned.map((m) => m.hardcoverBookId).sort((a, b) => a! - b!)).toEqual([2001, 2002, 2003]);
+      expect(card!.members).toHaveLength(4);
     });
 
     /**

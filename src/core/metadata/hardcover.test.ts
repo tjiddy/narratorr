@@ -110,6 +110,162 @@ describe('HardcoverClient', () => {
     });
   });
 
+  /**
+   * #2097 — Hardcover carries duplicate WORKS at one position (a translation
+   * registered as its own work rather than an edition). `distinct_on: position`
+   * let Hasura collapse those server-side, keeping the MOST-READ row regardless
+   * of script; the collapse now happens client-side in
+   * `pickPreferredMembersByPosition`, which prefers the Latin-script work first
+   * and only then falls back to readership.
+   *
+   * Both queries are asserted because both feed the single `mapSeries`
+   * producer: fixing only the by-id query would leave the automatic-resolve path
+   * (name + author) still collapsing by readership.
+   */
+  describe('members query shape — no server-side collapse (#2097 AC1)', () => {
+    async function outgoingQuery(call: () => Promise<unknown>): Promise<string> {
+      fetchMock.mockResolvedValueOnce(buildJsonResponse({ data: { series: [] } }));
+      await call();
+      const init = fetchMock.mock.calls[0]![1] as RequestInit;
+      return JSON.parse(init.body as string).query as string;
+    }
+
+    it.each([
+      ['getSeriesMembers', () => new HardcoverClient('K').getSeriesMembers('The Band', 'Nicholas Eames')],
+      ['getSeriesMembersById', () => new HardcoverClient('K').getSeriesMembersById(2375)],
+    ])('%s no longer asks Hasura to collapse same-position rows', async (_name, call) => {
+      const query = await outgoingQuery(call);
+      expect(query).not.toContain('distinct_on');
+    });
+
+    it.each([
+      ['getSeriesMembers', () => new HardcoverClient('K').getSeriesMembers('The Band', 'Nicholas Eames')],
+      ['getSeriesMembersById', () => new HardcoverClient('K').getSeriesMembersById(2375)],
+    ])('%s keeps the ordering clause and the users_count selection the picker reads', async (_name, call) => {
+      const query = await outgoingQuery(call);
+      expect(query).toContain('position: asc');
+      expect(query).toContain('users_count: desc');
+      // The tie-break reads it off the raw row, so it must stay selected.
+      expect(query).toContain('book { id slug title image { url } users_count }');
+    });
+  });
+
+  /**
+   * #2097 — the adapter half of the fix: the response now legitimately carries
+   * several rows per position, and `mapSeries` resolves them.
+   */
+  describe('same-position duplicate works (#2097)', () => {
+    const RUSSIAN_WOW = { id: 465829, slug: 'pered-burey', title: 'World of Warcraft: Перед бурей', image: null, users_count: 62 };
+    const ENGLISH_WOW = { id: 331, slug: 'before-the-storm', title: 'Before the Storm', image: null, users_count: 7 };
+
+    function seriesResponse(bookSeries: unknown[]): Response {
+      return buildJsonResponse({
+        data: { series: [{ id: 2375, name: 'World of Warcraft', slug: 'world-of-warcraft', author: { name: 'Christie Golden' }, book_series: bookSeries }] },
+      });
+    }
+
+    it('parses a payload with two rows at one position without raising MetadataError (AC11)', async () => {
+      fetchMock.mockResolvedValueOnce(seriesResponse([
+        { position: 15, book: RUSSIAN_WOW },
+        { position: 15, book: ENGLISH_WOW },
+      ]));
+      await expect(new HardcoverClient('K').getSeriesMembersById(2375)).resolves.not.toBeNull();
+    });
+
+    /**
+     * AC14, live prod case (2026-08-03). The Russian work wins on readership
+     * 62-to-7 and still loses the slot — that inversion is the whole fix.
+     */
+    it('resolves WoW position 15 to the English work end to end (AC14)', async () => {
+      fetchMock.mockResolvedValueOnce(seriesResponse([
+        { position: 14, book: { id: 300, slug: 'illidan', title: 'Illidan', image: null, users_count: 200 } },
+        { position: 15, book: RUSSIAN_WOW },
+        { position: 15, book: ENGLISH_WOW },
+      ]));
+      const result = await new HardcoverClient('K').getSeriesMembersById(2375);
+      const atFifteen = result!.members.filter((m) => m.position === 15);
+      expect(atFifteen).toHaveLength(1);
+      expect(atFifteen[0]!.title).toBe('Before the Storm');
+      expect(atFifteen[0]!.hardcoverBookId).toBe(331);
+      // The other slot is untouched.
+      expect(result!.members.map((m) => m.hardcoverBookId)).toEqual([300, 331]);
+    });
+
+    it('applies the same dedup on the name+author resolve path (AC1)', async () => {
+      fetchMock.mockResolvedValueOnce(seriesResponse([
+        { position: 15, book: RUSSIAN_WOW },
+        { position: 15, book: ENGLISH_WOW },
+      ]));
+      const result = await new HardcoverClient('K').getSeriesMembers('World of Warcraft', 'Christie Golden');
+      expect(result!.members.map((m) => m.hardcoverBookId)).toEqual([331]);
+    });
+
+    /**
+     * AC8 — the length filter runs BEFORE the picker, so an over-length title
+     * is out of the group entirely and its sibling keeps the slot instead of the
+     * position being lost. Both directions are asserted: a reversed
+     * implementation (dedupe first, drop after) yields an empty slot in exactly
+     * one of them.
+     */
+    it('drops an over-length title before the pick, leaving the Cyrillic sibling holding the slot (AC8)', async () => {
+      const overLength = 'B'.repeat(2049);
+      fetchMock.mockResolvedValueOnce(seriesResponse([
+        { position: 5, book: { id: 500, slug: 'long-en', title: overLength, image: null, users_count: 900 } },
+        { position: 5, book: { id: 501, slug: 'ru', title: 'Перед бурей', image: null, users_count: 3 } },
+      ]));
+      const result = await new HardcoverClient('K').getSeriesMembersById(2375);
+      expect(result!.members).toHaveLength(1);
+      expect(result!.members[0]!.hardcoverBookId).toBe(501);
+      expect(result!.members[0]!.title).toBe('Перед бурей');
+    });
+
+    it('drops an over-length Cyrillic title before the pick, leaving the English sibling (AC8 mirror)', async () => {
+      const overLength = `Перед бурей ${'б'.repeat(2049)}`;
+      fetchMock.mockResolvedValueOnce(seriesResponse([
+        { position: 5, book: { id: 502, slug: 'long-ru', title: overLength, image: null, users_count: 900 } },
+        { position: 5, book: { id: 503, slug: 'en', title: 'Before the Storm', image: null, users_count: 3 } },
+      ]));
+      const result = await new HardcoverClient('K').getSeriesMembersById(2375);
+      expect(result!.members).toHaveLength(1);
+      expect(result!.members[0]!.hardcoverBookId).toBe(503);
+    });
+
+    /**
+     * AC3 — the counter-assertion against the old collapse. `DISTINCT ON` treats
+     * SQL NULLs as equal, so all three unpositioned works used to come back as
+     * one row; each is a different book and each now surfaces.
+     */
+    it('returns every unpositioned work instead of collapsing them to one (AC3)', async () => {
+      fetchMock.mockResolvedValueOnce(seriesResponse([
+        { position: null, book: { id: 601, slug: 'a', title: 'Companion A', image: null, users_count: 5 } },
+        { position: null, book: { id: 602, slug: 'b', title: 'Companion B', image: null, users_count: 4 } },
+        { position: null, book: { id: 603, slug: 'c', title: 'Companion C', image: null, users_count: 3 } },
+      ]));
+      const result = await new HardcoverClient('K').getSeriesMembersById(2375);
+      expect(result!.members.map((m) => m.hardcoverBookId)).toEqual([601, 602, 603]);
+      expect(result!.members.map((m) => m.position)).toEqual([null, null, null]);
+    });
+
+    /**
+     * AC9 non-regression — a series with no same-position duplicates maps
+     * exactly as it did before the picker existed: same ids, titles, positions,
+     * same order.
+     */
+    it('leaves an all-distinct-position series byte-identical (AC9)', async () => {
+      fetchMock.mockResolvedValueOnce(seriesResponse([
+        { position: 1, book: { id: 1001, slug: 'kings', title: 'Kings of the Wyld', image: { url: 'https://img/1' }, users_count: 100 } },
+        { position: 2, book: { id: 1002, slug: 'bloody', title: 'Bloody Rose', image: null, users_count: 80 } },
+        { position: 3, book: { id: 1003, slug: 'heretic', title: 'Heretic', image: null, users_count: 60 } },
+      ]));
+      const result = await new HardcoverClient('K').getSeriesMembersById(2375);
+      expect(result!.members).toEqual([
+        { hardcoverBookId: 1001, slug: 'kings', title: 'Kings of the Wyld', position: 1, imageUrl: 'https://img/1' },
+        { hardcoverBookId: 1002, slug: 'bloody', title: 'Bloody Rose', position: 2, imageUrl: null },
+        { hardcoverBookId: 1003, slug: 'heretic', title: 'Heretic', position: 3, imageUrl: null },
+      ]);
+    });
+  });
+
   describe('Response shape', () => {
     it('surfaces series.author.name on the resolved series object', async () => {
       fetchMock.mockResolvedValueOnce(buildJsonResponse({
