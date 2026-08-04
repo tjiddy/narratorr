@@ -49,7 +49,7 @@ function hydratedBook(overrides?: Record<string, unknown>) {
   };
 }
 
-/** A SearchResult-shaped row as IndexerSearchService.searchAll returns it. */
+/** A SearchResult-shaped row as IndexerSearchService.searchAllWithStatus returns it. */
 function searchResult(overrides?: Record<string, unknown>) {
   return {
     title: 'The Way of Kings (Unabridged)',
@@ -114,7 +114,7 @@ const authService = {
 } as unknown as AuthService;
 
 const bookService = { getById: vi.fn() } as unknown as BookService;
-const indexerSearchService = { searchAll: vi.fn() } as unknown as IndexerSearchService;
+const indexerSearchService = { searchAllWithStatus: vi.fn() } as unknown as IndexerSearchService;
 const downloadOrchestrator = { grab: vi.fn() } as unknown as DownloadOrchestrator;
 const downloadService = { getById: vi.fn() } as unknown as DownloadService;
 // #1800 — post-processing deps for the shared display filter chain the v1
@@ -151,7 +151,7 @@ describe('v1 action routes (search + grab)', () => {
     (authService.validateApiKey as Mock).mockResolvedValue(true);
     (authService.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
     (bookService.getById as Mock).mockResolvedValue(hydratedBook());
-    (indexerSearchService.searchAll as Mock).mockResolvedValue([]);
+    (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
     (downloadService.getById as Mock).mockResolvedValue(null);
     // Pass-all post-processing defaults so the existing search tests still see
     // their raw fixtures survive the filter chain (blacklist/quality/enrichment).
@@ -185,7 +185,7 @@ describe('v1 action routes (search + grab)', () => {
 
       expect(res.statusCode).toBe(404);
       expectV1Envelope(res.json());
-      expect(indexerSearchService.searchAll as Mock).not.toHaveBeenCalled();
+      expect(indexerSearchService.searchAllWithStatus as Mock).not.toHaveBeenCalled();
     });
 
     // #1983 F3 — pins the CANONICAL `v1PublicIdParamSchema` (`.trim().min(1)`) as this
@@ -204,12 +204,12 @@ describe('v1 action routes (search + grab)', () => {
         // search fan-out was reached.
         expect(db.select).not.toHaveBeenCalled();
         expect(bookService.getById as Mock).not.toHaveBeenCalled();
-        expect(indexerSearchService.searchAll as Mock).not.toHaveBeenCalled();
+        expect(indexerSearchService.searchAllWithStatus as Mock).not.toHaveBeenCalled();
       },
     );
 
     it('returns 200 with a { data, total } envelope of opaque releases (no raw downloadUrl/infoHash/guid)', async () => {
-      (indexerSearchService.searchAll as Mock).mockResolvedValue([searchResult(), searchResult({ guid: 'guid-2', title: 'Words of Radiance' })]);
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [searchResult(), searchResult({ guid: 'guid-2', title: 'Words of Radiance' })], succeeded: 1, failed: 0 });
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -232,7 +232,7 @@ describe('v1 action routes (search + grab)', () => {
       // absent-then-nulled seeders; the v1 DTO has no leechers field.
       const { seeders: _drop, ...noSeeders } = searchResult();
       void _drop;
-      (indexerSearchService.searchAll as Mock).mockResolvedValue([noSeeders]);
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [noSeeders], succeeded: 1, failed: 0 });
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -243,20 +243,60 @@ describe('v1 action routes (search + grab)', () => {
       expect(body.data[0]).not.toHaveProperty('leechers');
     });
 
-    it('feeds the resolved book into the query and forwards { title, author } to searchAll', async () => {
-      (indexerSearchService.searchAll as Mock).mockResolvedValue([]);
+    it('feeds the resolved book into the query and forwards the ranking context to searchAllWithStatus', async () => {
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
 
       await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
-      expect(indexerSearchService.searchAll as Mock).toHaveBeenCalledTimes(1);
-      const [query, options] = (indexerSearchService.searchAll as Mock).mock.calls[0]!;
+      const calls = (indexerSearchService.searchAllWithStatus as Mock).mock.calls;
+
+      // Rung 1 is the canonical query, byte-identical to the pre-ladder one.
+      const [query, options] = calls[0]!;
       expect(query).toContain('Way of Kings');
       expect(query).toContain('Brandon Sanderson');
-      expect(options).toEqual({ title: 'The Way of Kings', author: 'Brandon Sanderson' });
+      expect(options).toEqual({ title: 'The Way of Kings', author: 'Brandon Sanderson', rankingAuthor: 'Brandon Sanderson' });
+
+      // v1 discovery runs the full ladder (#2104 AC28). "The Way of Kings" is
+      // colon-free and paren-free, so that costs exactly ONE extra rung — the
+      // author-dropped one, which keeps the canonical author for RANKING while
+      // dropping it from transport.
+      expect(calls.map(([q, o]) => [q, (o as { author?: string }).author])).toEqual([
+        ['The Way of Kings Brandon Sanderson', 'Brandon Sanderson'],
+        ['the way of kings', undefined],
+      ]);
+    });
+
+    // AC28 — v1 search is DISCOVERY only, so it runs the full ladder with no
+    // corroboration floor; the response envelope stays unchanged. The `.strict()`
+    // release DTO is the enforcement point for "no rung disclosure".
+    it('returns candidates found only at a relaxed rung, with no rung field on the envelope (AC28)', async () => {
+      (bookService.getById as Mock).mockResolvedValue({
+        ...hydratedBook(),
+        title: 'The Churn: An Expanse Novella',
+      });
+      (indexerSearchService.searchAllWithStatus as Mock).mockImplementation(async (query: string) => ({
+        results: query === 'the churn Brandon Sanderson' ? [searchResult({ title: 'The Churn (Unabridged)' })] : [],
+        succeeded: 1,
+        failed: 0,
+      }));
+
+      const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { data: Array<Record<string, unknown>>; total: number };
+      expect(body.total).toBe(1);
+      expect(Object.keys(body)).toEqual(['data', 'total']);
+      expect(body.data[0]).not.toHaveProperty('relaxedQuery');
+      expect(body.data[0]).not.toHaveProperty('rung');
+
+      // The winning rung really was a relaxed one.
+      const queries = (indexerSearchService.searchAllWithStatus as Mock).mock.calls.map((c) => c[0] as string);
+      expect(queries[0]).toBe('The Churn An Expanse Novella Brandon Sanderson');
+      expect(queries.at(-1)).toBe('the churn Brandon Sanderson');
     });
 
     it('returns 200 { data: [], total: 0 } on an empty result set (not 404, not an error)', async () => {
-      (indexerSearchService.searchAll as Mock).mockResolvedValue([]);
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -264,14 +304,14 @@ describe('v1 action routes (search + grab)', () => {
       expect(res.json()).toEqual({ data: [], total: 0 });
     });
 
-    it('returns a 400 v1 envelope when the derived query normalizes to empty (searchAll never called)', async () => {
+    it('returns a 400 v1 envelope when the derived query normalizes to empty (searchAllWithStatus never called)', async () => {
       (bookService.getById as Mock).mockResolvedValue({ ...createMockDbBook({ id: BOOK_ID, title: '...' }), authors: [] });
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
       expect(res.statusCode).toBe(400);
       expectV1Envelope(res.json());
-      expect(indexerSearchService.searchAll as Mock).not.toHaveBeenCalled();
+      expect(indexerSearchService.searchAllWithStatus as Mock).not.toHaveBeenCalled();
     });
 
     // ------------------------------------------------------------------------
@@ -281,7 +321,7 @@ describe('v1 action routes (search + grab)', () => {
     it('excludes a blacklisted release (by guid) from the v1 data list; total is the filtered count', async () => {
       const clean = searchResult({ guid: 'clean-guid', title: 'Words of Radiance (Unabridged)' });
       const blacklisted = searchResult({ guid: 'blk-guid', title: 'Oathbringer (Unabridged)' });
-      (indexerSearchService.searchAll as Mock).mockResolvedValue([clean, blacklisted]);
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [clean, blacklisted], succeeded: 1, failed: 0 });
       (blacklistService.getBlacklistedIdentifiers as Mock).mockResolvedValue({
         blacklistedHashes: new Set<string>(),
         blacklistedGuids: new Set(['blk-guid']),
@@ -308,7 +348,7 @@ describe('v1 action routes (search + grab)', () => {
         guid: 'usenet-guid',
       });
       const full = searchResult({ guid: 'full-guid', title: 'Words of Radiance (Unabridged)' });
-      (indexerSearchService.searchAll as Mock).mockResolvedValue([partial, full]);
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [partial, full], succeeded: 1, failed: 0 });
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -319,7 +359,7 @@ describe('v1 action routes (search + grab)', () => {
     });
 
     it('keeps the v1 envelope unchanged: only { data, total }, no unsupportedResults/durationUnknown, total === data.length', async () => {
-      (indexerSearchService.searchAll as Mock).mockResolvedValue([searchResult(), searchResult({ guid: 'guid-2', title: 'Oathbringer' })]);
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [searchResult(), searchResult({ guid: 'guid-2', title: 'Oathbringer' })], succeeded: 1, failed: 0 });
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -408,7 +448,7 @@ describe('v1 action routes (search + grab)', () => {
       // out must verify on the grab endpoint. Mint it via the real search route
       // (not a hand-signed token) so an accidental re-wire of search to the
       // unsigned body encoder would fail here even while the reject tests stay green.
-      (indexerSearchService.searchAll as Mock).mockResolvedValue([searchResult()]);
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [searchResult()], succeeded: 1, failed: 0 });
 
       const searchRes = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
       expect(searchRes.statusCode).toBe(200);
@@ -458,7 +498,7 @@ describe('v1 action routes (search + grab)', () => {
       expect(res.statusCode).toBe(201);
       expect(downloadOrchestrator.grab as Mock).toHaveBeenCalledTimes(1);
       // Grab never touches the search/filter chain.
-      expect(indexerSearchService.searchAll as Mock).not.toHaveBeenCalled();
+      expect(indexerSearchService.searchAllWithStatus as Mock).not.toHaveBeenCalled();
       expect(blacklistService.getBlacklistedIdentifiers as Mock).not.toHaveBeenCalled();
     });
   });

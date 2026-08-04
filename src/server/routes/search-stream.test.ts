@@ -802,3 +802,247 @@ describe('searchStreamRoutes — unmocked postProcessSearchResults', () => {
     expect(data).toHaveProperty('unsupportedResults');
   });
 });
+
+// ============================================================================
+// #2104 — progressive query relaxation on the interactive surface
+// ============================================================================
+
+describe('GET /api/search/stream — query ladder (#2104)', () => {
+  const VALID_STREAM_TOKEN = 'valid-stream-token';
+  const BOOK_TITLE = 'The Churn: An Expanse Novella';
+  const AUTHOR = 'James S. A. Corey';
+  const CANONICAL_Q = 'The Churn An Expanse Novella James S A Corey';
+
+  /** Every rung the ladder builds for this book, in order. */
+  const RUNGS = [
+    CANONICAL_Q,
+    'the churn James S A Corey',
+    'an expanse novella James S A Corey',
+    'the churn an expanse novella',
+    'the churn',
+    'an expanse novella',
+  ];
+
+  function authService(): AuthService {
+    return {
+      validateApiKey: vi.fn().mockResolvedValue(true),
+      getSessionSecret: vi.fn().mockResolvedValue('test-secret'),
+      verifyStreamToken: vi.fn().mockImplementation((token: string) =>
+        token === VALID_STREAM_TOKEN ? { kind: 'stream', issuedAt: Date.now(), expiresAt: Date.now() + 60_000 } : null),
+      verifySessionCookie: vi.fn().mockReturnValue(null),
+      getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
+      hasUser: vi.fn().mockResolvedValue(true),
+    } as unknown as AuthService;
+  }
+
+  async function buildApp(indexerSearchService: IndexerSearchService) {
+    const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    await app.register(cookie);
+    await app.register(authPlugin, { authService: authService() });
+    const { searchStreamRoutes } = await import('./search-stream.js');
+    await searchStreamRoutes(
+      app,
+      indexerSearchService,
+      createMockBlacklistService(),
+      createMockSettingsService(),
+      mockIndexer,
+      new SearchSessionManager(),
+    );
+    return app;
+  }
+
+  /**
+   * Streaming search whose per-indexer answer depends on the transport query.
+   * `onComplete` is what increments the ladder's `succeeded` count, so a rung
+   * that reports completions with zero results is a GENUINE zero and advances.
+   */
+  function serviceAnswering(hitQuery: string | null, resultCount = 2) {
+    const controllerMaps: Array<Map<number, AbortController>> = [];
+    const service = {
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 1, name: 'AudioBookBay' }, { id: 2, name: 'MAM' }]),
+      searchAllStreaming: vi.fn().mockImplementation(
+        async (query: string, _o: unknown, controllers: Map<number, AbortController>, cb: {
+          onComplete: (id: number, name: string, count: number, ms: number) => void;
+        }) => {
+          controllerMaps.push(controllers);
+          const hit = query === hitQuery;
+          const count = hit ? resultCount : 0;
+          cb.onComplete(1, 'AudioBookBay', count, 10);
+          cb.onComplete(2, 'MAM', 0, 10);
+          return hit ? Array.from({ length: count }, (_v, i) => ({ title: `R${i}`, protocol: 'usenet', indexer: 'AudioBookBay' })) : [];
+        },
+      ),
+    } as unknown as IndexerSearchService;
+    return { service, controllerMaps };
+  }
+
+  const url = (params: Record<string, string>) =>
+    `/api/search/stream?${new URLSearchParams({ token: VALID_STREAM_TOKEN, ...params }).toString()}`;
+
+  const queriesOf = (svc: IndexerSearchService) =>
+    vi.mocked(svc.searchAllStreaming).mock.calls.map((c) => c[0] as string);
+
+  let postProcessSpy: MockInstance;
+  beforeEach(() => {
+    // Echo the winning rung's results through, so `search-complete` carries the
+    // ladder's output rather than a fixed empty payload.
+    postProcessSpy = vi.spyOn(searchPipeline, 'postProcessSearchResults')
+      .mockImplementation(async (results) => ({ results, durationUnknown: false, unsupportedResults: { count: 0, titles: [] } }));
+  });
+  afterEach(() => postProcessSpy.mockRestore());
+
+  // AC24 — rung 1 is the query the user asked for, so there is nothing to tell
+  // them. The key must be ABSENT, not present-and-undefined.
+  it('omits relaxedQuery entirely when rung 1 produced the hits (AC24)', async () => {
+    const { service } = serviceAnswering(CANONICAL_Q);
+    const app = await buildApp(service);
+    try {
+      const { events } = await fetchSseEvents(app, url({ q: CANONICAL_Q, title: BOOK_TITLE, author: AUTHOR }));
+      const complete = events.find((e) => e.event === 'search-complete')!;
+
+      expect(queriesOf(service)).toEqual([CANONICAL_Q]);
+      expect(complete.data as Record<string, unknown>).not.toHaveProperty('relaxedQuery');
+    } finally {
+      await app.close();
+    }
+  });
+
+  // AC24 — a relaxed winning rung is disclosed verbatim.
+  it('sets relaxedQuery to the winning rung query when rungs 2+ produced the hits (AC24)', async () => {
+    const { service } = serviceAnswering(RUNGS[3]!);
+    const app = await buildApp(service);
+    try {
+      const { events } = await fetchSseEvents(app, url({ q: CANONICAL_Q, title: BOOK_TITLE, author: AUTHOR }));
+      const complete = events.find((e) => e.event === 'search-complete')!;
+
+      expect(queriesOf(service)).toEqual(RUNGS.slice(0, 4));
+      expect((complete.data as { relaxedQuery?: string }).relaxedQuery).toBe('the churn an expanse novella');
+    } finally {
+      await app.close();
+    }
+  });
+
+  // AC26 — per-indexer counts need NO buffering: the client replaces its entry
+  // by `indexerId`, so the LAST frame per indexer is the winning rung's.
+  it('leaves the winning rung as the last indexer-complete frame per indexer (AC26)', async () => {
+    const { service } = serviceAnswering(RUNGS[3]!, 7);
+    const app = await buildApp(service);
+    try {
+      const { events } = await fetchSseEvents(app, url({ q: CANONICAL_Q, title: BOOK_TITLE, author: AUTHOR }));
+      const byIndexer = new Map<number, number>();
+      for (const e of events.filter((x) => x.event === 'indexer-complete')) {
+        const d = e.data as { indexerId: number; resultCount: number };
+        byIndexer.set(d.indexerId, d.resultCount);
+      }
+
+      expect(byIndexer.get(1)).toBe(7);
+      expect(byIndexer.get(2)).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  // AC27 — sticky cancellation. `SearchSessionManager` keeps one controller map
+  // for the session; the route hands the SAME map to every rung, which is what
+  // lets `searchAllStreaming`'s pre-adapter guard skip a cancelled indexer.
+  it('passes one sticky controller map to every rung, so a cancelled indexer is not re-queried (AC27)', async () => {
+    const cancelledFrames: number[] = [];
+    const queriedIndexers: number[][] = [];
+    const service = {
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 1, name: 'AudioBookBay' }, { id: 2, name: 'MAM' }]),
+      searchAllStreaming: vi.fn().mockImplementation(
+        async (_q: string, _o: unknown, controllers: Map<number, AbortController>, cb: {
+          onComplete: (id: number, name: string, count: number, ms: number) => void;
+          onCancelled?: (id: number, name: string) => void;
+        }) => {
+          const queried: number[] = [];
+          for (const [id, controller] of controllers) {
+            // Stand-in for the real pre-adapter abort guard: already-cancelled
+            // indexers are skipped with NO callback at all.
+            if (controller.signal.aborted) continue;
+            queried.push(id);
+            if (id === 1) {
+              controller.abort();
+              cb.onCancelled?.(1, 'AudioBookBay');
+              continue;
+            }
+            cb.onComplete(id, 'MAM', 0, 10);
+          }
+          queriedIndexers.push(queried);
+          return [];
+        },
+      ),
+    } as unknown as IndexerSearchService;
+
+    const app = await buildApp(service);
+    try {
+      const { events } = await fetchSseEvents(app, url({ q: CANONICAL_Q, title: BOOK_TITLE, author: AUTHOR }));
+      for (const e of events.filter((x) => x.event === 'indexer-cancelled')) {
+        cancelledFrames.push((e.data as { indexerId: number }).indexerId);
+      }
+
+      // Indexer 1 is queried on rung 1 and never again.
+      expect(queriedIndexers[0]).toEqual([1, 2]);
+      expect(queriedIndexers.slice(1).every((ids) => ids.every((id) => id !== 1))).toBe(true);
+      // COUNTERFACTUAL: build a fresh controller map per rung and indexer 1 is
+      // re-queried on every rung, emitting a duplicate frame each time.
+      expect(cancelledFrames).toEqual([1]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  // AC38 — with no canonical title there is nothing to relax, and inventing one
+  // from the free-text `q` would relax a string the user typed.
+  it('runs rung 1 only when the optional title param is absent (AC38)', async () => {
+    const { service } = serviceAnswering(null);
+    const app = await buildApp(service);
+    try {
+      await fetchSseEvents(app, url({ q: CANONICAL_Q }));
+      expect(queriesOf(service)).toEqual([CANONICAL_Q]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  // D13 — the pre-SSE empty-clean guard is deliberately PRESERVED. The user
+  // explicitly typed that query; silently searching for the canonical title
+  // instead is worse than telling them their input is unusable.
+  it('still returns 400 for a punctuation-only q even when a usable canonical title is present (D13)', async () => {
+    const { service } = serviceAnswering(null);
+    const app = await buildApp(service);
+    try {
+      const { status, events } = await fetchSseEvents(app, url({ q: '??', title: BOOK_TITLE, author: AUTHOR }));
+
+      expect(status).toBe(400);
+      expect(events.find((e) => e.event === 'search-start')).toBeUndefined();
+      expect(service.searchAllStreaming).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  // D13 — an EDITED query is rung 1 verbatim; only the relaxed rungs come from
+  // the canonical title.
+  it('uses the user-edited q verbatim as rung 1 while relaxing the canonical title (D13)', async () => {
+    const { service } = serviceAnswering(null);
+    const app = await buildApp(service);
+    try {
+      await fetchSseEvents(app, url({ q: 'churn expanse', title: BOOK_TITLE, author: AUTHOR }));
+
+      // The canonical `full` variant no longer collapses onto rung 1 (the
+      // edited query is a different search), so it takes its own rung — the
+      // surprising case is bounded to "user edited, got zero, saw canonical
+      // relaxations".
+      expect(queriesOf(service)).toEqual([
+        'churn expanse',
+        'the churn an expanse novella James S A Corey',
+        ...RUNGS.slice(1),
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+});

@@ -14,6 +14,7 @@ import { DuplicateDownloadError } from '../../services/download-errors.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import { resolveBookQualityInputs } from '@core/utils/index.js';
 import { buildSearchQuery, postProcessSearchResults } from '../../services/search-pipeline.js';
+import { buildQueryLadder, runQueryLadder } from '../../services/search-query-ladder.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
 import { downloadV1Schema, toDownloadV1 } from '@shared/schemas/v1/downloads.js';
 import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
@@ -231,10 +232,20 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
             return reply.status(400).send(envelope('BAD_REQUEST', 'Search query is empty after normalization'));
           }
 
+          // Progressive query relaxation (#2104). v1 search is DISCOVERY only —
+          // it returns candidates and never grabs — so it runs the full ladder
+          // with no corroboration floor, exactly like the interactive modal. The
+          // response envelope is unchanged: no rung disclosure on the public
+          // contract (the `.strict()` release DTO is the enforcement point).
           const author = book.authors?.[0]?.name;
-          const allResults = await deps.indexerSearchService.searchAll(query, {
-            title: book.title,
-            ...(author !== undefined && { author }),
+          const ladder = buildQueryLadder({ title: book.title, author, query });
+          const { results: allResults } = await runQueryLadder(ladder, async (rung) => {
+            const { results, succeeded } = await deps.indexerSearchService.searchAllWithStatus(rung.query, {
+              title: book.title,
+              author: rung.author,
+              rankingAuthor: author,
+            });
+            return { results, succeeded };
           });
 
           // #1800 — v1 search filtering contract. Route raw `searchAll` output

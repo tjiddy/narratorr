@@ -6,12 +6,14 @@ import { type SettingsService } from '../services/settings.service.js';
 import { type SearchSessionManager } from '../services/search-session.js';
 import { postProcessSearchResults } from '../services/search-pipeline.js';
 import { cleanIndexerQuery } from '../services/indexer-query.js';
+import { buildQueryLadder, runQueryLadder } from '../services/search-query-ladder.js';
 import { searchQuerySchema, type SearchQuery } from '@shared/schemas.js';
 import type {
   SearchStartEvent,
   IndexerCompleteEvent,
   IndexerErrorEvent,
   IndexerCancelledEvent,
+  SearchResponsePayload,
 } from '@shared/schemas/search-stream.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { SSE_HEARTBEAT_FRAME, startHeartbeat, stopHeartbeat } from '../utils/sse-stream.js';
@@ -100,30 +102,54 @@ export async function searchStreamRoutes(
         sessionManager.cleanup(session.sessionId);
       });
 
-      // Run streaming search
+      // Run the streaming search through the query ladder (#2104).
+      //
+      // The interactive surface runs the FULL ladder with NO floor — the user is
+      // reading the results and makes the call, so corroboration is theirs to
+      // do. Rung 1 is the user's `q` VERBATIM: `deriveQuery` prefills
+      // "{title} {author}" but the query is editable, and relaxing a string the
+      // user typed would be a surprise. Relaxed rungs relax the CANONICAL
+      // `title`, sent separately — so an edited query that returns hits never
+      // fires the ladder at all, and when `title` is absent entirely there is
+      // nothing to relax and only rung 1 runs.
+      //
+      // `session.controllers` is the same map on every rung, so an indexer the
+      // user cancels stays cancelled: `searchAllStreaming`'s pre-adapter abort
+      // guard skips it without emitting a duplicate frame. Per-indexer counts
+      // need no buffering either — the client replaces its entry by `indexerId`,
+      // so the winning rung's numbers are the ones left on screen.
       try {
-        const allResults = await indexerSearchService.searchAllStreaming(
-          q,
-          { limit, author, title },
-          session.controllers,
-          {
-            onComplete: (indexerId, name, resultCount, elapsedMs) => {
-              const event: IndexerCompleteEvent = { indexerId, name, resultCount, elapsedMs };
-              writeSSE(reply, 'indexer-complete', event);
+        const ladder = buildQueryLadder({ title: title ?? '', author, query: q });
+        const ran = await runQueryLadder(ladder, async (rung) => {
+          let succeeded = 0;
+          const results = await indexerSearchService.searchAllStreaming(
+            rung.query,
+            { limit, author: rung.author, title, rankingAuthor: author },
+            session.controllers,
+            {
+              onComplete: (indexerId, name, resultCount, elapsedMs) => {
+                succeeded++;
+                const event: IndexerCompleteEvent = { indexerId, name, resultCount, elapsedMs };
+                writeSSE(reply, 'indexer-complete', event);
+              },
+              onError: (indexerId, name, error, elapsedMs) => {
+                const event: IndexerErrorEvent = { indexerId, name, error, elapsedMs };
+                writeSSE(reply, 'indexer-error', event);
+              },
+              onCancelled: (indexerId, name) => {
+                const event: IndexerCancelledEvent = { indexerId, name };
+                writeSSE(reply, 'indexer-cancelled', event);
+              },
             },
-            onError: (indexerId, name, error, elapsedMs) => {
-              const event: IndexerErrorEvent = { indexerId, name, error, elapsedMs };
-              writeSSE(reply, 'indexer-error', event);
-            },
-            onCancelled: (indexerId, name) => {
-              const event: IndexerCancelledEvent = { indexerId, name };
-              writeSSE(reply, 'indexer-cancelled', event);
-            },
-          },
-        );
+          );
+          return { results, succeeded };
+        });
 
-        const processed = await postProcessSearchResults(allResults, bookDuration, blacklistService, settingsService, indexerService, request.log);
-        writeSSE(reply, 'search-complete', processed);
+        const processed = await postProcessSearchResults(ran.results, bookDuration, blacklistService, settingsService, indexerService, request.log);
+        // Disclose the winning rung only when it was a RELAXED one — rung 1 is
+        // the query the user asked for, so there is nothing to tell them.
+        const payload: SearchResponsePayload = ran.index === 0 ? processed : { ...processed, relaxedQuery: ran.rung.query };
+        writeSSE(reply, 'search-complete', payload);
       } catch (error: unknown) {
         request.log.error({ error: serializeError(error) }, 'Search stream error');
         writeSSE(reply, 'search-complete', {

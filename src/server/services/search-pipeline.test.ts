@@ -3068,7 +3068,11 @@ type TightenOptional<T> = {
 
 describe('postProcessSearchResults — search-complete payload schema compatibility (#734 AC1)', () => {
   it('return type is structurally compatible with searchResponseSchema', () => {
-    type TightSearchResponse = Omit<SearchResponsePayload, 'results'> & { results: TightenOptional<SearchResultPayload>[] };
+    // `relaxedQuery` is omitted deliberately: the query ladder's rung
+    // disclosure (#2104 D10) is added by the SSE ROUTE, which knows which rung
+    // won. `postProcessSearchResults` runs on one rung's results and has no way
+    // to know — so it is not part of its return contract.
+    type TightSearchResponse = Omit<SearchResponsePayload, 'results' | 'relaxedQuery'> & { results: TightenOptional<SearchResultPayload>[] };
     expectTypeOf<Awaited<ReturnType<typeof postProcessSearchResults>>>()
       .branded.toEqualTypeOf<TightSearchResponse>();
   });
