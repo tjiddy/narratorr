@@ -133,14 +133,50 @@ function colonSegments(base: string): string[] {
 
 /**
  * The LOSSLESS twin of `normalizeTitleForVariantMatch`: identical folds (curly
- * apostrophes, audio-edition tails, case, combining diacritics, `&`/`+` → "and",
- * punctuation-to-space, whitespace collapse) except that the character class is
- * Unicode-aware, so letters and digits in EVERY script survive.
+ * apostrophes, audio-edition tails, case, `&`/`+` → "and", punctuation-to-space,
+ * whitespace collapse) except that the character class is Unicode-aware, so
+ * letters, digits AND combining marks in every script survive.
  *
  * It exists to answer one question the lossy form cannot: are these two titles
  * actually the same text? It tolerates exactly the drift the scalar form
  * tolerates and nothing more, so using it as identity evidence never accepts a
  * pairing the scalar form would have rejected on those axes.
+ *
+ * The combining-mark strip is NARROW, and both halves of the bound are
+ * load-bearing (#2110):
+ *
+ *  - **Latin bases only.** Stripping marks script-agnostically is not a
+ *    "consistent fold", it is an identity erasure everywhere the mark is not a
+ *    drift artefact. Cyrillic `й` decomposes to `и` + breve, so an unqualified
+ *    strip pairs `"…: май"` with `"…: маи"` — two different books — through
+ *    exactly the degenerate FULL≡FULL arm this form is the sole evidence for.
+ *    Same for Devanagari matras, Arabic harakat and Hebrew niqqud, which the
+ *    old `[^\p{L}\p{N}' ]` keep class additionally turned into word-fragmenting
+ *    spaces (`"किताब"` → `"क त ब"`), producing false pairs AND false refusals.
+ *    On a Latin base the strip is unchanged, so `é` → `e` drift tolerance and
+ *    every `"Les Misérables"` ≡ `"Les Miserables"` pairing survive.
+ *  - **U+0300–036F only, not `\p{M}`.** An implementation that strips every
+ *    `\p{M}` after a Latin base passes every in-block fixture while breaking
+ *    the lockstep premise `hasDegenerateFullForm` rests on. `"Sa᷀ga: Book One"`
+ *    (Latin `a` + U+1DC0) scalar-folds to `"sa ga book one"` — the SCALAR
+ *    diacritic step does not reach U+1DC0 either, so the mark falls through to
+ *    `[^a-z0-9' ]+` and fragments the word. Keeping it here yields
+ *    `"sa᷀ga book one"` and a correct `degenerateFull: true`; stripping it
+ *    yields `"saga book one"` and silently trusts a genuinely lossy title. The
+ *    band is the contract, not an implementation detail.
+ *
+ * Optional pointing/vocalization is therefore NOT equivalent to its unpointed
+ * spelling, deliberately: "pronunciation aid" vs "identity-bearing vowel" is
+ * not decidable from `\p{Mn}`/`\p{Mc}` (Devanagari matras span both, and `ी` is
+ * exactly the character that must not fold). A false refusal costs a missing
+ * "In Library" badge, which position rescue still covers; a false pair puts a
+ * wrong badge on a different book. Same posture the module already takes on
+ * `ß`/`ø`/`æ`.
+ *
+ * `.normalize('NFC')` runs LAST, after the whitespace collapse and trim: the
+ * pipeline decomposes to apply the strip, so without recomposing, a title
+ * carrying a surviving mark would never equal the same title written in the
+ * ordinary composed form.
  */
 export function normalizeTitleLosslessly(title: string): string {
   return title
@@ -149,11 +185,12 @@ export function normalizeTitleLosslessly(title: string): string {
     .replace(/\[\s*(?:unabridged|audio|audible)\s*\]/gi, ' ')
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/(\p{Script=Latin})[̀-ͯ]+/gu, '$1')
     .replace(/\s*[&+]\s*/g, ' and ')
-    .replace(/[^\p{L}\p{N}' ]+/gu, ' ')
+    .replace(/[^\p{L}\p{N}\p{M}' ]+/gu, ' ')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    .normalize('NFC');
 }
 
 /**
@@ -243,11 +280,28 @@ export function titleVariants(title: string): SharedVariant[] {
 
   // `raw` is already lowercased and whitespace-collapsed, so it IS the
   // case-insensitive collapsed key — no second derivation to drift.
+  //
+  // `lossy` (#2110) asks `hasDegenerateFullForm`'s question of this SLICE, on
+  // the RAW slice text — before normalization, because the whole point is which
+  // characters the normalization discarded. The pairing rule refuses a lossy
+  // variant as OFFERED evidence: `"World of Warcraft: Тревелер (Traveler)"`
+  // must not claim a bare `"World of Warcraft"` through a fragment whose
+  // distinguishing content the fold ate, which is #2096's own lesson applied at
+  // the variant level rather than only at the full-form level.
+  //
+  // Dedup keeps the FIRST occurrence's flag, and that is safe in one direction
+  // only — which happens to be the right one. A slice cannot drop a character
+  // the whole title kept, so `hasDegenerateFullForm(title) === false` implies
+  // every slice is non-lossy: "first non-lossy, later lossy" cannot occur. The
+  // only real collision is "first lossy, later non-lossy", which retains the
+  // lossy flag — conservative, and exactly what kills the Тревелер case (its
+  // non-lossy `prefix(1)` collapses onto the earlier lossy entry and is never
+  // emitted at all).
   const push = (text: string, tag: SharedVariantTag, parensStripped: boolean): void => {
     const raw = normalizeTitleForVariantMatch(text);
     if (raw.length === 0 || seen.has(raw)) return;
     seen.add(raw);
-    variants.push({ raw, tag, parensStripped });
+    variants.push({ raw, tag, parensStripped, lossy: hasDegenerateFullForm(text) });
   };
 
   push(title, 'full', false);
