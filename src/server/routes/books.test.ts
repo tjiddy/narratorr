@@ -4055,6 +4055,14 @@ describe('#1071 series routes', () => {
       expect(summaryRecords(logSpies)[0]![0]).toMatchObject({
         bookId: 1, synced: 3, eligible: 3, retagged: 0, opfWritten: 3, failed: 0, taggingGateDegraded: true,
       });
+      // The degradation is not summary-only: it carries its own diagnostic, logged EXACTLY once
+      // for the pass and carrying a SERIALIZED error. `type` is the load-bearing term — a raw
+      // `Error` would satisfy a `message`-only matcher, so the assertion pins what it lacks.
+      expect(routeWarnings()).toHaveLength(1);
+      const gateWarn = routeWarnings()[0]![0] as { bookId: number; error: unknown };
+      expect(gateWarn.bookId).toBe(1);
+      expect(gateWarn.error).not.toBeInstanceOf(Error);
+      expect(gateWarn.error).toMatchObject({ type: 'Error', message: 'db blip' });
     });
 
     it('a sustained settings outage fails every OPF but adds no failure of its own', async () => {
@@ -4069,6 +4077,11 @@ describe('#1071 series routes', () => {
       expect(summaryRecords(logSpies)[0]![0]).toMatchObject({
         bookId: 1, synced: 3, eligible: 3, retagged: 0, opfWritten: 0, failed: 3, taggingGateDegraded: true,
       });
+      // ONE gate warning even though every read of the pass rejected — the gate is decided once,
+      // so its diagnostic cannot multiply per book. (The three per-book OPF rejections are the
+      // HELPER's own records, which carry a different message and are excluded by `routeWarnings`.)
+      expect(routeWarnings()).toHaveLength(1);
+      expect((routeWarnings()[0]![0] as { error: unknown }).error).toMatchObject({ type: 'Error', message: 'settings table gone' });
     });
 
     it('the pass emits exactly one summary info record after every id settles', async () => {
@@ -4108,6 +4121,38 @@ describe('#1071 series routes', () => {
       expect(routeWarnings()).toHaveLength(1);
       expect(writeOpfMock).not.toHaveBeenCalled();
       expect(summaryRecords(logSpies)[0]![0]).toMatchObject({ synced: 0, eligible: 0, failed: 0 });
+    });
+
+    it('each synced book fully settles before the next one starts', async () => {
+      // Invocation-order arrays cannot see this: under `Promise.all(syncedIds.map(...))` the three
+      // per-book chains interleave and still yield `[1, 7, 9]` in every array. Park book 1
+      // mid-pass instead — a parallel loop would have preloaded 7 and 9 by then.
+      primeTagging({ enabled: true, writeOpf: true });
+      primeBind([1, 7, 9]);
+      let releaseBookOne!: () => void;
+      const bookOneParked = new Promise<void>((resolve) => { releaseBookOne = resolve; });
+      (services.tagging.retagBook as Mock).mockImplementation(async (id: number) => {
+        if (id === 1) await bookOneParked;
+        return retagResult({ bookId: id });
+      });
+      const preloadIds = () => (services.book.getById as Mock).mock.calls.map((c) => c[0]);
+
+      const pending = bind();
+      await new Promise((resolve) => setTimeout(resolve, 10)); // drain everything that CAN proceed
+
+      // Book 1 is held inside its own retag: its OPF has not run, and books 7 and 9 have not even
+      // been preloaded. `[1, 1]` is the route's own 404 guard plus book 1's preload — nothing more.
+      expect(preloadIds()).toEqual([1, 1]);
+      expect(retagIds()).toEqual([1]);
+      expect(opfTargets()).toEqual([]);
+
+      releaseBookOne();
+      expect((await pending).statusCode).toBe(200);
+
+      // Released, the remaining ids run to completion in order.
+      expect(preloadIds()).toEqual([1, 1, 7, 9]);
+      expect(retagIds()).toEqual([1, 7, 9]);
+      expect(opfTargets().map((t) => t.bookId)).toEqual([1, 7, 9]);
     });
 
     it('the post-bind pass runs after the service resolves', async () => {
