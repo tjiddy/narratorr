@@ -4098,6 +4098,18 @@ describe('#1071 series routes', () => {
       });
     });
 
+    it('an empty synced list warns rather than passing silently', async () => {
+      // A non-null bind always rewrote at least the initiating book, so this is a bug shape
+      // (Hazard 1: a stale double, or a regression in the transaction's return value) — it must
+      // not read as a quiet zero-book pass.
+      primeBind([]);
+
+      expect((await bind()).statusCode).toBe(200);
+      expect(routeWarnings()).toHaveLength(1);
+      expect(writeOpfMock).not.toHaveBeenCalled();
+      expect(summaryRecords(logSpies)[0]![0]).toMatchObject({ synced: 0, eligible: 0, failed: 0 });
+    });
+
     it('the post-bind pass runs after the service resolves', async () => {
       primeTagging({ enabled: true, writeOpf: true });
       const order: string[] = [];
