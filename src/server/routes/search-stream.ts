@@ -146,9 +146,23 @@ export async function searchStreamRoutes(
         });
 
         const processed = await postProcessSearchResults(ran.results, bookDuration, blacklistService, settingsService, indexerService, request.log);
-        // Disclose the winning rung only when it was a RELAXED one — rung 1 is
-        // the query the user asked for, so there is nothing to tell them.
-        const payload: SearchResponsePayload = ran.index === 0 ? processed : { ...processed, relaxedQuery: ran.rung.query };
+        // Disclose the winning rung only when a RELAXED one actually produced the
+        // releases being shown. Both halves are load-bearing:
+        //
+        //  - `ran.index > 0` — rung 1 is the query the user asked for, so there
+        //    is nothing to tell them.
+        //  - `processed.results.length > 0` — `runQueryLadder` reports the last
+        //    rung it ATTEMPTED, so a ladder that exhausted, or one that aborted on
+        //    a later-rung outage, also lands on an index > 0 with an empty set;
+        //    and a rung that did return releases can still have every one of them
+        //    removed by the blacklist/quality/language gates above. In all three
+        //    the notice would sit next to "No releases found" and claim a match
+        //    that never happened.
+        //
+        // The resulting payload invariant is what the client relies on:
+        // `relaxedQuery` present implies `results` is non-empty.
+        const relaxed = ran.index > 0 && processed.results.length > 0;
+        const payload: SearchResponsePayload = relaxed ? { ...processed, relaxedQuery: ran.rung.query } : processed;
         writeSSE(reply, 'search-complete', payload);
       } catch (error: unknown) {
         request.log.error({ error: serializeError(error) }, 'Search stream error');

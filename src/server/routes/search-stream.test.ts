@@ -924,6 +924,87 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
+  // AC24 / F1 — a ladder that RAN a relaxed rung is not a ladder that MATCHED on
+  // one. `runQueryLadder` reports the last rung it attempted, so exhaustion and a
+  // later-rung outage both surface an index > 0 with an empty result set. Keying
+  // disclosure on the index alone would put "matched on relaxed query" next to
+  // "No releases found".
+  it('omits relaxedQuery when the ladder exhausts every rung at zero (AC24, F1)', async () => {
+    const { service } = serviceAnswering(null);
+    const app = await buildApp(service);
+    try {
+      const { events } = await fetchSseEvents(app, url({ q: CANONICAL_Q, title: BOOK_TITLE, author: AUTHOR }));
+      const complete = events.find((e) => e.event === 'search-complete')!;
+
+      // The ladder really did reach a relaxed rung — this is not a rung-1 case.
+      expect(queriesOf(service)).toEqual(RUNGS);
+      expect((complete.data as { results: unknown[] }).results).toEqual([]);
+      expect(complete.data as Record<string, unknown>).not.toHaveProperty('relaxedQuery');
+    } finally {
+      await app.close();
+    }
+  });
+
+  // AC24 / F1 — the outage arm. A later rung where NO indexer answered aborts the
+  // ladder, returning that rung with an empty set; it produced nothing, so there
+  // is nothing to disclose.
+  it('omits relaxedQuery when a later rung aborts on a total indexer outage (AC24, F1)', async () => {
+    let call = 0;
+    const service = {
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 1, name: 'AudioBookBay' }]),
+      searchAllStreaming: vi.fn().mockImplementation(
+        async (_q: string, _o: unknown, _c: Map<number, AbortController>, cb: {
+          onComplete: (id: number, name: string, count: number, ms: number) => void;
+          onError: (id: number, name: string, error: string, ms: number) => void;
+        }) => {
+          call++;
+          // Rung 1 answers a genuine zero; rung 2 finds every indexer down.
+          if (call === 1) cb.onComplete(1, 'AudioBookBay', 0, 10);
+          else cb.onError(1, 'AudioBookBay', 'ECONNREFUSED', 10);
+          return [];
+        },
+      ),
+    } as unknown as IndexerSearchService;
+
+    const app = await buildApp(service);
+    try {
+      const { events } = await fetchSseEvents(app, url({ q: CANONICAL_Q, title: BOOK_TITLE, author: AUTHOR }));
+      const complete = events.find((e) => e.event === 'search-complete')!;
+
+      // Aborted at rung 2 — an index > 0, so an index-only condition would fire.
+      expect(queriesOf(service)).toEqual(RUNGS.slice(0, 2));
+      expect((complete.data as { results: unknown[] }).results).toEqual([]);
+      expect(complete.data as Record<string, unknown>).not.toHaveProperty('relaxedQuery');
+    } finally {
+      await app.close();
+    }
+  });
+
+  // AC24 / F1 — the third arm the index-only condition also got wrong: a relaxed
+  // rung DID return releases, but the existing blacklist/quality/language gates
+  // removed all of them. The notice sits above the result list and explains it,
+  // so with nothing listed it explains nothing and contradicts "No releases found".
+  it('omits relaxedQuery when a relaxed rung hit but the gates filtered every result (AC24, F1)', async () => {
+    const { service } = serviceAnswering(RUNGS[3]!);
+    postProcessSpy.mockImplementation(async () => ({
+      results: [],
+      durationUnknown: false,
+      unsupportedResults: { count: 0, titles: [] },
+    }));
+
+    const app = await buildApp(service);
+    try {
+      const { events } = await fetchSseEvents(app, url({ q: CANONICAL_Q, title: BOOK_TITLE, author: AUTHOR }));
+      const complete = events.find((e) => e.event === 'search-complete')!;
+
+      expect(queriesOf(service)).toEqual(RUNGS.slice(0, 4));
+      expect((complete.data as { results: unknown[] }).results).toEqual([]);
+      expect(complete.data as Record<string, unknown>).not.toHaveProperty('relaxedQuery');
+    } finally {
+      await app.close();
+    }
+  });
+
   // AC26 — per-indexer counts need NO buffering: the client replaces its entry
   // by `indexerId`, so the LAST frame per indexer is the winning rung's.
   it('leaves the winning rung as the last indexer-complete frame per indexer (AC26)', async () => {
