@@ -664,10 +664,10 @@ describe('SeriesCardService — unit', () => {
       }));
 
       const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
-      const card = await svc.bindHardcoverSeries(bookId, 4242);
+      const bound = await svc.bindHardcoverSeries(bookId, 4242);
 
-      expect(card!.hardcoverSeriesId).toBe(4242);
-      expect(card!.name).toBe('The Earthsea Quartet');
+      expect(bound!.card.hardcoverSeriesId).toBe(4242);
+      expect(bound!.card.name).toBe('The Earthsea Quartet');
       const rows = await db.select().from(series).where(eq(series.hardcoverSeriesId, 4242));
       expect(rows).toHaveLength(1);
 

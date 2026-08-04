@@ -464,7 +464,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     },
   );
 
-  registerSeriesRoutes(app, deps.bookService, deps.seriesCardService);
+  registerSeriesRoutes(app, deps);
 
   registerMergeRoutes(app, mergeService);
 

@@ -664,10 +664,10 @@ describe('SeriesCardService — integration', () => {
       mockFetchHardcover(chapterhousePayload());
 
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
-      const card = await svc.bindHardcoverSeries(bookId, 7701);
+      const bound = await svc.bindHardcoverSeries(bookId, 7701);
 
-      expect(card).not.toBeNull();
-      const member = card!.members.find((m) => m.title === 'Chapterhouse: Dune')!;
+      expect(bound).not.toBeNull();
+      const member = bound!.card.members.find((m) => m.title === 'Chapterhouse: Dune')!;
       expect(member.inLibrary).toBe(true);
       expect(member.libraryBookId).toBe(bookId);
 
@@ -795,13 +795,13 @@ describe('SeriesCardService — integration', () => {
       // prior name to `persistMembers`, so the pool is
       // `IN ('Zeta Series','Alpha Series')` and spans both books.
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
-      const card = await svc.bindHardcoverSeries(higherId, 7703);
+      const bound = await svc.bindHardcoverSeries(higherId, 7703);
 
-      expect(card).not.toBeNull();
+      expect(bound).not.toBeNull();
       const memberRows = await db.select().from(seriesMembers);
       expect(memberRows).toHaveLength(1);
       expect(memberRows[0]!.bookId).toBe(lowerId);
-      expect(card!.members[0]!.libraryBookId).toBe(lowerId);
+      expect(bound!.card.members[0]!.libraryBookId).toBe(lowerId);
     });
   });
 });
