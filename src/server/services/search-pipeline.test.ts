@@ -3453,18 +3453,74 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     ]);
   });
 
-  it('finds The Churn at the prefix(1) rung and grabs it (AC13)', async () => {
+  // AC13, plus #2133 AC7 — the ACCEPTED FLIP, and the reviewable decision point
+  // of #2133. The ladder still reaches the prefix(1) rung and still issues the
+  // same two queries; what changed is that `"The Churn"` is corroborated ONLY by
+  // that rung's own tokens, which is indistinguishable at the string level from
+  // the `"The Vital Abyss: An Expanse Novella"` false grab on the suffix side.
+  // The failure direction is the safe one: a Needs Review item, never a wrong
+  // book.
+  it('holds The Churn at the prefix(1) rung — a head-only release is circular evidence (AC13, #2133 AC7)', async () => {
     const svc = serviceAnswering({
       'the churn James S A Corey': [makeResult({ title: 'The Churn (Unabridged) [M4B]' })],
     });
 
     const result = await searchAndGrabForBook(churnBook, deps(svc));
 
-    expect(result).toEqual({ result: 'grabbed', title: 'The Churn (Unabridged) [M4B]' });
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
     expect(queriesOf(svc)).toEqual([
       'The Churn An Expanse Novella James S A Corey',
       'the churn James S A Corey',
     ]);
+    expect(eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      bookId: 2,
+      reason: {
+        relaxed_query: 'the churn James S A Corey',
+        variant_tag: 'prefix(1)',
+        release_title: 'The Churn (Unabridged) [M4B]',
+      },
+    }));
+  });
+
+  // #2133 AC7 — a release carrying the WHOLE canonical title still grabs at the
+  // same rung, so the flip above is scoped to head-only names.
+  it('still grabs a release carrying the whole canonical title at the prefix(1) rung (#2133 AC7)', async () => {
+    const svc = serviceAnswering({
+      'the churn James S A Corey': [makeResult({ title: 'The Churn: An Expanse Novella' })],
+    });
+
+    const result = await searchAndGrabForBook(churnBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'The Churn: An Expanse Novella' });
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // #2133 AC7 — the suffix-side mirror hole. Both are real Expanse novellas by
+  // the same author, so the `author=` transport filter does not exclude them.
+  it('holds a franchise sibling found at the suffix(1) rung (#2133 AC7)', async () => {
+    const svc = serviceAnswering({
+      'an expanse novella James S A Corey': [
+        makeResult({ title: 'The Vital Abyss: An Expanse Novella', seeders: 99 }),
+        makeResult({ title: 'Gods of Risk: An Expanse Novella', seeders: 1 }),
+      ],
+    });
+
+    const result = await searchAndGrabForBook(churnBook, deps(svc));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+    expect(eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      reason: {
+        relaxed_query: 'an expanse novella James S A Corey',
+        variant_tag: 'suffix(1)',
+        release_title: 'The Vital Abyss: An Expanse Novella',
+      },
+    }));
   });
 
   it('finds Rising Storm at the paren-stripped full rung and grabs it (AC13)', async () => {
@@ -3554,6 +3610,208 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
 
     expect(result).toEqual({ result: 'grabbed', title: 'Star Wars: Haunted Starlight' });
     expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // ==========================================================================
+  // #2133 — the anchored floor, on the rung the circular floor let through
+  // ==========================================================================
+
+  // AC5 — the live repro (dev UAT c2e). Before #2133 the `prefix(2)` rung's
+  // floor WAS its own query, so every High Republic sibling corroborated itself
+  // and the top-ranked one was auto-sent to the download client.
+  // COUNTERFACTUAL: read `rung.segments` instead of `rung.floorSegments` and
+  // this grabs "01 Star Wars-The High Republic-The Eye of Darkness".
+  it('holds every High-Republic sibling found at the prefix(2) rung, recording ONE event (AC5)', async () => {
+    const svc = serviceAnswering({
+      'star wars the high republic George Mann': [
+        makeResult({ title: '01 Star Wars-The High Republic-The Eye of Darkness', seeders: 99 }),
+        makeResult({ title: 'Star Wars: The High Republic: Cataclysm', seeders: 1 }),
+      ],
+    });
+
+    const result = await searchAndGrabForBook(franchiseBook, deps(svc));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+    expect(eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      bookId: 1,
+      reason: {
+        relaxed_query: 'star wars the high republic George Mann',
+        variant_tag: 'prefix(2)',
+        release_title: '01 Star Wars-The High Republic-The Eye of Darkness',
+      },
+    }));
+  });
+
+  // AC6 — the positive control on the SAME rung: a release naming the wanted
+  // book still grabs, past a higher-ranked sibling, and holds nothing.
+  it('grabs a lower-ranked release naming the wanted book at the prefix(2) rung (AC6)', async () => {
+    const svc = serviceAnswering({
+      'star wars the high republic George Mann': [
+        makeResult({ title: '01 Star Wars-The High Republic-The Eye of Darkness', seeders: 99 }),
+        makeResult({ title: 'Star Wars: Haunted Starlight', seeders: 5 }),
+      ],
+    });
+
+    const result = await searchAndGrabForBook(franchiseBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'Star Wars: Haunted Starlight' });
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  it("grabs the book's own canonical title at the prefix(2) rung (AC6)", async () => {
+    const svc = serviceAnswering({
+      'star wars the high republic George Mann': [makeResult({ title: 'Star Wars: The High Republic: Haunted Starlight' })],
+    });
+
+    const result = await searchAndGrabForBook(franchiseBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'Star Wars: The High Republic: Haunted Starlight' });
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // AC16 class 1 — COLLAPSED ANCHORS. Both ends normalize to `star wars`, so a
+  // floor stated as a SET would be satisfied by the single occurrence the
+  // prefix(2) query already guarantees. The canonical title carries it twice.
+  const collapsedBook = { id: 4, title: 'Star Wars: The High Republic: Star Wars', duration: 3600, authors: [{ name: 'George Mann' }] };
+
+  it('holds the sibling of a collapsed-anchor title at the prefix(2) rung (AC16)', async () => {
+    const svc = serviceAnswering({
+      'star wars the high republic George Mann': [makeResult({ title: 'Star Wars: The High Republic: The Eye of Darkness' })],
+    });
+
+    const result = await searchAndGrabForBook(collapsedBook, deps(svc));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+    expect(eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      bookId: 4,
+      reason: expect.objectContaining({ variant_tag: 'prefix(2)' }),
+    }));
+  });
+
+  // COUNTERFACTUAL: restart the occurrence scan past the shared delimiter and
+  // both of these grabs become holds — the book fails its own floor.
+  it.each([
+    ['Star Wars: The High Republic: Star Wars'],
+    ['01 Star Wars-The High Republic-Star Wars'],
+  ])('grabs %s for the collapsed-anchor book at the prefix(2) rung (AC16)', async (title) => {
+    const svc = serviceAnswering({ 'star wars the high republic George Mann': [makeResult({ title })] });
+
+    const result = await searchAndGrabForBook(collapsedBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title });
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // AC16 class 2 — an anchor RECURRING INSIDE A NEIGHBOURING SEGMENT. The
+  // prefix(2) query's own tail supplies one space-bounded `gamma`, so a one-each
+  // floor would be cleared by the query itself — and by the sibling.
+  const neighbourBook = { id: 5, title: 'Alpha: Beta Gamma: Gamma', duration: 3600, authors: [{ name: 'Ann Author' }] };
+
+  it('holds the sibling of a recurring-anchor title at the prefix(2) rung (AC16)', async () => {
+    const svc = serviceAnswering({
+      'alpha beta gamma Ann Author': [makeResult({ title: 'Alpha: Beta Gamma: Delta' })],
+    });
+
+    const result = await searchAndGrabForBook(neighbourBook, deps(svc));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+    expect(eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      bookId: 5,
+      reason: expect.objectContaining({ variant_tag: 'prefix(2)', release_title: 'Alpha: Beta Gamma: Delta' }),
+    }));
+  });
+
+  it('grabs the recurring-anchor book at the prefix(2) rung when the release names it (AC16)', async () => {
+    const svc = serviceAnswering({
+      'alpha beta gamma Ann Author': [makeResult({ title: 'Alpha: Beta Gamma: Gamma' })],
+    });
+
+    const result = await searchAndGrabForBook(neighbourBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'Alpha: Beta Gamma: Gamma' });
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // AC16 class 3 — a GENERIC PARENTHETICAL splitting an anchor. Both sides
+  // reduce through `titleSegments`, so the book's own paren-intact release
+  // grabs. COUNTERFACTUAL: reduce the release with the scalar normalizer alone
+  // and this book holds on its own release.
+  const parenBook = { id: 6, title: 'Star (Deluxe) Wars: Haunted Starlight', duration: 3600, authors: [{ name: 'George Mann' }] };
+
+  it('grabs the paren-intact own release of a split-anchor title at the prefix(1) rung (AC16)', async () => {
+    const svc = serviceAnswering({
+      'star wars George Mann': [makeResult({ title: 'Star (Deluxe) Wars: Haunted Starlight' })],
+    });
+
+    const result = await searchAndGrabForBook(parenBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'Star (Deluxe) Wars: Haunted Starlight' });
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // F1 — the offered side of the character-survival gate, on the auto path. The
+  // canonical title is pure ASCII, so it is NOT caught by the rung-1-only
+  // degenerate short-circuit and does build a floor; the two siblings are
+  // DIFFERENT books whose distinguishing characters the ASCII fold erases, so
+  // before the gate they supplied the anchors from what survived and the
+  // top-ranked one was auto-sent to the download client as the wrong book.
+  const lossyBook = { id: 7, title: 'World of Warcraft: A', duration: 3600, authors: [{ name: 'Christie Golden' }] };
+
+  it('holds a lossy-fold sibling found at the prefix(1) rung rather than grabbing it (F1)', async () => {
+    const svc = serviceAnswering({
+      'world of warcraft Christie Golden': [
+        makeResult({ title: 'World of Warcraft: A前夜', seeders: 99 }),
+        makeResult({ title: 'World of Warcraft: A後夜', seeders: 1 }),
+      ],
+    });
+
+    const result = await searchAndGrabForBook(lossyBook, deps(svc));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+    expect(eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      bookId: 7,
+      reason: expect.objectContaining({ variant_tag: 'prefix(1)', release_title: 'World of Warcraft: A前夜' }),
+    }));
+  });
+
+  it('still grabs the lossy-gated book own ASCII release at the prefix(1) rung (F1)', async () => {
+    const svc = serviceAnswering({
+      'world of warcraft Christie Golden': [makeResult({ title: 'World of Warcraft: A' })],
+    });
+
+    const result = await searchAndGrabForBook(lossyBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'World of Warcraft: A' });
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  it('holds the sibling of a split-anchor title at the prefix(1) rung (AC16)', async () => {
+    const svc = serviceAnswering({
+      'star wars George Mann': [makeResult({ title: 'Star (Deluxe) Wars: Cataclysm' })],
+    });
+
+    const result = await searchAndGrabForBook(parenBook, deps(svc));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+    expect(eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      bookId: 6,
+      reason: expect.objectContaining({ variant_tag: 'prefix(1)', release_title: 'Star (Deluxe) Wars: Cataclysm' }),
+    }));
   });
 
   // AC40, AC41 — a post-gate list with no downloadable candidate is not a floor

@@ -1014,11 +1014,21 @@ describe('retrySearch — query ladder (#2104)', () => {
     }));
   }
 
-  const franchiseDeps = (searchAllWithStatus: ReturnType<typeof vi.fn>) =>
+  /** The Churn live example — the suffix/prefix pair #2133 AC7 pins. */
+  const churnBook: BookWithAuthor = {
+    ...createMockDbBook({ duration: 3600, title: 'The Churn: An Expanse Novella' }),
+    authors: [{ ...createMockDbAuthor(), name: 'James S. A. Corey' }],
+    narrators: [],
+  };
+
+  const depsFor = (book: BookWithAuthor) => (searchAllWithStatus: ReturnType<typeof vi.fn>) =>
     createDeps({
       indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus }),
-      bookService: inject<BookService>({ getById: vi.fn().mockResolvedValue(franchiseBook) }),
+      bookService: inject<BookService>({ getById: vi.fn().mockResolvedValue(book) }),
     });
+
+  const franchiseDeps = depsFor(franchiseBook);
+  const churnDeps = depsFor(churnBook);
 
   // AC19 — the WHOLE ladder costs exactly ONE RetryBudget attempt, not one per
   // rung. COUNTERFACTUAL: consume inside the rung loop and this reads 4.
@@ -1081,6 +1091,53 @@ describe('retrySearch — query ladder (#2104)', () => {
 
     expect(result.outcome).toBe('retried');
     expect(deps.eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // #2133 AC10 — both auto paths agree, through the unchanged shared
+  // `selectRelaxedCandidate` seam. Retry owns an INDEPENDENT filter/rank/grab
+  // chain, so the anchored floor needs its own pin on this path: the AC5 repro…
+  it('holds every High-Republic sibling found at the prefix(2) rung, recording ONE event (#2133 AC5, AC10)', async () => {
+    const deps = franchiseDeps(answering({
+      'star wars the high republic George Mann': [
+        { ...mockSearchResult, title: '01 Star Wars-The High Republic-The Eye of Darkness', seeders: 99 },
+        { ...mockSearchResult, title: 'Star Wars: The High Republic: Cataclysm', seeders: 1 },
+      ],
+    }));
+
+    const result = await retrySearch(1, deps);
+
+    expect(result).toEqual({ outcome: 'no_candidates' });
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+    expect(deps.eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(deps.eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      reason: {
+        relaxed_query: 'star wars the high republic George Mann',
+        variant_tag: 'prefix(2)',
+        release_title: '01 Star Wars-The High Republic-The Eye of Darkness',
+      },
+    }));
+  });
+
+  // …and the AC7 accepted flip.
+  it('holds a head-only The Churn release at the prefix(1) rung (#2133 AC7, AC10)', async () => {
+    const deps = churnDeps(answering({
+      'the churn James S A Corey': [{ ...mockSearchResult, title: 'The Churn (Unabridged) [M4B]' }],
+    }));
+
+    const result = await retrySearch(1, deps);
+
+    expect(result).toEqual({ outcome: 'no_candidates' });
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+    expect(deps.eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(deps.eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      reason: {
+        relaxed_query: 'the churn James S A Corey',
+        variant_tag: 'prefix(1)',
+        release_title: 'The Churn (Unabridged) [M4B]',
+      },
+    }));
   });
 
   // AC34 — retry is already bounded by RetryBudget's 3 attempts, so it never
