@@ -978,6 +978,23 @@ describe('books routes', () => {
       await app2.close();
     });
 
+    // #2098 AC16/AC17 — the Edit Metadata row of the mutation matrix in `opf-refresh.ts` is
+    // OPF-yes / retag-NO, and nothing pinned the "no" half until now. An audio re-tag is a
+    // destructive in-place ffmpeg rewrite; this route has no `retagFiles` opt-in in its schema or
+    // its UI, and `POST /api/books/:id/retag` is the operator's explicit path for it.
+    it('never re-tags — the PUT route has no retagFiles opt-in', async () => {
+      const deps = {
+        ...depsFor({ writeOpf: true, path: '/lib/Author/Book' }),
+        settingsService: createMockSettingsService({ tagging: { enabled: true, writeOpf: true } }),
+      };
+      const app2 = await createAppFromDeps(deps);
+      const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
+      expect(res.statusCode).toBe(200);
+      // Tag Embedding is globally ON and the book is imported — still no re-tag.
+      expect(deps.taggingService.retagBook).not.toHaveBeenCalled();
+      await app2.close();
+    });
+
     // #1707 — the standalone edit route fires a 'metadata' refresh only when the OPF was written.
     it("fires a 'metadata' refresh when the OPF is written, none when skipped", async () => {
       const notifyRefresh = vi.fn().mockResolvedValue(undefined);
@@ -3225,6 +3242,9 @@ describe('POST /api/books/:id/cover', () => {
 
       expect(res.statusCode).toBe(200);
       expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, bookId: 1, bookFolder: '/library/book' }));
+      // #2098 AC17 — the cover-upload row of the mutation matrix is OPF-yes / retag-NO. A cover
+      // swap changes no tag field, so it never touches the audio files.
+      expect(services.tagging.retagBook).not.toHaveBeenCalled();
     });
 
     it('still returns 200 when the OPF refresh throws (nonfatal)', async () => {

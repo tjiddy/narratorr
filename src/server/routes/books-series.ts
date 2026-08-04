@@ -232,21 +232,21 @@ async function runPostBindRefresh(
 }
 
 /**
- * One synced book's refresh: preload → (gated) re-tag → OPF, mirroring Fix Match's order.
+ * Resolve one synced book's eligibility. The preload has FOUR outcomes and only the last is
+ * eligible — it rejected, it resolved `null` (the row was deleted between the commit and this
+ * read), it resolved a book with `path === null` (never imported), or it resolved a book with a
+ * usable folder. A rejection and a vanished row are treated identically: a refresh this pass owed
+ * could not be attempted, so both warn and count as a failure. A never-imported book is the
+ * ordinary wanted-but-undownloaded series member — silent, and not a failure.
  *
- * The preload has four outcomes and only the last is ELIGIBLE — it rejected, it resolved `null`
- * (the row was deleted between the commit and this read), it resolved a book with `path === null`
- * (never imported), or it resolved a book with a usable folder. A rejection and a vanished row are
- * treated identically: a refresh this pass owed could not be attempted, so both warn and count as a
- * failure. A never-imported book is the ordinary wanted-but-undownloaded series member — silent, and
- * not a failure. `book.path` is never dereferenced before the `null` book is narrowed away.
+ * Narrowing lives here so no caller can reach `book.path` on a `null` book: a throw inside the
+ * per-book loop would abort every remaining id.
  */
-async function refreshBoundBook(
+async function preloadBoundBook(
   deps: BookRouteDeps,
   bookId: number,
-  retagEnabled: boolean,
   log: FastifyBaseLogger,
-): Promise<BoundBookOutcome> {
+): Promise<{ book: BookDetail; bookFolder: string } | BoundBookOutcome> {
   let book: BookDetail | null;
   try {
     book = await deps.bookService.getById(bookId);
@@ -258,8 +258,20 @@ async function refreshBoundBook(
     log.warn({ bookId }, 'Series bind: a synced book no longer exists — its sidecar was not refreshed');
     return INELIGIBLE_FAILURE;
   }
-  const bookFolder = book.path;
-  if (!bookFolder) return INELIGIBLE; // never imported — nothing on disk to refresh
+  if (!book.path) return INELIGIBLE; // never imported — nothing on disk to refresh
+  return { book, bookFolder: book.path };
+}
+
+/** One synced book's refresh: preload → (gated) re-tag → OPF, mirroring Fix Match's order. */
+async function refreshBoundBook(
+  deps: BookRouteDeps,
+  bookId: number,
+  retagEnabled: boolean,
+  log: FastifyBaseLogger,
+): Promise<BoundBookOutcome> {
+  const preloaded = await preloadBoundBook(deps, bookId, log);
+  if ('eligible' in preloaded) return preloaded;
+  const { book, bookFolder } = preloaded;
 
   const retag = retagEnabled ? await retagBoundBook(deps, bookId, log) : null;
   // The OPF step runs even when the re-tag threw: the two artifacts are independent, and the
@@ -271,13 +283,27 @@ async function refreshBoundBook(
 
   const retagged = (retag?.result?.tagged ?? 0) > 0;
   if (retagged || opfOutcome === 'written') {
-    // Exactly one 'metadata' refresh per book covering both writers, preferring the retag's
-    // pre-tag-write item (captured before the irreversible in-place rewrite).
-    enqueueBookRefresh(deps.connectorService, log, 'metadata', retag?.result?.refreshItem ?? {
-      bookId, title: book.title, authorName: book.authors[0]?.name ?? null, libraryPath: bookFolder,
-    });
+    notifyBoundBookRefresh(deps, log, book, bookFolder, retag?.result ?? null);
   }
   return { eligible: true, retagged, opfWritten: opfOutcome === 'written', failed: (retag?.failed ?? false) || opfOutcome === 'failed' };
+}
+
+/**
+ * EXACTLY ONE `'metadata'` connector refresh per book, covering both writers — never one per
+ * writer. Built from the {@link RetagResult}'s `refreshItem` when the re-tag produced one (that
+ * item is captured BEFORE the irreversible in-place tag rewrite, so a post-write reload failure
+ * can't drop it), otherwise from the book preloaded at the top of this book's pass.
+ */
+function notifyBoundBookRefresh(
+  deps: BookRouteDeps,
+  log: FastifyBaseLogger,
+  book: BookDetail,
+  bookFolder: string,
+  retagResult: RetagResult | null,
+): void {
+  enqueueBookRefresh(deps.connectorService, log, 'metadata', retagResult?.refreshItem ?? {
+    bookId: book.id, title: book.title, authorName: book.authors[0]?.name ?? null, libraryPath: bookFolder,
+  });
 }
 
 /**
