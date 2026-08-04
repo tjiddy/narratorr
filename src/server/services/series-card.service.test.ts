@@ -861,6 +861,109 @@ describe('SeriesCardService — unit', () => {
       expect(book.seriesName).toBe('The Earthsea Cycle');
     });
   });
+
+  // ─── #2098: the ids the transaction actually rewrote cross the boundary ───
+  //
+  // The route's post-commit pass refreshes each rewritten book's `metadata.opf` and
+  // embedded tags, so it needs to know WHICH books the transaction touched — and it
+  // must learn that from the transaction's own resolved value, never from an outer
+  // accumulator that would survive a rollback.
+  describe('bindHardcoverSeries — the synced id list (#2098)', () => {
+    it('returns the card alongside the ids it rewrote', async () => {
+      const bookA = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      const bookB = await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'The Earthsea Cycle', seriesPosition: 2, authorName: 'Ursula K. Le Guin' });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [
+          { position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' },
+          { position: 5, id: 2, slug: 'tombs', title: 'The Tombs of Atuan' },
+        ],
+      }));
+
+      const bound = await new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(bookA, 4242);
+
+      expect(bound!.card.name).toBe('The Earthsea Quartet');
+      // Both siblings were rewritten, in matched-member order.
+      expect(bound!.syncedIds).toEqual([bookA, bookB]);
+      // The ids are exactly the rows whose series_name moved to the canonical name.
+      const rewritten = (await db.select().from(books)).filter((b) => b.seriesName === 'The Earthsea Quartet').map((b) => b.id);
+      expect([...bound!.syncedIds].sort()).toEqual([...rewritten].sort());
+    });
+
+    it('an unmatched initiating book still appears in syncedIds', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'Unrelated Book', seriesName: 'Earthsea', seriesPosition: 7, authorName: 'Ursula K. Le Guin' });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [{ position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' }],
+      }));
+
+      const bound = await new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(bookId, 4242);
+
+      // It matched no member, but the bind still adopted the canonical name for it — so its
+      // sidecar is stale too and the pass owes it a refresh.
+      expect(bound!.syncedIds).toEqual([bookId]);
+      expect(bound!.card).not.toBeNull();
+    });
+
+    it('syncedIds carries no duplicate when the initiating book is itself a matched member', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [{ position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' }],
+      }));
+
+      const bound = await new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(bookId, 4242);
+
+      expect(bound!.syncedIds).toEqual([bookId]);
+      expect(new Set(bound!.syncedIds).size).toBe(bound!.syncedIds.length);
+    });
+
+    it('a rolled-back bind returns no synced ids', async () => {
+      const seed = async () => seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      const payload = () => hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [{ position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' }],
+      });
+      const link = await import('./book-series-link.js');
+
+      // Positive control FIRST, so the negative below is not vacuous: this fixture DOES report
+      // an id when the transaction commits.
+      const okId = await seed();
+      mockFetchOnce(payload());
+      const ok = await new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(okId, 4242);
+      expect(ok!.syncedIds).toEqual([okId]);
+
+      // Now fail the transaction at `relinkBookToBoundSeries` — AFTER the id-collecting
+      // `UPDATE books` has been issued, which is the only point at which a returned-from-tx list
+      // is distinguishable from an outer accumulator.
+      const rollbackId = await seed();
+      mockFetchOnce(payload());
+      vi.spyOn(link, 'relinkBookToBoundSeries').mockRejectedValueOnce(new Error('relink boom'));
+
+      const call = new SeriesCardService(db, log, settingsServiceWith('K')).bindHardcoverSeries(rollbackId, 4242);
+      await expect(call).rejects.toThrow('relink boom');
+      // Nothing observable reports a synced id: the call produced no value at all, and the
+      // book's series fields are back where they were.
+      const row = (await db.select().from(books).where(eq(books.id, rollbackId)))[0]!;
+      expect(row.seriesName).toBe('The Earthsea Cycle');
+    });
+
+    it('the three null exits still resolve null, not a result object', async () => {
+      const svc = (key: string) => new SeriesCardService(db, log, settingsServiceWith(key));
+
+      // 1. Book missing.
+      expect(await svc('K').bindHardcoverSeries(999_999, 4242)).toBeNull();
+
+      // 2. No Hardcover key configured.
+      const noKeyId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'Earthsea', authorName: 'Ursula K. Le Guin' });
+      globalThis.fetch = vi.fn() as typeof globalThis.fetch;
+      expect(await svc('').bindHardcoverSeries(noKeyId, 4242)).toBeNull();
+
+      // 3. `fetchById` returned nothing.
+      mockFetchOnce({ data: { series: [] } });
+      expect(await svc('K').bindHardcoverSeries(noKeyId, 4242)).toBeNull();
+    });
+  });
   // ─── #2069 AC24: binding is an operator re-assertion of the SERIES ───
   //
   // It removes the initiating book's `seriesName` tombstone in the SAME transaction

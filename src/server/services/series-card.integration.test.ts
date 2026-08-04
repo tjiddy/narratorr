@@ -804,4 +804,41 @@ describe('SeriesCardService — integration', () => {
       expect(bound!.card.members[0]!.libraryBookId).toBe(lowerId);
     });
   });
+
+  // #2098 — the route's post-bind sidecar pass iterates `syncedIds`, so the list must agree with
+  // the COMMITTED artifact (the `books` rows whose series_name actually moved), not with a mock.
+  describe('#2098 — the committed synced set', () => {
+    it('a real bind over a seeded 3-book series reports all three ids', async () => {
+      const ids = [
+        await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' }),
+        await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'The Earthsea Cycle', seriesPosition: 2, authorName: 'Ursula K. Le Guin' }),
+        await seedBookWithSeries(db, { title: 'The Farthest Shore', seriesName: 'The Earthsea Cycle', seriesPosition: 3, authorName: 'Ursula K. Le Guin' }),
+      ];
+      // A fourth book in an unrelated series — it must NOT be reported.
+      const unrelated = await seedBookWithSeries(db, { title: 'The Dispossessed', seriesName: 'Hainish Cycle', seriesPosition: 5, authorName: 'Ursula K. Le Guin' });
+
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        data: {
+          series: [{
+            id: 7801, name: 'The Earthsea Quartet', slug: 'earthsea-quartet', author: { name: 'Ursula K. Le Guin' },
+            book_series: [
+              { position: 1, book: { id: 5001, slug: 'wizard', title: 'A Wizard of Earthsea', image: null, users_count: 90 } },
+              { position: 2, book: { id: 5002, slug: 'tombs', title: 'The Tombs of Atuan', image: null, users_count: 80 } },
+              { position: 3, book: { id: 5003, slug: 'shore', title: 'The Farthest Shore', image: null, users_count: 70 } },
+            ],
+          }],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof globalThis.fetch;
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const bound = await svc.bindHardcoverSeries(ids[0]!, 7801);
+
+      expect(bound!.syncedIds).toEqual(ids);
+      // Observed against the committed rows, not against the member set the bind built.
+      const rewritten = (await db.select().from(books))
+        .filter((b) => b.seriesName === 'The Earthsea Quartet').map((b) => b.id).sort((a, b) => a - b);
+      expect([...bound!.syncedIds].sort((a, b) => a - b)).toEqual(rewritten);
+      expect(bound!.syncedIds).not.toContain(unrelated);
+    });
+  });
 });

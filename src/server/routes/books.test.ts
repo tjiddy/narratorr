@@ -4084,8 +4084,10 @@ describe('#1071 series routes', () => {
       (services.book.getById as Mock).mockImplementation((id: number) =>
         Promise.resolve({ ...mockBook, id, title: `Book ${id}`, path: folderFor(id) }));
       (services.seriesCard.bindHardcoverSeries as Mock).mockImplementation(async () => {
-        await Promise.resolve();
-        // Observed at the service call's RESOLUTION, not at statement issuance.
+        // Held open across several macrotasks so the observation point is the service call's
+        // RESOLUTION (the commit), not the statement that issued it — a pass sequenced before
+        // the resolution would get its retag/OPF in ahead of this push.
+        await new Promise((resolve) => setTimeout(resolve, 10));
         order.push('bind-resolved');
         return {
           card: { id: 9, name: 'The Earthsea Quartet', hardcoverSeriesId: 4242, seriesAuthor: null, lastFetchedAt: null, members: [] },
