@@ -295,6 +295,49 @@ describe('v1 action routes (search + grab)', () => {
       expect(queries.at(-1)).toBe('the churn Brandon Sanderson');
     });
 
+    // #2138 F1 (spec review) — the public discovery caller shares
+    // `buildQueryLadder`, so the tail-rung admission changes its query sequence
+    // and its cap displacement too. The existing relaxed-rung test above covers
+    // only the two-segment shape where `suffix(1)` was already admitted, so it
+    // cannot see the deep-franchise regression.
+    it('returns a deep-franchise candidate found only at the tail rung, envelope unchanged (AC28, F1)', async () => {
+      (bookService.getById as Mock).mockResolvedValue({
+        ...hydratedBook(),
+        title: 'Star Wars: The High Republic: Haunted Starlight',
+      });
+      (indexerSearchService.searchAllWithStatus as Mock).mockImplementation(async (query: string) => ({
+        results: query === 'haunted starlight Brandon Sanderson'
+          ? [searchResult({ title: 'Haunted Starlight - Brandon Sanderson' })]
+          : [],
+        succeeded: 1,
+        failed: 0,
+      }));
+
+      const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { data: Array<Record<string, unknown>>; total: number };
+      expect(body.total).toBe(1);
+      // No floor on discovery, so the franchise-dropping release is RETURNED
+      // here even though the auto paths hold it (#2138 AC9/AC10).
+      expect(body.data[0]!.title).toBe('Haunted Starlight - Brandon Sanderson');
+      // The strict envelope gains no rung or relaxed-query field.
+      expect(Object.keys(body)).toEqual(['data', 'total']);
+      expect(body.data[0]).not.toHaveProperty('relaxedQuery');
+      expect(body.data[0]).not.toHaveProperty('rung');
+
+      // Rungs 0-4: the tail rung is the deepest of the author-ON arm, reached
+      // only after every more specific rung answered a genuine zero.
+      const queries = (indexerSearchService.searchAllWithStatus as Mock).mock.calls.map((c) => c[0] as string);
+      expect(queries).toEqual([
+        'Star Wars The High Republic Haunted Starlight Brandon Sanderson',
+        'star wars the high republic Brandon Sanderson',
+        'the high republic haunted starlight Brandon Sanderson',
+        'star wars haunted starlight Brandon Sanderson',
+        'haunted starlight Brandon Sanderson',
+      ]);
+    });
+
     it('returns 200 { data: [], total: 0 } on an empty result set (not 404, not an error)', async () => {
       (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
 

@@ -1044,6 +1044,51 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
+  // #2138 AC9 — the reported UAT symptom, fully fixed on THIS surface. Before
+  // the tail exemption every rung ANDed a franchise token, so a release named
+  // plainly was unreachable and the modal showed 25 siblings and nothing else.
+  // Discovery applies no corroboration floor (#2133 AC11), so the release is
+  // listed for a manual grab: no hold, no held event.
+  it('surfaces a franchise-dropping release found at the tail rung (#2138 AC9)', async () => {
+    const FRANCHISE_TITLE = 'Star Wars: The High Republic: Haunted Starlight';
+    const FRANCHISE_Q = 'Star Wars The High Republic Haunted Starlight George Mann';
+    const TAIL_Q = 'haunted starlight George Mann';
+    const wanted = [{ title: 'Haunted Starlight - George Mann', protocol: 'usenet', indexer: 'AudioBookBay' }];
+    const service = {
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 1, name: 'AudioBookBay' }]),
+      searchAllStreaming: vi.fn().mockImplementation(
+        async (query: string, _o: unknown, _c: Map<number, AbortController>, cb: {
+          onComplete: (id: number, name: string, count: number, ms: number) => void;
+        }) => {
+          const hit = query === TAIL_Q;
+          cb.onComplete(1, 'AudioBookBay', hit ? wanted.length : 0, 10);
+          return hit ? wanted : [];
+        },
+      ),
+    } as unknown as IndexerSearchService;
+
+    const app = await buildApp(service);
+    try {
+      const { events } = await fetchSseEvents(app, url({ q: FRANCHISE_Q, title: FRANCHISE_TITLE, author: 'George Mann' }));
+      const complete = events.find((e) => e.event === 'search-complete')!;
+
+      // Rungs 0-4 of AC1 — the tail rung is the deepest of the author-ON arm, so
+      // it is reached only after every more specific rung answered a real zero.
+      expect(queriesOf(service)).toEqual([
+        FRANCHISE_Q,
+        'star wars the high republic George Mann',
+        'the high republic haunted starlight George Mann',
+        'star wars haunted starlight George Mann',
+        TAIL_Q,
+      ]);
+      expect((complete.data as { results: Array<{ title: string }> }).results.map((r) => r.title))
+        .toEqual(['Haunted Starlight - George Mann']);
+      expect((complete.data as { relaxedQuery?: string }).relaxedQuery).toBe(TAIL_Q);
+    } finally {
+      await app.close();
+    }
+  });
+
   // AC26 — per-indexer counts need NO buffering: the client replaces its entry
   // by `indexerId`, so the LAST frame per indexer is the winning rung's.
   it('leaves the winning rung as the last indexer-complete frame per indexer (AC26)', async () => {

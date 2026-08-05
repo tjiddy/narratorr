@@ -1160,6 +1160,55 @@ describe('retrySearch — query ladder (#2104)', () => {
         rankingAuthor: 'George Mann',
       }));
     }
-    expect(searchAllWithStatus.mock.calls.slice(4).every(([, o]) => (o as { author?: string }).author === undefined)).toBe(true);
+    // #2138 — the author-ON arm gained the tail rung, so it now runs 0-4 and the
+    // author-OFF arm starts at 5 (it was 4). The transport/ranking split itself
+    // is unchanged; only the arm boundary moved.
+    const authorOff = (o: unknown) => (o as { author?: string }).author === undefined;
+    expect(searchAllWithStatus.mock.calls.slice(0, 5).some(([, o]) => authorOff(o))).toBe(false);
+    expect(searchAllWithStatus.mock.calls.slice(5).every(([, o]) => authorOff(o))).toBe(true);
+  });
+
+  // #2138 AC10 — the tail rung on retry's INDEPENDENT filter/rank/grab chain.
+  // Both halves route through the same shared `selectRelaxedCandidate`, so this
+  // pins that the two auto paths cannot drift at the new rung either.
+  it('grabs a release found at the tail rung that carries both anchors (AC10)', async () => {
+    const deps = franchiseDeps(answering({
+      'haunted starlight George Mann': [{ ...mockSearchResult, title: 'Star Wars: Haunted Starlight' }],
+    }));
+    const consumeAttempt = vi.spyOn(deps.retryBudget, 'consumeAttempt');
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retried');
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledTimes(1);
+    expect(deps.eventHistory.create).not.toHaveBeenCalled();
+    // AC19 — the whole ladder is still ONE budget attempt, not one per rung.
+    expect(consumeAttempt).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds a franchise-dropping release found at the tail rung, recording ONE event (AC10)', async () => {
+    const deps = franchiseDeps(answering({
+      'haunted starlight George Mann': [{ ...mockSearchResult, title: 'Haunted Starlight - George Mann' }],
+    }));
+    const consumeAttempt = vi.spyOn(deps.retryBudget, 'consumeAttempt');
+
+    const result = await retrySearch(1, deps);
+
+    // The recorded decision on #2138: the shared anchor floor demands BOTH ends
+    // of the canonical title, so a release that drops the franchise prefix is
+    // surfaced in Needs Review rather than grabbed. Changing that would mean a
+    // per-rung floor, explicitly out of scope.
+    expect(result).toEqual({ outcome: 'no_candidates' });
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+    expect(consumeAttempt).toHaveBeenCalledTimes(1);
+    expect(deps.eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(deps.eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      reason: {
+        relaxed_query: 'haunted starlight George Mann',
+        variant_tag: 'suffix(1)',
+        release_title: 'Haunted Starlight - George Mann',
+      },
+    }));
   });
 });
