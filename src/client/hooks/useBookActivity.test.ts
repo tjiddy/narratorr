@@ -59,8 +59,8 @@ describe('useBookActivity', () => {
     expect(result.current).toEqual({ state: 'queued', label: 'Merge queued' });
   });
 
-  it('maps an encoding merge to working with its percentage', () => {
-    setMergeProgress(42, { bookTitle: 'T', phase: 'processing', percentage: 61 });
+  it('maps an encoding merge to working, converting the wire fraction to a display percent', () => {
+    setMergeProgress(42, { bookTitle: 'T', phase: 'processing', percentage: 0.61 });
     const { result } = renderHook(() => useBookActivity(42), { wrapper });
     expect(result.current).toEqual({ state: 'working', label: 'Encoding…', percentage: 61 });
   });
@@ -78,7 +78,7 @@ describe('useBookActivity', () => {
   });
 
   it('ignores merge progress belonging to a different book', () => {
-    setMergeProgress(7, { bookTitle: 'Other', phase: 'processing', percentage: 10 });
+    setMergeProgress(7, { bookTitle: 'Other', phase: 'processing', percentage: 0.1 });
     const { result } = renderHook(() => useBookActivity(42), { wrapper });
     expect(result.current).toBeNull();
   });
@@ -107,7 +107,7 @@ describe('useBookActivity', () => {
 
   it('prefers merge state over an import job for the same book', async () => {
     (api.getImportJobs as Mock).mockResolvedValue([importJob({ status: 'pending' })]);
-    setMergeProgress(42, { bookTitle: 'T', phase: 'processing', percentage: 30 });
+    setMergeProgress(42, { bookTitle: 'T', phase: 'processing', percentage: 0.3 });
     const { result } = renderHook(() => useBookActivity(42), { wrapper });
     await waitFor(() => expect(api.getImportJobs).toHaveBeenCalled());
     expect(result.current).toEqual({ state: 'working', label: 'Encoding…', percentage: 30 });
@@ -144,10 +144,10 @@ describe('useBookActivity from a merge_state snapshot', () => {
       queued: [],
     });
     const { result } = renderHook(() => useBookActivity(42), { wrapper });
-    expect(result.current).toEqual({ state: 'working', label: 'Encoding…', percentage: 0.35 });
+    expect(result.current).toEqual({ state: 'working', label: 'Encoding…', percentage: 35 });
   });
 
-  it('renders the spinner chip for that active book', () => {
+  it('renders the spinner chip with the display percent for that active book', () => {
     applyMergeStateSnapshot({
       active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'processing', percentage: 0.35 }],
       queued: [],
@@ -156,7 +156,10 @@ describe('useBookActivity from a merge_state snapshot', () => {
 
     render(React.createElement(BookActivityBadge, { activity: result.current, variant: 'chip' as const }));
 
-    expect(screen.getByTestId('activity-chip').querySelector('[data-testid="loading-spinner"]')).toBeInTheDocument();
+    const chip = screen.getByTestId('activity-chip');
+    // Wire 0.35 must surface as "35%", not "0%" — the display-boundary assertion.
+    expect(chip).toHaveAccessibleName('Encoding — 35%');
+    expect(chip.querySelector('[data-testid="loading-spinner"]')).toBeInTheDocument();
   });
 
   it('shows no chip after the terminal sequence, while the Activity card is still in its dismiss window', () => {
