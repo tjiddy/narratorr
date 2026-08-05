@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router';
+import { useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import DOMPurify from 'dompurify';
 import { useAuthor, useAuthorBooks } from '@/hooks/useMetadata';
@@ -12,11 +12,12 @@ import { AuthorPageSkeleton } from './AuthorPageSkeleton.js';
 import { AuthorNotFound } from './AuthorNotFound.js';
 import { SeriesSection } from './SeriesSection.js';
 import { getInitials, groupBooksBySeries, BIO_COLLAPSE_LENGTH } from './helpers.js';
+import { useBackWithFallback } from '@/hooks/useBackWithFallback.js';
 
 // eslint-disable-next-line complexity -- 3 data fetches with loading/error early returns + 4 conditional sections
 export function AuthorPage() {
   const { asin } = useParams<{ asin: string }>();
-  const navigate = useNavigate();
+  const goBack = useBackWithFallback('/library');
 
   const { data: author, isLoading: authorLoading, isError: authorError } = useAuthor(asin);
   const { data: books, isLoading: booksLoading } = useAuthorBooks(asin);
@@ -51,7 +52,7 @@ export function AuthorPage() {
 
         {/* Back link */}
         <button
-          onClick={() => navigate(-1)}
+          onClick={goBack}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6 focus-ring rounded-lg px-1 -ml-1 animate-fade-in-up"
         >
           <ArrowLeftIcon className="w-4 h-4" />

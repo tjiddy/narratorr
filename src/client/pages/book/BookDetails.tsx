@@ -23,6 +23,7 @@ import { AudioPreview } from './AudioPreview.js';
 import { useCoverPaste } from '@/hooks/useCoverPaste.js';
 import { useCoverDraft } from '@/hooks/useCoverDraft.js';
 import { useRetryImportAvailable } from '@/hooks/useRetryImportAvailable.js';
+import { useBackWithFallback } from '@/hooks/useBackWithFallback.js';
 import { toast } from 'sonner';
 
 const BOOK_TABS: TabItem[] = [
@@ -40,6 +41,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
   metadataBook?: MetadataBook | null | undefined;
 }) {
   const navigate = useNavigate();
+  const backToLibrary = useBackWithFallback('/library');
   const { modals, open, close } = useBookModals();
   const [tab, setTab] = useState<'details' | 'history'>('details');
 
@@ -83,7 +85,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
         statusLabel={merged.statusLabel}
         statusDotClass={merged.statusDotClass}
         hasPath={!!libraryBook.path}
-        onBackClick={() => navigate(-1)}
+        onBackClick={backToLibrary}
         onSearchClick={() => open('search')}
         onEditClick={() => open('edit')}
         onFixMatchClick={() => open('fixMatch')}
