@@ -105,6 +105,13 @@ describe('buildQueryLadder', () => {
   // AC1, AC2, AC3, AC4 — the deep-franchise live example, asserted as a full
   // ordered array. The generator's order is a TOTAL order (#2096 G4), so this
   // pins membership, author-major ordering, admission, and each rung's floor.
+  //
+  // #2138 THE DISPLACEMENT, stated here rather than discovered later: the bare
+  // distinguishing-title rung `suffix(1)` is now admitted (index 4), and
+  // `MAX_SEARCH_RUNGS` stays 8 — so it does not lengthen the ladder, it
+  // DISPLACES the deepest author-OFF rung. `first+last@-` (this array's former
+  // index 7) is no longer issued at all. Exhaustion still means "all 8 rungs
+  // returned an answered zero", so the 24h cooldown semantics are unchanged.
   it('emits the full author-major ladder for the deep-franchise live example (AC1-AC4)', () => {
     const ladder = buildQueryLadder({
       title: 'Star Wars: The High Republic: Haunted Starlight',
@@ -144,6 +151,16 @@ describe('buildQueryLadder', () => {
         segments: ['star wars', 'haunted starlight'],
         floorSegments: FLOOR,
       },
+      // #2138 AC1 — the bare distinguishing title, the deepest rung of the
+      // author-ON arm. It carries the SAME shared floor as every other cut, so
+      // #2133's anchored corroboration applies to it byte-identically.
+      {
+        query: 'haunted starlight George Mann',
+        author: 'George Mann',
+        variant: { raw: 'haunted starlight', tag: 'suffix(1)', parensStripped: true, lossy: false },
+        segments: ['haunted starlight'],
+        floorSegments: FLOOR,
+      },
       {
         query: 'star wars the high republic haunted starlight',
         author: undefined,
@@ -165,18 +182,127 @@ describe('buildQueryLadder', () => {
         segments: ['the high republic', 'haunted starlight'],
         floorSegments: FLOOR,
       },
-      {
-        query: 'star wars haunted starlight',
-        author: undefined,
-        variant: { raw: 'star wars haunted starlight', tag: 'first+last', parensStripped: true, lossy: false },
-        segments: ['star wars', 'haunted starlight'],
-        floorSegments: FLOOR,
-      },
     ]);
 
-    // `prefix(1)` = "star wars" retains 1 against a budget of ceil(3/2) = 2 —
-    // the pure-franchise rung the budget exists to suppress.
+    // AC3 — `prefix(1)` = "star wars" retains 1 against a budget of ceil(3/2) = 2
+    // and is NOT exempt: the pure-franchise rung the budget exists to suppress
+    // stays suppressed, on both author arms.
     expect(shape(ladder)).not.toContain('prefix(1)@George Mann');
+    expect(shape(ladder)).not.toContain('prefix(1)@-');
+    expect(ladder.every((r) => r.query !== 'star wars' && r.query !== 'star wars George Mann')).toBe(true);
+  });
+
+  // #2138 AC2 — the cap absorbs the growth. Asserted separately from the array
+  // above so the length claim has its own observation point.
+  it('does not lengthen the deep-franchise ladder past the cap (AC2)', () => {
+    const ladder = buildQueryLadder({
+      title: 'Star Wars: The High Republic: Haunted Starlight',
+      author: 'George Mann',
+    });
+    expect(MAX_SEARCH_RUNGS).toBe(8);
+    expect(ladder).toHaveLength(MAX_SEARCH_RUNGS);
+    // The displaced rung: today's deepest author-OFF cut is gone.
+    expect(shape(ladder)).not.toContain('first+last@-');
+  });
+
+  // #2138 F2 (spec review) — the tail exemption is admission policy, not author
+  // policy. Existing no-author coverage uses the two-segment Churn shape where
+  // `suffix(1)` was already admitted, so it cannot see an implementation that
+  // accidentally gates the new exemption on author presence.
+  it('admits the tail rung on a deep title with no author, in one deduped arm (AC1, F2)', () => {
+    const ladder = buildQueryLadder({ title: 'Star Wars: The High Republic: Haunted Starlight' });
+
+    expect(shape(ladder)).toEqual([
+      'canonical@-',
+      'prefix(2)@-',
+      'suffix(2)@-',
+      'first+last@-',
+      'suffix(1)@-',
+    ]);
+    expect(ladder.every((r) => r.author === undefined)).toBe(true);
+    expect(rungFor(ladder, 'suffix(1)').query).toBe('haunted starlight');
+    expect(rungFor(ladder, 'suffix(1)').segments).toEqual(['haunted starlight']);
+    expect(shape(ladder)).not.toContain('prefix(1)@-');
+  });
+
+  // #2138 AC6 — shallow and colon-free titles are untouched. `suffix(1)` was
+  // ALREADY admitted at two effective segments (budget 1), which is how "The
+  // Churn" works, so these shapes must be byte-identical to today's.
+  it.each([
+    [
+      'The Churn: An Expanse Novella',
+      'James S. A. Corey',
+      ['canonical@James S. A. Corey', 'prefix(1)@James S. A. Corey', 'suffix(1)@James S. A. Corey', 'full@-', 'prefix(1)@-', 'suffix(1)@-'],
+    ],
+    ['Dune', 'Frank Herbert', ['canonical@Frank Herbert', 'full@-']],
+  ])('leaves the %s ladder unchanged (AC6)', (title, author, expected) => {
+    expect(shape(buildQueryLadder({ title, author }))).toEqual(expected);
+  });
+
+  // #2138 AC4 — the exemption is keyed on the TAG, not on "the slice equals the
+  // last effective segment". Here the two readings diverge: the generator's
+  // first-wins dedup hands the tail TEXT to `prefix(1)`, so no `suffix(1)` is
+  // emitted at all and this ladder is byte-identical to today's.
+  //
+  // COUNTERFACTUAL: exempt any slice equal to the last effective segment and the
+  // bare pure-franchise query `star wars` is admitted here.
+  it('never admits the tail text when dedup hands it to prefix(1) (AC4)', () => {
+    const ladder = buildQueryLadder({ title: 'Star Wars: The High Republic: Star Wars', author: 'George Mann' });
+
+    expect(shape(ladder)).toEqual([
+      'canonical@George Mann',
+      'prefix(2)@George Mann',
+      'suffix(2)@George Mann',
+      'first+last@George Mann',
+      'full@-',
+      'prefix(2)@-',
+      'suffix(2)@-',
+      'first+last@-',
+    ]);
+    expect(ladder.every((r) => r.variant?.tag !== 'suffix(1)')).toBe(true);
+    expect(ladder.every((r) => r.variant?.raw !== 'star wars')).toBe(true);
+  });
+
+  // #2138 AC4 — the other divergence: a LEADING `---` makes dedup hand the tail
+  // text `gamma` to `first+last`, whose slice contains the normalization-empty
+  // segment, so step 1 still rejects it. Neither a `first+last` nor any tail
+  // rung is issued; the ladder is unchanged.
+  it('issues no tail rung when dedup hands the tail text to a step-1-rejected first+last (AC4)', () => {
+    const ladder = buildQueryLadder({ title: '---: Alpha: Beta: Gamma', author: 'A' });
+
+    expect(shape(ladder)).toEqual(['canonical@A', 'suffix(2)@A', 'full@-', 'suffix(2)@-']);
+    expect(ladder.every((r) => r.variant?.tag !== 'first+last')).toBe(true);
+    expect(ladder.every((r) => r.variant?.tag !== 'suffix(1)')).toBe(true);
+    expect(ladder.every((r) => r.variant?.raw !== 'gamma')).toBe(true);
+  });
+
+  // #2138 AC7 — the depth boundary is a CONSEQUENCE of the cap, measured here,
+  // not ordering logic. 3, 4 and 5 effective segments reach the tail rung; at
+  // 6 the author-ON arm fills the cap before it.
+  it.each([
+    ['Alpha: Beta: Gamma', 'suffix(1)@A'],
+    ['Alpha: Beta: Gamma: Delta', 'suffix(1)@A'],
+    ['Alpha: Beta: Gamma: Delta: Eps', 'suffix(1)@A'],
+  ])('reaches the tail rung on %s (AC7)', (title, expected) => {
+    expect(shape(buildQueryLadder({ title, author: 'A' }))).toContain(expected);
+  });
+
+  it('does not reach the tail rung at six effective segments — the cap fills first (AC7)', () => {
+    const ladder = buildQueryLadder({ title: 'Alpha: Beta: Gamma: Delta: Eps: Zeta', author: 'Author Name' });
+
+    // Byte-identical to today: the whole cap is the author-ON arm, ending at
+    // `first+last`, so the tail rung is never emitted.
+    expect(shape(ladder)).toEqual([
+      'canonical@Author Name',
+      'prefix(5)@Author Name',
+      'suffix(5)@Author Name',
+      'prefix(4)@Author Name',
+      'suffix(4)@Author Name',
+      'prefix(3)@Author Name',
+      'suffix(3)@Author Name',
+      'first+last@Author Name',
+    ]);
+    expect(ladder).toHaveLength(MAX_SEARCH_RUNGS);
   });
 
   // D3 step 1 + D7 — the floor tests exactly the constraints the budget granted.
@@ -266,6 +392,32 @@ describe('buildQueryLadder', () => {
     expect(firstLast.segments).toEqual(['star wars', 'haunted starlight']);
     expect(passesSegmentFloor('Star Wars: Cataclysm', firstLast)).toBe(false);
     expect(passesSegmentFloor('Star Wars: Haunted Starlight', firstLast)).toBe(true);
+
+    // #2138 AC5 — step 1 binds the tail rung too, and it binds BEFORE the
+    // exemption is consulted. Here the retained tail segment is non-empty, so
+    // the rung IS admitted and carries the same shared floor; the interior `---`
+    // still keeps every pure-franchise slice out.
+    const tail = rungFor(ladder, 'suffix(1)');
+    expect(tail.query).toBe('haunted starlight George Mann');
+    expect(tail.segments).toEqual(['haunted starlight']);
+    expect(tail.floorSegments).toEqual(['star wars', 'haunted starlight']);
+    expect(passesSegmentFloor('Star Wars: Cataclysm', tail)).toBe(false);
+    expect(passesSegmentFloor('Star Wars: Haunted Starlight', tail)).toBe(true);
+  });
+
+  // #2138 AC5 — a TRAILING punctuation-only segment admits no cut rung at all,
+  // so the exemption has nothing to widen. Measured, not predicted: the
+  // generator's `suffix(1)` here would retain the empty `---`, so its `raw`
+  // normalizes to '' and the generator never emits it — step 1 stays ahead of
+  // the exemption as the structural invariant, but for this tag the upstream
+  // empty-`raw` guard is what the rejection actually reduces to. Every OTHER cut
+  // (`suffix(2)`, `first+last`) retains the empty segment and step 1 rejects it.
+  it('admits no cut rung, and no garbage floor, for a trailing punctuation-only segment (AC5)', () => {
+    const ladder = buildQueryLadder({ title: 'Alpha: Beta: ---', author: 'A' });
+
+    expect(shape(ladder)).toEqual(['canonical@A', 'full@-']);
+    expect(ladder.every((r) => r.floorSegments.length === 0)).toBe(true);
+    for (const rung of ladder) for (const segment of rung.segments) expect(segment).not.toBe('');
   });
 
   // AC3 — the budget denominator must be the effective segment count, not
@@ -404,6 +556,10 @@ describe('the anchored floor — sibling rejection (#2133)', () => {
       'Star Wars: The High Republic: Haunted Starlight | prefix(2)': false,
       'Star Wars: The High Republic: Haunted Starlight | suffix(2)': false,
       'Star Wars: The High Republic: Haunted Starlight | first+last': true,
+      // #2138 — the tail rung. It transports ONLY the last anchor, so the shared
+      // floor's first anchor is unsatisfied and the rung does not self-pass: a
+      // franchise-dropping release found here is held, not grabbed (AC10).
+      'Star Wars: The High Republic: Haunted Starlight | suffix(1)': false,
       'The Churn: An Expanse Novella | prefix(1)': false,
       'The Churn: An Expanse Novella | suffix(1)': false,
       'Star Wars: The Rising Storm (The High Republic) | prefix(1)': false,
@@ -416,12 +572,15 @@ describe('the anchored floor — sibling rejection (#2133)', () => {
       'Alpha: Beta: Gamma: Delta: Eps: Zeta | suffix(3)': false,
       'Alpha: Beta: Gamma: Delta: Eps: Zeta | first+last': true,
       'Star Wars: ---: The High Republic: Haunted Starlight | first+last': true,
+      'Star Wars: ---: The High Republic: Haunted Starlight | suffix(1)': false,
       'Star Wars: The High Republic: Star Wars | prefix(2)': false,
       'Star Wars: The High Republic: Star Wars | suffix(2)': false,
       'Star Wars: The High Republic: Star Wars | first+last': true,
       'Alpha: Beta Gamma: Gamma | prefix(2)': false,
       'Alpha: Beta Gamma: Gamma | suffix(2)': false,
       'Alpha: Beta Gamma: Gamma | first+last': false,
+      // The canonical text demands `gamma` twice; the tail rung supplies one.
+      'Alpha: Beta Gamma: Gamma | suffix(1)': false,
       'Star (Deluxe) Wars: Haunted Starlight | prefix(1)': false,
       'Star (Deluxe) Wars: Haunted Starlight | suffix(1)': false,
     });
@@ -637,5 +796,31 @@ describe('selectRelaxedCandidate', () => {
   it("grabs the book's own canonical title on the prefix(2) rung (AC6)", () => {
     const results = [passing('Star Wars: The High Republic: Haunted Starlight')];
     expect(selectRelaxedCandidate(results, prefix2)).toEqual({ kind: 'grab', result: results[0] });
+  });
+});
+
+// ============================================================================
+// #2142 rider — the countOccurrences self-overlap claim, pinned
+// ============================================================================
+
+describe('countOccurrences self-overlap (the #2133 docblock claim)', () => {
+  // The docblock states the conservative arm outright — '"a a a" yields 1 for "a a"' — and that
+  // the error direction matters (it errs toward hold). This title makes the claim observable
+  // through the public surface: the tail segment "A A A" self-overlaps the first anchor "a a".
+  const TITLE = 'A A: Whatever: A A A';
+
+  it('demands the conservative count — the self-overlapping tail adds ONE "a a", not two', () => {
+    // An overlapping scan would demand three copies of "a a" (one from the head, two from the
+    // tail); the trailing-delimiter restart demands exactly two.
+    const rung = segmentCutRungs(TITLE)[0]!;
+    expect([...rung.floorSegments].sort()).toEqual(['a a', 'a a', 'a a a']);
+  });
+
+  it('errs toward hold: a release that is only the tail fails the floor', () => {
+    const rung = segmentCutRungs(TITLE)[0]!;
+    // "A A A" carries one conservative "a a" — below the two demanded — so the floor refuses.
+    expect(passesSegmentFloor('A A A', rung)).toBe(false);
+    // The canonical title itself still self-passes (both sides count with the same function).
+    expect(passesSegmentFloor(TITLE, rung)).toBe(true);
   });
 });

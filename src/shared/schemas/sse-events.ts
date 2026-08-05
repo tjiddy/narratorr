@@ -18,10 +18,7 @@ export const sseEventTypeSchema = z.enum([
   'review_needed',
   'merge_complete',
   'merge_started',
-  'merge_progress',
   'merge_failed',
-  'merge_queued',
-  'merge_queue_updated',
   'merge_state',
   'search_started',
   'search_indexer_complete',
@@ -147,13 +144,6 @@ export const mergeDisplayPhaseSchema = z.enum([
 
 export type MergeDisplayPhase = z.infer<typeof mergeDisplayPhaseSchema>;
 
-export const mergeProgressPayload = z.object({
-  book_id: z.number(),
-  book_title: z.string(),
-  phase: mergePhaseSchema,
-  percentage: z.number().optional(),
-});
-
 export const mergeFailedReasonSchema = z.enum(['cancelled', 'error']);
 
 export type MergeFailedReason = z.infer<typeof mergeFailedReasonSchema>;
@@ -163,18 +153,6 @@ export const mergeFailedPayload = z.object({
   book_title: z.string(),
   error: z.string(),
   reason: mergeFailedReasonSchema.default('error'),
-});
-
-export const mergeQueuedPayload = z.object({
-  book_id: z.number(),
-  book_title: z.string(),
-  position: z.number(),
-});
-
-export const mergeQueueUpdatedPayload = z.object({
-  book_id: z.number(),
-  book_title: z.string(),
-  position: z.number(),
 });
 
 /**
@@ -197,8 +175,8 @@ export type MergeActivePhase = z.infer<typeof mergeActivePhaseSchema>;
  * written once to each newly connected client, which is what makes a late joiner (page
  * reload mid-queue) correct by construction. `active` is a list because the merge semaphore
  * is sized from `processing.maxConcurrentProcessing` (1..8), so N merges can genuinely run
- * at once. `queued` is FIFO — position is `index + 1`, not a field. `percentage` keeps the
- * 0..1 fraction `merge_progress` already carries.
+ * at once. `queued` is FIFO — position is `index + 1`, not a field. `percentage` is the
+ * audio processor's 0..1 fraction, converted to a display percent at the client boundary.
  */
 export const mergeStatePayload = z.object({
   active: z.array(z.object({
@@ -268,10 +246,7 @@ export type SSEEventPayloads = {
   review_needed: z.infer<typeof reviewNeededPayload>;
   merge_complete: z.infer<typeof mergeCompletePayload>;
   merge_started: z.infer<typeof mergeStartedPayload>;
-  merge_progress: z.infer<typeof mergeProgressPayload>;
   merge_failed: z.infer<typeof mergeFailedPayload>;
-  merge_queued: z.infer<typeof mergeQueuedPayload>;
-  merge_queue_updated: z.infer<typeof mergeQueueUpdatedPayload>;
   merge_state: z.infer<typeof mergeStatePayload>;
   search_started: z.infer<typeof searchStartedPayload>;
   search_indexer_complete: z.infer<typeof searchIndexerCompletePayload>;
@@ -306,10 +281,7 @@ export const CACHE_INVALIDATION_MATRIX: Record<SSEEventType, CacheInvalidationRu
   review_needed: { activity: 'invalidate', activityCounts: 'invalidate' },
   merge_complete: { activity: 'invalidate', activityCounts: 'invalidate', books: 'invalidate', eventHistory: 'invalidate' },
   merge_started: { eventHistory: 'invalidate' },
-  merge_progress: {},
   merge_failed: { eventHistory: 'invalidate', books: 'invalidate' },
-  merge_queued: {},
-  merge_queue_updated: {},
   // Deliberately empty (#2129): this frame fires on every progress tick and carries no data
   // any query owns — invalidating from it would refetch the whole activity surface per tick.
   merge_state: {},

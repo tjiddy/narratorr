@@ -92,12 +92,8 @@ function resolveRetryCandidate(
   const selection = selectRelaxedCandidate(results, ran.rung);
 
   if (selection.kind === 'hold') {
-    log.info({
-      bookId: book.id, title: book.title, attempt,
-      relaxedQuery: ran.rung.query, variantTag: ran.rung.variant?.tag, releaseTitle: selection.releaseTitle,
-    }, 'Retry search: relaxed-query candidates held for review — none carried the canonical title anchors');
     recordSearchRelaxedHeldEvent({
-      book, eventHistory, log,
+      book, eventHistory, log, attempt,
       relaxedQuery: ran.rung.query,
       variantTag: ran.rung.variant?.tag ?? 'full',
       releaseTitle: selection.releaseTitle,

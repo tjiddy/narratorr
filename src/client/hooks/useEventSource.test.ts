@@ -701,7 +701,7 @@ describe('#257 merge observability — useEventSource', () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['eventHistory'] });
     });
 
-    it('merge_progress event does NOT trigger full cache invalidation', () => {
+    it('merge_state event does NOT trigger cache invalidation (per-tick frame)', () => {
       const { wrapper, queryClient } = createWrapper();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
@@ -709,11 +709,11 @@ describe('#257 merge observability — useEventSource', () => {
       const es = MockEventSource.instances[0];
       act(() => es!.simulateOpen());
 
-      act(() => es!.simulateEvent('merge_progress', {
-        book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
+      act(() => es!.simulateEvent('merge_state', {
+        active: [{ book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5 }], queued: [],
       }));
 
-      // merge_progress has empty invalidation rule — no invalidation calls
+      // merge_state has a deliberately empty invalidation rule — no invalidation calls
       expect(invalidateSpy).not.toHaveBeenCalled();
     });
 
@@ -778,17 +778,20 @@ describe('#257 merge observability — useEventSource', () => {
   });
 
   describe('event listener registration', () => {
-    it('registers listeners for merge_started, merge_progress, merge_failed', () => {
+    it('registers listeners for the surviving merge events (started, failed, state)', () => {
       const { wrapper } = createWrapper();
 
       renderHook(() => useEventSource('key'), { wrapper });
       const es = MockEventSource.instances[0];
 
-      // Check that all 3 new event types have listeners registered
-      for (const type of ['merge_started', 'merge_progress', 'merge_failed']) {
+      for (const type of ['merge_started', 'merge_failed', 'merge_state']) {
         const handlers = (es as unknown as { listeners: Map<string, unknown[]> }).listeners.get(type);
         expect(handlers).toBeDefined();
         expect(handlers!.length).toBeGreaterThan(0);
+      }
+      // Retired in #2142 — no listener may come back without re-adding the event to the schema.
+      for (const type of ['merge_progress', 'merge_queued', 'merge_queue_updated']) {
+        expect((es as unknown as { listeners: Map<string, unknown[]> }).listeners.get(type)).toBeUndefined();
       }
     });
   });
@@ -802,21 +805,17 @@ describe('#257 merge observability — useEventSource', () => {
       setMergeProgress(42, null);
     });
 
-    // #2129 — non-terminal state has ONE source now: the merge_state snapshot. The incremental
-    // events stay on the wire (toasts, event history, cache) but no longer write the store.
-    it('merge_queued / merge_started / merge_progress no longer write the store (AC8)', () => {
+    // #2129 — non-terminal state has ONE source now: the merge_state snapshot. merge_started
+    // is the sole surviving incremental (toast + event history, #2142) and must not write the
+    // store — a second writer would recreate the dual-source fight #2129 eliminated.
+    it('merge_started does not write the store (AC8)', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });
       const { result: progressResult } = renderHook(() => useMergeProgress(42));
       const es = MockEventSource.instances[0];
       act(() => es!.simulateOpen());
 
-      act(() => es!.simulateEvent('merge_queued', { book_id: 42, book_title: 'My Book', position: 2 }));
-      act(() => es!.simulateEvent('merge_queue_updated', { book_id: 42, book_title: 'My Book', position: 1 }));
       act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
-      act(() => es!.simulateEvent('merge_progress', {
-        book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
-      }));
 
       expect(progressResult.current).toBeNull();
     });
@@ -1134,29 +1133,7 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
   });
 
   describe('#368 merge queue — SSE event handling', () => {
-    it('does not write the store for merge_queued — the snapshot owns queued state (#2129 AC8)', () => {
-      const queryClient = new QueryClient();
-      queryClient.setQueryData(['auth', 'config'], { apiKey: 'test-key' });
-      const wrapper = ({ children }: { children: ReactNode }) =>
-        createElement(QueryClientProvider, { client: queryClient }, children);
-
-      renderHook(() => useEventSource('test-key'), { wrapper });
-
-      const es = MockEventSource.instances[MockEventSource.instances.length - 1];
-      es!.simulateOpen();
-
-      act(() => {
-        es!.simulateEvent('merge_queued', { book_id: 42, book_title: 'Test Book', position: 2 });
-      });
-
-      const { result } = renderHook(() => useMergeProgress(42));
-      expect(result.current).toBeNull();
-
-      // Clean up
-      setMergeProgress(42, null);
-    });
-
-    it('takes the queue position from the snapshot\'s FIFO order, not from merge_queue_updated', () => {
+    it('takes the queue position from the snapshot\'s FIFO order (#2129)', () => {
       const queryClient = new QueryClient();
       queryClient.setQueryData(['auth', 'config'], { apiKey: 'test-key' });
       const wrapper = ({ children }: { children: ReactNode }) =>
@@ -1172,11 +1149,6 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
           active: [],
           queued: [{ book_id: 7, book_title: 'Ahead' }, { book_id: 42, book_title: 'Test Book' }],
         });
-      });
-
-      // The legacy position events stay on the wire and are simply ignored by the store.
-      act(() => {
-        es!.simulateEvent('merge_queue_updated', { book_id: 42, book_title: 'Test Book', position: 1 });
       });
 
       const { result } = renderHook(() => useMergeProgress(42));
@@ -1688,10 +1660,7 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     review_needed: { activity: 'invalidate', activityCounts: 'invalidate' },
     merge_complete: { activity: 'invalidate', activityCounts: 'invalidate', books: 'invalidate', eventHistory: 'invalidate' },
     merge_started: { eventHistory: 'invalidate' },
-    merge_progress: {},
     merge_failed: { eventHistory: 'invalidate', books: 'invalidate' },
-    merge_queued: {},
-    merge_queue_updated: {},
     merge_state: {},
     search_started: {},
     search_indexer_complete: {},
@@ -1713,10 +1682,7 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     review_needed: { download_id: 7, book_id: 42, book_title: 'Test' },
     merge_complete: { book_id: 42, book_title: 'Test', success: true, message: 'msg' },
     merge_started: { book_id: 42, book_title: 'Test' },
-    merge_progress: { book_id: 42, book_title: 'Test', phase: 'staging', percentage: 0.5 },
     merge_failed: { book_id: 42, book_title: 'Test', error: 'err', reason: 'error' },
-    merge_queued: { book_id: 42, book_title: 'Test', position: 1 },
-    merge_queue_updated: { book_id: 42, book_title: 'Test', position: 1 },
     merge_state: { active: [], queued: [] },
     search_started: { book_id: 42, book_title: 'Test', indexers: [] },
     search_indexer_complete: { book_id: 42, indexer_id: 1, indexer_name: 'X', results_found: 0, elapsed_ms: 1 },

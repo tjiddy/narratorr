@@ -30,11 +30,22 @@ import { buildSearchQuery, cleanIndexerQuery } from './indexer-query.js';
 /**
  * Rung 1 plus at most seven relaxed rungs.
  *
- * 8 is exactly the author-ON / author-OFF pairing of the four variants a
- * 3-segment franchise title yields under the segment budget — the deepest live
- * shape. There is NO client-side indexer rate limiter, so this constant is the
- * only protection against MAM's server-side limit; the exhaustion cooldown
- * (`search-ladder-cooldown.ts`) is the second. Do not raise it without one.
+ * 8 is a BUDGET, not a derived count. There is NO client-side indexer rate
+ * limiter, so this constant is the only protection against MAM's server-side
+ * limit; the exhaustion cooldown (`search-ladder-cooldown.ts`) is the second. Do
+ * not raise it without one.
+ *
+ * What it bounds is total queries per book per cycle, and it TRUNCATES rather
+ * than trims proportionally: {@link buildQueryLadder} fills the author-ON arm
+ * first and returns the moment it reaches 8, so admitted variants past that
+ * point are simply never issued. Since #2138 the 3-segment franchise title — the
+ * deepest live shape — yields FIVE admitted cut variants, so its ten author
+ * pairings truncate to 8: the whole author-ON arm plus the first three author-OFF
+ * rungs, and the deepest author-OFF cut (`first+last@-`) is displaced. That is
+ * the intended trade — a more identifying query with the author attached beats a
+ * less identifying one without it — and it is why the tail-rung admission costs
+ * no extra query and no extra latency. Exhaustion still means "all 8 rungs
+ * returned an answered zero", so cooldown semantics are untouched.
  */
 export const MAX_SEARCH_RUNGS = 8;
 
@@ -203,6 +214,44 @@ function retainedSlice(tag: Variant['tag'], segments: string[]): string[] | null
 }
 
 /**
+ * Tags exempt from the step-2 COUNT budget — never from step 1.
+ *
+ * The budget suppresses a rung that "retained too little", but a segment COUNT
+ * conflates quantity with identity, and on a deep-franchise title the two
+ * shapes below retain the LEAST text and the MOST identity:
+ *
+ *  - **`first+last`** retains the title's two identity-bearing ends — 2 against
+ *    a budget of 3 on a 5-segment title — and is the shape the deep-franchise
+ *    live example needs.
+ *  - **`suffix(1)`** is the bare distinguishing title, and on 3+ segments it is
+ *    the single most identifying string the book has. Publishers drop the
+ *    franchise prefix exactly on these books, so a release named plainly
+ *    (`"Haunted Starlight - George Mann"`) is unreachable by every query that
+ *    ANDs a franchise token — which, without this exemption, is every rung
+ *    (#2138). At two effective segments the budget of 1 already admits it, which
+ *    is how `"The Churn: An Expanse Novella"` works; the exemption only extends
+ *    that to the depths where the count starts refusing it.
+ *
+ * The exemption is keyed on the TAG, deliberately, and not on "this slice IS the
+ * last effective segment" (#2138 AC4). `retainedSlice('suffix(1)', effective)`
+ * is that element, so the two readings coincide whenever the generator emits a
+ * `suffix(1)` at all — and where they diverge, first-wins dedup has handed the
+ * tail TEXT to some other tag and the tag reading is the safe one:
+ *
+ *  - `"Star Wars: The High Republic: Star Wars"` emits the tail text as
+ *    `prefix(1)`, so a slice reading admits the bare pure-franchise `star wars`.
+ *  - `"---: Alpha: Beta: Gamma"` emits it as `first+last`, whose slice carries
+ *    the normalization-empty `---` that step 1 must still reject.
+ *
+ * The pure-franchise `prefix(1)` is NOT exempt and stays suppressed. What makes
+ * the asymmetry sound is that the two ends are not interchangeable: a franchise
+ * name leads, the book's own name trails.
+ */
+function isBudgetExempt(tag: Variant['tag']): boolean {
+  return tag === 'first+last' || tag === 'suffix(1)';
+}
+
+/**
  * Which variants may become rungs, plus the ONE floor they all share.
  *
  * The budget decides ADMISSION — which queries the ladder issues — and #2133
@@ -233,10 +282,8 @@ function retainedSlice(tag: Variant['tag'], segments: string[]): string[] | null
  *     from step 2 would otherwise let `"---: Alpha: Beta: Gamma"` admit a
  *     one-element floor `["gamma"]`.
  *  2. `n = slice.length`, which now provably equals the count of the slice's
- *     EFFECTIVE segments, and the variant enters iff `n >= ceil(count / 2)` — or
- *     its tag is `first+last`. That exemption is deliberate: on a 5-segment
- *     franchise title `first+last` retains 2 against a budget of 3, and it is
- *     the shape the deep-franchise live example needs.
+ *     EFFECTIVE segments, and the variant enters iff `n >= ceil(count / 2)` or
+ *     {@link isBudgetExempt} names its tag.
  *
  * A `full` variant (either `parensStripped`) is unconditional and never floored.
  */
@@ -257,7 +304,7 @@ function admitVariants(title: string): {
     const slice = retainedSlice(variant.tag, effective);
     if (!slice || slice.length === 0) continue;
     if (slice.some((segment) => segment.length === 0)) continue; // step 1
-    if (variant.tag !== 'first+last' && slice.length < budget) continue; // step 2
+    if (!isBudgetExempt(variant.tag) && slice.length < budget) continue; // step 2
     admitted.push({ variant, segments: slice });
   }
   // `nonEmpty` IS `effectiveSegments(title)`, so the floor reuses the raw-vs-

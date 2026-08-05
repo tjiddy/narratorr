@@ -64,17 +64,18 @@ export class MergeStateBroadcaster {
   }
 
   /**
-   * Phase / percentage update for an in-flight merge. `percentage` mirrors the last
-   * `merge_progress` emit exactly — including an emit that carries none (a phase transition),
-   * which clears it, matching what the incremental events used to do to the client store.
+   * Phase / percentage update for an in-flight merge. An update that carries no `percentage`
+   * (a phase transition) clears the stored one, so a client never renders a stale percentage
+   * against a new phase. Broadcasts only when the book is actually tracked — an update for an
+   * untracked book (unreachable today) must not emit a no-change frame, matching the
+   * changed-only discipline `finishTerminal` and `clearResidue` follow.
    */
   updateProgress(bookId: number, phase: MergeActivePhase, percentage?: number): void {
     const entry = this.activeEntries.get(bookId);
-    if (entry) {
-      entry.phase = phase;
-      if (percentage === undefined) delete entry.percentage;
-      else entry.percentage = percentage;
-    }
+    if (!entry) return;
+    entry.phase = phase;
+    if (percentage === undefined) delete entry.percentage;
+    else entry.percentage = percentage;
     this.broadcast();
   }
 
@@ -97,10 +98,12 @@ export class MergeStateBroadcaster {
   }
 
   /**
-   * Idempotent backstop for the exits that end a merge with NO terminal event — `executeMerge`'s
-   * `!book || !book.path` and missing-ffmpeg early returns, and the non-`MergeError` branch of
-   * `executeWithRevalidation` — which would otherwise strand a permanent chip. Broadcasts only
-   * when it actually removed something, so the normal terminal path stays at exactly one frame.
+   * Idempotent backstop for any exit that ends a merge with NO terminal event — since #2142
+   * converted `executeMerge`'s pre-flight early returns to `MergeError` throws (terminal-
+   * reported by its catch), the known remaining case is the non-`MergeError` branch of
+   * `executeWithRevalidation`'s revalidation gate — which would otherwise strand a permanent
+   * chip. Broadcasts only when it actually removed something, so the normal terminal path
+   * stays at exactly one frame.
    */
   clearResidue(bookId: number): void {
     if (this.remove(bookId)) this.broadcast();
@@ -109,10 +112,11 @@ export class MergeStateBroadcaster {
   /**
    * The title captured when the book entered the snapshot, so a terminal emitter can take it as a
    * parameter instead of re-reading the book (which would put an `await` inside the delete →
-   * terminal event → cleared snapshot sequence).
+   * terminal event → cleared snapshot sequence). Owns the placeholder for the untracked case
+   * (#2142) — one spelling, not one per caller.
    */
-  titleFor(bookId: number): string | undefined {
-    return this.activeEntries.get(bookId)?.title ?? this.queuedTitles.get(bookId);
+  titleFor(bookId: number): string {
+    return this.activeEntries.get(bookId)?.title ?? this.queuedTitles.get(bookId) ?? `Book ${bookId}`;
   }
 
   private remove(bookId: number): boolean {

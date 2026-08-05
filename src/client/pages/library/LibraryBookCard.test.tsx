@@ -700,7 +700,8 @@ describe('React.memo (REACT-2 refactor)', () => {
 
     it('working merge shows the spinner chip and swaps the status bar for a progress sliver', () => {
       const book = createMockLibraryBook({ id: 4242 });
-      setMergeProgress(4242, { bookTitle: book.title, phase: 'processing', percentage: 60 });
+      // Wire unit is a 0..1 fraction — the hook converts to the 0..100 display percent.
+      setMergeProgress(4242, { bookTitle: book.title, phase: 'processing', percentage: 0.6 });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
 
       const chip = screen.getByTestId('activity-chip');

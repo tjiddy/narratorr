@@ -13,7 +13,6 @@ import {
   reviewNeededPayload,
   mergeCompletePayload,
   mergeStartedPayload,
-  mergeProgressPayload,
   mergeFailedPayload,
   mergeStatePayload,
   searchStartedPayload,
@@ -43,14 +42,16 @@ describe('bookStatusSchema widening', () => {
 });
 
 describe('SSE event schemas', () => {
-  it('defines all 21 event types', () => {
+  // The single membership pin for the event union (#2142 deduped the count-only twin).
+  // merge_progress / merge_queued / merge_queue_updated were retired in #2142 —
+  // merge_state is the sole live channel for non-terminal merge state.
+  it('defines exactly the 18 event types', () => {
     const types = sseEventTypeSchema.options;
     expect(types).toEqual([
       'download_progress', 'download_status_change', 'book_status_change',
       'import_complete', 'import_phase_change', 'import_progress', 'import_failed',
       'grab_started', 'review_needed', 'merge_complete',
-      'merge_started', 'merge_progress', 'merge_failed',
-      'merge_queued', 'merge_queue_updated', 'merge_state',
+      'merge_started', 'merge_failed', 'merge_state',
       'search_started', 'search_indexer_complete', 'search_indexer_error',
       'search_grabbed', 'search_complete',
     ]);
@@ -149,10 +150,6 @@ describe('CACHE_INVALIDATION_MATRIX', () => {
     expect(rule.activityCounts).toBeUndefined();
   });
 
-  it('merge_progress has empty invalidation (no cache impact)', () => {
-    const rule = CACHE_INVALIDATION_MATRIX.merge_progress;
-    expect(rule).toEqual({});
-  });
 });
 
 describe('TOAST_EVENT_CONFIG', () => {
@@ -168,7 +165,7 @@ describe('TOAST_EVENT_CONFIG', () => {
     expect(TOAST_EVENT_CONFIG.download_progress).toBeUndefined();
     expect(TOAST_EVENT_CONFIG.download_status_change).toBeUndefined();
     expect(TOAST_EVENT_CONFIG.book_status_change).toBeUndefined();
-    expect(TOAST_EVENT_CONFIG.merge_progress).toBeUndefined();
+    expect(TOAST_EVENT_CONFIG.merge_state).toBeUndefined();
   });
 
   it('merge_started is info level with book_title key', () => {
@@ -201,29 +198,6 @@ describe('#257 merge observability — SSE payload schemas', () => {
 
     it('rejects payload with missing book_title', () => {
       expect(() => mergeStartedPayload.parse({ book_id: 42 })).toThrow();
-    });
-  });
-
-  describe('merge_progress payload', () => {
-    it('accepts valid payload with all phases: staging, processing, verifying, committing', () => {
-      for (const phase of ['staging', 'processing', 'verifying', 'committing']) {
-        const valid = { book_id: 42, book_title: 'My Book', phase };
-        expect(mergeProgressPayload.parse(valid)).toEqual(valid);
-      }
-    });
-
-    it('rejects invalid phase string', () => {
-      expect(() => mergeProgressPayload.parse({ book_id: 42, book_title: 'My Book', phase: 'unknown' })).toThrow();
-    });
-
-    it('percentage is optional (absent during non-processing phases)', () => {
-      const withoutPercentage = { book_id: 42, book_title: 'My Book', phase: 'staging' };
-      expect(mergeProgressPayload.parse(withoutPercentage)).toEqual(withoutPercentage);
-    });
-
-    it('accepts percentage as 0..1 ratio', () => {
-      const valid = { book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.34 };
-      expect(mergeProgressPayload.parse(valid)).toEqual(valid);
     });
   });
 
@@ -264,9 +238,10 @@ describe('#257 merge observability — SSE payload schemas', () => {
 // ============================================================================
 
 describe('#392 search progress — SSE event schemas', () => {
-  it('defines all 21 event types (12 existing + 5 search + 3 import events + merge_state)', () => {
+  // The exhaustive ordered pin lives in 'SSE event schemas' above (#2142 dropped the
+  // count-only duplicate here — the two had to be edited in lockstep on every union change).
+  it('includes the search event types', () => {
     const types = sseEventTypeSchema.options;
-    expect(types).toHaveLength(21);
     expect(types).toContain('search_started');
     expect(types).toContain('search_indexer_complete');
     expect(types).toContain('search_indexer_error');

@@ -15,6 +15,7 @@ import {
   recordDownloadCompletedEvent,
   recordDownloadFailedEvent,
   recordGrabFailedEvent,
+  recordSearchRelaxedHeldEvent,
 } from './download-side-effects.js';
 
 function createMockBroadcaster(): EventBroadcasterService {
@@ -453,5 +454,56 @@ describe('recordGrabFailedEvent (#1157)', () => {
     expect(eventHistory.create).toHaveBeenCalledWith(
       expect.objectContaining({ reason: { error: '', release_title: 'Release' } }),
     );
+  });
+});
+
+describe('recordSearchRelaxedHeldEvent', () => {
+  const book = { id: 9, title: 'Haunted Starlight', authors: [{ name: 'George Mann' }], narrators: [{ name: 'N' }] };
+  const baseArgs = { relaxedQuery: 'haunted starlight', variantTag: 'suffix(1)', releaseTitle: 'Haunted Starlight - George Mann' };
+
+  it('records the held event and emits the operator log line from one home (#2142)', () => {
+    const eventHistory = createMockEventHistory();
+    const log = createMockLog();
+
+    recordSearchRelaxedHeldEvent({ eventHistory, book, log, ...baseArgs });
+
+    expect(eventHistory.create).toHaveBeenCalledWith({
+      bookId: 9,
+      bookTitle: 'Haunted Starlight',
+      authorName: 'George Mann',
+      narratorName: 'N',
+      eventType: 'search_relaxed_held',
+      source: 'auto',
+      reason: { relaxed_query: 'haunted starlight', variant_tag: 'suffix(1)', release_title: 'Haunted Starlight - George Mann' },
+    });
+    // The log line the two auto-grab paths used to copy in lockstep — no attempt field
+    // on the scheduled-cycle path.
+    expect(log.info).toHaveBeenCalledWith(
+      { bookId: 9, title: 'Haunted Starlight', relaxedQuery: 'haunted starlight', variantTag: 'suffix(1)', releaseTitle: 'Haunted Starlight - George Mann' },
+      'Relaxed-query candidates held for review — none carried the canonical title anchors',
+    );
+  });
+
+  it('carries the attempt counter in the log payload on the retry path', () => {
+    const eventHistory = createMockEventHistory();
+    const log = createMockLog();
+
+    recordSearchRelaxedHeldEvent({ eventHistory, book, log, attempt: 2, ...baseArgs });
+
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 2, bookId: 9 }),
+      'Relaxed-query candidates held for review — none carried the canonical title anchors',
+    );
+  });
+
+  it('logs a warning when the history write rejects (fire-and-forget)', async () => {
+    const eventHistory = createMockEventHistory();
+    (eventHistory.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('DB down'));
+    const log = createMockLog();
+
+    recordSearchRelaxedHeldEvent({ eventHistory, book, log, ...baseArgs });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(log.warn).toHaveBeenCalledWith(expect.anything(), 'Failed to record search_relaxed_held event');
   });
 });

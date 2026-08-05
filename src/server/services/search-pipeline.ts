@@ -505,10 +505,6 @@ async function runSearchAndGrab(
   // `results.find(r => r.downloadUrl)`.
   const selection = selectRelaxedCandidate(results, ran.rung);
   if (selection.kind === 'hold') {
-    log.info({
-      bookId: book.id, title: book.title,
-      relaxedQuery: ran.rung.query, variantTag: ran.rung.variant?.tag, releaseTitle: selection.releaseTitle,
-    }, 'Relaxed-query candidates held for review — none carried the canonical title anchors');
     recordSearchRelaxedHeldEvent({
       book, eventHistory, log,
       relaxedQuery: ran.rung.query,

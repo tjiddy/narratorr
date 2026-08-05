@@ -353,10 +353,10 @@ function dispatchToasts(type: SSEEventType, data: SSEEventPayloads[typeof type])
 
 /**
  * Merge store writes (#2129). Non-terminal state — queued, starting, and every in-flight phase —
- * comes exclusively from the `merge_state` snapshot, which is authoritative and complete; the
- * incremental `merge_queued` / `merge_queue_updated` / `merge_started` / `merge_progress` events
- * stay on the wire for toasts, event history and cache invalidation but no longer touch the
- * store, so the two sources can't fight over the same books.
+ * comes exclusively from the `merge_state` snapshot, which is authoritative and complete.
+ * `merge_started` is the ONLY surviving incremental merge event, and it survives for its toast
+ * and event-history invalidation alone — it must never write the store (a second writer is
+ * exactly the dual-source fight #2129 eliminated; the other incrementals were retired in #2142).
  *
  * The terminal events keep writing it: they carry `message` / `error` / `enrichmentWarning` /
  * `outcome`, none of which the snapshot has, and the snapshot that follows deliberately omits
