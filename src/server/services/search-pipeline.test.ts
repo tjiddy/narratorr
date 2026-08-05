@@ -3613,6 +3613,60 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
   });
 
   // ==========================================================================
+  // #2138 — the bare distinguishing-title rung
+  // ==========================================================================
+
+  // AC1, AC10 — the new rung is REACHABLE on the auto path and is not hold-only
+  // by tag: a release found there that carries both canonical anchors grabs
+  // through the unchanged shared selector. `queriesOf` pins rungs 0-4 of AC1,
+  // which is where the ladder now stops.
+  it('reaches the tail rung and grabs a release carrying both anchors (AC1, AC10)', async () => {
+    const svc = serviceAnswering({
+      'haunted starlight George Mann': [makeResult({ title: 'Star Wars: Haunted Starlight' })],
+    });
+
+    const result = await searchAndGrabForBook(franchiseBook, deps(svc));
+
+    expect(result).toEqual({ result: 'grabbed', title: 'Star Wars: Haunted Starlight' });
+    expect(queriesOf(svc)).toEqual([
+      'Star Wars The High Republic Haunted Starlight George Mann',
+      'star wars the high republic George Mann',
+      'the high republic haunted starlight George Mann',
+      'star wars haunted starlight George Mann',
+      'haunted starlight George Mann',
+    ]);
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // AC10 — the honest pin of the recorded decision on #2138. The shared anchor
+  // floor is built from the canonical title's FIRST and LAST effective segments,
+  // so a release that drops the franchise prefix supplies only one of the two.
+  // The query is now issued (which is the fix) and the release is now NAMED in
+  // Needs Review (which is the delivered value on this path), but the grab is
+  // withheld. Auto-grabbing it would require a per-rung floor — out of scope,
+  // and in direct tension with "the pure-franchise suppression is untouched".
+  it('holds a franchise-dropping release found at the tail rung, recording ONE event (AC10)', async () => {
+    const svc = serviceAnswering({
+      'haunted starlight George Mann': [makeResult({ title: 'Haunted Starlight - George Mann' })],
+    });
+
+    const result = await searchAndGrabForBook(franchiseBook, deps(svc));
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+    expect(eventHistory.create).toHaveBeenCalledTimes(1);
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'search_relaxed_held',
+      bookId: 1,
+      reason: {
+        relaxed_query: 'haunted starlight George Mann',
+        variant_tag: 'suffix(1)',
+        release_title: 'Haunted Starlight - George Mann',
+      },
+    }));
+  });
+
+  // ==========================================================================
   // #2133 — the anchored floor, on the rung the circular floor let through
   // ==========================================================================
 
