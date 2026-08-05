@@ -798,3 +798,29 @@ describe('selectRelaxedCandidate', () => {
     expect(selectRelaxedCandidate(results, prefix2)).toEqual({ kind: 'grab', result: results[0] });
   });
 });
+
+// ============================================================================
+// #2142 rider — the countOccurrences self-overlap claim, pinned
+// ============================================================================
+
+describe('countOccurrences self-overlap (the #2133 docblock claim)', () => {
+  // The docblock states the conservative arm outright — '"a a a" yields 1 for "a a"' — and that
+  // the error direction matters (it errs toward hold). This title makes the claim observable
+  // through the public surface: the tail segment "A A A" self-overlaps the first anchor "a a".
+  const TITLE = 'A A: Whatever: A A A';
+
+  it('demands the conservative count — the self-overlapping tail adds ONE "a a", not two', () => {
+    // An overlapping scan would demand three copies of "a a" (one from the head, two from the
+    // tail); the trailing-delimiter restart demands exactly two.
+    const rung = segmentCutRungs(TITLE)[0]!;
+    expect([...rung.floorSegments].sort()).toEqual(['a a', 'a a', 'a a a']);
+  });
+
+  it('errs toward hold: a release that is only the tail fails the floor', () => {
+    const rung = segmentCutRungs(TITLE)[0]!;
+    // "A A A" carries one conservative "a a" — below the two demanded — so the floor refuses.
+    expect(passesSegmentFloor('A A A', rung)).toBe(false);
+    // The canonical title itself still self-passes (both sides count with the same function).
+    expect(passesSegmentFloor(TITLE, rung)).toBe(true);
+  });
+});

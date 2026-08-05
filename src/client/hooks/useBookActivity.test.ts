@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { renderHook, render, screen, waitFor } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useBookActivity } from './useBookActivity.js';
 import { setMergeProgress, applyMergeStateSnapshot, _resetForTesting } from './useMergeProgress.js';
-import { BookActivityBadge } from '@/pages/library/BookActivityBadge.js';
 import { api } from '@/lib/api';
 import type { Mock } from 'vitest';
 
@@ -127,17 +126,6 @@ describe('useBookActivity from a merge_state snapshot', () => {
     expect(result.current).toEqual({ state: 'queued', label: 'Merge queued' });
   });
 
-  it('renders the hourglass chip for that snapshot-only queued book', () => {
-    applyMergeStateSnapshot({ active: [], queued: [{ book_id: 42, book_title: 'The Shining' }] });
-    const { result } = renderHook(() => useBookActivity(42), { wrapper });
-
-    render(React.createElement(BookActivityBadge, { activity: result.current, variant: 'chip' as const }));
-
-    const chip = screen.getByTestId('activity-chip');
-    expect(chip).toHaveAccessibleName('Merge queued');
-    expect(chip.querySelector('[data-testid="loading-spinner"]')).not.toBeInTheDocument();
-  });
-
   it('reports the working state with its percentage for an active snapshot entry', () => {
     applyMergeStateSnapshot({
       active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'processing', percentage: 0.35 }],
@@ -147,29 +135,15 @@ describe('useBookActivity from a merge_state snapshot', () => {
     expect(result.current).toEqual({ state: 'working', label: 'Encoding…', percentage: 35 });
   });
 
-  it('renders the spinner chip with the display percent for that active book', () => {
-    applyMergeStateSnapshot({
-      active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'processing', percentage: 0.35 }],
-      queued: [],
-    });
-    const { result } = renderHook(() => useBookActivity(42), { wrapper });
-
-    render(React.createElement(BookActivityBadge, { activity: result.current, variant: 'chip' as const }));
-
-    const chip = screen.getByTestId('activity-chip');
-    // Wire 0.35 must surface as "35%", not "0%" — the display-boundary assertion.
-    expect(chip).toHaveAccessibleName('Encoding — 35%');
-    expect(chip.querySelector('[data-testid="loading-spinner"]')).toBeInTheDocument();
-  });
-
-  it('shows no chip after the terminal sequence, while the Activity card is still in its dismiss window', () => {
+  // Chip-render assertions for these states live in BookActivityBadge.test.tsx (#2142) — this
+  // suite owns only the snapshot → activity derivation; the end-to-end wire → rendered-percent
+  // chain is pinned in LibraryBookCard.test.tsx.
+  it('reports null after the terminal sequence, while the Activity card is still in its dismiss window', () => {
     setMergeProgress(42, { bookTitle: 'Dogs of War', phase: 'complete', outcome: 'success', message: 'Merged 3 files' });
     applyMergeStateSnapshot({ active: [], queued: [] });
 
     const { result } = renderHook(() => useBookActivity(42), { wrapper });
 
     expect(result.current).toBeNull();
-    const { container } = render(React.createElement(BookActivityBadge, { activity: result.current, variant: 'chip' as const }));
-    expect(container).toBeEmptyDOMElement();
   });
 });

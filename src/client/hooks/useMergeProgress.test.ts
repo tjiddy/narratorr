@@ -224,7 +224,7 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     });
   });
 
-  it('preserves bookTitle from merge_queued through subsequent phase transitions', () => {
+  it('preserves bookTitle from the queued entry through subsequent phase transitions', () => {
     const { result } = renderHook(() => useMergeActivityCards());
 
     act(() => {
@@ -308,7 +308,7 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     expect(result.current).toHaveLength(0);
   });
 
-  it('handles merge_progress arriving before merge_started (creates entry with title)', () => {
+  it('handles a progress write for an unseen book (creates entry with title)', () => {
     const { result } = renderHook(() => useMergeActivityCards());
 
     act(() => {

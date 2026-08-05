@@ -90,8 +90,7 @@ export class EventBroadcasterService {
     try {
       client.reply.raw.write(frameEvent(type, data));
     } catch {
-      this.clients.delete(client);
-      this.log.warn({ clientId: client.id }, 'SSE client removed after write failure');
+      this.pruneAfterWriteFailure(client);
     }
   }
 
@@ -181,8 +180,13 @@ export class EventBroadcasterService {
     }
 
     for (const dead of deadClients) {
-      this.clients.delete(dead);
-      this.log.warn({ clientId: dead.id }, 'SSE client removed after write failure');
+      this.pruneAfterWriteFailure(dead);
     }
+  }
+
+  /** Drop a client whose write failed — shared by broadcast and per-client paths (#2142). */
+  private pruneAfterWriteFailure(client: SSEClient): void {
+    this.clients.delete(client);
+    this.log.warn({ clientId: client.id }, 'SSE client removed after write failure');
   }
 }

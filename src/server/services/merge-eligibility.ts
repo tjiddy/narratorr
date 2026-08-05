@@ -33,12 +33,25 @@ function requireMergeableBook<T extends MergeCandidate>(book: T | null): T & { p
   return book as T & { path: string };
 }
 
+/** Top-level, non-hidden audio entries of a folder — the exact set a merge would consume. */
+export async function listTopLevelAudioFiles(dir: string): Promise<string[]> {
+  const allEntries = await readdir(dir);
+  return allEntries.filter((f) => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+}
+
+/**
+ * The merge minimum (≥2 top-level audio files), shared by the eligibility gates and
+ * `executeMerge`'s post-recovery recheck (#2142) so a book accepted at enqueue can never fail
+ * mid-execution with a divergent threshold, message, or error code.
+ */
+export function requireMergeMinimum(topLevelAudioFiles: string[]): void {
+  if (topLevelAudioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
+}
+
 /** The environment checks: ffmpeg is available and the folder still holds ≥2 visible audio files. */
 async function requireMergeableFolder(bookPath: string): Promise<void> {
   if (!(await resolveFfmpegPath())) throw new MergeError('ffmpeg is not available', 'FFMPEG_NOT_CONFIGURED');
-  const allEntries = await readdir(bookPath);
-  const topLevelAudioFiles = allEntries.filter((f) => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
-  if (topLevelAudioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
+  requireMergeMinimum(await listTopLevelAudioFiles(bookPath));
 }
 
 /**
@@ -49,7 +62,7 @@ async function requireMergeableFolder(bookPath: string): Promise<void> {
  */
 export async function validateBookForMerge(
   bookService: Pick<BookService, 'getById'>,
-  settingsService: SettingsService,
+  settingsService: Pick<SettingsService, 'get'>,
   bookId: number,
 ): Promise<{ processing: AppSettings['processing']; title: string }> {
   const book = requireMergeableBook(await bookService.getById(bookId));

@@ -245,19 +245,25 @@ export interface RecordSearchRelaxedHeldEventArgs {
   variantTag: string;
   /** The highest-ranked DOWNLOADABLE candidate, which by construction failed the floor. */
   releaseTitle: string;
+  /** Retry-path attempt counter — present only on the retry-search caller. */
+  attempt?: number;
   log: FastifyBaseLogger;
 }
 
 /**
- * Fire-and-forget `search_relaxed_held` recording (#2104 D9).
+ * Fire-and-forget `search_relaxed_held` recording (#2104 D9), plus its operator log line —
+ * one home for both (#2142), so the two auto-grab paths cannot drift on wording or fields.
+ * The structured `attempt` field is what distinguishes the retry path in the logs.
  *
- * A segment-cut rung found grabbable candidates but none corroborated the
- * retained title segments, so the auto-grab was withheld and the operator gets
- * the call. Persisted rather than broadcast: a scheduled cycle runs every 360
- * minutes, so an SSE toast would simply be missed.
+ * Persisted rather than broadcast: a scheduled cycle runs every 360 minutes, so an SSE toast
+ * would simply be missed.
  */
 export function recordSearchRelaxedHeldEvent(args: RecordSearchRelaxedHeldEventArgs): void {
-  const { eventHistory, book, relaxedQuery, variantTag, releaseTitle, log } = args;
+  const { eventHistory, book, relaxedQuery, variantTag, releaseTitle, attempt, log } = args;
+  log.info({
+    bookId: book.id, title: book.title, ...(attempt !== undefined && { attempt }),
+    relaxedQuery, variantTag, releaseTitle,
+  }, 'Relaxed-query candidates held for review — none carried the canonical title anchors');
   eventHistory.create({
     bookId: book.id,
     bookTitle: book.title,

@@ -927,8 +927,8 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
   // AC24 / F1 — a ladder that RAN a relaxed rung is not a ladder that MATCHED on
   // one. `runQueryLadder` reports the last rung it attempted, so exhaustion and a
   // later-rung outage both surface an index > 0 with an empty result set. Keying
-  // disclosure on the index alone would put "matched on relaxed query" next to
-  // "No releases found".
+  // disclosure on the index alone would make the search box adopt a query that
+  // produced nothing (the box adoption is relaxedQuery's only consumer since d1555ec3).
   it('omits relaxedQuery when the ladder exhausts every rung at zero (AC24, F1)', async () => {
     const { service } = serviceAnswering(null);
     const app = await buildApp(service);
