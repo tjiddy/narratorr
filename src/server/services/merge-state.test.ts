@@ -563,6 +563,27 @@ describe('#2129 merge_state snapshot', () => {
       expect(harness.snapshots()).toHaveLength(2);
       expect(harness.snapshots()[1]).toEqual({ active: [], queued: [] });
     });
+
+    it('reports merge_failed and cleans up when the book read itself REJECTS', async () => {
+      // The read sits inside executeMerge's try (assess catch on #2142): a transport-dead
+      // getById must route through the catch and finally — outside the try it would skip the
+      // terminal, skip the cleanup, and leak the AbortController entry.
+      setupBlockingMerge();
+      const harness = createSnapshotHarness({ books: [{ id: 42, title: 'Dogs of War' }] });
+      const row = await harness.bookService.getById(42);
+      harness.bookService.getById.mockResolvedValueOnce(row).mockRejectedValue(new Error('DB transport died'));
+
+      await harness.service.enqueueMerge(42);
+      await settle();
+
+      const failures = harness.frames.filter((f) => f.event === 'merge_failed');
+      expect(failures).toHaveLength(1);
+      expect(failures[0]!.payload).toMatchObject({ book_id: 42, book_title: 'Dogs of War', error: 'DB transport died' });
+      expect(harness.service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
+      // The finally ran: no stale AbortController survives, so a late cancel finds nothing —
+      // a leaked entry would return 'cancelled' for a merge that no longer exists.
+      expect(await harness.service.cancelMerge(42)).toEqual({ status: 'not-found' });
+    });
   });
 
   describe('backstop for the exits that emit no terminal event', () => {

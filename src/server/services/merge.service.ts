@@ -338,9 +338,13 @@ export class MergeService {
     let stagingOwned = false;
     let stagingDir: string | undefined;
 
-    const book = await this.bookService.getById(bookId);
+    // Assigned inside the try: a REJECTED read (transport error) must route through the catch —
+    // merge_failed + the finally's controller/phase cleanup — not bypass both, leak the
+    // AbortController entry, and leave the chip to vanish silently via the backstop.
+    let book: Awaited<ReturnType<BookService['getById']>> = null;
 
     try {
+      book = await this.bookService.getById(bookId);
       // Pre-flight guards, thrown as MergeError (#2142) so the catch below reports them through
       // the SAME `merge_failed` terminal the queued path's revalidation uses. Previously these
       // returned a success-shaped MergeResult with no terminal event — the operator watched the
@@ -427,7 +431,10 @@ export class MergeService {
       const message = allWarnings.length > 0
         ? `${mergedSummary} (${allWarnings.join('; ')})`
         : mergedSummary;
-      this.mergeState.finishTerminal(bookId, () => this.emitMergeComplete(bookId, book.title, message, enrichmentWarning));
+      // Const capture: `book` is a `let` (assigned in this try), so the closure would re-widen
+      // it to nullable — the narrowed title is taken here, in straight-line code.
+      const completedTitle = book.title;
+      this.mergeState.finishTerminal(bookId, () => this.emitMergeComplete(bookId, completedTitle, message, enrichmentWarning));
       return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, ...(enrichmentWarning !== undefined && { enrichmentWarning }) };
     } catch (error: unknown) {
       const errorMessage = getErrorMessage(error);
