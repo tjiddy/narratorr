@@ -7,23 +7,27 @@ import { AUDIO_EXTENSIONS } from '@core/utils/audio-constants.js';
 import {
   tryTitleDashSeriesBook,
   tryCrossSegmentAgreement,
+  tryLeadingPositionLeaf,
   trySeriesParen,
   tryBookOfSeriesDescriptor,
   isPureReleaseTagBracket,
   isReleaseTagInner,
 } from './folder-parsing-patterns.js';
 import {
-  CODEC_TAGS,
+  BARE_YEAR_REGEX,
   CODEC_TEST_REGEX,
+  extractYear,
   isEditionParen,
   NARRATOR_PAREN_REGEX,
+  normalizeFolderName,
   applyLastFirstSwap,
 } from './folder-parsing-primitives.js';
 import { TAG_TITLE_SERIES_MARKER_REGEX } from '@shared/dedup.js';
 
 // Re-export so the public import surface is unchanged (consumers import
-// CODEC_TEST_REGEX from this module — see folder-parsing.test.ts).
-export { CODEC_TEST_REGEX };
+// CODEC_TEST_REGEX / normalizeFolderName / extractYear from this module — see
+// folder-parsing.test.ts, match-job.helpers.ts, library-scan.service.ts).
+export { CODEC_TEST_REGEX, normalizeFolderName, extractYear };
 
 /**
  * Strip a recognized audio extension from a path segment. Used for single-file
@@ -38,12 +42,6 @@ function stripAudioExtension(segment: string): string {
 }
 
 // ─── Regex Constants ────────────────────────────────────────────────
-
-/** Global codec regex (strips all matches). `CODEC_TAGS` / `CODEC_TEST_REGEX` live in primitives. */
-const CODEC_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'gi');
-
-/** Matches a bare 4-digit year (1900–2099) at end of string. */
-const BARE_YEAR_REGEX = /\b((?:19|20)\d{2})\s*$/;
 
 /** Matches "Series – NN – Title" or "Series - NN - Title" (dash or en-dash separators). Captures NN as group 2. */
 const SERIES_NUMBER_TITLE_REGEX = /^(.+?)\s*[–-]\s*(\d+)\s*[–-]\s*(.+)$/;
@@ -118,15 +116,6 @@ export interface CleanNameTraceResult {
 }
 
 // ─── Core Functions ─────────────────────────────────────────────────
-
-/** Shared normalization: underscore/dot→space, codec strip, collapse whitespace, trim. */
-export function normalizeFolderName(name: string): string {
-  return name
-    .replace(/[_.]/g, ' ')
-    .replace(CODEC_REGEX, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
 
 export function cleanName(name: string): string {
   return cleanNameWithTrace(name).result;
@@ -426,6 +415,40 @@ function parseTwoPartTitleSegment(
   return cs ?? { title: transform(titleSegment), author: p8Author, series: p8Series, ...asinTail };
 }
 
+/**
+ * Shared 3+-part title-segment pattern chain (`Author/Series/<leaf>`): all-numeric guard →
+ * cross-segment agreement → bare leading-position capture → today's folder-derived fallback.
+ * `transform` selects cleaned (`cleanName`) vs raw (`identity`); `author` and `series` are the
+ * branch's already-resolved authoritative values and always win over anything a pattern returns
+ * (cross-segment is written for the 2-part shape and yields `author: null` by design).
+ *
+ * Order is most-specific-first: a leaf whose series prefix itself starts with digits
+ * (`123 - Series 01 - Title` under a `123 - Series` folder) must be resolved by agreement, which
+ * the bare arm would otherwise pre-empt by reading `123` as the position. Callers strip any
+ * trailing series paren BEFORE invoking this via `withTitleSegmentSeriesParen`, so the paren's
+ * position still overlays whatever this chain produced. (#2145)
+ */
+function parseThreePartTitleSegment(
+  seriesFolder: string,
+  titleSegment: string,
+  author: string,
+  series: string,
+  asinTail: { asin?: string },
+  transform: (s: string) => string,
+): ParsedFolder {
+  // All-numeric date-like leaves ('11-22-63', '1.5') are titles, not positions. cleanName
+  // short-circuits on them internally, but the new patterns run BEFORE it — so guard here too.
+  if (!isAllNumericSegments(titleSegment)) {
+    const cs = tryCrossSegmentAgreement(seriesFolder, titleSegment, asinTail, transform);
+    if (cs) return { ...cs, author, series };
+    const leading = tryLeadingPositionLeaf(titleSegment);
+    if (leading) {
+      return { title: transform(leading.remainder), author, series, seriesPosition: leading.seriesPosition, ...asinTail };
+    }
+  }
+  return { title: transform(titleSegment), author, series, ...asinTail };
+}
+
 function parseSingleFolder(folder: string): ParsedFolder {
   // Extract ASIN bracket before any other pattern matching
   const { asin, cleaned } = extractASIN(folder);
@@ -579,12 +602,11 @@ export function parseFolderStructure(parts: string[]): ParsedFolder {
   const folderSeries = cleanName(parts[parts.length - 2]!);
   // Trailing `(Series Book N)` paren: strip from the title, take its position; the folder series
   // segment stays authoritative for the name (folder wins even if the paren names a different series).
-  return withTitleSegmentSeriesParen(titleSegment, asinTail, cleanName, (remainder) => ({
-    title: cleanName(remainder),
-    author: cleanName(parts[0]!),
-    series: folderSeries,
-    ...asinTail,
-  }));
+  // The RAW parent segment is what feeds cross-segment agreement — mirroring the 2-part caller,
+  // which hands the helper its raw `authorSegment` — so clean and raw agree on what the helper sees.
+  return withTitleSegmentSeriesParen(titleSegment, asinTail, cleanName, (remainder) =>
+    parseThreePartTitleSegment(
+      parts[parts.length - 2]!, remainder, cleanName(parts[0]!), folderSeries, asinTail, cleanName));
 }
 
 /**
@@ -641,12 +663,9 @@ export function parseFolderStructureRaw(parts: string[]): ParsedFolder {
   const folderSeries = parts[parts.length - 2]!;
   // Trailing `(Series Book N)` paren — mirrors the cleaned 3+-part branch with `identity` (raw
   // series name is NOT run through cleanName). Folder series segment stays authoritative for the name.
-  return withTitleSegmentSeriesParen(titleSegment, asinTail, identity, (remainder) => ({
-    title: remainder,
-    author: parts[0]!,
-    series: folderSeries,
-    ...asinTail,
-  }));
+  return withTitleSegmentSeriesParen(titleSegment, asinTail, identity, (remainder) =>
+    parseThreePartTitleSegment(
+      parts[parts.length - 2]!, remainder, parts[0]!, folderSeries, asinTail, identity));
 }
 
 function parseSingleFolderRaw(folder: string): ParsedFolder {
@@ -689,31 +708,4 @@ function parseSingleFolderRaw(folder: string): ParsedFolder {
   if (authorTitle) return authorTitle;
 
   return { title: cleaned ? input : folder, author: null, series: null, ...asinTail };
-}
-
-/**
- * Extracts a 4-digit year (1900–2099) from a folder name string.
- * Checks parenthesized, bracketed, and bare trailing years.
- */
-export function extractYear(name: string): number | undefined {
-  const normalized = normalizeFolderName(name);
-  // Check parenthesized year: (2017)
-  const parenMatch = normalized.match(/\((\d{4})\)\s*$/);
-  if (parenMatch) {
-    const y = parseInt(parenMatch[1]!, 10);
-    if (y >= 1900 && y <= 2099) return y;
-  }
-  // Check bracketed year: [2017]
-  const bracketMatch = normalized.match(/\[(\d{4})\]\s*$/);
-  if (bracketMatch) {
-    const y = parseInt(bracketMatch[1]!, 10);
-    if (y >= 1900 && y <= 2099) return y;
-  }
-  // Check bare trailing year
-  const bareMatch = normalized.match(BARE_YEAR_REGEX);
-  if (bareMatch) {
-    const y = parseInt(bareMatch[1]!, 10);
-    if (y >= 1900 && y <= 2099) return y;
-  }
-  return undefined;
 }

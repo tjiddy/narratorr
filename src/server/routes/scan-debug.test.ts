@@ -279,6 +279,23 @@ describe('POST /api/library/scan-debug', () => {
         expect(body.parsing.raw.seriesPosition).toBeNull();
         expect(body.cleaning.seriesPosition).toBeUndefined();
       });
+
+      // #2145 — the diagnostic surface for the Detailed preset's own 3-level output. The route
+      // already forwards `rawParsed.seriesPosition ?? null`; this asserts the parser now supplies it.
+      it('surfaces the position captured from a bare NN - Title leaf on a 3+-part path', async () => {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/library/scan-debug',
+          payload: { folderName: 'Brandon Sanderson/The Stormlight Archive/01 - The Way of Kings' },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.parsing.pattern).toBe('3+-part');
+        expect(body.parsing.raw.seriesPosition).toBe(1);
+        expect(body.parsing.raw.title).toBe('The Way of Kings');
+        expect(body.cleaning.seriesPosition).toBeUndefined();
+      });
     });
   });
 

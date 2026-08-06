@@ -13,6 +13,46 @@ export const CODEC_TAGS = ['MP3', 'M4B', 'M4A', 'FLAC', 'OGG', 'AAC', 'Unabridge
 /** Non-global codec regex for `.test()` guards — no `lastIndex` state between calls. */
 export const CODEC_TEST_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'i');
 
+/** Global codec regex (strips all matches) — the stripping twin of `CODEC_TEST_REGEX`. */
+const CODEC_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'gi');
+
+/** Shared normalization: underscore/dot→space, codec strip, collapse whitespace, trim. */
+export function normalizeFolderName(name: string): string {
+  return name
+    .replace(/[_.]/g, ' ')
+    .replace(CODEC_REGEX, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/** Matches a bare 4-digit year (1900–2099) at end of string. */
+export const BARE_YEAR_REGEX = /\b((?:19|20)\d{2})\s*$/;
+
+/**
+ * The repository's single notion of "this number is a year": 1900–2099. Shared by
+ * `extractYear`, the clean pipeline's trailing-year strips, and the #2145 leading-position
+ * guard that keeps the Detailed preset's positions and the Plex preset's years — which
+ * render into the identical folder-name slot — from being read as each other.
+ */
+export function isYearInWindow(value: number): boolean {
+  return Number.isInteger(value) && value >= 1900 && value <= 2099;
+}
+
+/**
+ * Extracts a 4-digit year (1900–2099) from a folder name string.
+ * Checks parenthesized, bracketed, and bare trailing years.
+ */
+export function extractYear(name: string): number | undefined {
+  const normalized = normalizeFolderName(name);
+  for (const regex of [/\((\d{4})\)\s*$/, /\[(\d{4})\]\s*$/, BARE_YEAR_REGEX]) {
+    const match = normalized.match(regex);
+    if (!match) continue;
+    const year = parseInt(match[1]!, 10);
+    if (isYearInWindow(year)) return year;
+  }
+  return undefined;
+}
+
 /**
  * Matches a trailing parenthetical containing a person's name (1-3 words).
  * Does NOT match: years (2020), codec tags (handled by CODEC_REGEX), or long subtitles (>3 words).
