@@ -1634,7 +1634,7 @@ describe('enrichment job — user-cleared fields (#2069)', () => {
    * Drive one candidate through the pass with the given stored tombstone column.
    * Returns the `.set(...)` payload the scalar UPDATE was issued with.
    */
-  async function runWithTombstones(raw: string | null, existing = emptyExisting): Promise<Record<string, unknown>> {
+  async function runWithTombstones(raw: string | null, existing: Record<string, unknown> = emptyExisting): Promise<Record<string, unknown>> {
     db.select
       .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_CLEARED' }]))            // candidates
       .mockReturnValueOnce(mockDbChain([existing]))                                // existing fill-empty inputs
@@ -1729,7 +1729,8 @@ describe('enrichment job — user-cleared fields (#2069)', () => {
   // ─── #2152 AC8: the seriesPosition tombstone writes null, it does not skip ───
   describe('a seriesPosition tombstone (#2152 AC8)', () => {
     /** The orphan shape `fillSeriesFields` exists for: no stored name, stale position. */
-    const orphanPosition = { ...emptyExisting, seriesName: null, seriesPosition: 7 };
+    const orphanPosition: Record<string, unknown> = { ...emptyExisting, seriesName: null, seriesPosition: 7 };
+    const storedName: Record<string, unknown> = { ...emptyExisting, seriesName: 'Custom Saga', seriesPosition: 7 };
 
     it('writes the provider name with seriesPosition NULL, not the provider number', async () => {
       const set = await runWithTombstones('["seriesPosition"]', orphanPosition);
@@ -1777,7 +1778,7 @@ describe('enrichment job — user-cleared fields (#2069)', () => {
     it('is bounded by what fillSeriesFields prepared — a stored name means NEITHER field is written', async () => {
       // Unchanged existing behavior, not a new rule: enrichment never overwrites a
       // stored pair, so the column survives the pass whatever the tombstone says.
-      const set = await runWithTombstones('["seriesPosition"]', { ...emptyExisting, seriesName: 'Custom Saga', seriesPosition: 7 });
+      const set = await runWithTombstones('["seriesPosition"]', storedName);
 
       expect(set).not.toHaveProperty('seriesName');
       expect(set).not.toHaveProperty('seriesPosition');

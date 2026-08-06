@@ -68,6 +68,30 @@ export function compareLibraryMembers(a: BookSeriesMemberCard, b: BookSeriesMemb
   return compareByPositionThenTitle(a.position, a.title, b.position, b.title);
 }
 
+/**
+ * A Hardcover member's entry: the stored row's text and numbering, plus whichever
+ * library book the title/position matcher paired it with.
+ *
+ * The one place the `seriesPosition` tombstone reaches the card (#2152 AC9a). It
+ * gates the RESOLVED book, after matching — a row that claimed nothing keeps its
+ * canonical numbering, and which book each member claims is unchanged.
+ */
+function hardcoverMemberCard(
+  row: SeriesMemberRow,
+  match: LibraryBookSummary | null,
+  positionClearedIds: ReadonlySet<number>,
+): BookSeriesMemberCard {
+  return {
+    hardcoverBookId: row.hardcoverBookId,
+    slug: row.slug,
+    title: row.title,
+    position: match && positionClearedIds.has(match.id) ? null : row.position,
+    imageUrl: row.imageUrl,
+    inLibrary: match !== null,
+    libraryBookId: match?.id ?? null,
+  };
+}
+
 /** The owned-book entry shape: rendered from the BOOK, never from a stored row. */
 export function libraryMemberCard(book: LibraryBookSummary): BookSeriesMemberCard {
   return {
@@ -138,15 +162,7 @@ export function buildMembersFromState({ rows, pool, positionClearedIds }: Member
     if (row.source === 'local') continue;
     const match = findInLibraryMatch({ title: row.title, position: row.position }, pool, claimed);
     if (match) claimed.add(match.id);
-    members.push({
-      hardcoverBookId: row.hardcoverBookId,
-      slug: row.slug,
-      title: row.title,
-      position: match && positionClearedIds.has(match.id) ? null : row.position,
-      imageUrl: row.imageUrl,
-      inLibrary: match !== null,
-      libraryBookId: match?.id ?? null,
-    });
+    members.push(hardcoverMemberCard(row, match, positionClearedIds));
   }
 
   const unclaimed: LibraryBookSummary[] = [];
