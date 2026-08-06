@@ -1143,7 +1143,7 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
     await waitForJob(service, id);
 
     expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, bookId: 1, bookFolder: '/lib/A/1' }));
-    expect(downloadMock).toHaveBeenCalledWith(1, '/lib/A/1', 'https://x/c.png', expect.anything(), expect.anything());
+    expect(downloadMock).toHaveBeenCalledWith(1, '/lib/A/1', 'https://x/c.png', expect.anything(), expect.anything(), expect.any(Function));
     const status = service.getJob(id);
     expect(status?.status).toBe('completed');
     expect(status?.failures).toBe(0);
@@ -1239,5 +1239,275 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
     expect(service.getActiveJob()?.type).toBe('write_metadata_sidecars');
     expect(() => service.startWriteMetadataSidecarsJob()).toThrow(expect.objectContaining({ code: 'BULK_OP_IN_PROGRESS' }));
     resolveFn([]);
+  });
+});
+
+// ===== #2159 — every operation NAMES its failures through the one shared formatter =====
+
+/** A rename row shaped for `loadRenameRows`' projection. */
+function renameRow(id: number, title: string) {
+  return { id, path: `/library/Old${id}`, title, seriesName: null, seriesPosition: null, publishedDate: null, editionLabel: null, authorName: 'A' };
+}
+
+describe('BulkOperationService — named failure details (#2159)', () => {
+  const writeOpfMock = vi.mocked(writeOpfSidecar);
+  const downloadMock = vi.mocked(downloadRemoteCover);
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    writeOpfMock.mockResolvedValue('written');
+    downloadMock.mockResolvedValue('written');
+  });
+
+  describe('rename', () => {
+    it('records { bookId, title, error } for a CONFLICT, naming the book the preview named', async () => {
+      const renameService = makeRenameService();
+      const { service, db } = createService({ renameService });
+      db.select.mockReturnValueOnce(mockDbChain([renameRow(2, 'Storm Front')]));
+      (renameService.renameBook as Mock).mockRejectedValueOnce(new RenameError('Target folder already exists', 'CONFLICT'));
+
+      const id = await service.startRenameJob();
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)?.failureDetails).toEqual([
+        { bookId: 2, title: 'Storm Front', error: 'CONFLICT: Target folder already exists' },
+      ]);
+    });
+
+    it('records NOTHING for a NO_PATH skip while still ticking completed', async () => {
+      const renameService = makeRenameService();
+      const { service, db } = createService({ renameService });
+      db.select.mockReturnValueOnce(mockDbChain([renameRow(3, 'Fool Moon')]));
+      (renameService.renameBook as Mock).mockRejectedValueOnce(new RenameError('no path', 'NO_PATH'));
+
+      const id = await service.startRenameJob();
+      await waitForJob(service, id);
+
+      const status = service.getJob(id);
+      expect(status?.completed).toBe(1);
+      expect(status?.failures).toBe(0);
+      expect(status?.failureDetails).toEqual([]);
+    });
+
+    it('routes the recorded error through the formatter — a URL secret is redacted', async () => {
+      const renameService = makeRenameService();
+      const { service, db } = createService({ renameService });
+      db.select.mockReturnValueOnce(mockDbChain([renameRow(4, 'Grave Peril')]));
+      (renameService.renameBook as Mock).mockRejectedValueOnce(
+        new Error('Rename hook failed at https://hooks.example.com/run?apikey=SECRET'),
+      );
+
+      const id = await service.startRenameJob();
+      await waitForJob(service, id);
+
+      const recorded = service.getJob(id)!.failureDetails[0]!.error;
+      expect(recorded).not.toContain('SECRET');
+      expect(recorded).toContain('Rename hook failed at https://hooks.example.com/run');
+    });
+  });
+
+  describe('re-tag', () => {
+    it('widens the eligible-row projection to { id, title }', async () => {
+      const { service, db } = createService();
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      const id = service.startRetagJob();
+      await waitForJob(service, id);
+
+      const projection = db.select.mock.calls[0]![0] as Record<string, unknown>;
+      expect(Object.keys(projection).sort()).toEqual(['id', 'title']);
+      expect(toSQL(projection.title).sql).toMatch(/"books"\."title"/i);
+    });
+
+    it('records the title AND the code-first text for a PATH_MISSING failure', async () => {
+      const taggingService = makeTaggingService();
+      const { service, db } = createService({ taggingService });
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 7, title: 'Summer Knight' }]));
+      (taggingService.retagBook as Mock).mockRejectedValueOnce(new RetagError('PATH_MISSING', 'Book folder no longer exists'));
+
+      const id = service.startRetagJob();
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)?.failureDetails).toEqual([
+        { bookId: 7, title: 'Summer Knight', error: 'PATH_MISSING: Book folder no longer exists' },
+      ]);
+    });
+
+    it('records NOTHING for a NO_PATH skip', async () => {
+      const taggingService = makeTaggingService();
+      const { service, db } = createService({ taggingService });
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 8, title: 'Death Masks' }]));
+      (taggingService.retagBook as Mock).mockRejectedValueOnce(new RetagError('NO_PATH', 'no path'));
+
+      const id = service.startRetagJob();
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)?.failureDetails).toEqual([]);
+      expect(service.getJob(id)?.failures).toBe(0);
+    });
+
+    it('routes the recorded error through the formatter — a URL secret is redacted', async () => {
+      const taggingService = makeTaggingService();
+      const { service, db } = createService({ taggingService });
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 9, title: 'Blood Rites' }]));
+      (taggingService.retagBook as Mock).mockRejectedValueOnce(
+        new Error('ffmpeg probe failed for https://media.example.com/f.m4b?token=SECRET'),
+      );
+
+      const id = service.startRetagJob();
+      await waitForJob(service, id);
+
+      const recorded = service.getJob(id)!.failureDetails[0]!.error;
+      expect(recorded).not.toContain('SECRET');
+      expect(recorded).toContain('ffmpeg probe failed for https://media.example.com/f.m4b');
+    });
+  });
+
+  describe('sidecars', () => {
+    it("records a detail naming the book when the OPF write returns 'failed'", async () => {
+      const { service, db } = createService();
+      writeOpfMock.mockResolvedValue('failed');
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 226, path: '/lib/A/1', coverUrl: null, title: "Captain's Fury" }]));
+
+      const id = service.startWriteMetadataSidecarsJob();
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)?.failureDetails).toEqual([
+        { bookId: 226, title: "Captain's Fury", error: 'OPF write failed' },
+      ]);
+    });
+
+    it('records the formatter output for a thrown per-book error', async () => {
+      const { service, db } = createService();
+      writeOpfMock.mockRejectedValue(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 11, path: '/lib/A/1', coverUrl: null, title: 'Dead Beat' }]));
+
+      const id = service.startWriteMetadataSidecarsJob();
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)?.failureDetails).toEqual([
+        { bookId: 11, title: 'Dead Beat', error: 'EACCES: permission denied' },
+      ]);
+    });
+
+    it('routes a thrown per-book error through the formatter — a URL secret is redacted', async () => {
+      const { service, db } = createService();
+      writeOpfMock.mockRejectedValue(new Error('Sidecar hook failed at https://hooks.example.com/run?apikey=SECRET'));
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 12, path: '/lib/A/1', coverUrl: null, title: 'Proven Guilty' }]));
+
+      const id = service.startWriteMetadataSidecarsJob();
+      await waitForJob(service, id);
+
+      const recorded = service.getJob(id)!.failureDetails[0]!.error;
+      expect(recorded).not.toContain('SECRET');
+      expect(recorded).toContain('Sidecar hook failed at https://hooks.example.com/run');
+    });
+
+    it('names the OPF cause the writer reported (the live ENOENT case)', async () => {
+      const { service, db } = createService();
+      writeOpfMock.mockImplementation(async (args) => {
+        args.onFailure?.(Object.assign(new Error("ENOENT: no such file or directory, open '/audiobooks/x/metadata.opf'"), { code: 'ENOENT' }));
+        return 'failed';
+      });
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 226, path: '/lib/A/1', coverUrl: null, title: "Captain's Fury" }]));
+
+      const id = service.startWriteMetadataSidecarsJob();
+      await waitForJob(service, id);
+
+      const detail = service.getJob(id)!.failureDetails[0]!;
+      expect(detail.error).toContain('ENOENT');
+      expect(`${detail.title} (book ${detail.bookId}): ${detail.error}`).toMatch(/^Captain's Fury \(book 226\): ENOENT/);
+    });
+  });
+
+  it('keeps failureDetails at [] and the payload otherwise unchanged for a clean job', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: null, title: 'Clean' }]));
+
+    const id = service.startWriteMetadataSidecarsJob();
+    await waitForJob(service, id);
+
+    expect(service.getJob(id)).toEqual({
+      jobId: id,
+      type: 'write_metadata_sidecars',
+      status: 'completed',
+      completed: 1,
+      total: 1,
+      failures: 0,
+      failureDetails: [],
+    });
+  });
+});
+
+// AC14 / carried F6 — the per-book log lines are the FULL-fidelity record (serialized error, stack
+// and all); the job record carries only the short form. Pinned exactly — message, level, and the
+// complete payload — so a future edit cannot quietly downgrade or reshape them.
+describe('BulkOperationService — per-book failure logs are unchanged (#2159 AC14)', () => {
+  const writeOpfMock = vi.mocked(writeOpfSidecar);
+  const downloadMock = vi.mocked(downloadRemoteCover);
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    writeOpfMock.mockResolvedValue('written');
+    downloadMock.mockResolvedValue('written');
+  });
+
+  it('rename: warn with the serialized error, bookId and jobId', async () => {
+    const renameService = makeRenameService();
+    const { service, db, log } = createService({ renameService });
+    db.select.mockReturnValueOnce(mockDbChain([renameRow(2, 'Storm Front')]));
+    (renameService.renameBook as Mock).mockRejectedValueOnce(new RenameError('Target folder already exists', 'CONFLICT'));
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(log.warn).toHaveBeenCalledWith(
+      {
+        bookId: 2,
+        jobId: id,
+        error: { message: 'Target folder already exists', stack: expect.any(String), type: 'RenameError', code: 'CONFLICT' },
+      },
+      'Bulk rename: book failed',
+    );
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('re-tag: warn with the serialized error, bookId and jobId', async () => {
+    const taggingService = makeTaggingService();
+    const { service, db, log } = createService({ taggingService });
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 7, title: 'Summer Knight' }]));
+    (taggingService.retagBook as Mock).mockRejectedValueOnce(new RetagError('PATH_MISSING', 'Book folder no longer exists'));
+
+    const id = service.startRetagJob();
+    await waitForJob(service, id);
+
+    expect(log.warn).toHaveBeenCalledWith(
+      {
+        bookId: 7,
+        jobId: id,
+        error: { message: 'Book folder no longer exists', stack: expect.any(String), type: 'RetagError', code: 'PATH_MISSING' },
+      },
+      'Bulk re-tag: book failed',
+    );
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('sidecars: warn with the serialized error, bookId and jobId', async () => {
+    const { service, db, log } = createService();
+    writeOpfMock.mockRejectedValue(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 11, path: '/lib/A/1', coverUrl: null, title: 'Dead Beat' }]));
+
+    const id = service.startWriteMetadataSidecarsJob();
+    await waitForJob(service, id);
+
+    expect(log.warn).toHaveBeenCalledWith(
+      {
+        bookId: 11,
+        jobId: id,
+        error: { message: 'EACCES: permission denied', stack: expect.any(String), type: 'Error', code: 'EACCES' },
+      },
+      'Bulk write-sidecars: book failed',
+    );
+    expect(log.error).not.toHaveBeenCalled();
   });
 });

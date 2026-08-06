@@ -109,7 +109,7 @@ describe('GET /api/books/bulk/active', () => {
   });
 
   it('returns running job info while job is in progress', async () => {
-    const activeJob = { jobId: 'abc', type: 'rename', status: 'running', completed: 3, total: 10, failures: 0 };
+    const activeJob = { jobId: 'abc', type: 'rename', status: 'running', completed: 3, total: 10, failures: 0, failureDetails: [] };
     const bulkOperation = makeBulkService({ getActiveJob: vi.fn().mockReturnValue(activeJob) });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);
@@ -231,7 +231,7 @@ describe('GET /api/books/bulk/:jobId', () => {
   });
 
   it('returns 200 with { status: running, completed, total, failures } while job is running', async () => {
-    const runningJob = { jobId: 'job-1', type: 'retag', status: 'running', completed: 5, total: 20, failures: 1 };
+    const runningJob = { jobId: 'job-1', type: 'retag', status: 'running', completed: 5, total: 20, failures: 1, failureDetails: [{ bookId: 226, title: "Captain's Fury", error: 'ENOENT: no such file' }] };
     const bulkOperation = makeBulkService({ getJob: vi.fn().mockReturnValue(runningJob) });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);
@@ -241,7 +241,7 @@ describe('GET /api/books/bulk/:jobId', () => {
   });
 
   it('returns 200 with { status: completed, completed, total, failures } after completion', async () => {
-    const completedJob = { jobId: 'job-2', type: 'rename', status: 'completed', completed: 10, total: 10, failures: 0 };
+    const completedJob = { jobId: 'job-2', type: 'rename', status: 'completed', completed: 10, total: 10, failures: 0, failureDetails: [] };
     const bulkOperation = makeBulkService({ getJob: vi.fn().mockReturnValue(completedJob) });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);
@@ -255,5 +255,63 @@ describe('GET /api/books/bulk/:jobId', () => {
     const app = await createTestApp(services);
     const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/unknown-id' });
     expect(resp.statusCode).toBe(404);
+  });
+});
+
+// #2159 — a bulk job's named failures ride the status payload on BOTH read surfaces, so the
+// question "which book failed?" is answerable from the API rather than from container logs.
+describe('failureDetails on the job-status payloads (#2159)', () => {
+  const details = [
+    { bookId: 226, title: "Captain's Fury", error: "ENOENT: no such file or directory, open '/audiobooks/x/metadata.opf'" },
+    { bookId: 227, title: 'Princeps’ Fury', error: 'CONFLICT: Target folder already exists' },
+  ];
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('GET /:jobId returns failureDetails for a RUNNING job', async () => {
+    const runningJob = { jobId: 'job-1', type: 'write_metadata_sidecars', status: 'running', completed: 5, total: 20, failures: 2, failureDetails: details };
+    const services = createMockServices({ bulkOperation: makeBulkService({ getJob: vi.fn().mockReturnValue(runningJob) }) });
+    const app = await createTestApp(services);
+
+    const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/job-1' });
+
+    expect(resp.statusCode).toBe(200);
+    expect(resp.json().failureDetails).toEqual(details);
+  });
+
+  it('GET /:jobId returns failureDetails for a COMPLETED job (readable within the TTL)', async () => {
+    const completedJob = { jobId: 'job-2', type: 'rename', status: 'completed', completed: 20, total: 20, failures: 2, failureDetails: details };
+    const services = createMockServices({ bulkOperation: makeBulkService({ getJob: vi.fn().mockReturnValue(completedJob) }) });
+    const app = await createTestApp(services);
+
+    const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/job-2' });
+
+    expect(resp.statusCode).toBe(200);
+    expect(resp.json()).toEqual(completedJob);
+  });
+
+  it('GET /active returns failureDetails on the running-job payload', async () => {
+    const activeJob = { jobId: 'job-3', type: 'retag', status: 'running', completed: 5, total: 20, failures: 2, failureDetails: details };
+    const services = createMockServices({ bulkOperation: makeBulkService({ getActiveJob: vi.fn().mockReturnValue(activeJob) }) });
+    const app = await createTestApp(services);
+
+    const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/active' });
+
+    expect(resp.statusCode).toBe(200);
+    expect(resp.json().failureDetails).toEqual(details);
+  });
+
+  it('a zero-failure job returns failureDetails as a PRESENT empty array (not merely falsy)', async () => {
+    const cleanJob = { jobId: 'job-4', type: 'rename', status: 'completed', completed: 10, total: 10, failures: 0, failureDetails: [] };
+    const services = createMockServices({ bulkOperation: makeBulkService({ getJob: vi.fn().mockReturnValue(cleanJob) }) });
+    const app = await createTestApp(services);
+
+    const body = (await app.inject({ method: 'GET', url: '/api/books/bulk/job-4' })).json();
+
+    expect(Object.keys(body)).toContain('failureDetails');
+    expect(Array.isArray(body.failureDetails)).toBe(true);
+    expect(body.failureDetails).toEqual([]);
   });
 });

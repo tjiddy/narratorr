@@ -16,7 +16,7 @@ import {
 import { ToolbarDropdown } from '@/components/ToolbarDropdown';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { BulkRenameModal } from '@/components/library/BulkRenameModal';
-import { api, type BulkOpType } from '@/lib/api';
+import { api, type BulkOpType, type BulkJobFailure } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { useBulkOperation } from '@/hooks/useBulkOperation';
 
@@ -26,6 +26,7 @@ interface BulkProgress {
   completed: number;
   total: number;
   failures: number;
+  failureDetails: BulkJobFailure[];
 }
 
 const ITEM_CLASS =
@@ -227,6 +228,47 @@ function useRovingMenu(): RovingMenu {
   return { open, setOpen, triggerRef, menuRef, close, handleKeyDown };
 }
 
+/**
+ * The failure indicator beside the trigger, as an expandable disclosure (#2159). Collapsed it reads
+ * exactly as it did before ("N failure(s)"); expanded it names each book, because "1 failure" with
+ * no name meant grepping container logs to find out WHICH book. Renders for a completed job too —
+ * the hook's progress survives completion, and the answer matters most after the run.
+ */
+function BulkFailureDisclosure({ failures, failureDetails }: { failures: number; failureDetails: BulkJobFailure[] }) {
+  const [expanded, setExpanded] = useState(false);
+  // `failures` is uncapped and `failureDetails` is capped server-side, so the gap is real.
+  const undisclosed = failures - failureDetails.length;
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(v => !v)}
+        className="flex items-center gap-1 text-xs text-destructive hover:underline focus-ring rounded"
+      >
+        <span>{failures} failure{failures !== 1 ? 's' : ''}</span>
+        <ChevronDownIcon className={`w-3 h-3 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+      </button>
+      {/* z-30 is the repository's dropdown tier (CSS-1). This panel sits beside the Library Actions
+          menu, which portals at z-30 via ToolbarDropdown — anything lower is painted underneath it,
+          which would hide the very failure rows this disclosure exists to show. */}
+      {expanded && (
+        <ul className="absolute right-0 top-full mt-1 z-30 max-h-64 w-80 overflow-y-auto glass-card rounded-xl border border-border shadow-lg p-2 space-y-1 animate-fade-in">
+          {failureDetails.map(detail => (
+            <li key={detail.bookId} className="text-xs text-muted-foreground break-words">
+              {detail.title} (book {detail.bookId}): {detail.error}
+            </li>
+          ))}
+          {undisclosed > 0 && (
+            <li className="text-xs text-muted-foreground/70 italic">…and {undisclosed} more</li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /** Rename/retag/write-sidecars confirmations — kept separate to bound the menu's complexity. */
 function BulkActionModals({ pendingOp, retagCount, onStartRename, onConfirm, onCancel }: {
   pendingOp: PendingOp;
@@ -340,9 +382,7 @@ export function LibraryActionsMenu({
   return (
     <div className="relative flex items-center gap-2">
       {progress.failures > 0 && (
-        <span className="text-xs text-destructive">
-          {progress.failures} failure{progress.failures !== 1 ? 's' : ''}
-        </span>
+        <BulkFailureDisclosure failures={progress.failures} failureDetails={progress.failureDetails} />
       )}
       <button
         ref={triggerRef}

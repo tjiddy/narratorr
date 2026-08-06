@@ -113,6 +113,13 @@ export async function downloadRemoteCover(
   remoteUrl: string,
   db: Db,
   log: FastifyBaseLogger,
+  /**
+   * Optional diagnostic side channel, invoked once with the underlying cause whenever the outcome
+   * is `'failed'` — the caught VALUE for a rejection (so `.code`/`.cause` survive for
+   * `toShortErrorText`), a descriptive string for the two non-throw arms that have no error object.
+   * Trailing and optional so the existing three callers and their mocks are untouched (#2159).
+   */
+  onFailure?: ((cause: unknown) => void) | undefined,
 ): Promise<CoverWriteOutcome> {
   // Caller-gated no-op: nothing to materialize (null / non-remote URL). Not a failure.
   if (!remoteUrl || !bookPath || !isRemoteCoverUrl(remoteUrl)) {
@@ -130,6 +137,7 @@ export async function downloadRemoteCover(
       if (!response.ok) {
         log.warn({ bookId, status: response.status, url: sanitizeLogUrl(remoteUrl) }, 'Remote cover download returned non-OK status');
         await response.body?.cancel().catch(() => { /* best-effort */ });
+        onFailure?.(`Cover download returned HTTP ${response.status}`);
         return 'failed';
       }
 
@@ -137,6 +145,7 @@ export async function downloadRemoteCover(
       if (!isImageContentType(contentType)) {
         log.warn({ bookId, contentType, url: sanitizeLogUrl(remoteUrl) }, 'Remote cover response is not an image');
         await response.body?.cancel().catch(() => { /* best-effort */ });
+        onFailure?.(`Cover response is not an image (content-type: ${contentType ?? 'none'})`);
         return 'failed';
       }
 
@@ -153,6 +162,7 @@ export async function downloadRemoteCover(
       await rename(tempPath, finalPath);
     } catch (error: unknown) {
       log.warn({ error: serializeError(error), bookId, url: sanitizeLogUrl(remoteUrl) }, 'Failed to download remote cover');
+      onFailure?.(error);
       return 'failed';
     }
 

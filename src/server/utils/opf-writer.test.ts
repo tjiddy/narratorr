@@ -514,4 +514,58 @@ describe('writeOpfSidecar — result API (#1670)', () => {
       writeOpfForImport({ enabled: true, bookService: makeBookService(makeBook()), bookId: 1, bookFolder: '/lib/Book', log: makeLog() }),
     ).resolves.toBeUndefined();
   });
+
+  // #2159 — the optional failure sink that lets the reconcile job NAME the cause. The outcome union
+  // stays a string (it is stubbed at ~40 mock sites); the cause rides a side channel instead.
+  describe('onFailure side channel (#2159)', () => {
+    it('receives the caught VALUE (not a message) when writeFile rejects', async () => {
+      const cause = Object.assign(new Error("ENOENT: no such file or directory, open '/lib/Book/metadata.opf'"), { code: 'ENOENT' });
+      writeFileMock.mockRejectedValueOnce(cause);
+      const onFailure = vi.fn();
+
+      const outcome = await writeOpfSidecar({ enabled: true, bookService: makeBookService(makeBook()), bookId: 1, bookFolder: '/lib/Book', log: makeLog(), onFailure });
+
+      expect(outcome).toBe('failed');
+      expect(onFailure).toHaveBeenCalledTimes(1);
+      expect(onFailure).toHaveBeenCalledWith(cause); // identity — `.code` survives for the formatter
+    });
+
+    it('receives the caught value when the fresh book load rejects', async () => {
+      const cause = new Error('DB locked');
+      const bookService = { getById: vi.fn().mockRejectedValue(cause) } as unknown as BookService;
+      const onFailure = vi.fn();
+
+      const outcome = await writeOpfSidecar({ enabled: true, bookService, bookId: 1, bookFolder: '/lib/Book', log: makeLog(), onFailure });
+
+      expect(outcome).toBe('failed');
+      expect(onFailure).toHaveBeenCalledWith(cause);
+    });
+
+    it('is NOT invoked on any non-failed outcome', async () => {
+      const onFailure = vi.fn();
+      await writeOpfSidecar({ enabled: true, bookService: makeBookService(makeBook()), bookId: 1, bookFolder: '/lib/Book', log: makeLog(), onFailure });
+      await writeOpfSidecar({ enabled: false, bookService: makeBookService(makeBook()), bookId: 1, bookFolder: '/lib/Book', log: makeLog(), onFailure });
+      await writeOpfSidecar({ enabled: true, bookService: makeBookService(null), bookId: 9, bookFolder: '/lib/Book', log: makeLog(), onFailure });
+      expect(onFailure).not.toHaveBeenCalled();
+    });
+
+    it('omitting it is a no-op — the failing arm still returns the same string outcome', async () => {
+      writeFileMock.mockRejectedValueOnce(new Error('EACCES'));
+      const outcome = await writeOpfSidecar({ enabled: true, bookService: makeBookService(makeBook()), bookId: 1, bookFolder: '/lib/Book', log: makeLog() });
+      expect(outcome).toBe('failed');
+    });
+
+    it('keeps the existing warn line unchanged in level and content (AC14)', async () => {
+      writeFileMock.mockRejectedValueOnce(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
+      const log = makeLog();
+
+      await writeOpfSidecar({ enabled: true, bookService: makeBookService(makeBook()), bookId: 1, bookFolder: '/lib/Book', log, onFailure: vi.fn() });
+
+      expect(log.warn).toHaveBeenCalledWith(
+        { error: { message: 'EACCES: permission denied', stack: expect.any(String), type: 'Error', code: 'EACCES' }, bookId: 1 },
+        'Failed to write metadata.opf — continuing',
+      );
+      expect(log.error).not.toHaveBeenCalled();
+    });
+  });
 });

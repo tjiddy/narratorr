@@ -102,6 +102,13 @@ export interface WriteOpfForImportArgs {
   /** The book folder the OPF is written into (`result.targetPath` auto / `finalPath` manual). */
   bookFolder: string;
   log: FastifyBaseLogger;
+  /**
+   * Optional diagnostic side channel, invoked with the CAUGHT VALUE (never a pre-formatted string)
+   * whenever the outcome is `'failed'`. The `'written' | 'skipped' | 'failed'` union is stubbed at
+   * ~40 mock sites, so it stays a string; the reconcile job that needs to NAME the failure
+   * (#2159) subscribes here instead. Omitting it is a no-op — every existing caller is unaffected.
+   */
+  onFailure?: ((cause: unknown) => void) | undefined;
 }
 
 /**
@@ -145,7 +152,7 @@ export type OpfWriteOutcome = 'written' | 'skipped' | 'failed';
  * provenance marker. See {@link mayWriteOpf}.
  */
 export async function writeOpfSidecar(args: WriteOpfForImportArgs): Promise<OpfWriteOutcome> {
-  const { enabled, bookService, bookId, bookFolder, log } = args;
+  const { enabled, bookService, bookId, bookFolder, log, onFailure } = args;
   if (!enabled) return 'skipped';
 
   // Pointer single-file imports persist a *file* path (e.g. `/audiobooks/Doctor Sleep.m4b`), not a
@@ -170,6 +177,7 @@ export async function writeOpfSidecar(args: WriteOpfForImportArgs): Promise<OpfW
     return 'written';
   } catch (error: unknown) {
     log.warn({ error: serializeError(error), bookId }, 'Failed to write metadata.opf — continuing');
+    onFailure?.(error);
     return 'failed';
   }
 }
