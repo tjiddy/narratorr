@@ -95,6 +95,40 @@ describe('SeriesCard', () => {
     expect(screen.getByText('Bloody Rose')).toBeInTheDocument();
   });
 
+  // #2144: on a Hardcover-canonical card, an owned book Hardcover does not list
+  // arrives with `hardcoverBookId: null` and `inLibrary: true`. It must render
+  // exactly like any other owned member — a link to the book, the In Library
+  // badge, no '+ Add' — and its row key must fall through to the `library-N`
+  // branch of `memberKeyFor`, since there is no Hardcover id to key on.
+  it('renders an owned member with no hardcoverBookId as an In Library link keyed by library id', async () => {
+    vi.mocked(api.getBookSeries).mockResolvedValueOnce({
+      series: {
+        id: 1,
+        name: 'Exploring Azeroth',
+        hardcoverSeriesId: 25106,
+        seriesAuthor: 'Christie Golden',
+        lastFetchedAt: '2026-08-05T00:00:00.000Z',
+        members: [
+          makeMember({ hardcoverBookId: 8001, title: 'The Eastern Kingdoms', position: 1, inLibrary: false }),
+          makeMember({ hardcoverBookId: null, title: 'Kalimdor', position: 2, inLibrary: true, libraryBookId: 77 }),
+        ],
+      },
+    });
+
+    renderCard({ bookId: 77 });
+
+    const link = await screen.findByRole('link', { name: 'Kalimdor' });
+    expect(link).toHaveAttribute('href', '/books/77');
+    expect(screen.getByText('In Library')).toBeInTheDocument();
+    // Exactly one '+ Add' on the card — the Hardcover member the operator does
+    // NOT own. The owned entry must not have produced a second one.
+    expect(screen.getAllByTestId('series-card-add')).toHaveLength(1);
+    // Both rows rendered: with `hardcoverBookId` null on one and a title-based
+    // key colliding across renames, the `library-N` branch is what keeps the
+    // owned row identified.
+    expect(screen.getAllByTestId('series-card-member')).toHaveLength(2);
+  });
+
   it('renders + Add link with /search?q=<title>+<seriesAuthor> for missing members', async () => {
     vi.mocked(api.getBookSeries).mockResolvedValueOnce({
       series: {
