@@ -1726,6 +1726,64 @@ describe('enrichment job — user-cleared fields (#2069)', () => {
     expect(bookService.update).toHaveBeenCalledWith(1, { genres: ['Fantasy'] }, { tx: expect.anything() });
   });
 
+  // ─── #2152 AC8: the seriesPosition tombstone writes null, it does not skip ───
+  describe('a seriesPosition tombstone (#2152 AC8)', () => {
+    /** The orphan shape `fillSeriesFields` exists for: no stored name, stale position. */
+    const orphanPosition = { ...emptyExisting, seriesName: null, seriesPosition: 7 };
+
+    it('writes the provider name with seriesPosition NULL, not the provider number', async () => {
+      const set = await runWithTombstones('["seriesPosition"]', orphanPosition);
+
+      expect(set.seriesName).toBe('Secret Projects');
+      expect(set).toHaveProperty('seriesPosition', null);
+    });
+
+    it('control: the SAME fixture without the tombstone writes the provider position', async () => {
+      const set = await runWithTombstones(null, orphanPosition);
+
+      expect(set.seriesName).toBe('Secret Projects');
+      expect(set.seriesPosition).toBe(1);
+    });
+
+    it('writes null rather than DELETING the key, so the stale orphan cannot survive', async () => {
+      // Deleting the key would leave the stored `7` sitting beside the fresh
+      // provider name — exactly the position-without-series shape the pair rule
+      // and #2152 exist to remove.
+      const set = await runWithTombstones('["seriesPosition"]', orphanPosition);
+
+      expect(Object.keys(set)).toContain('seriesPosition');
+      expect(set.seriesPosition).toBeNull();
+    });
+
+    it('leaves every untombstoned sibling fill alone', async () => {
+      const set = await runWithTombstones('["seriesPosition"]', orphanPosition);
+
+      expect(set.subtitle).toBe('A Cosmere Novel');
+      expect(set.publisher).toBe('Dragonsteel');
+      expect(set.description).toBe('Provider description');
+      expect(set.enrichmentStatus).toBe('enriched');
+    });
+
+    it('composes with the seriesName tombstone: BOTH lands the same row as seriesName alone', async () => {
+      const both = await runWithTombstones('["seriesName","seriesPosition"]', orphanPosition);
+      const nameOnly = await runWithTombstones('["seriesName"]', orphanPosition);
+
+      expect(both).not.toHaveProperty('seriesName');
+      expect(both).not.toHaveProperty('seriesPosition');
+      expect('seriesPosition' in both).toBe('seriesPosition' in nameOnly);
+      expect('seriesName' in both).toBe('seriesName' in nameOnly);
+    });
+
+    it('is bounded by what fillSeriesFields prepared — a stored name means NEITHER field is written', async () => {
+      // Unchanged existing behavior, not a new rule: enrichment never overwrites a
+      // stored pair, so the column survives the pass whatever the tombstone says.
+      const set = await runWithTombstones('["seriesPosition"]', { ...emptyExisting, seriesName: 'Custom Saga', seriesPosition: 7 });
+
+      expect(set).not.toHaveProperty('seriesName');
+      expect(set).not.toHaveProperty('seriesPosition');
+    });
+  });
+
   it('a suppressed fill is a DECISION, not a failure — the candidate is still counted enriched', async () => {
     await runWithTombstones('["description","genres","publisher","publishedDate","seriesName","subtitle"]');
 
