@@ -250,8 +250,11 @@ function BulkFailureDisclosure({ failures, failureDetails }: { failures: number;
         <span>{failures} failure{failures !== 1 ? 's' : ''}</span>
         <ChevronDownIcon className={`w-3 h-3 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
       </button>
+      {/* z-30 is the repository's dropdown tier (CSS-1). This panel sits beside the Library Actions
+          menu, which portals at z-30 via ToolbarDropdown — anything lower is painted underneath it,
+          which would hide the very failure rows this disclosure exists to show. */}
       {expanded && (
-        <ul className="absolute right-0 top-full mt-1 z-20 max-h-64 w-80 overflow-y-auto glass-card rounded-xl border border-border shadow-lg p-2 space-y-1 animate-fade-in">
+        <ul className="absolute right-0 top-full mt-1 z-30 max-h-64 w-80 overflow-y-auto glass-card rounded-xl border border-border shadow-lg p-2 space-y-1 animate-fade-in">
           {failureDetails.map(detail => (
             <li key={detail.bookId} className="text-xs text-muted-foreground break-words">
               {detail.title} (book {detail.bookId}): {detail.error}

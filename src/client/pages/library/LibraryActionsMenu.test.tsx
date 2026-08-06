@@ -447,6 +447,19 @@ describe('LibraryActionsMenu', () => {
       expect(screen.getByText("Captain's Fury (book 226): ENOENT")).toBeInTheDocument();
     });
 
+    describe('z-index scale (CSS-1)', () => {
+      it('failure panel has z-30 class (dropdown scale)', async () => {
+        const user = userEvent.setup();
+        renderMenu({}, { isRunning: true, failures: 1, failureDetails: [liveCase] });
+
+        await user.click(failureDisclosure());
+
+        const panel = screen.getByText("Captain's Fury (book 226): ENOENT").closest('ul')!;
+        expect(panel).toHaveClass('z-30');
+        expect(panel).not.toHaveClass('z-20');
+      });
+    });
+
     it('collapses again on a second click', async () => {
       const user = userEvent.setup();
       renderMenu({}, { isRunning: true, failures: 1, failureDetails: [liveCase] });
