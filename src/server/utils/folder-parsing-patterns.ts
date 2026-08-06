@@ -1,7 +1,7 @@
 // Pattern helpers for folder-parsing.ts (issue #1034). Extracted to keep the
 // main module under the file-size cap; behaviour is unchanged from inlining.
 
-import { CODEC_TEST_REGEX, isEditionParen, NARRATOR_PAREN_REGEX, applyLastFirstSwap } from './folder-parsing-primitives.js';
+import { CODEC_TEST_REGEX, isEditionParen, isYearInWindow, NARRATOR_PAREN_REGEX, applyLastFirstSwap } from './folder-parsing-primitives.js';
 import type { ParsedFolder } from './folder-parsing.js';
 
 /**
@@ -223,6 +223,63 @@ export function tryCrossSegmentAgreement(
     seriesPosition: position,
     ...asinTail,
   };
+}
+
+/**
+ * Bare leading-position prefixes on a leaf directory — `01 - Title`, `2.5 – Title`,
+ * `01. - Title`, `01.- Title`, `01. Title`. This is exactly the shape family the
+ * `leadingNumeric` clean step strips today (`folder-parsing.ts`), in the same order and
+ * with the same `[–-]` separator class, so the capture recovers positions that used to be
+ * discarded as noise rather than changing which titles are produced. Em-dash is
+ * deliberately absent — `leadingNumeric` does not strip it, so capturing it would change
+ * the title too (#2145). Group 1 is the position literal, group 2 the remainder.
+ */
+const LEADING_POSITION_REGEXES: readonly RegExp[] = [
+  /^(\d+\.\d+)\s*[–-]\s*(.*)$/,
+  /^(\d+)[.\s]*[–-]\s*(.*)$/,
+  /^(\d+)\.(?!\d)\s*(.*)$/,
+];
+
+/**
+ * True when the position literal was written as a BARE 4-digit integer inside the
+ * repository's existing year window (`isYearInWindow`, the same 1900–2099 bound
+ * `extractYear` and the clean pipeline's trailing-year strips use). narratorr's own Plex
+ * preset folder format renders a year into this exact prefix slot of this exact shape
+ * (`{author}/{series?/}{year? - }{title}` → `Stephen King/The Dark Tower/1982 - The
+ * Gunslinger`), so the window is what keeps the Detailed preset's positions and the Plex
+ * preset's years from being read as each other. The test is on the LITERAL, not just the
+ * value: `01984` and `1984.5` are not year-shaped, and everything outside the window
+ * (`1899`, `2100`, `1000`, `12345`) is captured normally. Cross-segment agreement is
+ * deliberately NOT subject to this — its distinctive-token intersection is a disambiguator
+ * the bare prefix has no equivalent of.
+ */
+function isYearShapedPositionLiteral(literal: string, position: number): boolean {
+  return /^\d{4}$/.test(literal) && isYearInWindow(position);
+}
+
+/**
+ * Capture a bare `NN - Title` leading position from a leaf segment, returning the
+ * position-free remainder and the numeric position. Returns null when no prefix shape
+ * fires, when the remainder is LEXICALLY empty (`03 - ` is only a position and separator,
+ * so there is no title to keep — that leaf behaves exactly as it did before), when the
+ * position can't be parsed, or when the prefix is year-shaped. Callers apply their own
+ * cleanName/identity transform to the remainder: a remainder that is real text but
+ * transforms to empty (`03 - [Graphic Audio]`) still captures, matching the 1-part and
+ * 2-part position routes. (#2145)
+ */
+export function tryLeadingPositionLeaf(
+  segment: string,
+): { remainder: string; seriesPosition: number } | null {
+  for (const regex of LEADING_POSITION_REGEXES) {
+    const m = segment.match(regex);
+    if (!m) continue;
+    const remainder = m[2]!.trim();
+    if (!remainder) return null;
+    const position = parseRomanOrArabicPosition(m[1]!);
+    if (position === undefined || isYearShapedPositionLiteral(m[1]!, position)) return null;
+    return { remainder, seriesPosition: position };
+  }
+  return null;
 }
 
 /**

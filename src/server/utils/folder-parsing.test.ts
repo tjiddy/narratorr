@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseTitledDiscFolder } from '@core/utils/book-discovery.js';
+import { renderTemplate } from '@core/utils/naming.js';
 import {
   parseFolderStructure,
   parseFolderStructureRaw,
@@ -2758,6 +2759,336 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(parseFolderStructureRaw(['Brian Aldiss - The Saga of Pliocene Exile'])).toEqual({
           title: 'The Saga of Pliocene Exile', author: 'Brian Aldiss', series: null,
         });
+      });
+    });
+  });
+
+  // Issue #2145 — narratorr's own Detailed folder format renders a series position into the
+  // leaf directory (`{author}/{series}/{seriesPosition:00? - }{title}`), but the 3+-part parser
+  // branch stripped that prefix as noise without capturing it. These tests pin the additive
+  // capture: cross-segment agreement first (most-specific-first), then the bare `NN - Title`
+  // leaf, both scoped to paths that actually carry a series folder.
+  describe('leading-position leaf capture on 3+-part paths (issue #2145)', () => {
+    describe('the reported round-trip losses (Problem table)', () => {
+      it('row 1 — Detailed preset leaf `01 - The Way of Kings` yields position 1', () => {
+        expect(parseFolderStructure(['Brandon Sanderson', 'The Stormlight Archive', '01 - The Way of Kings'])).toEqual({
+          title: 'The Way of Kings', author: 'Brandon Sanderson', series: 'The Stormlight Archive', seriesPosition: 1,
+        });
+      });
+
+      it('row 2 — a colon subtitle survives the position strip', () => {
+        expect(parseFolderStructure(['Sean Copeland', 'Exploring Azeroth', '02 - Exploring Azeroth: Kalimdor'])).toEqual({
+          title: 'Exploring Azeroth: Kalimdor', author: 'Sean Copeland', series: 'Exploring Azeroth', seriesPosition: 2,
+        });
+      });
+
+      it('row 3 — a `Series NN - Title` leaf under a matching series folder (cross-segment)', () => {
+        expect(parseFolderStructure([
+          'Brandon Sanderson', 'The Stormlight Archive', 'The Stormlight Archive 01 - The Way of Kings',
+        ])).toEqual({
+          title: 'The Way of Kings', author: 'Brandon Sanderson', series: 'The Stormlight Archive', seriesPosition: 1,
+        });
+      });
+
+      it('row 4 — the two-level layout is unchanged', () => {
+        expect(parseFolderStructure(['Brandon Sanderson', 'The Stormlight Archive - 01 - The Way of Kings'])).toEqual({
+          title: 'The Way of Kings', author: 'Brandon Sanderson', series: 'The Stormlight Archive', seriesPosition: 1,
+        });
+      });
+    });
+
+    // AC2/AC3 — the capture covers exactly the prefix shapes `leadingNumeric` strips today, so
+    // nothing silently discarded before this change stays discarded. Em-dash is deliberately absent
+    // (out of parity with `leadingNumeric`). Zero-padding and decimals parse numerically.
+    describe('position prefix shapes (AC2/AC3)', () => {
+      it.each([
+        ['01 - T', 1],
+        ['1 - T', 1],
+        ['12 - T', 12],
+        ['2.5 - T', 2.5],
+        ['2.5 – T', 2.5], // decimal + en-dash (F7)
+        ['01 – T', 1], // integer + en-dash
+        ['01. - T', 1],
+        ['01.- T', 1],
+        ['01. T', 1],
+      ])('leaf %s → position %s with a position-free title', (leaf, position) => {
+        expect(parseFolderStructure(['A', 'S', leaf])).toEqual({
+          title: 'T', author: 'A', series: 'S', seriesPosition: position,
+        });
+      });
+
+      it('em-dash prefixes stay out of scope — no capture, title unchanged (matches leadingNumeric)', () => {
+        const result = parseFolderStructure(['A', 'S', '01 — T']);
+        expect(result.seriesPosition).toBeUndefined();
+        expect(result.title).toBe('01 — T');
+      });
+    });
+
+    // AC4 — position 0 is what `{seriesPosition:00? - }` renders for a prequel. A truthiness
+    // emission guard drops it; assert the KEY's presence, not just the value.
+    it('AC4 — position 0 survives as a real key, not undefined', () => {
+      const result = parseFolderStructure(['A', 'S', '00 - Prequel']);
+      expect(result.seriesPosition).toBe(0);
+      expect('seriesPosition' in result).toBe(true);
+      expect(result.title).toBe('Prequel');
+    });
+
+    // AC5 — the capture is gated on the LEXICAL remainder, not the transformed title.
+    describe('degenerate leaves (AC5)', () => {
+      it.each(['03 - ', '03 -'])('lexically empty remainder %j → no capture, behaves exactly as today', (leaf) => {
+        const result = parseFolderStructure(['A', 'S', leaf]);
+        expect(result.seriesPosition).toBeUndefined();
+        expect(result.title).toBe('03 -');
+      });
+
+      // Companion to the 1-part / 2-part collapse-guard pins above ("series-position route inherits
+      // the shared collapse guard") — the 3+-part branch inherits the same rule rather than minting
+      // a second one: a remainder that is real text but CLEANS to empty still captures its position.
+      it('transform-empty remainder captures the position and emits the empty title (clean)', () => {
+        expect(parseFolderStructure(['Author', 'Series', '03 - [Graphic Audio]'])).toEqual({
+          title: '', author: 'Author', series: 'Series', seriesPosition: 3,
+        });
+      });
+
+      it('transform-empty remainder — raw keeps the uncollapsed text', () => {
+        expect(parseFolderStructureRaw(['Author', 'Series', '03 - [Graphic Audio]'])).toEqual({
+          title: '[Graphic Audio]', author: 'Author', series: 'Series', seriesPosition: 3,
+        });
+      });
+    });
+
+    it('AC6 — a deep path keeps its existing second-to-last series pick', () => {
+      expect(parseFolderStructure(['A', 'S', 'Subfolder', '03 - Deep Title'])).toEqual({
+        title: 'Deep Title', author: 'A', series: 'Subfolder', seriesPosition: 3,
+      });
+    });
+
+    describe('cross-segment agreement now runs on 3+-part paths (AC7–AC9)', () => {
+      it('AC7 — the caller owns author (parts[0]) and series (the folder segment), not the helper echo', () => {
+        const result = parseFolderStructure([
+          'Brandon Sanderson', 'The Stormlight Archive', 'The Stormlight Archive 01 - The Way of Kings',
+        ]);
+        expect(result.author).toBe('Brandon Sanderson'); // helper returns author: null by design
+        expect(result.series).toBe('The Stormlight Archive');
+        expect(result.seriesPosition).toBe(1);
+      });
+
+      it("AC7 — the helper's existing Roman-numeral arm now reaches 3-part paths", () => {
+        expect(parseFolderStructure([
+          'Brandon Sanderson', 'The Stormlight Archive', 'The Stormlight Archive II - The Way of Kings',
+        ])).toEqual({
+          title: 'The Way of Kings', author: 'Brandon Sanderson', series: 'The Stormlight Archive', seriesPosition: 2,
+        });
+      });
+
+      // AC8 — most-specific-first. This row DISCRIMINATES the ordering: the bare-prefix arm would
+      // happily read `123` as the position and leave `Series 01 - Title` as the title, so it must
+      // only be reached after cross-segment agreement declines.
+      it('AC8 — a numeric-and-dash series prefix is resolved by agreement, not pre-empted by the bare arm', () => {
+        expect(parseFolderStructure(['A', '123 - Series', '123 - Series 01 - Title'])).toEqual({
+          title: 'Title', author: 'A', series: 'Series', seriesPosition: 1,
+        });
+      });
+
+      it('AC8 — raw twin of the ordering fixture', () => {
+        expect(parseFolderStructureRaw(['A', '123 - Series', '123 - Series 01 - Title'])).toEqual({
+          title: 'Title', author: 'A', series: '123 - Series', seriesPosition: 1,
+        });
+      });
+
+      it('AC9 — a prefix sharing no distinctive token with the series folder declines, leaf unchanged', () => {
+        const result = parseFolderStructure(['Author', 'Series', 'Unrelated Prefix 3 - Title']);
+        expect(result.seriesPosition).toBeUndefined();
+        expect(result).toEqual({ title: 'Unrelated Prefix 3 - Title', author: 'Author', series: 'Series' });
+      });
+
+      // AC9b — CHARACTERIZATION ONLY (#1273 convention): this expected object was captured by
+      // RUNNING the parser, not hand-authored, and is NOT asserted as correct behavior. Wiring the
+      // helper in (AC7) means it now also SEES multi-dash filename leaves from split single-file
+      // discoveries; per AC9a this issue makes no claim about which of those it accepts. The row
+      // exists purely as a drift signal at stock naming settings — do NOT extend it into a
+      // separator / namingCase / stopword matrix.
+      it('AC9b — multi-dash filename leaf at stock settings (current output, not asserted-correct)', () => {
+        expect(parseFolderStructure([
+          'Brandon Sanderson',
+          'The Stormlight Archive',
+          'Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings.m4b',
+        ])).toEqual({
+          title: 'The Way of Kings', author: 'Brandon Sanderson', series: 'The Stormlight Archive', seriesPosition: 1,
+        });
+      });
+    });
+
+    describe('guards — no phantom positions (AC10/AC11/AC13)', () => {
+      it('AC10 — a 2-part path has no series anchor, so nothing is captured', () => {
+        const result = parseFolderStructure(['Brandon Sanderson', '01 - The Way of Kings']);
+        expect(result.seriesPosition).toBeUndefined();
+        expect(result).toEqual({ title: 'The Way of Kings', author: 'Brandon Sanderson', series: null });
+      });
+
+      it('AC10 — a 1-part title that legitimately starts with a number is untouched', () => {
+        const result = parseFolderStructure(['George Orwell', '1984']);
+        expect(result.seriesPosition).toBeUndefined();
+        expect(result.title).toBe('1984');
+      });
+
+      it.each(['11-22-63', '11.22.63', '1.5'])(
+        'AC11 — all-numeric date-like leaf %s keeps its title with no position',
+        (leaf) => {
+          const result = parseFolderStructure(['Author', 'Series', leaf]);
+          expect(result.seriesPosition).toBeUndefined();
+          expect(result).toEqual({ title: leaf, author: 'Author', series: 'Series' });
+        },
+      );
+
+      it('AC13 — a leaf with no numeric prefix is unchanged', () => {
+        const result = parseFolderStructure(['Author', 'Series', 'Some Title']);
+        expect(result.seriesPosition).toBeUndefined();
+        expect(result).toEqual({ title: 'Some Title', author: 'Author', series: 'Series' });
+      });
+    });
+
+    // AC12 — the Plex preset renders a YEAR into this exact prefix slot of this exact 3-part shape
+    // (`{author}/{series?/}{year? - }{title}`), so a BARE 4-DIGIT INTEGER inside the repository's
+    // existing 1900–2099 window is not read as a position. Every row also asserts the title: that
+    // is what proves the window changed only position emission, never the title.
+    describe('AC12 — the 1900–2099 year window applies to the bare-prefix arm only', () => {
+      it.each([
+        ['1899 - Title', 1899, 'Title'],
+        ['1900 - Title', undefined, 'Title'],
+        ['1984 - The Real Title', undefined, 'The Real Title'],
+        ['2099 - Title', undefined, 'Title'],
+        ['2100 - Title', 2100, 'Title'],
+        ['1000 - Title', 1000, 'Title'],
+        ['1984.5 - Title', 1984.5, 'Title'], // a decimal is unambiguously not a year
+        ['12345 - Title', 12345, 'Title'], // five digits is not year-shaped (F8)
+        ['01984 - Title', 1984, 'Title'], // a leading-zero five-digit literal is not year-shaped (F8)
+      ])('leaf %s → position %s, title %s', (leaf, position, title) => {
+        const result = parseFolderStructure(['Author', 'Series', leaf]);
+        expect(result.seriesPosition).toBe(position);
+        expect(result.title).toBe(title);
+      });
+
+      it('cross-segment agreement is unaffected by the window — the token match is its disambiguator', () => {
+        expect(parseFolderStructure(['Stephen King', 'The Dark Tower', 'The Dark Tower 1982 - The Gunslinger'])).toEqual({
+          title: 'The Gunslinger', author: 'Stephen King', series: 'The Dark Tower', seriesPosition: 1982,
+        });
+      });
+    });
+
+    describe('precedence and preprocessing (AC14/AC15)', () => {
+      it('AC14 — an explicit trailing (Series Book N) paren still wins over the leading prefix', () => {
+        expect(parseFolderStructure(['Author', 'Series', '04 - Title (Series Book 9)'])).toEqual({
+          title: 'Title', author: 'Author', series: 'Series', seriesPosition: 9,
+        });
+      });
+
+      it('AC15 — ASIN extraction still runs before the new pattern', () => {
+        expect(parseFolderStructure(['Author', 'Series', '03 - Title [B01ABCDEFG]'])).toEqual({
+          title: 'Title', author: 'Author', series: 'Series', seriesPosition: 3, asin: 'B01ABCDEFG',
+        });
+      });
+
+      it('AC15 — audio-extension stripping still runs before the new pattern', () => {
+        expect(parseFolderStructure(['Author', 'Series', '03 - Title.m4b'])).toEqual({
+          title: 'Title', author: 'Author', series: 'Series', seriesPosition: 3,
+        });
+      });
+
+      // Split single-file discoveries put the audio FILENAME in folderParts (book-discovery's
+      // makeFolderEntry), so a bare `NN - Title.m4b` leaf is in scope and falls out of the existing
+      // preprocessing order with no new code.
+      it('AC15 — a split single-file discovery leaf captures its position', () => {
+        expect(parseFolderStructure(['Brandon Sanderson', 'The Stormlight Archive', '01 - The Way of Kings.m4b'])).toEqual({
+          title: 'The Way of Kings', author: 'Brandon Sanderson', series: 'The Stormlight Archive', seriesPosition: 1,
+        });
+      });
+    });
+
+    // AC16 — clean and raw share ONE helper, so they must not drift. Raw differs only in the
+    // transform (`identity`): the position is removed from the raw title too.
+    describe('raw parity (parseFolderStructureRaw)', () => {
+      it('raw: bare leaf capture', () => {
+        expect(parseFolderStructureRaw(['Author', 'Series', '03 - Title'])).toEqual({
+          title: 'Title', author: 'Author', series: 'Series', seriesPosition: 3,
+        });
+      });
+
+      it('raw: the Detailed-preset row-1 leaf', () => {
+        expect(parseFolderStructureRaw(['Brandon Sanderson', 'The Stormlight Archive', '01 - The Way of Kings'])).toEqual({
+          title: 'The Way of Kings', author: 'Brandon Sanderson', series: 'The Stormlight Archive', seriesPosition: 1,
+        });
+      });
+
+      it('raw: position 0 survives', () => {
+        const result = parseFolderStructureRaw(['A', 'S', '00 - Prequel']);
+        expect(result.seriesPosition).toBe(0);
+        expect('seriesPosition' in result).toBe(true);
+      });
+
+      it('raw: the year window declines identically', () => {
+        const result = parseFolderStructureRaw(['Author', 'Series', '1984 - The Real Title']);
+        expect(result.seriesPosition).toBeUndefined();
+        expect(result.title).toBe('1984 - The Real Title');
+      });
+
+      it('raw: an all-numeric date-like leaf is untouched', () => {
+        const result = parseFolderStructureRaw(['Author', 'Series', '11-22-63']);
+        expect(result.seriesPosition).toBeUndefined();
+        expect(result.title).toBe('11-22-63');
+      });
+
+      it('raw: cross-segment agreement on a 3-part path', () => {
+        expect(parseFolderStructureRaw([
+          'Brandon Sanderson', 'The Stormlight Archive', 'The Stormlight Archive 01 - The Way of Kings',
+        ])).toEqual({
+          title: 'The Way of Kings', author: 'Brandon Sanderson', series: 'The Stormlight Archive', seriesPosition: 1,
+        });
+      });
+    });
+
+    // AC19 — the property this issue exists to restore: a path RENDERED by the folder template
+    // parses back to the same four fields. It carries exactly two stated conditions, both named in
+    // the test titles rather than left implicit: a series must be present (AC10), and the position
+    // must be outside the 1900–2099 integer year window (AC12).
+    describe('AC19 — round trip through the Detailed folder template', () => {
+      const FOLDER_FORMAT = '{author}/{series}/{seriesPosition:00? - }{title}';
+      const roundTrip = (author: string, series: string, seriesPosition: number, title: string) =>
+        parseFolderStructure(
+          renderTemplate(FOLDER_FORMAT, { author, series, seriesPosition, title }).split('/'),
+        );
+
+      it.each([
+        ['Brandon Sanderson', 'The Stormlight Archive', 1, 'The Way of Kings'],
+        ['Brandon Sanderson', 'The Stormlight Archive', 2.5, 'Edgedancer'],
+        ['Brandon Sanderson', 'The Stormlight Archive', 12, 'Book Twelve'],
+        ['A', 'S', 0, 'Prequel'],
+        ['A', 'S', 1899, 'Title'],
+        ['A', 'S', 2100, 'Title'],
+        ['A', 'S', 1000, 'Title'],
+        ['A', 'S', 1984.5, 'Title'],
+      ])('with a series and a non-year position, (%s, %s, %s, %s) survives the round trip', (author, series, position, title) => {
+        expect(roundTrip(author, series, position, title)).toEqual({
+          title, author, series, seriesPosition: position,
+        });
+      });
+
+      // The documented exception, asserted as such: these render fine and parse back with the
+      // correct title, but deliberately WITHOUT a position — the Plex preset renders a year into
+      // the identical slot of the identical shape.
+      it.each([1900, 1984, 2099])(
+        'a bare integer position inside the 1900–2099 year window round-trips its title but NOT its position (%s)',
+        (position) => {
+          expect(roundTrip('A', 'S', position, 'Title')).toEqual({ title: 'Title', author: 'A', series: 'S' });
+        },
+      );
+
+      it('without a series the template drops the segment, and the 2-part path captures no position (AC10)', () => {
+        const rendered = renderTemplate(FOLDER_FORMAT, {
+          author: 'A', series: undefined, seriesPosition: 3, title: 'Title',
+        });
+        expect(rendered).toBe('A/03 - Title');
+        expect(parseFolderStructure(rendered.split('/')).seriesPosition).toBeUndefined();
       });
     });
   });
