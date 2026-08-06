@@ -7,23 +7,27 @@ import type { SettingsService } from './settings.service.js';
 import { HardcoverClient, type HardcoverSearchCandidate, type HardcoverSeriesData } from '@core/metadata/hardcover.js';
 import { resolveSeriesViaHardcover } from './hardcover-series-resolver.js';
 import { findInLibraryMatch, normalizeMemberTitleForMatch, type LibraryBookSummary } from './series-title-match.js';
-import { relinkBookToBoundSeries, removeSeriesNameTombstone } from './book-series-link.js';
+import {
+  buildMembersFromState,
+  compareLibraryMembers,
+  libraryMemberCard,
+  type BookSeriesMemberCard,
+  type MemberState,
+} from './series-card-members.js';
+import { relinkBookToBoundSeries, removeSeriesNameTombstone, seedLocalMembersForUnclaimedBooks } from './book-series-link.js';
 import { upsertHardcoverSeries } from './hardcover-series-upsert.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
 import { serializeError } from '../utils/serialize-error.js';
 
+/**
+ * The card's member-entry shape. Declared beside the assembly rule that produces
+ * it in `series-card-members.ts` and re-exported here, because this module is the
+ * import site every consumer (the services barrel, the routes) already uses.
+ */
+export type { BookSeriesMemberCard };
+
 /** Scheduled sweep threshold — rows older than this are re-fetched. */
 export const STALE_AFTER_DAYS = 7;
-
-export interface BookSeriesMemberCard {
-  hardcoverBookId: number | null;
-  slug: string | null;
-  title: string;
-  position: number | null;
-  imageUrl: string | null;
-  inLibrary: boolean;
-  libraryBookId: number | null;
-}
 
 export interface BookSeriesCardData {
   id: number | null;
@@ -273,17 +277,7 @@ export class SeriesCardService {
 
   private async buildLibraryOnlyCard(seriesName: string): Promise<BookSeriesCardData> {
     const libraryBooks = await this.loadLibraryBooksForSeries(seriesName);
-    const members = libraryBooks
-      .map<BookSeriesMemberCard>((b) => ({
-        hardcoverBookId: null,
-        slug: null,
-        title: b.title,
-        position: b.seriesPosition,
-        imageUrl: null,
-        inLibrary: true,
-        libraryBookId: b.id,
-      }))
-      .sort(compareLibraryMembers);
+    const members = libraryBooks.map(libraryMemberCard).sort(compareLibraryMembers);
     return {
       id: null,
       name: seriesName,
@@ -294,33 +288,36 @@ export class SeriesCardService {
     };
   }
 
-  private async buildCardFromCache(row: SeriesRow, seriesName: string): Promise<BookSeriesCardData> {
+  /**
+   * The card's two inputs, read together off ONE handle: the series' member rows
+   * and its library pool. Taken on `this.db` for the snapshot and re-taken on the
+   * transaction handle inside the reconcile — which is the whole point of having
+   * it as one function. A guarded write must re-read its preconditions INSIDE the
+   * transaction (`src/db/serial-transactions.ts`), and a second reader written
+   * separately is a second reader that can drift from the first.
+   */
+  private async readMemberState(executor: DbOrTx, seriesId: number, seriesName: string): Promise<MemberState> {
     // SQLite's default ASC ordering puts NULL positions FIRST, but the
     // library-only path puts them LAST via `compareLibraryMembers`. Read the
     // rows unordered (the DB row id is not user-facing) and sort in JS so
     // both modes share a single ordering rule.
-    const memberRows = await this.db
+    const rows = await executor
       .select()
       .from(seriesMembers)
-      .where(eq(seriesMembers.seriesId, row.id));
-    const libraryBooks = await this.loadLibraryBooksForSeries(seriesName);
-    const sortedRows = [...memberRows].sort((a, b) =>
-      compareByPositionThenTitle(a.position, a.title, b.position, b.title),
-    );
-    const matchedLibraryIds = new Set<number>();
-    const members = sortedRows.map<BookSeriesMemberCard>((m) => {
-      const match = findInLibraryMatch({ title: m.title, position: m.position }, libraryBooks, matchedLibraryIds);
-      if (match) matchedLibraryIds.add(match.id);
-      return {
-        hardcoverBookId: m.hardcoverBookId,
-        slug: m.slug,
-        title: m.title,
-        position: m.position,
-        imageUrl: m.imageUrl,
-        inLibrary: match !== null,
-        libraryBookId: match?.id ?? null,
-      };
-    });
+      .where(eq(seriesMembers.seriesId, seriesId));
+    const pool = await this.loadLibraryBooksForSeries(seriesName, executor);
+    return { rows, pool };
+  }
+
+  private async buildCardFromCache(row: SeriesRow, seriesName: string): Promise<BookSeriesCardData> {
+    const snapshot = buildMembersFromState(await this.readMemberState(this.db, row.id, seriesName));
+    // FAST PATH — every owned book is already represented. The common case, and
+    // it includes every card built immediately after `persistMembers` seeded: no
+    // transaction is opened and no write is issued, so the reconcile does not tax
+    // the ordinary GET.
+    const members = snapshot.unclaimed.length === 0
+      ? snapshot.members
+      : await this.reconcileUnclaimedMembers(row.id, seriesName, snapshot.members);
     return {
       id: row.id,
       name: row.name,
@@ -329,6 +326,61 @@ export class SeriesCardService {
       lastFetchedAt: row.lastFetchedAt?.toISOString() ?? null,
       members,
     };
+  }
+
+  /**
+   * Persist the local rows the snapshot found missing, GUARDED and best-effort
+   * (#2144 AC10).
+   *
+   * The snapshot read is not a safe basis for an insert: a refresh or a bind can
+   * delete-and-rebuild the series in between and pair that book to a
+   * newly-available Hardcover member, after which an unguarded insert resurrects
+   * a superseded local row — and the two partial unique indexes are disjoint, so
+   * the DB would happily let it coexist with the canonical one. The single
+   * transaction therefore RE-READS both the member rows and the pool inside
+   * itself, recomputes the unclaimed set from those fresh reads, and inserts only
+   * what is still unclaimed. A book claimed in the meantime, removed from the
+   * pool, or deleted outright is simply absent from the recomputed set — which is
+   * also what keeps the FK from rejecting an insert naming a since-deleted book
+   * ([[libsql-foreign-keys-on-by-default]]).
+   *
+   * The transaction returns the member rows it LEAVES BEHIND, and the card is
+   * assembled from those, never from the pre-write snapshot — so the response
+   * cannot advertise a row the guard declined to write
+   * ([[caller-owned-tx-drops-post-commit-effects]]).
+   *
+   * Best-effort by design: any failure, including a partial-unique-index
+   * collision as the last-resort backstop, is caught and logged, and the card
+   * falls back to the pre-write snapshot's entries. `getSeriesForBook` /
+   * `refreshSeriesForBook` still resolve; no rejection escapes.
+   *
+   * NEVER nested: this is opened only from the card build, and every caller
+   * (`persistAndBuildCard`, `bindHardcoverSeries`) invokes that build AFTER its
+   * own transaction has resolved. `db-write-lane.ts` is deliberately not used —
+   * its own docblock scopes it to a compound sequence needing atomicity against
+   * another compound sequence, and notes a single guarded transaction does not.
+   */
+  private async reconcileUnclaimedMembers(
+    seriesId: number,
+    seriesName: string,
+    fallback: BookSeriesMemberCard[],
+  ): Promise<BookSeriesMemberCard[]> {
+    try {
+      const committed = await this.db.transaction(async (tx) => {
+        const fresh = await this.readMemberState(tx, seriesId, seriesName);
+        const { unclaimed } = buildMembersFromState(fresh);
+        if (unclaimed.length === 0) return fresh;
+        await seedLocalMembersForUnclaimedBooks(tx, seriesId, unclaimed);
+        return this.readMemberState(tx, seriesId, seriesName);
+      });
+      return buildMembersFromState(committed).members;
+    } catch (error: unknown) {
+      this.log.warn(
+        { seriesId, seriesName, error: serializeError(error) },
+        'Series card: seeding owned members left unclaimed by Hardcover failed — rendering the pre-write snapshot',
+      );
+      return fallback;
+    }
   }
 
   private async persistAndBuildCard(resolved: HardcoverSeriesData, seriesName: string): Promise<BookSeriesCardData> {
@@ -346,6 +398,15 @@ export class SeriesCardService {
    * sibling books still carrying the old name are matched here too, letting
    * the bind caller sync EVERY matched member, not just the initiating book.
    * Returns the upserted row alongside the (bookId, position) pairs it matched.
+   *
+   * After the Hardcover inserts, every owned book the members left UNCLAIMED gets
+   * a `source: 'local'` row (#2144). That seed reads the PRIMARY name's pool only,
+   * never `extraSeriesNames`: on the bind path a sibling still carrying the
+   * pre-bind (Audnexus) name that matched no member is not a member of the
+   * canonical series and must get no row. Because this method deletes every row
+   * of the series before rebuilding, a later refresh whose payload finally
+   * carries the real Hardcover member supersedes the seeded row for free — one
+   * canonical row, no local row, and no separate "upgrade" path.
    */
   private async persistMembers(tx: DbOrTx, resolved: HardcoverSeriesData, seriesName: string, extraSeriesNames: string[] = []): Promise<{ row: SeriesRow; matches: MatchedLibraryBook[] }> {
     const normalized = normalizeSeriesName(seriesName);
@@ -373,6 +434,14 @@ export class SeriesCardService {
         source: 'hardcover',
       });
     }
+    const primaryPool = extraSeriesNames.length === 0
+      ? libraryBooks
+      : await this.loadLibraryBooksForSeries(seriesName, tx);
+    await seedLocalMembersForUnclaimedBooks(
+      tx,
+      upserted.id,
+      primaryPool.filter((book) => !matchedLibraryIds.has(book.id)),
+    );
     return { row: upserted, matches };
   }
 
@@ -514,22 +583,3 @@ export class SeriesCardService {
     return rows;
   }
 }
-
-/**
- * Member ordering shared by the cache-driven and library-only paths: numeric
- * `series_position` ascending with NULL positions placed at the end. `title`
- * is the tie-breaker for stable order. SQLite's default ASC puts NULLs FIRST,
- * which is why the cache path can't lean on the DB's ORDER BY for parity.
- */
-function compareByPositionThenTitle(aPos: number | null, aTitle: string, bPos: number | null, bTitle: string): number {
-  if (aPos === null && bPos === null) return aTitle.localeCompare(bTitle);
-  if (aPos === null) return 1;
-  if (bPos === null) return -1;
-  if (aPos !== bPos) return aPos - bPos;
-  return aTitle.localeCompare(bTitle);
-}
-
-function compareLibraryMembers(a: BookSeriesMemberCard, b: BookSeriesMemberCard): number {
-  return compareByPositionThenTitle(a.position, a.title, b.position, b.title);
-}
-

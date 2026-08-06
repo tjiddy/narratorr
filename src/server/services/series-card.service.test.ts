@@ -561,9 +561,14 @@ describe('SeriesCardService — unit', () => {
       expect(populated).toEqual([bookId]);
     });
 
-    it('does not inflate the card beyond the canonical Hardcover member list or add local members', async () => {
-      // A library book exists in the series but is NOT in the canonical Hardcover
-      // list — the service must not append it as an extra member.
+    /**
+     * #2144 NARROWS the #1139 no-inflation rule rather than deleting it. Adding an
+     * owned book Hardcover does not list is now REQUIRED — that is the whole
+     * issue. Adding anything else is still forbidden: the card's only two sources
+     * are the canonical member list and the library pool, so a title that appears
+     * in neither can never reach it.
+     */
+    it('adds owned books missing from the canonical list but nothing beyond the two sources', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Local Only', seriesName: 'The Band', seriesPosition: 9, authorName: 'Nicholas Eames' });
       const canonical: MemberInput[] = [
         { position: 1, id: 1001, slug: 'kings', title: 'Kings of the Wyld' },
@@ -575,10 +580,15 @@ describe('SeriesCardService — unit', () => {
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
       const card = await svc.getSeriesForBook(bookId);
 
-      expect(card!.members).toHaveLength(canonical.length);
-      expect(card!.members.map((m) => m.title)).toEqual(['Kings of the Wyld', 'Bloody Rose', 'Heretic']);
-      // The local-only book at position 9 was not appended.
-      expect(card!.members.some((m) => m.title === 'Local Only')).toBe(false);
+      // Canonical count + the one owned book, interleaved by position — not
+      // appended as an "extras" block that happens to land last.
+      expect(card!.members).toHaveLength(canonical.length + 1);
+      expect(card!.members.map((m) => m.title)).toEqual(['Kings of the Wyld', 'Bloody Rose', 'Heretic', 'Local Only']);
+      const owned = card!.members.find((m) => m.title === 'Local Only')!;
+      expect(owned).toMatchObject({ position: 9, inLibrary: true, libraryBookId: bookId, hardcoverBookId: null });
+      // Nothing that is neither a canonical member nor a library book appears.
+      const allowed = new Set([...canonical.map((m) => m.title), 'Local Only']);
+      expect(card!.members.every((m) => allowed.has(m.title))).toBe(true);
     });
   });
 
@@ -733,7 +743,7 @@ describe('SeriesCardService — unit', () => {
       expect(memberRows[0]!.source).toBe('hardcover');
     });
 
-    it('preserves books.seriesPosition and seeds no local member when the book is not a member', async () => {
+    it('preserves books.seriesPosition and seeds exactly one local member when the book is not a member', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Unrelated Book', seriesName: 'Earthsea', seriesPosition: 7, authorName: 'Ursula K. Le Guin' });
       mockFetchOnce(hardcoverSeriesPayload({
         id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
@@ -741,13 +751,19 @@ describe('SeriesCardService — unit', () => {
       }));
 
       const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
-      await svc.bindHardcoverSeries(bookId, 4242);
+      const bound = await svc.bindHardcoverSeries(bookId, 4242);
 
       const book = (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
       expect(book.seriesName).toBe('The Earthsea Quartet');
       expect(book.seriesPosition).toBe(7);
+      // #2144: the bind adopted the canonical name for a book that matched no
+      // member, so it is now an owned book of that series with nothing to pair
+      // with — exactly the shape that must get a local row.
       const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
-      expect(memberRows).toHaveLength(0);
+      expect(memberRows).toHaveLength(1);
+      expect(memberRows[0]!.source).toBe('local');
+      const owned = bound!.card.members.find((m) => m.title === 'Unrelated Book')!;
+      expect(owned).toMatchObject({ position: 7, inLibrary: true, libraryBookId: bookId, hardcoverBookId: null });
     });
 
     it('sets books.seriesPosition to 0 for a position-0 member (no falsy coercion)', async () => {
