@@ -1,8 +1,9 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { eq } from 'drizzle-orm';
 import type { Db, DbOrTx } from '@db/index.js';
-import { books } from '@db/schema.js';
+import { books, bookNarrators } from '@db/schema.js';
 import type { BookService } from './book.service.js';
+import type { NarratorSource } from './import-adapters/types.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
@@ -27,6 +28,8 @@ export interface EnrichmentBookInput {
   duration: number | null;
   coverUrl: string | null;
   existingGenres: string[] | null;
+  /** #2158 AC8 — see `AudioEnrichmentBook.narratorSource`. Absent keeps today's semantics. */
+  narratorSource?: NarratorSource | undefined;
 }
 
 export interface AudnexusConfig {
@@ -70,7 +73,14 @@ export async function orchestrateBookEnrichment(
   const audioResult = await enrichBookFromAudio(
     bookId,
     finalPath,
-    { narrators: book.narrators ?? null, duration: book.duration ?? null, coverUrl: book.coverUrl ?? null },
+    {
+      narrators: book.narrators ?? null,
+      duration: book.duration ?? null,
+      coverUrl: book.coverUrl ?? null,
+      // Conditionally spread so the argument stays byte-identical for every caller that supplies no
+      // provenance — the exact-argument mocks across the enrichment suites depend on it.
+      ...(book.narratorSource !== undefined && { narratorSource: book.narratorSource }),
+    },
     deps.db,
     deps.log,
     deps.bookService,
@@ -276,6 +286,24 @@ async function applyEnrichmentData(
  * unmatched-genre telemetry for it AFTER the owning transaction commits (#2069
  * F21/F5). Narrators carry no telemetry, so only the genre arm reports back.
  */
+/**
+ * Whether the row currently has ANY narrator, read on the caller's transaction handle (#2158 AC9).
+ *
+ * `opts.existingNarrator` is a snapshot of the PRE-import item, taken before the provider fetch — so
+ * when the provider had no narrators and the embedded-tag fill supplied them moments earlier, that
+ * snapshot is stale and the Audnexus write would clobber a value the files just contributed. The
+ * live re-read runs inside the write transaction for the same reason the tombstone set does: a
+ * caller's pre-fetch cannot see a write that committed during the fetch.
+ */
+async function rowHasNarrators(tx: DbOrTx, bookId: number): Promise<boolean> {
+  const rows = await tx
+    .select({ narratorId: bookNarrators.narratorId })
+    .from(bookNarrators)
+    .where(eq(bookNarrators.bookId, bookId))
+    .limit(1);
+  return rows.length > 0;
+}
+
 async function applyEnrichmentArrayFields(
   bookId: number,
   data: { narrators?: string[] | undefined; genres?: string[] | undefined },
@@ -284,7 +312,7 @@ async function applyEnrichmentArrayFields(
   cleared: ReadonlySet<ClearableBookField>,
   tx: DbOrTx,
 ): Promise<string[] | null> {
-  if (!opts.existingNarrator && data.narrators?.length) {
+  if (!opts.existingNarrator && data.narrators?.length && !(await rowHasNarrators(tx, bookId))) {
     await deps.bookService.update(bookId, { narrators: data.narrators }, { tx });
   }
   if (data.genres?.length && !opts.existingGenres?.length && !cleared.has('genres')) {
@@ -312,13 +340,20 @@ export interface ImportConfirmItem {
 // Extracted to reduce cyclomatic complexity in callers (each ?? and || counts as a branch).
 
 export function buildEnrichmentBookInput(
-  book: { narrators?: Array<{ name: string }> | null; duration?: number | null; coverUrl?: string | null; genres?: string[] | null },
+  book: {
+    narrators?: Array<{ name: string }> | null;
+    duration?: number | null;
+    coverUrl?: string | null;
+    genres?: string[] | null;
+    narratorSource?: NarratorSource | undefined;
+  },
 ): EnrichmentBookInput {
   return {
     narrators: book.narrators ?? null,
     duration: book.duration ?? null,
     coverUrl: book.coverUrl ?? null,
     existingGenres: book.genres ?? null,
+    ...(book.narratorSource !== undefined && { narratorSource: book.narratorSource }),
   };
 }
 

@@ -26,16 +26,40 @@ export interface ImportAdapter {
 }
 
 /**
+ * Where a staged item's narrators came from, as of the moment the submission runner processed it
+ * (#2158 D8). Deliberately a statement about the DATA, not about the author: the wire cannot express
+ * intent (`buildEditedFromBestMatch` copies the provider's narrators into `edited.narrators` while
+ * `metadata` carries the same array, so an auto-matched row and an explicitly edited row are
+ * structurally identical), so the runner answers the one factual question it can — does the row still
+ * carry the provider's own proposal?
+ *
+ * - `curated` — the OPF sidecar yielded narrators, OR the item's narrators differ from the matched
+ *   metadata's. The tag fill is suppressed.
+ * - `provider` — the item's narrators are non-empty and equal the matched metadata's. The tag fill
+ *   fires (an untouched provider proposal is not a curation worth protecting from the files).
+ * - `none` — the item carries no narrators. The tag fill fires, as it always has.
+ */
+export const narratorSourceSchema = z.enum(['curated', 'provider', 'none']);
+export type NarratorSource = z.infer<typeof narratorSourceSchema>;
+
+/**
  * Persisted payload for manual import jobs.
  * Reuses `importConfirmItemSchema` for runtime shape and overrides the `metadata` field
  * with `z.custom<BookMetadata>().optional()` — a TYPE-only override (no extra runtime
  * validation, identical to z.unknown() at the safeParse boundary) so downstream callers
  * retain typed access to `metadata.narrators` etc. without `as` casts. Tightening
  * runtime validation of `metadata` is intentionally out of scope.
+ *
+ * `narratorSource` is a RUNNER-COMPUTED field and is declared here ONLY, exactly as `mode` already
+ * is — Zod's default strip means a key the runner invents but never declares is silently dropped
+ * when the adapter re-parses the persisted payload. It is deliberately absent from
+ * `importConfirmItemSchema`/`stagedImportItemSchema`, so the client wire contract, the strict staged
+ * bounds, and the finalize payload digest are all unaffected.
  */
 export const manualImportJobPayloadSchema = importConfirmItemSchema.extend({
   metadata: z.custom<BookMetadata>().optional(),
   mode: importModeSchema.optional(),
+  narratorSource: narratorSourceSchema.optional(),
 });
 
 /**

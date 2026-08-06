@@ -15,8 +15,10 @@ import type { NotifierService } from './notifier.service.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { classifyConfirmItem } from './import-confirm-item.helpers.js';
 import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
+import { readOpfMetadata } from '../utils/opf-reader.js';
+import { applyOpfOverlay } from './import-opf-overlay.js';
 import type { ImportConfirmItem } from './library-scan.service.js';
-import type { ManualImportJobPayload } from './import-adapters/types.js';
+import type { ManualImportJobPayload, NarratorSource } from './import-adapters/types.js';
 import { aggregateDispositions, stagedImportItemSchema, type ItemDisposition, type SubmissionAggregates, type SubmissionSource } from '@core/import-staging/schemas.js';
 
 const SAFETY_POLL_INTERVAL_MS = 30_000;
@@ -212,7 +214,17 @@ export class ImportSubmissionRunner {
         });
         return true;
       }
-      const item = parsed.data as ImportConfirmItem;
+      const staged = parsed.data as ImportConfirmItem;
+
+      // #2158: the ONE OPF overlay point — after the staged parse, BEFORE classification. The
+      // enriched item is what gets serialized into the manual job payload below, so this single
+      // fold reaches every downstream consumer: `classifyConfirmItem`'s three-way `findDuplicate`
+      // stops running narrator-blind, `buildBookCreatePayload` lands the OPF values on the created
+      // row, the copy-time collision fence gets narrators, and Audnexus's fill-empty sees them as
+      // present. Read from `item.path` — the SOURCE folder — never from the eventual library target:
+      // the manual copy/move fast path stages AUDIO ONLY (#1602), so `metadata.opf` is never carried
+      // into the target and a read there would find nothing for every copy/move import.
+      const { item, narratorSource } = applyOpfOverlay(staged, await readOpfMetadata(staged.path, this.log));
 
       const classification = await classifyConfirmItem(item, this.bookService, this.log);
       if (classification !== 'proceed' && 'skip' in classification) {
@@ -233,7 +245,7 @@ export class ImportSubmissionRunner {
         return true;
       }
 
-      await this.acceptItem(sub, row, item);
+      await this.acceptItem(sub, row, item, narratorSource);
     } catch (error: unknown) {
       this.log.error({ error: serializeError(error), submissionId: sub.id, ordinal: row.ordinal }, 'Staged import item preparation failed');
       await this.writeTerminal(sub, row, { disposition: 'failed', reason: 'Import failed — see server logs for details.' });
@@ -247,7 +259,7 @@ export class ImportSubmissionRunner {
    * side effects (info log, genre telemetry, one `book_added` event, worker nudge)
    * re-homed here. Rolls back to `pending` on any failure — no orphan.
    */
-  private async acceptItem(sub: SubmissionRow, row: ItemRow, item: ImportConfirmItem): Promise<void> {
+  private async acceptItem(sub: SubmissionRow, row: ItemRow, item: ImportConfirmItem, narratorSource: NarratorSource): Promise<void> {
     const resolved = await this.bookService.resolveCreateInput(buildBookCreatePayload(item, item.metadata ?? null, 'importing'));
     let createdBookId: number | undefined;
     // Every catch branch returns, so `notice` is only read on the success path where
@@ -256,7 +268,9 @@ export class ImportSubmissionRunner {
     try {
       notice = await this.db.transaction(async (tx) => {
         const bookId = await this.bookService.createResolved(resolved, tx);
-        const payload: ManualImportJobPayload = { ...item };
+        // `narratorSource` rides the job payload beside `mode` — both are runner-computed and both
+        // are declared on `manualImportJobPayloadSchema` only, so neither is stripped at re-parse.
+        const payload: ManualImportJobPayload = { ...item, narratorSource };
         if (sub.mode) payload.mode = sub.mode;
         const enqueued = await this.bookImportService.enqueue({ bookId, type: 'manual', metadata: JSON.stringify(payload) }, tx);
         if ('error' in enqueued) throw new ActiveJobConflict();

@@ -32,13 +32,26 @@ import { RateLimitError, TransientError } from '@core/index.js';
  * `{ asin, user_cleared_fields }`) and a `transaction` that runs its callback on
  * the same handle. Both reads hit the same stub, so the identity guard holds by
  * construction unless a test deliberately varies the row between them.
+ *
+ * #2158 AC9 added a THIRD read on the same handle — the in-transaction
+ * `book_narrators` re-read that stops the Audnexus write from clobbering narrators
+ * the embedded-tag fill supplied moments earlier. It is discriminated by PROJECTION
+ * rather than by call order (`shared-test-double-defaults-ripple` §2): a call-index
+ * counter desynchronises the moment a test issues a different number of reads.
+ * `narratorRows` defaults to EMPTY, i.e. "the row has no narrators yet", which is
+ * what every pre-#2158 test in this suite implicitly assumed.
  */
-function dbWithUpdateChain(row?: { asin?: string | null; userClearedFields?: string | null }) {
+function dbWithUpdateChain(
+  row?: { asin?: string | null; userClearedFields?: string | null },
+  narratorRows: { narratorId: number }[] = [],
+) {
   const updateChain = mockDbChain();
   const selectRow = { asin: row?.asin ?? null, userClearedFields: row?.userClearedFields ?? null };
   const db = {
     update: vi.fn().mockReturnValue(updateChain),
-    select: vi.fn().mockReturnValue(mockDbChain([selectRow])),
+    select: vi.fn().mockImplementation((projection?: Record<string, unknown>) =>
+      projection && 'narratorId' in projection ? mockDbChain(narratorRows) : mockDbChain([selectRow]),
+    ),
   } as unknown as Db & { transaction: unknown };
   db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db));
   return { db: db as Db, updateChain };
@@ -849,6 +862,47 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
 
       expect(deps.bookService.update).toHaveBeenCalledWith(42, { narrators: ['Michael Kramer'] }, { tx: expect.anything() });
       expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+    });
+
+    // ─── #2158 AC9: the narrator write re-reads the row inside its own transaction ───
+    //
+    // `existingNarrator` is a snapshot of the PRE-import item, taken before the provider fetch. When
+    // the provider had no narrators, the embedded-tag fill can supply them between that snapshot and
+    // this write — and the caller's pre-fetch cannot see it. The re-read is the fix; these two rows
+    // are its positive and negative control.
+    it('AC9: skips the narrator write when the row already carries narrators the snapshot missed', async () => {
+      const { db } = dbWithUpdateChain(undefined, [{ narratorId: 7 }]);
+      // A DIFFERENT narrator, otherwise the assertion cannot distinguish "skipped" from "wrote the
+      // same value" — the vacuous-observation trap this suite has hit before.
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      expect(deps.bookService.update).not.toHaveBeenCalledWith(42, { narrators: ['Audnexus Narrator'] }, expect.anything());
+    });
+
+    it('AC9: still fills narrators when the row genuinely has none', async () => {
+      const { db } = dbWithUpdateChain(undefined, []);
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      expect(deps.bookService.update).toHaveBeenCalledWith(42, { narrators: ['Audnexus Narrator'] }, { tx: expect.anything() });
+    });
+
+    it('AC9: the re-read runs on the TRANSACTION handle, not a second connection', async () => {
+      const { db } = dbWithUpdateChain(undefined, []);
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      // The stub hands the same object to the transaction callback, so the observable is that the
+      // projection was issued at all — a nested `db.transaction` would throw NestedTransactionError.
+      const projections = (db.select as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]);
+      expect(projections.some((p) => p && typeof p === 'object' && 'narratorId' in p)).toBe(true);
     });
 
     it('a telemetry failure is non-fatal — the success log still fires', async () => {
