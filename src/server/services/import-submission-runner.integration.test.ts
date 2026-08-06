@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { eq, asc } from 'drizzle-orm';
@@ -14,6 +14,7 @@ import { ImportStagingService } from './import-staging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { NotifierService } from './notifier.service.js';
 import { serializeSubmissionForDigest, type StagedImportItem } from '@core/import-staging/schemas.js';
+import { manualImportJobPayloadSchema } from './import-adapters/types.js';
 
 interface DrainSeam { drainOne(): Promise<boolean> }
 
@@ -929,6 +930,355 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       expect(rows[1]!.disposition).toBe('skipped');
       expect(rows[1]!.reason).toBe('already-in-library');
       expect(await db.select().from(books)).toHaveLength(1);
+    });
+  });
+
+  // ── #2158: the metadata.opf overlay ──────────────────────────────────────
+  //
+  // The runner half of the ladder: read the sidecar at the SOURCE folder, fold it into the staged
+  // item BEFORE classification, and carry the narrator provenance on the enqueued job payload. The
+  // tag/provider half (which needs the manual adapter) lives in `import-opf-ladder.integration.test.ts`.
+  describe('metadata.opf overlay (#2158)', () => {
+    /** A book folder under the suite tmpdir, optionally holding a `metadata.opf`. */
+    function bookFolder(name: string, opf?: string): string {
+      const folder = join(dir, name);
+      mkdirSync(folder, { recursive: true });
+      if (opf !== undefined) writeFileSync(join(folder, 'metadata.opf'), opf, 'utf-8');
+      return folder;
+    }
+
+    function opfWith(inner: string[]): string {
+      return [
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<package version="2.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">',
+        '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">',
+        ...inner.map((line) => `    ${line}`),
+        '  </metadata>',
+        '</package>',
+        '',
+      ].join('\n');
+    }
+
+    const DESCRIPTIVE_OPF = opfWith([
+      '<dc:title>Opf Title</dc:title>',
+      '<dc:subtitle>Opf Subtitle</dc:subtitle>',
+      '<dc:description>Opf Description</dc:description>',
+      '<dc:publisher>Opf Publisher</dc:publisher>',
+      '<dc:date>1988-08-08</dc:date>',
+      '<dc:subject>Opf Genre</dc:subject>',
+    ]);
+
+    async function jobPayload(): Promise<Record<string, unknown>> {
+      const [job] = await db.select().from(importJobs);
+      return JSON.parse(job!.metadata) as Record<string, unknown>;
+    }
+
+    async function onlyBook() {
+      const rows = await db.select().from(books);
+      expect(rows).toHaveLength(1);
+      return rows[0]!;
+    }
+
+    async function bookAuthorNames(bookId: number): Promise<string[]> {
+      const detail = await new BookService(db, inject(log)).getById(bookId);
+      return (detail?.authors ?? []).map((a) => a.name);
+    }
+
+    // ── AC10: folder-parse priority survives the overlay ──────────────────
+
+    it('AC10: an OPF title/series never overrides the folder parse', async () => {
+      const path = bookFolder('ac10-folder', opfWith([
+        '<dc:title>Opf Title</dc:title>',
+        '<meta name="calibre:series" content="Opf Series"/>',
+        '<meta name="calibre:series_index" content="9"/>',
+      ]));
+      await seedProcessing([{ path, title: 'Folder Title', seriesName: 'Folder Series', seriesPosition: 2, forceImport: true }]);
+
+      await drainAll();
+
+      expect(await onlyBook()).toMatchObject({ title: 'Folder Title', seriesName: 'Folder Series', seriesPosition: 2 });
+    });
+
+    it('AC10: an item with NO series takes the OPF series', async () => {
+      const path = bookFolder('ac10-noseries', opfWith([
+        '<meta name="calibre:series" content="Opf Series"/>',
+        '<meta name="calibre:series_index" content="0"/>',
+      ]));
+      await seedProcessing([{ path, title: 'Folder Title', forceImport: true }]);
+
+      await drainAll();
+
+      // seriesPosition 0 is a legitimate position, so it must survive the whole chain.
+      expect(await onlyBook()).toMatchObject({ seriesName: 'Opf Series', seriesPosition: 0 });
+    });
+
+    it('AC10 headline: TWO OPF aut creators against a single folder author keep the FOLDER author', async () => {
+      // Two creators is what forces the branch: `buildBookCreatePayload` prefers `meta.authors`
+      // outright when it holds MORE THAN ONE, so a one-creator fixture would pass against an overlay
+      // that writes `metadata.authors` unconditionally (`roundtrip-fixture-must-force-the-branch`).
+      // A provider match with exactly ONE author is required too — with `metadata` absent the
+      // overlay takes the synthetic path and never reaches the constrained write at all.
+      const path = bookFolder('ac10-two-aut', opfWith([
+        '<dc:creator opf:role="aut">Opf Author One</dc:creator>',
+        '<dc:creator opf:role="aut">Opf Author Two</dc:creator>',
+      ]));
+      await seedProcessing([{
+        path, title: 'T', authorName: 'Folder Author', forceImport: true,
+        metadata: { title: 'T', authors: [{ name: 'Provider Author' }] },
+      }]);
+
+      await drainAll();
+
+      expect(await bookAuthorNames((await onlyBook()).id)).toEqual(['Folder Author']);
+    });
+
+    it('AC10: an OPF series never overrides a series the PROVIDER supplied', async () => {
+      // The folder-carried fields are corroborated, never overridden — for the provider as well as
+      // for the folder parse. Reds against an overlay that writes `seriesPrimary` unconditionally.
+      const path = bookFolder('ac10-provider-series', opfWith([
+        '<meta name="calibre:series" content="Opf Series"/>',
+        '<meta name="calibre:series_index" content="9"/>',
+      ]));
+      await seedProcessing([{
+        path, title: 'T', forceImport: true,
+        metadata: { title: 'T', authors: [{ name: 'A' }], seriesPrimary: { name: 'Provider Series', position: 5 } },
+      }]);
+
+      await drainAll();
+
+      expect(await onlyBook()).toMatchObject({ seriesName: 'Provider Series', seriesPosition: 5 });
+    });
+
+    it('AC10: provider authors present + no folder author → the provider authors survive', async () => {
+      const path = bookFolder('ac10-provider-aut', opfWith([
+        '<dc:creator opf:role="aut">Opf Author One</dc:creator>',
+        '<dc:creator opf:role="aut">Opf Author Two</dc:creator>',
+      ]));
+      await seedProcessing([{ path, title: 'T', forceImport: true, metadata: { title: 'T', authors: [{ name: 'Provider Author' }] } }]);
+
+      await drainAll();
+
+      expect(await bookAuthorNames((await onlyBook()).id)).toEqual(['Provider Author']);
+    });
+
+    it('AC10: neither present → the OPF creators land', async () => {
+      const path = bookFolder('ac10-opf-aut', opfWith([
+        '<dc:creator opf:role="aut">Opf Author One</dc:creator>',
+        '<dc:creator opf:role="aut">Opf Author Two</dc:creator>',
+      ]));
+      await seedProcessing([{ path, title: 'T', forceImport: true }]);
+
+      await drainAll();
+
+      expect(await bookAuthorNames((await onlyBook()).id)).toEqual(['Opf Author One', 'Opf Author Two']);
+    });
+
+    // ── AC11: an OPF ASIN is a last resort for identity ───────────────────
+
+    describe('AC11 — identity', () => {
+      const OPF_ASIN = opfWith(['<dc:identifier opf:scheme="ASIN">B0OPFASIN1</dc:identifier>']);
+
+      /** Drain with a spied `findDuplicate` and return the candidate it was handed. */
+      async function dedupeCandidate(item: StagedImportItem): Promise<Record<string, unknown>> {
+        const bs = new BookService(db, inject(log));
+        const spy = vi.spyOn(bs, 'findDuplicate').mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false } as never);
+        await seedProcessing([item]);
+        await drainRunner(makeRunner(bs));
+        expect(spy).toHaveBeenCalledTimes(1);
+        return spy.mock.calls[0]![0] as unknown as Record<string, unknown>;
+      }
+
+      it('(i) an explicit item ASIN wins over the OPF one', async () => {
+        const path = bookFolder('ac11-item', OPF_ASIN);
+        expect(await dedupeCandidate({ path, title: 'T', asin: 'B0ITEMASIN' })).toMatchObject({ asin: 'B0ITEMASIN' });
+      });
+
+      it('(ii) a matched provider ASIN wins over the OPF one', async () => {
+        const path = bookFolder('ac11-provider', OPF_ASIN);
+        const item: StagedImportItem = { path, title: 'T', metadata: { title: 'T', authors: [{ name: 'A' }], asin: 'B0PROVASIN' } };
+        expect(await dedupeCandidate(item)).toMatchObject({ asin: 'B0PROVASIN' });
+      });
+
+      it('(iii) an OPF ASIN alone reaches findDuplicate', async () => {
+        const path = bookFolder('ac11-opf', OPF_ASIN);
+        expect(await dedupeCandidate({ path, title: 'T' })).toMatchObject({ asin: 'B0OPFASIN1' });
+      });
+
+      it('(iv) a 65-char OPF ASIN was dropped at read time, so findDuplicate receives none', async () => {
+        const path = bookFolder('ac11-overbound', opfWith([
+          `<dc:identifier opf:scheme="ASIN">${'x'.repeat(65)}</dc:identifier>`,
+          '<dc:title>Anchor</dc:title>',
+        ]));
+        expect(await dedupeCandidate({ path, title: 'T' })).not.toHaveProperty('asin');
+      });
+    });
+
+    // ── AC12: a synthetic BookMetadata when there was no provider match ────
+
+    it('AC12: no provider match + an OPF → the row gets the OPF descriptive fields', async () => {
+      const path = bookFolder('ac12-synth', DESCRIPTIVE_OPF);
+      await seedProcessing([{ path, title: 'Folder Title', authorName: 'Folder Author', forceImport: true }]);
+
+      await drainAll();
+
+      const book = await onlyBook();
+      expect(book).toMatchObject({
+        title: 'Folder Title', subtitle: 'Opf Subtitle', description: 'Opf Description',
+        publisher: 'Opf Publisher', publishedDate: '1988-08-08',
+      });
+      expect(book.genres).toEqual(['Opf Genre']);
+      // The synthetic metadata is real on the payload, and its authors follow AC10's table.
+      const payload = await jobPayload();
+      expect(payload.metadata).toMatchObject({ title: 'Folder Title', authors: [{ name: 'Folder Author' }] });
+    });
+
+    it('AC12: no provider match + no OPF → item.metadata stays undefined on the enqueued payload', async () => {
+      const path = bookFolder('ac12-none');
+      await seedProcessing([{ path, title: 'Folder Title', forceImport: true }]);
+
+      await drainAll();
+
+      expect(await jobPayload()).not.toHaveProperty('metadata');
+    });
+
+    it('the OPF OVERRIDES a provider match for the descriptive fields', async () => {
+      const path = bookFolder('descriptive-override', DESCRIPTIVE_OPF);
+      await seedProcessing([{
+        path, title: 'Folder Title', forceImport: true,
+        metadata: {
+          title: 'Provider Title', authors: [{ name: 'A' }], subtitle: 'Provider Subtitle',
+          description: 'Provider Description', publisher: 'Provider Publisher',
+          publishedDate: '2020-01-01', genres: ['Provider Genre'],
+        },
+      }]);
+
+      await drainAll();
+
+      const book = await onlyBook();
+      expect(book).toMatchObject({
+        subtitle: 'Opf Subtitle', description: 'Opf Description',
+        publisher: 'Opf Publisher', publishedDate: '1988-08-08',
+      });
+      expect(book.genres).toEqual(['Opf Genre']);
+    });
+
+    // ── AC13: nothing about a bad OPF can fail an import ──────────────────
+
+    it.each([
+      ['binary-garbage', ' not xmlÿ'],
+      ['an-unparseable-fragment', '<package><metadata><dc:title>unclosed'],
+      ['a-valid-but-empty-document', '<package><metadata></metadata></package>'],
+    ])('AC13: %s produces the no-OPF baseline outcome', async (label, contents) => {
+      const path = bookFolder(`ac13-${label}`, contents);
+      const subId = await seedProcessing([{ path, title: 'Folder Title', forceImport: true, metadata: { title: 'P', authors: [{ name: 'A' }], description: 'Provider Description' } }]);
+
+      await drainAll();
+
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item!.disposition).toBe('accepted');
+      expect(await onlyBook()).toMatchObject({ description: 'Provider Description' });
+    });
+
+    // ── D1: the overlay runs BEFORE classification ────────────────────────
+
+    it('D1: OPF narrators are visible to classifyConfirmItem', async () => {
+      const path = bookFolder('d1-order', opfWith(['<dc:creator opf:role="nrt">Opf Narrator</dc:creator>']));
+      const bs = new BookService(db, inject(log));
+      const spy = vi.spyOn(bs, 'findDuplicate').mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false } as never);
+      await seedProcessing([{ path, title: 'T' }]);
+
+      await drainRunner(makeRunner(bs));
+
+      // Reds if the overlay moves after classification: the confirm-time recording verdict would go
+      // back to running narrator-blind.
+      expect(spy.mock.calls[0]![0]).toMatchObject({ narrators: ['Opf Narrator'] });
+    });
+
+    it('D1: the no-OPF control hands findDuplicate no narrators', async () => {
+      const path = bookFolder('d1-control');
+      const bs = new BookService(db, inject(log));
+      const spy = vi.spyOn(bs, 'findDuplicate').mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false } as never);
+      await seedProcessing([{ path, title: 'T' }]);
+
+      await drainRunner(makeRunner(bs));
+
+      expect(spy.mock.calls[0]![0]).not.toHaveProperty('narrators');
+    });
+
+    // ── D2 + the read location ────────────────────────────────────────────
+
+    it('D2: a manual COPY submission reads the OPF at the SOURCE folder', async () => {
+      // The regression pin for D2. The manual empty-target fast path stages AUDIO ONLY (#1602), so
+      // `metadata.opf` never reaches the library target — a read at the eventual `finalPath` would
+      // find nothing for every copy/move import.
+      const path = bookFolder('d2-copy-source', DESCRIPTIVE_OPF);
+      await seedProcessing([{ path, title: 'T', forceImport: true }], { source: 'manual', mode: 'copy' });
+
+      await drainAll();
+
+      expect(await onlyBook()).toMatchObject({ description: 'Opf Description' });
+      expect(await jobPayload()).toMatchObject({ mode: 'copy' });
+    });
+
+    it('pointer mode (a library submission, no mode) reads the same single folder', async () => {
+      const path = bookFolder('pointer', DESCRIPTIVE_OPF);
+      await seedProcessing([{ path, title: 'T', forceImport: true }]);
+
+      await drainAll();
+
+      expect(await onlyBook()).toMatchObject({ description: 'Opf Description' });
+      expect(await jobPayload()).not.toHaveProperty('mode');
+    });
+
+    it('KNOWN LIMITATION: an OPF at a disc-group PARENT is not read', async () => {
+      // For a coalesced disc group `item.path` is a member folder (`import-helpers.ts:501-536`), so a
+      // sidecar sitting at the group parent is out of scope. Pinned deliberately rather than left
+      // unspecified; lifting it is follow-up work.
+      const parent = bookFolder('disc-parent', DESCRIPTIVE_OPF);
+      const member = join(parent, 'Disc 1');
+      mkdirSync(member, { recursive: true });
+      await seedProcessing([{ path: member, title: 'T', forceImport: true }]);
+
+      await drainAll();
+
+      expect(await onlyBook()).toMatchObject({ description: null });
+    });
+
+    it('a single-file pointer path (.m4b) is skipped without a read', async () => {
+      const path = join(bookFolder('single-file'), 'Book.m4b');
+      writeFileSync(path, '');
+      await seedProcessing([{ path, title: 'T', forceImport: true }]);
+
+      await drainAll();
+
+      expect(await onlyBook()).toMatchObject({ description: null });
+    });
+
+    // ── D8/D3: narratorSource rides the enqueued payload ──────────────────
+
+    it.each([
+      ['curated (OPF)', true, undefined, 'curated'],
+      ['curated (differing wire narrators)', false, ['Typed'], 'curated'],
+      ['provider (wire equals metadata)', false, ['Provider Narrator'], 'provider'],
+      ['none (no wire narrators)', false, undefined, 'none'],
+    ] as const)('D3/D8: %s lands on the enqueued job payload', async (label, withOpf, narrators, expected) => {
+      const path = bookFolder(
+        `ns-${expected}-${label.replace(/\W+/g, '-')}`,
+        withOpf ? opfWith(['<dc:creator opf:role="nrt">Opf Narrator</dc:creator>']) : undefined,
+      );
+      await seedProcessing([{
+        path, title: 'T', forceImport: true,
+        ...(narrators !== undefined && { narrators: [...narrators] }),
+        metadata: { title: 'T', authors: [{ name: 'A' }], narrators: ['Provider Narrator'] },
+      }]);
+
+      await drainAll();
+
+      // Asserted on the PAYLOAD, so a stripped-at-reparse regression (D3) is caught directly rather
+      // than as a confusing downstream symptom — the schema re-parse below is the adapter's own.
+      const payload = await jobPayload();
+      expect(payload).toMatchObject({ narratorSource: expected });
+      expect(manualImportJobPayloadSchema.parse(payload).narratorSource).toBe(expected);
     });
   });
 });
