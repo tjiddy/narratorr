@@ -1477,4 +1477,40 @@ describe('ManualImportAdapter', () => {
       }));
     });
   });
+
+  // ── #2158: the runner-computed narrator provenance reaches the enrichment orchestrator ──
+  //
+  // The value is computed by `ImportSubmissionRunner` and rides `manualImportJobPayloadSchema`, so
+  // the adapter's only job is to read it off the payload and hand it down unchanged. The behaviour it
+  // then produces (which narrator lands on the row) is pinned end-to-end in
+  // `import-opf-ladder.integration.test.ts`.
+  describe('narratorSource threading (#2158 AC8)', () => {
+    async function processWith(extra: Partial<ManualImportJobPayload>) {
+      const payload: ManualImportJobPayload = {
+        path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author', mode: 'copy', ...extra,
+      };
+      await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
+      const { orchestrateBookEnrichment } = await import('../enrichment-orchestration.helpers.js');
+      return vi.mocked(orchestrateBookEnrichment).mock.calls[0]![2];
+    }
+
+    it.each(['curated', 'provider', 'none'] as const)('forwards narratorSource=%s', async (narratorSource) => {
+      expect(await processWith({ narratorSource })).toMatchObject({ narratorSource });
+    });
+
+    it('omits the key entirely when the payload carries no provenance (default-preserving)', async () => {
+      // An older persisted job predates #2158; absent must keep today's fill-empty semantics, and the
+      // argument must stay byte-identical for the exact-argument mocks in the sibling suites.
+      expect(await processWith({})).not.toHaveProperty('narratorSource');
+    });
+
+    it('a narratorSource the schema does not know is rejected at parse, not silently forwarded', async () => {
+      const payload = {
+        path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author', mode: 'copy',
+        narratorSource: 'invented',
+      };
+      await expect(adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx))
+        .rejects.toThrow(/shape mismatch/);
+    });
+  });
 });
