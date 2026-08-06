@@ -23,25 +23,62 @@ import { orchestrateBookEnrichment, applyAudnexusEnrichment } from './enrichment
 import { mockDbChain } from '../__tests__/helpers.js';
 import { RateLimitError, TransientError } from '@core/index.js';
 
+/** One mock handle — the root connection and the transaction handle are built from this. */
+interface MockHandle {
+  update: ReturnType<typeof vi.fn>;
+  select: ReturnType<typeof vi.fn>;
+}
+
+/** The `select` calls on `handle` that asked for the `book_narrators` projection. */
+function narratorReads(handle: MockHandle): unknown[] {
+  return handle.select.mock.calls.filter(
+    ([projection]) => projection && typeof projection === 'object' && 'narratorId' in (projection as object),
+  );
+}
+
 /**
  * A db whose `update().set().where()` chain resolves; returns the captured chain
  * for assertions.
  *
  * Also carries the two seams #2069 AC11 added to this path: a `select` (the
  * pre-fetch ASIN capture AND the in-transaction re-read of
- * `{ asin, user_cleared_fields }`) and a `transaction` that runs its callback on
- * the same handle. Both reads hit the same stub, so the identity guard holds by
- * construction unless a test deliberately varies the row between them.
+ * `{ asin, user_cleared_fields }`) and a `transaction` that runs its callback.
+ *
+ * #2158 AC9 added a THIRD read — the in-transaction `book_narrators` re-read that
+ * stops the Audnexus write from clobbering narrators the embedded-tag fill supplied
+ * moments earlier. It is discriminated by PROJECTION rather than by call order
+ * (`shared-test-double-defaults-ripple` §2): a call-index counter desynchronises the
+ * moment a test issues a different number of reads. `narratorRows` defaults to EMPTY,
+ * i.e. "the row has no narrators yet", which is what every pre-#2158 test in this
+ * suite implicitly assumed.
+ *
+ * **The root and the transaction are DISTINCT objects (#2160 F1).** They used to be
+ * the same object, which made handle routing unobservable: a read that regressed from
+ * the callback's `tx` to `deps.db` landed on the very same `select` spy and every
+ * assertion stayed green. `db.transaction` now hands the callback its own `tx`, so
+ * WHICH handle a read or write used is a directly assertable fact — see
+ * {@link narratorReads} and the AC9 handle test. The two `update` spies deliberately
+ * share ONE `updateChain` so the existing scalar-write assertions read the same
+ * object regardless of which handle issued the write; the handle question is answered
+ * by the spies, not by the chain.
  */
-function dbWithUpdateChain(row?: { asin?: string | null; userClearedFields?: string | null }) {
+function dbWithUpdateChain(
+  row?: { asin?: string | null; userClearedFields?: string | null },
+  narratorRows: { narratorId: number }[] = [],
+) {
   const updateChain = mockDbChain();
   const selectRow = { asin: row?.asin ?? null, userClearedFields: row?.userClearedFields ?? null };
-  const db = {
+  const makeHandle = (): MockHandle => ({
     update: vi.fn().mockReturnValue(updateChain),
-    select: vi.fn().mockReturnValue(mockDbChain([selectRow])),
-  } as unknown as Db & { transaction: unknown };
-  db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db));
-  return { db: db as Db, updateChain };
+    select: vi.fn().mockImplementation((projection?: Record<string, unknown>) =>
+      projection && 'narratorId' in projection ? mockDbChain(narratorRows) : mockDbChain([selectRow]),
+    ),
+  });
+
+  const tx = makeHandle();
+  const db = makeHandle() as MockHandle & { transaction: ReturnType<typeof vi.fn> };
+  db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(tx as unknown as Db));
+  return { db: db as unknown as Db, root: db as MockHandle, tx, updateChain };
 }
 
 const mockEnrichBookFromAudio = vi.mocked(enrichBookFromAudio);
@@ -784,13 +821,13 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
     }
   });
 
-  // The F14 rollback proof deliberately does NOT live here. This suite's `db` and
-  // its transaction handle are the SAME object, so a regression that moved the
-  // scalar write before `db.transaction` would produce identical observations
-  // (same update chain, one transaction call, same rejected promise) — the test
-  // could not tell in-transaction from pre-transaction. It lives against a real
-  // migrated DB instead, with the split-transaction counterfactual executed
-  // alongside it: see `src/db/user-cleared-fields-schema.integration.test.ts`,
+  // The F14 rollback proof deliberately does NOT live here. #2160 F1 split the root
+  // and the transaction into distinct spies, so this suite can now tell WHICH handle
+  // a statement used — but it still cannot prove ROLLBACK, because these doubles never
+  // roll anything back: every write "succeeds" against an in-memory chain regardless of
+  // whether the surrounding transaction later throws. Atomicity therefore stays with a
+  // real migrated DB, with the split-transaction counterfactual executed alongside it:
+  // see `src/db/user-cleared-fields-schema.integration.test.ts`,
   // 'AC11 / F14 — post-import atomicity, against a real DB'.
 
   describe('F21 / F5 — the genre telemetry is a DEFERRED post-commit effect', () => {
@@ -849,6 +886,55 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
 
       expect(deps.bookService.update).toHaveBeenCalledWith(42, { narrators: ['Michael Kramer'] }, { tx: expect.anything() });
       expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+    });
+
+    // ─── #2158 AC9: the narrator write re-reads the row inside its own transaction ───
+    //
+    // `existingNarrator` is a snapshot of the PRE-import item, taken before the provider fetch. When
+    // the provider had no narrators, the embedded-tag fill can supply them between that snapshot and
+    // this write — and the caller's pre-fetch cannot see it. The re-read is the fix; these two rows
+    // are its positive and negative control.
+    it('AC9: skips the narrator write when the row already carries narrators the snapshot missed', async () => {
+      const { db } = dbWithUpdateChain(undefined, [{ narratorId: 7 }]);
+      // A DIFFERENT narrator, otherwise the assertion cannot distinguish "skipped" from "wrote the
+      // same value" — the vacuous-observation trap this suite has hit before.
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      expect(deps.bookService.update).not.toHaveBeenCalledWith(42, { narrators: ['Audnexus Narrator'] }, expect.anything());
+    });
+
+    it('AC9: still fills narrators when the row genuinely has none', async () => {
+      const { db } = dbWithUpdateChain(undefined, []);
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      expect(deps.bookService.update).toHaveBeenCalledWith(42, { narrators: ['Audnexus Narrator'] }, { tx: expect.anything() });
+    });
+
+    it('AC9: the re-read runs on the TRANSACTION handle, never the root connection', async () => {
+      const { db, root, tx } = dbWithUpdateChain(undefined, []);
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      // The root and the transaction are distinct spies, so "which handle" is a fact rather than an
+      // inference. Routing the re-read to `deps.db` would move the projection to `root` — verified
+      // red by mutating `applyEnrichmentArrayFields(..., tx)` to `(..., deps.db)`. It matters twice
+      // over: on libSQL a second connection cannot see the open transaction's uncommitted rows, and
+      // `bookService.update` opening its own transaction throws NestedTransactionError.
+      expect(narratorReads(tx)).toHaveLength(1);
+      expect(narratorReads(root)).toHaveLength(0);
+
+      // …and the write rides that SAME handle object — `toBe`, not a structural match, so a
+      // different-but-similar handle cannot satisfy it.
+      const updateCall = (deps.bookService.update as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect((updateCall[2] as { tx: unknown }).tx).toBe(tx);
     });
 
     it('a telemetry failure is non-fatal — the success log still fires', async () => {

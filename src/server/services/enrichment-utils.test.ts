@@ -551,6 +551,82 @@ describe('enrichBookFromAudio narrator splitting (issue #79)', () => {
   });
 });
 
+// ─── #2158 AC8: the tag fill gates on narratorSource, not on "the book has any narrators" ───
+//
+// The old gate made the provider always win. For an auto-matched row the client ships the provider's
+// narrators in BOTH `narrators` and `metadata.narrators` (`buildEditedFromBestMatch`), so
+// `book.narrators` was never empty and this arm was dead. The provenance question is what
+// distinguishes an untouched provider proposal (refillable from the files) from a curated value.
+describe('enrichBookFromAudio — narratorSource gate (#2158 AC8)', () => {
+  let mockDb: { update: ReturnType<typeof vi.fn> };
+  let log: FastifyBaseLogger;
+  let mockBookService: { update: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDb = {
+      update: vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }),
+      }),
+    };
+    log = inject<FastifyBaseLogger>({
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(), silent: vi.fn(), level: 'info',
+    });
+    mockBookService = { update: vi.fn().mockResolvedValue(null) };
+    vi.mocked(scanAudioDirectory).mockResolvedValue({
+      codec: 'mp3', bitrate: 128000, sampleRate: 44100, channels: 2,
+      bitrateMode: 'cbr' as const, fileFormat: 'MPEG', fileCount: 1,
+      totalSize: 1000, totalDuration: 100, hasCoverArt: false,
+      tagNarrator: 'Tag Narrator',
+    });
+  });
+
+  const run = (book: Parameters<typeof enrichBookFromAudio>[2]) =>
+    enrichBookFromAudio(5, '/books/test', book, inject<Db>(mockDb), log, inject<BookService>(mockBookService));
+
+  const PROVIDER_NARRATORS = [{ name: 'Provider Narrator' }];
+
+  it.each([
+    ['provider', true],
+    ['none', true],
+    ['curated', false],
+  ] as const)('narratorSource=%s with NON-EMPTY narrators → tag fill fires: %s', async (narratorSource, fires) => {
+    await run({ narrators: PROVIDER_NARRATORS, duration: null, coverUrl: null, narratorSource });
+
+    if (fires) expect(mockBookService.update).toHaveBeenCalledWith(5, { narrators: ['Tag Narrator'] });
+    else expect(mockBookService.update).not.toHaveBeenCalled();
+  });
+
+  // The counterfactual named in the spec: this row is the ONLY one that reds when the gate reverts
+  // to "the book has any narrators", because the supplied narrators are non-empty in all three arms.
+  it('narratorSource=provider is the row that reds on a revert to the narrators-empty gate', async () => {
+    await run({ narrators: PROVIDER_NARRATORS, duration: null, coverUrl: null, narratorSource: 'provider' });
+
+    expect(mockBookService.update).toHaveBeenCalledWith(5, { narrators: ['Tag Narrator'] });
+  });
+
+  it('an ABSENT narratorSource keeps today\'s semantics — non-empty narrators suppress the fill', async () => {
+    await run({ narrators: PROVIDER_NARRATORS, duration: null, coverUrl: null });
+
+    expect(mockBookService.update).not.toHaveBeenCalled();
+  });
+
+  it('an ABSENT narratorSource still fills when the supplied narrators are empty', async () => {
+    await run({ narrators: [], duration: null, coverUrl: null });
+
+    expect(mockBookService.update).toHaveBeenCalledWith(5, { narrators: ['Tag Narrator'] });
+  });
+
+  it('curated suppresses the fill even when the supplied narrators are EMPTY (the OPF arm)', async () => {
+    // The overlay writes OPF narrators to top-level `item.narrators`, so this shape is unusual — but
+    // `curated` is a statement about provenance, not about the array, and the gate must honour it.
+    await run({ narrators: null, duration: null, coverUrl: null, narratorSource: 'curated' });
+
+    expect(mockBookService.update).not.toHaveBeenCalled();
+  });
+});
+
 vi.mock('./cover-download.js', () => ({
   downloadRemoteCover: vi.fn().mockResolvedValue('written'),
   isRemoteCoverUrl: vi.fn((url: string | null | undefined) => {

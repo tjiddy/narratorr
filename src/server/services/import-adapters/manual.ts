@@ -158,7 +158,13 @@ export class ManualImportAdapter implements ImportAdapter {
 
       await orchestrateBookEnrichment(
         bookId, finalPath,
-        buildEnrichmentBookInput({ ...extracted.bookInput, genres: currentBook?.genres ?? null }),
+        // `narratorSource` (#2158) is the runner-computed provenance the tag fill gates on — it rides
+        // the job payload, not the confirm item, so it is read off `payload` rather than `item`.
+        buildEnrichmentBookInput({
+          ...extracted.bookInput,
+          genres: currentBook?.genres ?? null,
+          ...(payload.narratorSource !== undefined && { narratorSource: payload.narratorSource }),
+        }),
         enrichmentDeps,
         buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null, currentBook),
       );

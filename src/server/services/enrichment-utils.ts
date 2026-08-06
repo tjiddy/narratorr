@@ -11,6 +11,7 @@ import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
 import { mimeToExt } from '../utils/mime.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import type { NarratorSource } from './import-adapters/types.js';
 
 
 export interface EnrichmentResult {
@@ -22,6 +23,30 @@ export interface AudioEnrichmentBook {
   narrators?: Array<{ name: string }> | null;
   duration: number | null;
   coverUrl: string | null;
+  /**
+   * Narrator provenance for THIS import (#2158 AC8), computed by the staged submission runner and
+   * carried on the manual job payload. An optional field on the existing argument rather than a new
+   * positional parameter, so `import.service.ts` and `merge.service.ts` keep their seven-arg call
+   * sites compiling and behaving identically.
+   *
+   * **Absent means today's semantics** — fill only when the supplied narrators are empty, which is
+   * equivalent to `none`.
+   */
+  narratorSource?: NarratorSource | undefined;
+}
+
+/**
+ * Whether the embedded-tag narrator may fill this book.
+ *
+ * The old rule was "the book has no narrators", which made the provider always win: for an
+ * auto-matched row the client ships the provider's narrators in BOTH `narrators` and
+ * `metadata.narrators`, so `book.narrators` was never empty and the tag arm was dead. The new gate
+ * asks the provenance question instead — only a `curated` row (an OPF sidecar, or narrators that
+ * differ from the provider's own proposal) is protected from the files.
+ */
+function tagNarratorFillAllowed(book: AudioEnrichmentBook): boolean {
+  if (book.narratorSource === undefined) return !book.narrators?.length;
+  return book.narratorSource !== 'curated';
 }
 
 /**
@@ -99,7 +124,7 @@ export async function enrichBookFromAudio(
 
     // Tag data: only fill empty fields (don't overwrite user edits)
     // Narrator writes go through the junction table via bookService
-    if (!book.narrators?.length && scanResult.tagNarrator && bookService) {
+    if (tagNarratorFillAllowed(book) && scanResult.tagNarrator && bookService) {
       const narratorNames = scanResult.tagNarrator.split(/[,;&]/).map(n => n.trim()).filter(n => n.length > 0);
       await bookService.update(bookId, { narrators: narratorNames });
     }
