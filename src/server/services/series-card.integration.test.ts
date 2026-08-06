@@ -238,10 +238,18 @@ describe('SeriesCardService — integration', () => {
       expect(body.query).toContain('GetSeriesMembersById');
       expect(body.variables.id).toBe(5523);
 
-      // Stale member dropped, new member persisted
+      // Stale member dropped, new member persisted.
       const final = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, row!.id));
-      expect(final).toHaveLength(1);
-      expect(final[0]!.title).toBe('Kings of the Wyld');
+      const hardcover = final.filter((m) => m.source === 'hardcover');
+      expect(hardcover).toHaveLength(1);
+      expect(hardcover[0]!.title).toBe('Kings of the Wyld');
+      // The owned Bloody Rose pairs with no member in this payload, so #2144's
+      // invariant gives it a local row of its own — it is still the operator's
+      // book and still belongs on the card.
+      const local = final.filter((m) => m.source === 'local');
+      expect(local).toHaveLength(1);
+      expect(local[0]!.bookId).toBe(bookId);
+      expect(card!.members.map((m) => m.title)).toEqual(['Kings of the Wyld', 'Bloody Rose']);
     });
   });
 
@@ -892,9 +900,75 @@ describe('SeriesCardService — integration', () => {
 
       expect(bound).not.toBeNull();
       const memberRows = await db.select().from(seriesMembers);
-      expect(memberRows).toHaveLength(1);
-      expect(memberRows[0]!.bookId).toBe(lowerId);
+      // The ONE Hardcover member claimed the lower-id book — the assertion this
+      // fixture exists for. The higher-id initiating book adopted the canonical
+      // name unmatched, so #2144 gives it its own local row; that row is a
+      // consequence of the claim going the other way, not the claim itself.
+      const hardcover = memberRows.filter((m) => m.source === 'hardcover');
+      expect(hardcover).toHaveLength(1);
+      expect(hardcover[0]!.bookId).toBe(lowerId);
+      expect(memberRows.filter((m) => m.source === 'local').map((m) => m.bookId)).toEqual([higherId]);
+      expect(bound!.card.members[0]!.hardcoverBookId).toBe(4001);
       expect(bound!.card.members[0]!.libraryBookId).toBe(lowerId);
+    });
+  });
+
+  // #2144 — a library book with a series name must appear on that series' member
+  // list regardless of what Hardcover thinks. Hardcover's member queries exclude
+  // dateless works, so a "Planned book" stub leaves a hole the operator's own
+  // book falls through: not paired (nothing to pair with), and not seeded (the
+  // `upsertSeriesLink` canonical-series guard suppressed the local row).
+  describe('#2144 — owned books Hardcover does not expose', () => {
+    function mockFetchHardcover(payload: unknown): ReturnType<typeof vi.fn> {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      globalThis.fetch = fetchMock as typeof globalThis.fetch;
+      return fetchMock;
+    }
+
+    /** The live series: Hardcover exposes 1/3/4/5; position 2 is a dateless stub. */
+    function azerothPayload(withPositionTwo: boolean): unknown {
+      const members = [
+        { position: 1, book: { id: 8001, slug: 'eastern-kingdoms', title: 'Exploring Azeroth: The Eastern Kingdoms', image: null, users_count: 90 } },
+        { position: 3, book: { id: 8003, slug: 'northrend', title: 'Exploring Azeroth: Northrend', image: null, users_count: 70 } },
+        { position: 4, book: { id: 8004, slug: 'pandaria', title: 'Exploring Azeroth: Pandaria', image: null, users_count: 60 } },
+        { position: 5, book: { id: 8005, slug: 'outland', title: 'Exploring Azeroth: Outland', image: null, users_count: 50 } },
+      ];
+      if (withPositionTwo) {
+        members.splice(1, 0, { position: 2, book: { id: 8002, slug: 'kalimdor', title: 'Exploring Azeroth: Kalimdor', image: null, users_count: 80 } });
+      }
+      return {
+        data: {
+          series: [{ id: 25106, name: 'Exploring Azeroth', slug: 'exploring-azeroth', author: { name: 'Christie Golden' }, book_series: members }],
+        },
+      };
+    }
+
+    it('renders and persists the owned position-2 book Hardcover only exposes as a dateless stub', async () => {
+      const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
+      await seedBookWithSeries(db, { title: 'Exploring Azeroth: Northrend', seriesName: 'Exploring Azeroth', seriesPosition: 3, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(kalimdor);
+
+      expect(card!.members.map((m) => m.position)).toEqual([1, 2, 3, 4, 5]);
+      const owned = card!.members[1]!;
+      expect(owned).toMatchObject({
+        inLibrary: true,
+        libraryBookId: kalimdor,
+        hardcoverBookId: null,
+        slug: null,
+        imageUrl: null,
+        title: 'Exploring Azeroth: Kalimdor',
+      });
+
+      const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
+      const rows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id));
+      expect(rows).toHaveLength(5);
+      const local = rows.filter((r) => r.source === 'local');
+      expect(local).toHaveLength(1);
+      expect(local[0]!.bookId).toBe(kalimdor);
     });
   });
 

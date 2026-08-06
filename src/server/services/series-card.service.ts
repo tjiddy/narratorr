@@ -7,7 +7,7 @@ import type { SettingsService } from './settings.service.js';
 import { HardcoverClient, type HardcoverSearchCandidate, type HardcoverSeriesData } from '@core/metadata/hardcover.js';
 import { resolveSeriesViaHardcover } from './hardcover-series-resolver.js';
 import { findInLibraryMatch, normalizeMemberTitleForMatch, type LibraryBookSummary } from './series-title-match.js';
-import { relinkBookToBoundSeries, removeSeriesNameTombstone } from './book-series-link.js';
+import { relinkBookToBoundSeries, removeSeriesNameTombstone, seedLocalMembersForUnclaimedBooks } from './book-series-link.js';
 import { upsertHardcoverSeries } from './hardcover-series-upsert.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -58,6 +58,22 @@ export interface BookForSeriesCard {
 
 /** A library book paired to its matched Hardcover member's position. */
 interface MatchedLibraryBook { bookId: number; position: number | null }
+
+type SeriesMemberRow = typeof seriesMembers.$inferSelect;
+
+/** The card's two inputs, always read together off one handle. */
+interface MemberState {
+  rows: SeriesMemberRow[];
+  pool: LibraryBookSummary[];
+}
+
+/** What one partition/match pass over a {@link MemberState} yields. */
+interface BuiltMembers {
+  /** The card's entries, in `compareByPositionThenTitle` order. */
+  members: BookSeriesMemberCard[];
+  /** Pool books no member row claims — what a seed would have to write. */
+  unclaimed: LibraryBookSummary[];
+}
 
 export class SeriesCardService {
   constructor(
@@ -273,17 +289,7 @@ export class SeriesCardService {
 
   private async buildLibraryOnlyCard(seriesName: string): Promise<BookSeriesCardData> {
     const libraryBooks = await this.loadLibraryBooksForSeries(seriesName);
-    const members = libraryBooks
-      .map<BookSeriesMemberCard>((b) => ({
-        hardcoverBookId: null,
-        slug: null,
-        title: b.title,
-        position: b.seriesPosition,
-        imageUrl: null,
-        inLibrary: true,
-        libraryBookId: b.id,
-      }))
-      .sort(compareLibraryMembers);
+    const members = libraryBooks.map(libraryMemberCard).sort(compareLibraryMembers);
     return {
       id: null,
       name: seriesName,
@@ -294,33 +300,36 @@ export class SeriesCardService {
     };
   }
 
-  private async buildCardFromCache(row: SeriesRow, seriesName: string): Promise<BookSeriesCardData> {
+  /**
+   * The card's two inputs, read together off ONE handle: the series' member rows
+   * and its library pool. Taken on `this.db` for the snapshot and re-taken on the
+   * transaction handle inside the reconcile — which is the whole point of having
+   * it as one function. A guarded write must re-read its preconditions INSIDE the
+   * transaction (`src/db/serial-transactions.ts`), and a second reader written
+   * separately is a second reader that can drift from the first.
+   */
+  private async readMemberState(executor: DbOrTx, seriesId: number, seriesName: string): Promise<MemberState> {
     // SQLite's default ASC ordering puts NULL positions FIRST, but the
     // library-only path puts them LAST via `compareLibraryMembers`. Read the
     // rows unordered (the DB row id is not user-facing) and sort in JS so
     // both modes share a single ordering rule.
-    const memberRows = await this.db
+    const rows = await executor
       .select()
       .from(seriesMembers)
-      .where(eq(seriesMembers.seriesId, row.id));
-    const libraryBooks = await this.loadLibraryBooksForSeries(seriesName);
-    const sortedRows = [...memberRows].sort((a, b) =>
-      compareByPositionThenTitle(a.position, a.title, b.position, b.title),
-    );
-    const matchedLibraryIds = new Set<number>();
-    const members = sortedRows.map<BookSeriesMemberCard>((m) => {
-      const match = findInLibraryMatch({ title: m.title, position: m.position }, libraryBooks, matchedLibraryIds);
-      if (match) matchedLibraryIds.add(match.id);
-      return {
-        hardcoverBookId: m.hardcoverBookId,
-        slug: m.slug,
-        title: m.title,
-        position: m.position,
-        imageUrl: m.imageUrl,
-        inLibrary: match !== null,
-        libraryBookId: match?.id ?? null,
-      };
-    });
+      .where(eq(seriesMembers.seriesId, seriesId));
+    const pool = await this.loadLibraryBooksForSeries(seriesName, executor);
+    return { rows, pool };
+  }
+
+  private async buildCardFromCache(row: SeriesRow, seriesName: string): Promise<BookSeriesCardData> {
+    const snapshot = buildMembersFromState(await this.readMemberState(this.db, row.id, seriesName));
+    // FAST PATH — every owned book is already represented. The common case, and
+    // it includes every card built immediately after `persistMembers` seeded: no
+    // transaction is opened and no write is issued, so the reconcile does not tax
+    // the ordinary GET.
+    const members = snapshot.unclaimed.length === 0
+      ? snapshot.members
+      : await this.reconcileUnclaimedMembers(row.id, seriesName, snapshot.members);
     return {
       id: row.id,
       name: row.name,
@@ -329,6 +338,61 @@ export class SeriesCardService {
       lastFetchedAt: row.lastFetchedAt?.toISOString() ?? null,
       members,
     };
+  }
+
+  /**
+   * Persist the local rows the snapshot found missing, GUARDED and best-effort
+   * (#2144 AC10).
+   *
+   * The snapshot read is not a safe basis for an insert: a refresh or a bind can
+   * delete-and-rebuild the series in between and pair that book to a
+   * newly-available Hardcover member, after which an unguarded insert resurrects
+   * a superseded local row — and the two partial unique indexes are disjoint, so
+   * the DB would happily let it coexist with the canonical one. The single
+   * transaction therefore RE-READS both the member rows and the pool inside
+   * itself, recomputes the unclaimed set from those fresh reads, and inserts only
+   * what is still unclaimed. A book claimed in the meantime, removed from the
+   * pool, or deleted outright is simply absent from the recomputed set — which is
+   * also what keeps the FK from rejecting an insert naming a since-deleted book
+   * ([[libsql-foreign-keys-on-by-default]]).
+   *
+   * The transaction returns the member rows it LEAVES BEHIND, and the card is
+   * assembled from those, never from the pre-write snapshot — so the response
+   * cannot advertise a row the guard declined to write
+   * ([[caller-owned-tx-drops-post-commit-effects]]).
+   *
+   * Best-effort by design: any failure, including a partial-unique-index
+   * collision as the last-resort backstop, is caught and logged, and the card
+   * falls back to the pre-write snapshot's entries. `getSeriesForBook` /
+   * `refreshSeriesForBook` still resolve; no rejection escapes.
+   *
+   * NEVER nested: this is opened only from the card build, and every caller
+   * (`persistAndBuildCard`, `bindHardcoverSeries`) invokes that build AFTER its
+   * own transaction has resolved. `db-write-lane.ts` is deliberately not used —
+   * its own docblock scopes it to a compound sequence needing atomicity against
+   * another compound sequence, and notes a single guarded transaction does not.
+   */
+  private async reconcileUnclaimedMembers(
+    seriesId: number,
+    seriesName: string,
+    fallback: BookSeriesMemberCard[],
+  ): Promise<BookSeriesMemberCard[]> {
+    try {
+      const committed = await this.db.transaction(async (tx) => {
+        const fresh = await this.readMemberState(tx, seriesId, seriesName);
+        const { unclaimed } = buildMembersFromState(fresh);
+        if (unclaimed.length === 0) return fresh;
+        await seedLocalMembersForUnclaimedBooks(tx, seriesId, unclaimed);
+        return this.readMemberState(tx, seriesId, seriesName);
+      });
+      return buildMembersFromState(committed).members;
+    } catch (error: unknown) {
+      this.log.warn(
+        { seriesId, seriesName, error: serializeError(error) },
+        'Series card: seeding owned members left unclaimed by Hardcover failed — rendering the pre-write snapshot',
+      );
+      return fallback;
+    }
   }
 
   private async persistAndBuildCard(resolved: HardcoverSeriesData, seriesName: string): Promise<BookSeriesCardData> {
@@ -346,6 +410,15 @@ export class SeriesCardService {
    * sibling books still carrying the old name are matched here too, letting
    * the bind caller sync EVERY matched member, not just the initiating book.
    * Returns the upserted row alongside the (bookId, position) pairs it matched.
+   *
+   * After the Hardcover inserts, every owned book the members left UNCLAIMED gets
+   * a `source: 'local'` row (#2144). That seed reads the PRIMARY name's pool only,
+   * never `extraSeriesNames`: on the bind path a sibling still carrying the
+   * pre-bind (Audnexus) name that matched no member is not a member of the
+   * canonical series and must get no row. Because this method deletes every row
+   * of the series before rebuilding, a later refresh whose payload finally
+   * carries the real Hardcover member supersedes the seeded row for free — one
+   * canonical row, no local row, and no separate "upgrade" path.
    */
   private async persistMembers(tx: DbOrTx, resolved: HardcoverSeriesData, seriesName: string, extraSeriesNames: string[] = []): Promise<{ row: SeriesRow; matches: MatchedLibraryBook[] }> {
     const normalized = normalizeSeriesName(seriesName);
@@ -373,6 +446,14 @@ export class SeriesCardService {
         source: 'hardcover',
       });
     }
+    const primaryPool = extraSeriesNames.length === 0
+      ? libraryBooks
+      : await this.loadLibraryBooksForSeries(seriesName, tx);
+    await seedLocalMembersForUnclaimedBooks(
+      tx,
+      upserted.id,
+      primaryPool.filter((book) => !matchedLibraryIds.has(book.id)),
+    );
     return { row: upserted, matches };
   }
 
@@ -531,5 +612,90 @@ function compareByPositionThenTitle(aPos: number | null, aTitle: string, bPos: n
 
 function compareLibraryMembers(a: BookSeriesMemberCard, b: BookSeriesMemberCard): number {
   return compareByPositionThenTitle(a.position, a.title, b.position, b.title);
+}
+
+/** The owned-book entry shape: rendered from the BOOK, never from a stored row. */
+function libraryMemberCard(book: LibraryBookSummary): BookSeriesMemberCard {
+  return {
+    hardcoverBookId: null,
+    slug: null,
+    title: book.title,
+    position: book.seriesPosition,
+    imageUrl: null,
+    inLibrary: true,
+    libraryBookId: book.id,
+  };
+}
+
+/**
+ * ONE partition/match pass over a member set + its library pool — written once
+ * and applied to the snapshot rows, to the reconcile transaction's returned rows,
+ * and (through `unclaimed`) to the seed decision, so what the card shows and what
+ * the DB stores are computed by the same rule (#2144).
+ *
+ * The order of the three phases is the contract:
+ *
+ *   1. **Local rows claim by `book_id`, BEFORE the matcher runs.** A local row is
+ *      a durable statement that THIS book is a member, so it resolves through the
+ *      pool by id and can never claim a different one — and, claiming first, no
+ *      Hardcover member can take the book out from under it. A row whose `book_id`
+ *      is NULL (the book was deleted; the FK is `ON DELETE SET NULL`) or whose
+ *      book is no longer in the pool (its `books.series_name` moved) resolves to
+ *      nothing and is DROPPED — residue renders as no entry at all, never as a
+ *      phantom "+ Add".
+ *   2. **Hardcover rows match by title/position** against the pool, minus what
+ *      step 1 claimed, through the shared `findInLibraryMatch` + claim set. Local
+ *      rows never enter the title matcher, or one could claim a sibling's book.
+ *   3. **Every pool book not claimed by a Hardcover member gets its own entry**,
+ *      rendered from the book's CURRENT title and `series_position` — so a local
+ *      row whose stored title has since drifted does not render stale text, and
+ *      position `0` stays `0` rather than coercing to null. Of those, the ones no
+ *      local row claimed either are the `unclaimed` set: books with no row at all.
+ *
+ * Entries are interleaved by `compareByPositionThenTitle`, not appended as an
+ * "extras" block, so an owned book sorts into its position among the canonical
+ * members. This NARROWS the #1139 no-inflation rule rather than deleting it: the
+ * card still never gains an entry that is neither a canonical member nor a book
+ * in the pool.
+ */
+function buildMembersFromState({ rows, pool }: MemberState): BuiltMembers {
+  const sorted = [...rows].sort((a, b) =>
+    compareByPositionThenTitle(a.position, a.title, b.position, b.title),
+  );
+  const booksById = new Map(pool.map((book) => [book.id, book]));
+
+  const claimed = new Set<number>();
+  const claimedByLocal = new Set<number>();
+  for (const row of sorted) {
+    if (row.source !== 'local' || row.bookId === null) continue;
+    if (!booksById.has(row.bookId)) continue;
+    claimed.add(row.bookId);
+    claimedByLocal.add(row.bookId);
+  }
+
+  const members: BookSeriesMemberCard[] = [];
+  for (const row of sorted) {
+    if (row.source === 'local') continue;
+    const match = findInLibraryMatch({ title: row.title, position: row.position }, pool, claimed);
+    if (match) claimed.add(match.id);
+    members.push({
+      hardcoverBookId: row.hardcoverBookId,
+      slug: row.slug,
+      title: row.title,
+      position: row.position,
+      imageUrl: row.imageUrl,
+      inLibrary: match !== null,
+      libraryBookId: match?.id ?? null,
+    });
+  }
+
+  const unclaimed: LibraryBookSummary[] = [];
+  for (const book of pool) {
+    if (claimed.has(book.id) && !claimedByLocal.has(book.id)) continue;
+    if (!claimedByLocal.has(book.id)) unclaimed.push(book);
+    members.push(libraryMemberCard(book));
+  }
+
+  return { members: members.sort(compareLibraryMembers), unclaimed };
 }
 

@@ -1,7 +1,7 @@
-import { and, eq, isNull, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { DbOrTx } from '@db/index.js';
-import { books, series, seriesMembers } from '@db/schema.js';
+import { authors, bookAuthors, books, series, seriesMembers } from '@db/schema.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { normalizeMemberTitleForMatch } from './series-title-match.js';
@@ -70,6 +70,91 @@ export async function replaceSeriesLink(
 }
 
 /**
+ * A library book in a series' card pool — the shape the local-row seed reads.
+ * Structurally identical to `LibraryBookSummary`, and deliberately declared here
+ * rather than imported: `LibraryBookSummary` is the TITLE MATCHER's input type,
+ * shared with `findInLibraryMatch` and the blast-check replay, so binding the
+ * seed to it would make any future widening of the matcher's input ripple in.
+ */
+export interface UnclaimedLibraryBook {
+  id: number;
+  title: string;
+  seriesPosition: number | null;
+}
+
+/**
+ * The BOOK's primary author for each of `bookIds` — `authors.name` of the
+ * `book_authors` row with the lowest `position`, tie-broken by the lowest
+ * `author_id`, and absent from the map when the book has no author link.
+ *
+ * ONE query for the whole batch, never one per book: the seed runs inside the
+ * caller's transaction, and a per-book lookup would hold it open across N round
+ * trips. `book_authors.position` is `NOT NULL DEFAULT 0`, so defaulted, legacy
+ * or hand-seeded rows can tie there — hence the `author_id` tie-break, which
+ * makes the pick deterministic rather than plan-dependent. (The production
+ * writer assigns sequential positions, so a tie is the anomalous shape, not the
+ * usual co-author one.)
+ */
+async function loadPrimaryAuthorNames(tx: DbOrTx, bookIds: number[]): Promise<Map<number, string>> {
+  const rows = await tx
+    .select({ bookId: bookAuthors.bookId, name: authors.name })
+    .from(bookAuthors)
+    .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
+    .where(inArray(bookAuthors.bookId, bookIds))
+    .orderBy(asc(bookAuthors.bookId), asc(bookAuthors.position), asc(bookAuthors.authorId));
+  const primary = new Map<number, string>();
+  for (const row of rows) {
+    if (!primary.has(row.bookId)) primary.set(row.bookId, row.name);
+  }
+  return primary;
+}
+
+/**
+ * Seed one `source: 'local'` member row per owned book that no `series_members`
+ * row claims (#2144). THE single definition of what such a row looks like, called
+ * from both sites that can observe an unclaimed book — `persistMembers`' rebuild
+ * and the card build's reconcile transaction — so display and persistence cannot
+ * diverge. Runs on the caller's handle; errors propagate.
+ *
+ * The invariant it upholds: a library book carrying a series name appears on that
+ * series' member list regardless of what Hardcover thinks. Hardcover's member
+ * queries exclude dateless works (`release_date: {_is_null: false, _lt: $today}`,
+ * which correctly keeps unreleased books off the card), so an owned book whose
+ * Hardcover entry is a "Planned book" stub pairs with nothing — and
+ * `upsertSeriesLink`'s canonical-series guard deliberately seeds nothing either.
+ *
+ * Each row carries `hardcover_book_id IS NULL`, so it is constrained by
+ * `idx_series_members_local_unique (series_id, book_id)` — one row per book per
+ * series. `bookId` is always non-null here, which is what makes that partial
+ * index bite ([[sqlite-null-unique-index]]); a local row that LATER loses its
+ * book to `ON DELETE SET NULL` is residue, not a member, and the card drops it.
+ * `authorName` is the BOOK's own primary author, matching the create-time
+ * precedent in `BookService.runResolvedInsert`, not the series author.
+ */
+export async function seedLocalMembersForUnclaimedBooks(
+  tx: DbOrTx,
+  seriesId: number,
+  unclaimed: readonly UnclaimedLibraryBook[],
+): Promise<void> {
+  if (unclaimed.length === 0) return;
+  const authorNames = await loadPrimaryAuthorNames(tx, unclaimed.map((b) => b.id));
+  for (const book of unclaimed) {
+    await tx.insert(seriesMembers).values({
+      seriesId,
+      bookId: book.id,
+      hardcoverBookId: null,
+      slug: null,
+      imageUrl: null,
+      title: book.title,
+      normalizedTitle: normalizeMemberTitleForMatch(book.title),
+      authorName: authorNames.get(book.id) ?? null,
+      position: book.seriesPosition,
+      source: 'local',
+    });
+  }
+}
+
+/**
  * Reconcile a book's `series_members` rows after the operator explicitly CLEARED
  * its series through Edit Metadata (#2069 AC14). Runs on the caller's handle,
  * inside the same transaction as the clear, so a failure here rolls the clear
@@ -83,8 +168,11 @@ export async function replaceSeriesLink(
  *     belong on the SIBLING series card. Deleting one would drop a canonical
  *     member until the weekly `series-refresh` cron rebuilds it, so the row keeps
  *     its identity and only loses the book link (`book_id = NULL`). That is safe
- *     for the cards: `buildCardFromCache` computes `inLibrary` by title-matching
- *     against books selected on `books.series_name`, never off `series_members.book_id`.
+ *     for the cards: `buildCardFromCache` computes a HARDCOVER row's `inLibrary`
+ *     by title-matching against books selected on `books.series_name`, never off
+ *     `series_members.book_id`. (Since #2144 a `source: 'local'` row DOES resolve
+ *     by `book_id` — which is why local rows are deleted above rather than
+ *     null-linked: a book-less local row is residue the card renders as nothing.)
  *
  * Deliberately NOT `replaceSeriesLink`, which deletes unconditionally by `bookId`
  * — that behavior is correct for Fix Match and is left alone here.
@@ -169,6 +257,12 @@ export async function upsertSeriesLink(
     // its Hardcover member directly from the `books` table. Inserting a local
     // row here would coexist with that match (both pass the partial unique
     // indexes) and surface as two rows for the same book on the card.
+    //
+    // What this guard skips is COVERED, not lost (#2144): a book that pairs with
+    // no Hardcover member gets its local row from the card build's reconcile —
+    // which, unlike this call site, can see the whole member set and therefore
+    // knows the book was left unclaimed. Keeping the decision there is what makes
+    // "seeded" and "unpaired" the same verdict instead of two guesses.
     const seriesRow = await tx
       .select({ hardcoverSeriesId: series.hardcoverSeriesId })
       .from(series)
