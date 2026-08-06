@@ -158,6 +158,48 @@ describe('computeFolderTarget', () => {
   });
 });
 
+/**
+ * #2152 AC11 — the FOLDER seam, verified separately from the file seam: they are
+ * independent token maps (`import-helpers.ts` vs `paths.ts`) and neither stands in
+ * for the other. Keyed on the COLUMN; a regression pin, no production change expected.
+ */
+describe('#2152 AC11 — a cleared position renders no folder segment prefix', () => {
+  const DETAILED = { path: '/library', folderFormat: '{author}/{series}/{seriesPosition:00? - }{title}' };
+
+  const hunters = (seriesPosition: number | null, seriesName: string | null = 'Dune') =>
+    row({ path: '/library/x', title: 'Hunters of Dune', seriesName, seriesPosition });
+
+  it('drops the "07 - " prefix when the column is NULL', () => {
+    const result = computeFolderTarget(hunters(null), 'Frank Herbert', DETAILED, OPTS);
+    expect(result.targetPath.split('\\').join('/')).toBe('/library/Frank Herbert/Dune/Hunters of Dune');
+  });
+
+  it('control: the untombstoned book still renders the padded prefix', () => {
+    const result = computeFolderTarget(hunters(7), 'Frank Herbert', DETAILED, OPTS);
+    expect(result.targetPath.split('\\').join('/')).toBe('/library/Frank Herbert/Dune/07 - Hunters of Dune');
+  });
+
+  it('rule-b cross-check: both columns NULL renders neither series nor position', () => {
+    const result = computeFolderTarget(hunters(null, null), 'Frank Herbert', DETAILED, OPTS);
+    expect(result.targetPath.split('\\').join('/')).toBe('/library/Frank Herbert/Hunters of Dune');
+  });
+
+  describe('the exempt states are pinned as CURRENT behavior, not fixed', () => {
+    it('a position-without-series orphan still renders "07 - " (Out of Scope)', () => {
+      const result = computeFolderTarget(hunters(7, null), 'Frank Herbert', DETAILED, OPTS);
+      expect(result.targetPath.split('\\').join('/')).toContain('07 - Hunters of Dune');
+    });
+
+    it('the DECOUPLED state renders "07 - " too — the seam is column-keyed', () => {
+      // Post-bind shape: bind adopted the canonical name and left the stale column
+      // alone (AC9), and `FolderTargetRow` carries no tombstone the seam could read.
+      const result = computeFolderTarget(hunters(7, 'Dune'), 'Frank Herbert', DETAILED, OPTS);
+      expect(result.targetPath.split('\\').join('/')).toBe('/library/Frank Herbert/Dune/07 - Hunters of Dune');
+      expect(Object.keys(hunters(7))).not.toContain('userClearedFields');
+    });
+  });
+});
+
 describe('toLibraryRelative', () => {
   it('returns a library-relative POSIX path for paths inside the root', () => {
     expect(toLibraryRelative('/library/Author/Title', '/library')).toBe('Author/Title');

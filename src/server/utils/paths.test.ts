@@ -745,6 +745,79 @@ describe('buildBookNameTokens', () => {
   });
 });
 
+/**
+ * #2152 AC11 — the FILE seam. A book whose stored `series_position` is NULL (every
+ * in-app clear) must render no position token and no orphan separator. Keyed on the
+ * COLUMN, not the tombstone: this seam is deliberately tombstone-blind, and rule
+ * **b** is what guarantees the column is NULL for a clear made through the app.
+ * A regression pin — no production change is expected here.
+ */
+describe('#2152 AC11 — a cleared position renders no file token', () => {
+  const DETAILED_FILE = '{author} - {series? - }{seriesPosition:00? - }{title}{ (?edition?)}{ - ?trackNumber:000}';
+  const hunters: RenameableBook = {
+    title: 'Hunters of Dune',
+    seriesName: 'Dune',
+    seriesPosition: null,
+    narrators: [],
+    publishedDate: null,
+    editionLabel: null,
+  };
+
+  async function mockFiles(names: string[]): Promise<void> {
+    const { readdir } = await import('node:fs/promises');
+    vi.mocked(readdir).mockResolvedValue(names.map(n => makeDirent(n, true)) as never);
+  }
+
+  it('buildBookNameTokens emits no seriesPosition token for a NULL column', () => {
+    expect(buildBookNameTokens(hunters, 'Frank Herbert').seriesPosition).toBeUndefined();
+    expect(buildBookNameTokens(hunters, 'Frank Herbert').series).toBe('Dune');
+  });
+
+  it('planFileRenames drops the "07 - " prefix with no doubled or orphan separator', async () => {
+    await mockFiles(['audiobook.mp3']);
+    const renames = await planFileRenames('/t', DETAILED_FILE, hunters, 'Frank Herbert');
+
+    expect(renames).toEqual([{ from: 'audiobook.mp3', to: 'Frank Herbert - Dune - Hunters of Dune.mp3' }]);
+    // The `{series? - }{seriesPosition:00? - }` junction is where whitespace
+    // regressions hide.
+    expect(renames[0]!.to).not.toMatch(/ {2}| - - /);
+  });
+
+  it('control: the untombstoned book still renders the padded prefix', async () => {
+    await mockFiles(['audiobook.mp3']);
+    const renames = await planFileRenames('/t', DETAILED_FILE, { ...hunters, seriesPosition: 7 }, 'Frank Herbert');
+
+    expect(renames).toEqual([{ from: 'audiobook.mp3', to: 'Frank Herbert - Dune - 07 - Hunters of Dune.mp3' }]);
+  });
+
+  it('rule-b cross-check: a name-tombstoned book renders neither series nor position', async () => {
+    // Every rule-**b** row — including row 2b, where the operator supplied a
+    // position on an already-name-tombstoned book — leaves BOTH columns NULL. An
+    // implementation reading rule **b** as "only when the body blanks the name"
+    // would leave the position behind and fail here.
+    await mockFiles(['audiobook.mp3']);
+    const renames = await planFileRenames('/t', DETAILED_FILE, { ...hunters, seriesName: null, seriesPosition: null }, 'Frank Herbert');
+
+    expect(renames).toEqual([{ from: 'audiobook.mp3', to: 'Frank Herbert - Hunters of Dune.mp3' }]);
+  });
+
+  describe('the exempt states are pinned as CURRENT behavior, not fixed', () => {
+    it('a position-without-series orphan still renders "07 - " (Out of Scope)', async () => {
+      await mockFiles(['audiobook.mp3']);
+      const renames = await planFileRenames('/t', DETAILED_FILE, { ...hunters, seriesName: null, seriesPosition: 7 }, 'Frank Herbert');
+
+      expect(renames[0]!.to).toBe('Frank Herbert - 07 - Hunters of Dune.mp3');
+    });
+
+    it('the DECOUPLED state renders "07 - " too — the seam is column-keyed', () => {
+      // `RenameableBook` carries no tombstone field at all, which IS the pin: the
+      // seam cannot see one. A future tombstone-aware naming change flips this.
+      expect(buildBookNameTokens({ ...hunters, seriesPosition: 7 }, 'Frank Herbert').seriesPosition).toBe(7);
+      expect(Object.keys(hunters)).not.toContain('userClearedFields');
+    });
+  });
+});
+
 describe('cross-path naming consistency (anti-drift pin)', () => {
   // A representative book exercising every book-level token.
   const consistencyBook: RenameableBook = {

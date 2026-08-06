@@ -3090,6 +3090,28 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(rendered).toBe('A/03 - Title');
         expect(parseFolderStructure(rendered.split('/')).seriesPosition).toBeUndefined();
       });
+
+      // #2152 AC13 — "in the series, unnumbered" survives the round trip. A durable
+      // position clear NULLs the column, the token omits, and re-importing the
+      // resulting folder yields the series with NO position — so the clear is not
+      // faithfully undone by the (now position-capturing, #2145) parser.
+      it('a cleared position renders no token and re-imports as a series with no position', () => {
+        const rendered = renderTemplate(FOLDER_FORMAT, {
+          author: 'Frank Herbert', series: 'Dune', seriesPosition: undefined, title: 'Hunters of Dune',
+        });
+        expect(rendered).toBe('Frank Herbert/Dune/Hunters of Dune');
+
+        const parsed = parseFolderStructure(rendered.split('/'));
+        expect(parsed).toEqual({ title: 'Hunters of Dune', author: 'Frank Herbert', series: 'Dune' });
+        expect(parsed.seriesPosition).toBeUndefined();
+        expect(parsed.series).toBe('Dune');
+      });
+
+      it('control: the same book still numbered round-trips its position', () => {
+        expect(roundTrip('Frank Herbert', 'Dune', 7, 'Hunters of Dune')).toEqual({
+          title: 'Hunters of Dune', author: 'Frank Herbert', series: 'Dune', seriesPosition: 7,
+        });
+      });
     });
   });
 });
