@@ -76,8 +76,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
       <BookHero
         title={libraryBook.title}
         subtitle={merged.subtitle}
-        authorName={merged.authorName}
-        authorAsin={merged.authorAsin}
+        authors={merged.authors}
         narratorNames={merged.narratorNames}
         coverUrl={merged.coverUrl}
         updatedAt={libraryBook.updatedAt}

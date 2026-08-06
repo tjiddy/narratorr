@@ -8,8 +8,7 @@ import { ToolbarDropdown } from '@/components/ToolbarDropdown';
 interface BookHeroProps {
   title: string;
   subtitle?: string | undefined;
-  authorName?: string | undefined;
-  authorAsin?: string | null | undefined;
+  authors?: Array<{ name: string; asin?: string | null | undefined }> | undefined;
   narratorNames?: string | undefined;
   coverUrl?: string | undefined;
   updatedAt?: string | undefined;
@@ -59,7 +58,7 @@ interface BookHeroProps {
 
 // eslint-disable-next-line complexity, max-lines-per-function -- flat JSX conditionals for optional props, no branching logic; overflow menu adds state hooks
 export function BookHero({
-  title, subtitle, authorName, authorAsin, narratorNames,
+  title, subtitle, authors, narratorNames,
   coverUrl, updatedAt, metaDots, statusLabel, statusDotClass,
   hasPath, onBackClick, onSearchClick, onEditClick, onFixMatchClick, onRenameClick, isRenaming,
   onRetagClick, isRetagging, retagDisabled, retagTooltip,
@@ -207,14 +206,19 @@ export function BookHero({
             <p className="text-muted-foreground italic mt-1 text-lg animate-fade-in-up stagger-2">{subtitle}</p>
           )}
 
-          {authorName && (
+          {authors && authors.length > 0 && (
             <div className="mt-3 animate-fade-in-up stagger-3">
               <span className="text-muted-foreground text-sm">by </span>
-              {authorAsin ? (
-                <Link to={`/authors/${authorAsin}`} className="text-primary hover:underline font-medium">{authorName}</Link>
-              ) : (
-                <span className="font-medium">{authorName}</span>
-              )}
+              {authors.map((author, i) => (
+                <span key={`${author.name}-${i}`}>
+                  {i > 0 && <span className="text-muted-foreground text-sm">, </span>}
+                  {author.asin ? (
+                    <Link to={`/authors/${author.asin}`} className="text-primary hover:underline font-medium">{author.name}</Link>
+                  ) : (
+                    <span className="font-medium">{author.name}</span>
+                  )}
+                </span>
+              ))}
             </div>
           )}
 

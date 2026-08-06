@@ -6,7 +6,7 @@ import { BookHero } from './BookHero';
 
 const defaultProps = {
   title: 'Test Book',
-  authorName: 'Test Author',
+  authors: [{ name: 'Test Author' }],
   coverUrl: 'https://example.com/cover.jpg',
   metaDots: ['10h 0m', 'Fantasy'],
   statusLabel: 'Imported',

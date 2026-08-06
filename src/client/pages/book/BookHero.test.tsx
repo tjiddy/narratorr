@@ -6,7 +6,7 @@ import { BookHero } from './BookHero';
 
 const defaultProps = {
   title: 'The Way of Kings',
-  authorName: 'Brandon Sanderson',
+  authors: [{ name: 'Brandon Sanderson' }],
   coverUrl: 'https://example.com/cover.jpg',
   metaDots: ['45h 0m', 'Fantasy', 'The Stormlight Archive #1'],
   statusLabel: 'Wanted',
@@ -54,6 +54,24 @@ describe('BookHero', () => {
   it('renders author name', () => {
     renderHero();
     expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
+  });
+
+  it('renders every co-author, linking only those with an ASIN', () => {
+    renderHero({
+      authors: [
+        { name: 'Robert Jordan', asin: 'B000APZOQA' },
+        { name: 'Brandon Sanderson' },
+      ],
+    });
+    const jordan = screen.getByRole('link', { name: 'Robert Jordan' });
+    expect(jordan).toHaveAttribute('href', '/authors/B000APZOQA');
+    expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Brandon Sanderson' })).not.toBeInTheDocument();
+  });
+
+  it('renders no author line when the list is empty', () => {
+    renderHero({ authors: [] });
+    expect(screen.queryByText(/^by\s/)).not.toBeInTheDocument();
   });
 
   it('renders meta dots', () => {

@@ -124,7 +124,9 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
     statusDotClass: status.dotClass,
     statusBarClass: status.barClass,
     subtitle: displayed.subtitle,
-    authorName: libraryBook.authors[0]?.name,
-    authorAsin: libraryBook.authors[0]?.asin,
+    // The FULL author list — co-authored books credit everyone, each name linkable
+    // by its own ASIN (the narrator line got the plural treatment long ago; this
+    // matches it).
+    authors: libraryBook.authors.map((a) => ({ name: a.name, asin: a.asin })),
   };
 }
