@@ -122,15 +122,61 @@ export interface ClearedFieldsRecompute {
   /**
    * Stored-value overrides to merge over the request body (AC7). A blank value
    * for a clearable field normalizes to NULL and blank `genres` elements are
-   * dropped, so the stored value can never contradict the tombstone.
+   * dropped, so the stored value can never contradict the tombstone. Carries a
+   * NUMBER for `seriesPosition` (#2152) — `0` and fractional positions like `3.5`
+   * are ordinary values, never a clear.
    */
-  normalized: Partial<Record<ClearableBookField, string | string[] | null>>;
+  normalized: Partial<Record<ClearableBookField, string | string[] | number | null>>;
   /** The clearable fields this body just blanked — drives AC14's membership reconcile. */
   blanked: ClearableBookField[];
 }
 
 function isBlankString(value: unknown): boolean {
   return typeof value === 'string' && value.trim() === '';
+}
+
+/** True when the body carries a usable (non-`undefined`) value for `field`. */
+function carriesKey(body: ClearableUpdateBody, field: ClearableBookField): boolean {
+  return field in body && body[field] !== undefined;
+}
+
+/**
+ * The two series-specific pair rules (#2152 AC4), applied AFTER the uniform
+ * per-key pass has decided each key on its own. Everything else in the matrix is
+ * the uniform rule with no series branch — these are the only coupled cells.
+ *
+ *  - **(a)** a non-blank `seriesName` re-asserts the pair and drops a
+ *    `seriesPosition` tombstone (rows 4/5) — unless the same body carries its own
+ *    `seriesPosition` key, which always wins (row 6).
+ *  - **(b)** whenever the `seriesName` tombstone is LIVE after this recompute —
+ *    the body blanked it (rows 7–9) or it was already live (rows 2b/3) — the
+ *    `series_position` COLUMN normalizes to NULL. It does NOT touch the
+ *    `seriesPosition` tombstone, which is decided by its own key. Storing a
+ *    position beside a cleared name would mint exactly the position-without-series
+ *    shape #2152 exists to remove, and both rename token maps read the raw column.
+ *
+ * Rule **b** fires ONLY for bodies carrying at least one series key: an unrelated
+ * `PUT { subtitle }` (matrix row 1) must not rewrite series columns, so a legacy
+ * name-tombstoned row with a stale position is left exactly as it is.
+ */
+function applySeriesPairRules(
+  next: Set<ClearableBookField>,
+  normalized: ClearedFieldsRecompute['normalized'],
+  body: ClearableUpdateBody,
+): void {
+  const namePresent = carriesKey(body, 'seriesName');
+  const positionPresent = carriesKey(body, 'seriesPosition');
+  if (!namePresent && !positionPresent) return;
+
+  // (a) — keyed on the body asserting a real name, i.e. the name half did not blank.
+  if (namePresent && normalized.seriesName != null && !positionPresent) {
+    next.delete('seriesPosition');
+  }
+
+  // (b) — the column follows the name tombstone, whoever set it.
+  if (next.has('seriesName')) {
+    normalized.seriesPosition = null;
+  }
 }
 
 /**
@@ -148,12 +194,17 @@ function isBlankString(value: unknown): boolean {
  * | `genres: []` or `['', '  ']`            | added     | NULL            |
  * | non-blank string                        | removed   | verbatim        |
  * | `genres` with ≥1 non-blank element      | removed   | blanks dropped  |
+ * | `seriesPosition` number (incl. `0`/`3.5`)| removed  | verbatim number |
  *
  * A non-blank string is stored VERBATIM — no trimming — matching `diffDescription`,
- * which deliberately preserves interior whitespace. Keys outside
- * `CLEARABLE_BOOK_FIELDS` (`coverUrl`, `status`, `title`, `authors`, `narrators`,
- * `seriesPosition`) never affect the set: `seriesPosition` is not tombstoned
- * independently, the `seriesName` tombstone suppresses the pair (#1927 AC10).
+ * which deliberately preserves interior whitespace. `seriesPosition` is NUMERIC:
+ * `0` is a position, not a clear, so nothing on this path may use `||`.
+ *
+ * On top of that uniform pass sit the two pair rules in
+ * {@link applySeriesPairRules} — the whole of #2152 AC4's series-specific policy,
+ * and its only home: `BookService.runUpdate` merges `normalized` verbatim and
+ * re-derives no cell. Keys outside `CLEARABLE_BOOK_FIELDS` (`coverUrl`, `status`,
+ * `title`, `authors`, `narrators`) never affect the set.
  */
 export function recomputeClearedFields(
   current: readonly ClearableBookField[],
@@ -172,26 +223,45 @@ export function recomputeClearedFields(
 
     if (field === 'genres') {
       const kept = Array.isArray(value) ? value.filter((g): g is string => typeof g === 'string' && g.trim() !== '') : [];
-      if (kept.length === 0) {
-        next.add(field);
-        blanked.push(field);
-        normalized[field] = null;
-      } else {
-        next.delete(field);
-        normalized[field] = kept;
-      }
+      applyKey(next, normalized, blanked, field, kept.length === 0 ? null : kept);
       continue;
     }
 
-    if (value === null || isBlankString(value)) {
-      next.add(field);
-      blanked.push(field);
-      normalized[field] = null;
-    } else {
-      next.delete(field);
-      normalized[field] = value as string;
+    if (field === 'seriesPosition') {
+      // Numeric semantics: only an explicit `null` clears. A non-number is not
+      // producible through `updateBookBodySchema` (`z.number().nullable()` inside
+      // `.strict()`); treat it as no-op rather than inventing a coercion.
+      if (typeof value === 'number') applyKey(next, normalized, blanked, field, value);
+      else if (value === null) applyKey(next, normalized, blanked, field, null);
+      continue;
     }
+
+    applyKey(next, normalized, blanked, field, isBlankString(value) ? null : (value as string | null));
   }
 
+  applySeriesPairRules(next, normalized, body);
+
   return { cleared: [...next].sort(), normalized, blanked };
+}
+
+/**
+ * The uniform per-key rule, shared by all seven fields: a `null` decision adds
+ * the tombstone, NULLs the stored value and reports the field in `blanked`; any
+ * other value removes the tombstone and stores verbatim.
+ */
+function applyKey(
+  next: Set<ClearableBookField>,
+  normalized: ClearedFieldsRecompute['normalized'],
+  blanked: ClearableBookField[],
+  field: ClearableBookField,
+  value: string | string[] | number | null,
+): void {
+  if (value === null) {
+    next.add(field);
+    blanked.push(field);
+    normalized[field] = null;
+  } else {
+    next.delete(field);
+    normalized[field] = value;
+  }
 }

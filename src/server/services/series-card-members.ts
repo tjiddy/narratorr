@@ -26,10 +26,20 @@ export interface BookSeriesMemberCard {
 
 export type SeriesMemberRow = typeof seriesMembers.$inferSelect;
 
-/** The card's two inputs, always read together off one handle. */
+/** The card's inputs, always read together off one handle. */
 export interface MemberState {
   rows: SeriesMemberRow[];
   pool: LibraryBookSummary[];
+  /**
+   * Pool book ids carrying a live `seriesPosition` tombstone (#2152 AC9a).
+   *
+   * Derived where the pool is loaded, so all three card-build sites inherit it:
+   * the snapshot render, the unclaimed-seed reconcile transaction, and the card
+   * `bindHardcoverSeries` returns. It gates PROJECTION only — the title/position
+   * matcher's inputs are deliberately untouched, so `LibraryBookSummary` stays
+   * narrow and claim behavior is unchanged.
+   */
+  positionClearedIds: ReadonlySet<number>;
 }
 
 /** What one partition/match pass over a {@link MemberState} yields. */
@@ -101,8 +111,14 @@ export function libraryMemberCard(book: LibraryBookSummary): BookSeriesMemberCar
  * members. This NARROWS the #1139 no-inflation rule rather than deleting it: the
  * card still never gains an entry that is neither a canonical member nor a book
  * in the pool.
+ *
+ * One projection gate rides on top (#2152 AC9a): a Hardcover row that resolved to
+ * a library book whose position the operator cleared renders `position: null`, not
+ * the row's own cached number. It applies AFTER matching, so which book a member
+ * claims is unchanged; the member then sorts to the END alongside the other
+ * unnumbered entries, exactly as an unnumbered owned book does today.
  */
-export function buildMembersFromState({ rows, pool }: MemberState): BuiltMembers {
+export function buildMembersFromState({ rows, pool, positionClearedIds }: MemberState): BuiltMembers {
   const sorted = [...rows].sort((a, b) =>
     compareByPositionThenTitle(a.position, a.title, b.position, b.title),
   );
@@ -126,7 +142,7 @@ export function buildMembersFromState({ rows, pool }: MemberState): BuiltMembers
       hardcoverBookId: row.hardcoverBookId,
       slug: row.slug,
       title: row.title,
-      position: row.position,
+      position: match && positionClearedIds.has(match.id) ? null : row.position,
       imageUrl: row.imageUrl,
       inLibrary: match !== null,
       libraryBookId: match?.id ?? null,
