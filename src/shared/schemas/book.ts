@@ -153,10 +153,16 @@ export const createBookBodySchema = z.object({
  * `PUT /api/books/:id`, and therefore the only names that may appear in
  * `books.user_cleared_fields` (#2069).
  *
- * `seriesPosition` is deliberately absent: it is never tombstoned independently,
- * the `seriesName` tombstone suppresses the pair (#1927 AC10's single-source pair
- * rule). `coverUrl` (the #1634 Audnexus overwrite carve-out), `title`/`authors`
- * (not clearable — `.min(1)` below), `narrators` (rewritten unconditionally by
+ * `seriesPosition` is here as of #2152. #1927 AC10's single-source pair rule is
+ * KEPT in the series→position direction — a `seriesName` tombstone still
+ * suppresses both halves and nulls the position column — but the inverse
+ * direction ("in the series, unnumbered": series kept, position durably empty) is
+ * a real library state that Hardcover and this app's own series card already
+ * model, so the position now carries its own tombstone. `recomputeClearedFields`
+ * is the sole home of that pair policy (#2152 AC4).
+ *
+ * `coverUrl` (the #1634 Audnexus overwrite carve-out), `title`/`authors` (not
+ * clearable — `.min(1)` below), `narrators` (rewritten unconditionally by
  * `refreshScanBook`), and `duration` (not clearable through the modal) are out of
  * scope.
  *
@@ -164,7 +170,7 @@ export const createBookBodySchema = z.object({
  * service write boundary is the ONLY enforcement — mirroring the
  * `productionTypeSchema.parse` precedent in `BookService.update`.
  */
-export const CLEARABLE_BOOK_FIELDS = ['seriesName', 'subtitle', 'description', 'publisher', 'publishedDate', 'genres'] as const;
+export const CLEARABLE_BOOK_FIELDS = ['seriesName', 'seriesPosition', 'subtitle', 'description', 'publisher', 'publishedDate', 'genres'] as const;
 export const clearableBookFieldSchema = z.enum(CLEARABLE_BOOK_FIELDS);
 export type ClearableBookField = z.infer<typeof clearableBookFieldSchema>;
 export const clearedFieldsSchema = z.array(clearableBookFieldSchema);

@@ -69,11 +69,13 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: DirectoryBr
 
   return (
     <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[80vh]">
+      {/* Participates in the Modal's height-capped flex column — see BookMetadataModal. */}
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="directory-browser-modal-title"
         tabIndex={-1}
+        className="flex flex-col min-h-0 flex-1"
       >
         {/* Header */}
         <div className="px-6 pt-5 pb-4 flex items-center justify-between shrink-0">

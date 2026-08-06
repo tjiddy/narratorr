@@ -177,4 +177,108 @@ describe('Provider-only metadata clear — server E2E (#2069)', () => {
     expect('userClearedFields' in listed!).toBe(false);
     expect(listed!.title).toBe('Tress of the Emerald Sea');
   });
+
+  // ─── #2152: "in the series, unnumbered" through the real route + real DB ───
+  describe('clearing the position alone (#2152)', () => {
+    /** Hunters of Dune: series stored, position stored — the live case from the issue. */
+    async function seedNumberedFranchiseBook(): Promise<number> {
+      const [row] = await e2e.db
+        .insert(books)
+        .values({
+          publicId: generatePublicId('bk'),
+          title: 'Hunters of Dune',
+          status: 'imported',
+          enrichmentStatus: 'enriched',
+          seriesName: 'Dune',
+          seriesPosition: 7,
+          asin: 'B0BHUNTERS',
+        })
+        .returning();
+      return row!.id;
+    }
+
+    it('PUT { seriesPosition: null } persists the tombstone and echoes the parsed set', async () => {
+      const bookId = await seedNumberedFranchiseBook();
+
+      const res = await e2e.app.inject({
+        method: 'PUT',
+        url: `/api/books/${bookId}`,
+        payload: { seriesPosition: null },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().userClearedFields).toEqual(['seriesPosition']);
+      const row = await readRow(bookId);
+      expect(row.userClearedFields).toBe('["seriesPosition"]');
+      expect(row.seriesPosition).toBeNull();
+      expect(row.seriesName).toBe('Dune');
+    });
+
+    it('GET /api/books/:id echoes seriesPosition inside the parsed array, never the raw column', async () => {
+      const bookId = await seedNumberedFranchiseBook();
+      await e2e.app.inject({ method: 'PUT', url: `/api/books/${bookId}`, payload: { seriesPosition: null } });
+
+      const res = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().userClearedFields).toEqual(['seriesPosition']);
+      expect(res.payload).not.toContain('"[\\"seriesPosition\\"]"');
+    });
+
+    it('a full enrichment cycle after the clear does NOT resurrect the position', async () => {
+      const bookId = await seedNumberedFranchiseBook();
+      await e2e.app.inject({ method: 'PUT', url: `/api/books/${bookId}`, payload: { seriesPosition: null } });
+      // `fillSeriesFields` only fires when the stored NAME is absent, so drop it to
+      // reach the suppression at all — the orphan shape it exists for.
+      await e2e.db.update(books).set({ enrichmentStatus: 'pending', seriesName: null }).where(eq(books.id, bookId));
+
+      await runEnrichmentPass();
+
+      const row = await readRow(bookId);
+      expect(row.seriesName).toBe('Secret Projects');
+      expect(row.seriesPosition).toBeNull();
+      expect(row.userClearedFields).toBe('["seriesPosition"]');
+      expect(row.enrichmentStatus).toBe('enriched');
+      expect(row.publisher).toBe('Dragonsteel');
+    });
+
+    it('control: the same book WITHOUT the tombstone gets the provider position from the same pass', async () => {
+      const bookId = await seedNumberedFranchiseBook();
+      await e2e.db.update(books).set({ enrichmentStatus: 'pending', seriesName: null }).where(eq(books.id, bookId));
+
+      await runEnrichmentPass();
+
+      const row = await readRow(bookId);
+      expect(row.seriesName).toBe('Secret Projects');
+      expect(row.seriesPosition).toBe(1);
+    });
+
+    it('GET /api/books/:id/series shows that member with position null', async () => {
+      const bookId = await seedNumberedFranchiseBook();
+      await e2e.app.inject({ method: 'PUT', url: `/api/books/${bookId}`, payload: { seriesPosition: null } });
+
+      const res = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}/series` });
+
+      expect(res.statusCode).toBe(200);
+      const member = res.json().series.members.find((m: { libraryBookId: number }) => m.libraryBookId === bookId);
+      expect(member).toBeDefined();
+      expect(member.position).toBeNull();
+    });
+
+    it('re-assertion: typing a number back clears the tombstone and stores it', async () => {
+      const bookId = await seedNumberedFranchiseBook();
+      await e2e.app.inject({ method: 'PUT', url: `/api/books/${bookId}`, payload: { seriesPosition: null } });
+
+      const res = await e2e.app.inject({
+        method: 'PUT',
+        url: `/api/books/${bookId}`,
+        payload: { seriesPosition: 12 },
+      });
+
+      expect(res.json().userClearedFields).toEqual([]);
+      const row = await readRow(bookId);
+      expect(row.seriesPosition).toBe(12);
+      expect(row.userClearedFields).toBeNull();
+    });
+  });
 });

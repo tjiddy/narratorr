@@ -402,3 +402,34 @@ describe('BookFixMatchModal (#1129)', () => {
     });
   });
 });
+// ─── modal card overflow (drive-by): the dialog wrapper must join the Modal's
+// height-capped flex column, or the footer renders past the card on short viewports ───
+describe('height-capped card layout', () => {
+  it('constrains the dialog wrapper and lets the body scroll within the card', async () => {
+    renderModal();
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveClass('flex', 'flex-col', 'min-h-0', 'flex-1');
+    const scrollBody = dialog.querySelector('.overflow-y-auto');
+    expect(scrollBody).not.toBeNull();
+    expect(scrollBody).toHaveClass('flex-1', 'min-h-0');
+  });
+
+  it('the confirm step body scrolls within the card too', async () => {
+    // Both conditional views changed — the search-step test above never renders this one.
+    const user = userEvent.setup();
+    (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      books: [createMockBookMetadata({ asin: 'B_NEW', title: 'New Title' })],
+      authors: [],
+      series: [],
+    });
+    renderModal();
+    await user.click(screen.getByRole('button', { name: /search/i }));
+    await waitFor(() => expect(screen.getByText('New Title')).toBeInTheDocument());
+    await user.click(screen.getByText('New Title'));
+
+    expect(screen.getByText('Confirm match')).toBeInTheDocument();
+    const scrollBody = screen.getByRole('dialog').querySelector('.overflow-y-auto');
+    expect(scrollBody).not.toBeNull();
+    expect(scrollBody).toHaveClass('flex-1', 'min-h-0');
+  });
+});

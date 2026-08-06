@@ -82,7 +82,8 @@ export function FixSeriesModal({ bookId, currentSeriesName, onClose }: FixSeries
 
   return (
     <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[85vh]">
-      <div role="dialog" aria-modal="true" aria-labelledby="fix-series-modal-title" tabIndex={-1}>
+      {/* Participates in the Modal's height-capped flex column — see BookMetadataModal. */}
+      <div role="dialog" aria-modal="true" aria-labelledby="fix-series-modal-title" tabIndex={-1} className="flex flex-col min-h-0 flex-1">
         <div className="px-6 pt-5 pb-4 flex items-center justify-between shrink-0">
           <h2 id="fix-series-modal-title" className="font-display text-lg font-semibold tracking-tight">
             Fix Series
@@ -98,7 +99,7 @@ export function FixSeriesModal({ bookId, currentSeriesName, onClose }: FixSeries
         </div>
         <div className="border-t border-white/5" />
 
-        <div className="p-6 space-y-4 overflow-y-auto">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           <div className="flex gap-2">
             <input
               type="text"

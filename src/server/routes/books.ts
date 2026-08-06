@@ -155,9 +155,11 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
       }
 
       // Series card lazily populates on first GET via SeriesCardService when
-      // a Hardcover key is configured; no fire-and-forget enqueue here. The
-      // local series_members row from bookService.create.upsertSeriesLink is
-      // enough to render the card immediately.
+      // a Hardcover key is configured; no fire-and-forget enqueue here. For a
+      // series with no Hardcover row yet, the local series_members row from
+      // bookService.create.upsertSeriesLink is enough to render the card
+      // immediately; for an already-canonical series that guard writes no row,
+      // and the first card GET's reconcile seeds it instead (#2144).
 
       return reply.status(201).send(book);
     },

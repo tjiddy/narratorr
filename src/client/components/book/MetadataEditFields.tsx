@@ -87,7 +87,7 @@ export function MetadataEditFields({
   hasPath,
 }: MetadataEditFieldsProps) {
   return (
-    <div className="p-6 space-y-4 overflow-y-auto">
+    <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
       <div>
         <label htmlFor="edit-title" className={LABEL_CLASS}>
           Title <span className="text-red-400">*</span>

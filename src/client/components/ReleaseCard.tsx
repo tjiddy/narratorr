@@ -59,9 +59,11 @@ export function ReleaseCard({
 
         {/* Content */}
         <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+          {/* Title leads: the line is CSS-truncated, so the author list trails — a
+              multi-author anthology roll must eat the ellipsis, not the title. */}
           <h4 className="font-medium text-sm leading-tight truncate">
-            {result.author && <span className="text-muted-foreground">{result.author} — </span>}
             {result.title}
+            {result.author && <span className="text-muted-foreground"> — {result.author}</span>}
           </h4>
           {result.rawTitle && (
             <p className="text-xs text-muted-foreground/60 truncate mt-0.5" title={result.rawTitle}>

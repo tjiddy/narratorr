@@ -53,9 +53,14 @@ export interface DisplayedFields {
  * The `||`/`??` asymmetry is preserved by construction, not re-derived: a uniform
  * operator would change behavior on exactly the `''` and `[]` cases.
  *
- * `seriesPosition` follows `seriesName` (the #1927 AC10 pair rule) and is never
- * resolved independently. `coverUrl`, `duration`, and `narratorNames` are NOT part
- * of this decision — none of them is clearable — and stay inside `mergeBookData`.
+ * `seriesPosition` keeps the #1927 AC10 pair rule — it resolves only when the name
+ * does — and since #2152 carries its OWN tombstone on top of it: an operator who
+ * clears just the Position gets "in the series, unnumbered", so the header renders
+ * the series with no `#n` and the provider number does not resurrect. The two
+ * gates are independent and compose; neither replaces the other.
+ *
+ * `coverUrl`, `duration`, and `narratorNames` are NOT part of this decision — none
+ * of them is clearable — and stay inside `mergeBookData`.
  */
 export function resolveDisplayedFields(
   libraryBook: BookWithAuthor,
@@ -67,8 +72,10 @@ export function resolveDisplayedFields(
 
   return {
     seriesName,
-    // Pair rule: the position resolves only when the name does.
-    seriesPosition: seriesName ? (libraryBook.seriesPosition ?? primaryMetaSeries?.position) : undefined,
+    // Pair rule (the name must resolve) AND the position's own tombstone (#2152).
+    seriesPosition: seriesName && !cleared.has('seriesPosition')
+      ? (libraryBook.seriesPosition ?? primaryMetaSeries?.position)
+      : undefined,
     subtitle: orProvider(cleared, 'subtitle', libraryBook.subtitle, metadataBook?.subtitle),
     description: orProvider(cleared, 'description', libraryBook.description, metadataBook?.description),
     publisher: orProvider(cleared, 'publisher', libraryBook.publisher, metadataBook?.publisher),
@@ -124,7 +131,9 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
     statusDotClass: status.dotClass,
     statusBarClass: status.barClass,
     subtitle: displayed.subtitle,
-    authorName: libraryBook.authors[0]?.name,
-    authorAsin: libraryBook.authors[0]?.asin,
+    // The FULL author list — co-authored books credit everyone, each name linkable
+    // by its own ASIN (the narrator line got the plural treatment long ago; this
+    // matches it).
+    authors: libraryBook.authors.map((a) => ({ name: a.name, asin: a.asin })),
   };
 }

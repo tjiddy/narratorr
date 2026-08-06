@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books, series, seriesMembers } from '@db/schema.js';
-import { relinkBookToBoundSeries, replaceSeriesLink, upsertSeriesLink } from './book-series-link.js';
+import { readPositionClearedBookIds, relinkBookToBoundSeries, replaceSeriesLink, upsertSeriesLink } from './book-series-link.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 
 /**
@@ -274,6 +274,51 @@ describe('book-series-link', () => {
       // The member-row deletion was rolled back.
       const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
       expect(members).toHaveLength(1);
+    });
+  });
+
+  describe('readPositionClearedBookIds (#2152 AC9)', () => {
+    async function seedWithTombstones(title: string, raw: string | null): Promise<number> {
+      const id = await seedBook(title);
+      await db.update(books).set({ userClearedFields: raw }).where(eq(books.id, id));
+      return id;
+    }
+
+    it('returns exactly the ids carrying a live seriesPosition tombstone', async () => {
+      const cleared = await seedWithTombstones('Hunters of Dune', '["seriesPosition"]');
+      const nameOnly = await seedWithTombstones('Dune Messiah', '["seriesName"]');
+      const both = await seedWithTombstones('Children of Dune', '["seriesName","seriesPosition"]');
+      const untouched = await seedWithTombstones('Dune', null);
+
+      const result = await readPositionClearedBookIds(db, log, [cleared, nameOnly, both, untouched]);
+
+      expect([...result].sort((a, b) => a - b)).toEqual([cleared, both].sort((a, b) => a - b));
+    });
+
+    it('issues ONE batched query for the whole batch, never one per book', async () => {
+      const ids = await Promise.all([
+        seedWithTombstones('A', '["seriesPosition"]'),
+        seedWithTombstones('B', '["seriesPosition"]'),
+        seedWithTombstones('C', null),
+      ]);
+      const handle = { select: vi.fn((...args: unknown[]) => (db.select as (...a: unknown[]) => unknown)(...args)) };
+
+      const result = await readPositionClearedBookIds(inject(handle), log, ids);
+
+      expect(handle.select).toHaveBeenCalledTimes(1);
+      expect(result.size).toBe(2);
+    });
+
+    it('issues no query at all for an empty batch', async () => {
+      const handle = { select: vi.fn() };
+      expect(await readPositionClearedBookIds(inject(handle), log, [])).toEqual(new Set());
+      expect(handle.select).not.toHaveBeenCalled();
+    });
+
+    it('degrades a malformed persisted set to "not cleared" rather than throwing', async () => {
+      const corrupt = await seedWithTombstones('Sandworms of Dune', '{oops');
+      await expect(readPositionClearedBookIds(db, log, [corrupt])).resolves.toEqual(new Set());
+      expect(warnSpy).toHaveBeenCalled();
     });
   });
 });

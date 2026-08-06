@@ -224,3 +224,16 @@ describe('DirectoryBrowserModal', () => {
     });
   });
 });
+// ─── modal card overflow (drive-by): the dialog wrapper must join the Modal's
+// height-capped flex column, or the footer renders past the card on short viewports ───
+describe('height-capped card layout', () => {
+  it('constrains the dialog wrapper and lets the listing scroll within the card', async () => {
+    renderModal();
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveClass('flex', 'flex-col', 'min-h-0', 'flex-1');
+    // The listing keeps its deliberate 200px floor; flex-1 lets it shrink toward it.
+    const scrollBody = dialog.querySelector('.overflow-y-auto');
+    expect(scrollBody).not.toBeNull();
+    expect(scrollBody).toHaveClass('flex-1');
+  });
+});

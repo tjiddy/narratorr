@@ -136,6 +136,16 @@ function suppressTombstonedUpdates(
     delete updates.seriesName;
     delete updates.seriesPosition;
   }
+  // The position's own tombstone (#2152 AC8) writes `null` rather than deleting
+  // the key. `fillSeriesFields` only prepares the pair when the stored
+  // `seriesName` is ABSENT, and it exists precisely to stop a stale orphan
+  // position surviving beside a fresh provider name — deleting the key would
+  // preserve exactly that orphan. Writing `null` honors the clear AND keeps the
+  // pair single-source. The two branches compose in either order: the name branch
+  // above removes the key, and this one acts only on a key still present.
+  if (cleared.has('seriesPosition') && 'seriesPosition' in updates) {
+    updates.seriesPosition = null;
+  }
 }
 
 type EnrichmentWriteOutcome = 'applied' | 'stale' | 'unique-conflict';

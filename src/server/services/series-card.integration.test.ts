@@ -238,10 +238,18 @@ describe('SeriesCardService — integration', () => {
       expect(body.query).toContain('GetSeriesMembersById');
       expect(body.variables.id).toBe(5523);
 
-      // Stale member dropped, new member persisted
+      // Stale member dropped, new member persisted.
       const final = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, row!.id));
-      expect(final).toHaveLength(1);
-      expect(final[0]!.title).toBe('Kings of the Wyld');
+      const hardcover = final.filter((m) => m.source === 'hardcover');
+      expect(hardcover).toHaveLength(1);
+      expect(hardcover[0]!.title).toBe('Kings of the Wyld');
+      // The owned Bloody Rose pairs with no member in this payload, so #2144's
+      // invariant gives it a local row of its own — it is still the operator's
+      // book and still belongs on the card.
+      const local = final.filter((m) => m.source === 'local');
+      expect(local).toHaveLength(1);
+      expect(local[0]!.bookId).toBe(bookId);
+      expect(card!.members.map((m) => m.title)).toEqual(['Kings of the Wyld', 'Bloody Rose']);
     });
   });
 
@@ -892,9 +900,629 @@ describe('SeriesCardService — integration', () => {
 
       expect(bound).not.toBeNull();
       const memberRows = await db.select().from(seriesMembers);
-      expect(memberRows).toHaveLength(1);
-      expect(memberRows[0]!.bookId).toBe(lowerId);
+      // The ONE Hardcover member claimed the lower-id book — the assertion this
+      // fixture exists for. The higher-id initiating book adopted the canonical
+      // name unmatched, so #2144 gives it its own local row; that row is a
+      // consequence of the claim going the other way, not the claim itself.
+      const hardcover = memberRows.filter((m) => m.source === 'hardcover');
+      expect(hardcover).toHaveLength(1);
+      expect(hardcover[0]!.bookId).toBe(lowerId);
+      expect(memberRows.filter((m) => m.source === 'local').map((m) => m.bookId)).toEqual([higherId]);
+      expect(bound!.card.members[0]!.hardcoverBookId).toBe(4001);
       expect(bound!.card.members[0]!.libraryBookId).toBe(lowerId);
+    });
+  });
+
+  // #2144 — a library book with a series name must appear on that series' member
+  // list regardless of what Hardcover thinks. Hardcover's member queries exclude
+  // dateless works, so a "Planned book" stub leaves a hole the operator's own
+  // book falls through: not paired (nothing to pair with), and not seeded (the
+  // `upsertSeriesLink` canonical-series guard suppressed the local row).
+  describe('#2144 — owned books Hardcover does not expose', () => {
+    function mockFetchHardcover(payload: unknown): ReturnType<typeof vi.fn> {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      globalThis.fetch = fetchMock as typeof globalThis.fetch;
+      return fetchMock;
+    }
+
+    /** The live series: Hardcover exposes 1/3/4/5; position 2 is a dateless stub. */
+    function azerothPayload(withPositionTwo: boolean): unknown {
+      const members = [
+        { position: 1, book: { id: 8001, slug: 'eastern-kingdoms', title: 'Exploring Azeroth: The Eastern Kingdoms', image: null, users_count: 90 } },
+        { position: 3, book: { id: 8003, slug: 'northrend', title: 'Exploring Azeroth: Northrend', image: null, users_count: 70 } },
+        { position: 4, book: { id: 8004, slug: 'pandaria', title: 'Exploring Azeroth: Pandaria', image: null, users_count: 60 } },
+        { position: 5, book: { id: 8005, slug: 'outland', title: 'Exploring Azeroth: Outland', image: null, users_count: 50 } },
+      ];
+      if (withPositionTwo) {
+        members.splice(1, 0, { position: 2, book: { id: 8002, slug: 'kalimdor', title: 'Exploring Azeroth: Kalimdor', image: null, users_count: 80 } });
+      }
+      return {
+        data: {
+          series: [{ id: 25106, name: 'Exploring Azeroth', slug: 'exploring-azeroth', author: { name: 'Christie Golden' }, book_series: members }],
+        },
+      };
+    }
+
+    it('renders and persists the owned position-2 book Hardcover only exposes as a dateless stub', async () => {
+      const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
+      await seedBookWithSeries(db, { title: 'Exploring Azeroth: Northrend', seriesName: 'Exploring Azeroth', seriesPosition: 3, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(kalimdor);
+
+      expect(card!.members.map((m) => m.position)).toEqual([1, 2, 3, 4, 5]);
+      const owned = card!.members[1]!;
+      expect(owned).toMatchObject({
+        inLibrary: true,
+        libraryBookId: kalimdor,
+        hardcoverBookId: null,
+        slug: null,
+        imageUrl: null,
+        title: 'Exploring Azeroth: Kalimdor',
+      });
+
+      const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
+      const rows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id));
+      expect(rows).toHaveLength(5);
+      const local = rows.filter((r) => r.source === 'local');
+      expect(local).toHaveLength(1);
+      expect(local[0]!.bookId).toBe(kalimdor);
+    });
+
+    /**
+     * F3 (spec review): the durable row's COMPLETE shape, not just its count and
+     * source. Every field is independently required by AC6 — the provider columns
+     * must be NULL so the partial local unique index constrains the row, the title
+     * and normalized title must come from the book, the author must be the BOOK's
+     * primary author rather than the series author, and the position must be
+     * verbatim (position `0` is the case a falsy coercion would silently destroy).
+     */
+    it('F3: the seeded row carries the exact AC6 shape, including position 0 and the tie-broken primary author', async () => {
+      // Two authors at the SAME `book_authors.position` — the defaulted/legacy
+      // shape the `author_id` tie-break exists for. The lower author_id wins, and
+      // it is deliberately NOT the alphabetically-first name, so an implementation
+      // ordering by name instead of by id fails here.
+      const prequel = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Prequel', seriesName: 'Exploring Azeroth', seriesPosition: 0, authorName: 'Zara Primary' });
+      const [second] = await db.insert(authors).values({ publicId: generatePublicId('au'), name: 'Aaron Secondary', slug: 'aaron-secondary' }).returning();
+      await db.insert(bookAuthors).values({ bookId: prequel, authorId: second!.id, position: 0 });
+      // A second unclaimed book with no author link at all → authorName null.
+      const orphan = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Orphan', seriesName: 'Exploring Azeroth', seriesPosition: 6, authorName: null });
+      mockFetchHardcover(azerothPayload(false));
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(prequel);
+
+      const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
+      const rows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id));
+      const prequelRow = rows.find((r) => r.bookId === prequel)!;
+      expect(prequelRow).toMatchObject({
+        seriesId: seriesRow.id,
+        bookId: prequel,
+        hardcoverBookId: null,
+        slug: null,
+        imageUrl: null,
+        title: 'Exploring Azeroth: Prequel',
+        normalizedTitle: 'exploring azeroth prequel',
+        authorName: 'Zara Primary',
+        position: 0,
+        source: 'local',
+      });
+      expect(rows.find((r) => r.bookId === orphan)!.authorName).toBeNull();
+    });
+
+    /**
+     * AC8 — supersession through the POSITION arm, via the existing
+     * delete-and-rebuild. No "upgrade" code path exists or is wanted.
+     */
+    it('AC8: a later refresh carrying the real member leaves one canonical row and no local row', async () => {
+      const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(kalimdor);
+
+      // Positive control: the local row exists before the superseding refresh, so
+      // the assertions below cannot pass against a fixture that never seeded.
+      const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
+      const before = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id));
+      expect(before.filter((r) => r.source === 'local')).toHaveLength(1);
+
+      // Hardcover has since given the stub a release date, so the member arrives.
+      mockFetchHardcover(azerothPayload(true));
+      const card = await svc.refreshSeriesForBook(kalimdor);
+
+      const after = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id));
+      expect(after).toHaveLength(5);
+      expect(after.filter((r) => r.source === 'local')).toHaveLength(0);
+      const forBook = after.filter((r) => r.bookId === kalimdor);
+      expect(forBook).toHaveLength(1);
+      expect(forBook[0]!).toMatchObject({ source: 'hardcover', hardcoverBookId: 8002 });
+      expect(card!.members.map((m) => m.position)).toEqual([1, 2, 3, 4, 5]);
+      expect(card!.members.filter((m) => m.libraryBookId === kalimdor)).toHaveLength(1);
+    });
+
+    /**
+     * AC8 again, but the pairing rides the TITLE arm rather than position — the
+     * `derived-equals-full` case where the member's whole title is a suffix
+     * variant of the book's. Both sides are unpositioned, so the position pass
+     * cannot fire and the outcome depends entirely on the matcher.
+     */
+    it('AC8: supersession also works when the later member pairs on the title arm at a null position', async () => {
+      const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: null, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(kalimdor);
+      const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
+      expect((await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id))).filter((r) => r.source === 'local')).toHaveLength(1);
+
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        data: {
+          series: [{
+            id: 25106, name: 'Exploring Azeroth', slug: 'exploring-azeroth', author: { name: 'Christie Golden' },
+            book_series: [
+              { position: null, book: { id: 8002, slug: 'kalimdor', title: 'Kalimdor', image: null, users_count: 80 } },
+            ],
+          }],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof globalThis.fetch;
+      await svc.refreshSeriesForBook(kalimdor);
+
+      const after = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id));
+      expect(after).toHaveLength(1);
+      expect(after[0]!).toMatchObject({ source: 'hardcover', hardcoverBookId: 8002, bookId: kalimdor });
+    });
+
+    /**
+     * AC9 — the render path reconciles a book that entered the library AFTER the
+     * last rebuild, on the very next GET: no Hardcover fetch, no cache-miss
+     * resolve branch, and `series.last_fetched_at` untouched.
+     */
+    it('AC9: a cache-hit GET seeds a book imported after the rebuild, without fetching or touching last_fetched_at', async () => {
+      const kings = await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(kings);
+      const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
+      const fetchedAtBefore = seriesRow.lastFetchedAt!.getTime();
+
+      // A new import lands in the already-canonical series. `upsertSeriesLink`'s
+      // guard deliberately writes nothing — assert that first, or the GET below
+      // could be passing on a row it never created.
+      const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      await upsertSeriesLink(db, log, kalimdor, { name: 'Exploring Azeroth', position: 2, title: 'Exploring Azeroth: Kalimdor', authorName: 'Christie Golden' });
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, kalimdor))).toHaveLength(0);
+
+      const fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy as typeof globalThis.fetch;
+      const card = await svc.getSeriesForBook(kalimdor);
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(card!.members.filter((m) => m.libraryBookId === kalimdor)).toHaveLength(1);
+      const rows = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, kalimdor));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.source).toBe('local');
+      const after = (await db.select().from(series).where(eq(series.id, seriesRow.id)))[0]!;
+      expect(after.lastFetchedAt!.getTime()).toBe(fetchedAtBefore);
+    });
+
+    /**
+     * AC10 fast path — a card whose pool is fully claimed opens NO transaction.
+     * The reconcile must not tax the ordinary GET, which is the overwhelmingly
+     * common shape.
+     */
+    it('AC10: a fully-claimed pool opens no transaction and issues no write', async () => {
+      const kings = await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(kings);
+
+      // Positive control: the same spy DOES see a transaction when a book is
+      // unclaimed, so a zero count below means "fast path", not "spy never armed".
+      const stray = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      const armed = vi.spyOn(db, 'transaction');
+      await svc.getSeriesForBook(kings);
+      expect(armed).toHaveBeenCalledTimes(1);
+      armed.mockRestore();
+
+      // Now every pool book is claimed (the stray got its row above).
+      const spy = vi.spyOn(db, 'transaction');
+      const card = await svc.getSeriesForBook(kings);
+      expect(spy).not.toHaveBeenCalled();
+      expect(card!.members.filter((m) => m.libraryBookId === stray)).toHaveLength(1);
+      spy.mockRestore();
+    });
+
+    /**
+     * AC10 / AC8 — the stale-snapshot race, driven DETERMINISTICALLY rather than
+     * by timing. The card build computes its unclaimed snapshot, then a full
+     * refresh rebuilds the series and pairs that book to a now-available Hardcover
+     * member, and only THEN does the reconcile transaction run. Its in-transaction
+     * re-read must observe the canonical row and write nothing — an implementation
+     * that inserts from the snapshot resurrects a superseded local row, which the
+     * disjoint partial indexes happily let coexist with the canonical one.
+     */
+    it('AC10: a refresh that lands between the snapshot and the reconcile makes the guard write nothing', async () => {
+      const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(kalimdor);
+      const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
+      // Clear the seeded row so the next GET's snapshot sees the book unclaimed —
+      // the state a fresh import produces, reached here without a second service.
+      await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
+
+      const openTransaction = db.transaction.bind(db);
+      const spy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (callback) => {
+        // Between the snapshot and the reconcile: Hardcover now exposes the
+        // real position-2 member, and the rebuild pairs it with the book.
+        mockFetchHardcover(azerothPayload(true));
+        await svc.refreshSeriesForBook(kalimdor);
+        return openTransaction(callback);
+      });
+
+      mockFetchHardcover(azerothPayload(false));
+      const card = await svc.getSeriesForBook(kalimdor);
+      spy.mockRestore();
+
+      const rows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id));
+      const forBook = rows.filter((r) => r.bookId === kalimdor);
+      expect(forBook).toHaveLength(1);
+      expect(forBook[0]!.source).toBe('hardcover');
+      expect(rows.filter((r) => r.source === 'local')).toHaveLength(0);
+      // The response is assembled from what the transaction returned, so it shows
+      // the book once as an owned Hardcover entry — never a second '+ Add' row.
+      const shown = card!.members.filter((m) => m.libraryBookId === kalimdor);
+      expect(shown).toHaveLength(1);
+      expect(shown[0]!.hardcoverBookId).toBe(8002);
+      expect(card!.members.map((m) => m.position)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    /**
+     * F1 (PR review) — AC10 requires re-reading the library POOL inside the
+     * transaction, independently of the member rows. The refresh race above
+     * changes only the rows, so an implementation that re-read rows but reused
+     * the snapshot's pool would leave it green.
+     *
+     * Here the book LEAVES the pool between the two reads — the operator re-files
+     * it under another series while the GET is in flight. The in-transaction pool
+     * read no longer returns it, so it is not unclaimed and nothing is written.
+     * Against a stale snapshot pool it is still unclaimed, and the insert lands a
+     * durable local row binding a book to a series it no longer belongs to.
+     */
+    it('F1: a book that leaves the pool between the snapshot and the reconcile gets no row', async () => {
+      const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const observed = createMockLogger();
+      const svc = new SeriesCardService(db, inject(observed), settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(kalimdor);
+      const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
+      // Positive control: the seed DOES fire for this fixture, so a zero-row
+      // assertion below means "the guard declined", not "nothing ever seeds".
+      expect((await db.select().from(seriesMembers).where(eq(seriesMembers.source, 'local')))).toHaveLength(1);
+      await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
+      (observed.warn as ReturnType<typeof vi.fn>).mockClear();
+
+      const openTransaction = db.transaction.bind(db);
+      const spy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (callback) => {
+        await db.update(books).set({ seriesName: 'Chronicles of the Horde' }).where(eq(books.id, kalimdor));
+        return openTransaction(callback);
+      });
+
+      const card = await svc.getSeriesForBook(kalimdor);
+      spy.mockRestore();
+
+      const rows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id));
+      expect(rows.filter((r) => r.source === 'local')).toHaveLength(0);
+      expect(rows.filter((r) => r.bookId === kalimdor)).toHaveLength(0);
+      // The transaction committed cleanly — no best-effort fallback was needed.
+      expect(observed.warn).not.toHaveBeenCalled();
+      expect(card!.members.map((m) => m.position)).toEqual([1, 3, 4, 5]);
+      expect(card!.members.some((m) => m.libraryBookId === kalimdor)).toBe(false);
+    });
+
+    /**
+     * F1's other branch — the book is DELETED between the two reads. The
+     * in-transaction pool read drops it, so the insert never names a row that no
+     * longer exists. Against a stale snapshot pool the insert violates the FK
+     * ([[libsql-foreign-keys-on-by-default]]), the whole transaction rejects, and
+     * the best-effort fallback renders the PRE-WRITE snapshot — a card still
+     * advertising a book the operator just deleted. Both the silence of the log
+     * and the absence of the entry are therefore load-bearing.
+     */
+    it('F1: a book deleted between the snapshot and the reconcile is dropped, not FK-rejected', async () => {
+      const anchor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
+      const doomed = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const observed = createMockLogger();
+      const svc = new SeriesCardService(db, inject(observed), settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(anchor);
+      expect((await db.select().from(seriesMembers).where(eq(seriesMembers.source, 'local')))).toHaveLength(1);
+      await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
+      (observed.warn as ReturnType<typeof vi.fn>).mockClear();
+
+      const openTransaction = db.transaction.bind(db);
+      const spy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (callback) => {
+        await db.delete(books).where(eq(books.id, doomed));
+        return openTransaction(callback);
+      });
+
+      const card = await svc.getSeriesForBook(anchor);
+      spy.mockRestore();
+
+      expect(observed.warn).not.toHaveBeenCalled();
+      const rows = await db.select().from(seriesMembers);
+      expect(rows.filter((r) => r.source === 'local')).toHaveLength(0);
+      expect(card!.members.map((m) => m.position)).toEqual([1, 3, 4, 5]);
+      expect(card!.members.some((m) => m.title === 'Exploring Azeroth: Kalimdor')).toBe(false);
+    });
+
+    it('AC10: the reverse order — reconcile first, refresh after — converges on the same single canonical row', async () => {
+      const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(kalimdor);
+      const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
+      expect((await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id))).filter((r) => r.source === 'local')).toHaveLength(1);
+
+      mockFetchHardcover(azerothPayload(true));
+      await svc.refreshSeriesForBook(kalimdor);
+
+      const rows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id));
+      expect(rows.filter((r) => r.bookId === kalimdor)).toHaveLength(1);
+      expect(rows.filter((r) => r.source === 'local')).toHaveLength(0);
+    });
+
+    /**
+     * AC10 best-effort: the reconcile is a nicety, never a reason for the card to
+     * fail. On any rejection the GET still resolves, the card still shows the
+     * entry from the pre-write snapshot, and the failure is logged.
+     */
+    it('AC10: a failing reconcile is caught, logged once, and still returns the snapshot card', async () => {
+      const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const observed = createMockLogger();
+      const svc = new SeriesCardService(db, inject(observed), settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(kalimdor);
+      await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
+      (observed.warn as ReturnType<typeof vi.fn>).mockClear();
+
+      const spy = vi.spyOn(db, 'transaction').mockRejectedValueOnce(new Error('reconcile boom'));
+      const card = await svc.getSeriesForBook(kalimdor);
+      spy.mockRestore();
+
+      // Resolved, not rejected, and the owned book is still on the card.
+      expect(card!.members.map((m) => m.position)).toEqual([1, 2, 3, 4, 5]);
+      expect(card!.members[1]!.libraryBookId).toBe(kalimdor);
+      // Nothing landed — the fallback renders the snapshot, it does not fake a write.
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.source, 'local'))).toHaveLength(0);
+      const warnCalls = (observed.warn as ReturnType<typeof vi.fn>).mock.calls;
+      expect(warnCalls).toHaveLength(1);
+      const meta = warnCalls[0]![0] as { error: { type?: unknown; message?: unknown } };
+      expect(meta.error).not.toBeInstanceOf(Error);
+      expect(meta.error.message).toBe('reconcile boom');
+    });
+
+    /**
+     * AC5 — the seeded entry's position is `books.series_position` VERBATIM: `0`
+     * sorts before `1` instead of coercing to null, and `null` sorts last.
+     */
+    it('AC5: unclaimed books at position 0 and null interleave as [0, 1, 2.5, null]', async () => {
+      const zero = await seedBookWithSeries(db, { title: 'Origins', seriesName: 'Test Series', seriesPosition: 0, authorName: 'Some Author' });
+      const nullPos = await seedBookWithSeries(db, { title: 'Zed Companion', seriesName: 'Test Series', seriesPosition: null, authorName: 'Some Author' });
+      mockFetchHardcover({
+        data: {
+          series: [{
+            id: 7777, name: 'Test Series', slug: 'test-series', author: { name: 'Some Author' },
+            book_series: [
+              { position: 1, book: { id: 6001, slug: 'one', title: 'Book One', image: null, users_count: 50 } },
+              { position: 2.5, book: { id: 6002, slug: 'two-five', title: 'Book Two-Five', image: null, users_count: 40 } },
+            ],
+          }],
+        },
+      });
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(zero);
+
+      expect(card!.members.map((m) => m.position)).toEqual([0, 1, 2.5, null]);
+      expect(card!.members[0]!.libraryBookId).toBe(zero);
+      expect(card!.members.at(-1)!.libraryBookId).toBe(nullPos);
+      const rows = await db.select().from(seriesMembers);
+      expect(rows.find((r) => r.bookId === zero)!.position).toBe(0);
+      expect(rows.find((r) => r.bookId === nullPos)!.position).toBeNull();
+    });
+
+    /**
+     * AC11 — a local row renders from the BOOK's CURRENT title, not the text
+     * frozen into the row when it was seeded.
+     */
+    it('AC11: a local row whose stored title has drifted renders the book’s current title once', async () => {
+      const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(kalimdor);
+
+      await db.update(books).set({ title: 'Kalimdor (Renamed Edition)' }).where(eq(books.id, kalimdor));
+      const card = await svc.getSeriesForBook(kalimdor);
+
+      const owned = card!.members.filter((m) => m.libraryBookId === kalimdor);
+      expect(owned).toHaveLength(1);
+      expect(owned[0]!.title).toBe('Kalimdor (Renamed Edition)');
+      expect(card!.members.some((m) => m.title === 'Exploring Azeroth: Kalimdor')).toBe(false);
+      expect(card!.members.filter((m) => !m.inLibrary).map((m) => m.title)).not.toContain('Kalimdor (Renamed Edition)');
+    });
+
+    /**
+     * F4 (spec review) — AC11's OTHER half: a local row owns its `book_id`, so it
+     * cannot claim a different candidate even when its stored title and position
+     * are a perfect match for one. Sharp observation point: the Hardcover member
+     * pairs with book B by title, so an implementation that resolved local rows by
+     * title would have the local row steal B, leave the member unmatched, and seed
+     * a second local row for A.
+     */
+    it('F4: a local row claims its own book_id even when its stored title matches a sibling', async () => {
+      const bookA = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+      const bookB = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
+      const [seedRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 5523, name: 'The Band', normalizedName: 'the band', authorName: 'Nicholas Eames', lastFetchedAt: new Date(),
+      }).returning();
+      await db.insert(seriesMembers).values([
+        { seriesId: seedRow!.id, hardcoverBookId: 1002, slug: 'bloody', title: 'Bloody Rose', normalizedTitle: 'bloody rose', authorName: 'Nicholas Eames', position: 2, source: 'hardcover' },
+        // Drifted local row: points at A, but its stored title/position describe B.
+        { seriesId: seedRow!.id, bookId: bookA, title: 'Bloody Rose', normalizedTitle: 'bloody rose', authorName: 'Nicholas Eames', position: 2, source: 'local' },
+      ]);
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      // Both books are claimed — by the local row and by the member — so the
+      // build must take the fast path. Deleting the by-`book_id` claim entirely
+      // (rather than swapping it for a title match) leaves A unclaimed, and this
+      // is the assertion that sees it: the reconcile opens, its insert collides
+      // with the existing row, and the failure is swallowed as best-effort.
+      const txSpy = vi.spyOn(db, 'transaction');
+      const card = await svc.getSeriesForBook(bookA);
+      expect(txSpy).not.toHaveBeenCalled();
+      txSpy.mockRestore();
+
+      expect(card!.members).toHaveLength(2);
+      const forA = card!.members.filter((m) => m.libraryBookId === bookA);
+      const forB = card!.members.filter((m) => m.libraryBookId === bookB);
+      expect(forA).toHaveLength(1);
+      expect(forB).toHaveLength(1);
+      // A renders from its own book, B stays with the Hardcover member that paired.
+      expect(forA[0]!).toMatchObject({ title: 'Kings of the Wyld', position: 1, hardcoverBookId: null, inLibrary: true });
+      expect(forB[0]!).toMatchObject({ title: 'Bloody Rose', hardcoverBookId: 1002, inLibrary: true });
+      // Nothing was unclaimed, so no row was written and the drifted row survives.
+      const rows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seedRow!.id));
+      expect(rows.filter((r) => r.source === 'local').map((r) => r.bookId)).toEqual([bookA]);
+    });
+
+    /**
+     * AC12 — residue is not a member. A local row that lost its book to the FK's
+     * `ON DELETE SET NULL` renders nothing at all: not an owned row, and above all
+     * not a '+ Add' row inviting the operator to re-acquire a book they deleted.
+     */
+    it('AC12: a local row whose book was deleted renders no entry and no + Add phantom', async () => {
+      const anchor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
+      const doomed = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(anchor);
+
+      await db.delete(books).where(eq(books.id, doomed));
+      const residue = (await db.select().from(seriesMembers)).filter((r) => r.source === 'local');
+      expect(residue).toHaveLength(1);
+      expect(residue[0]!.bookId).toBeNull();
+
+      const card = await svc.getSeriesForBook(anchor);
+      expect(card!.members.map((m) => m.position)).toEqual([1, 3, 4, 5]);
+      expect(card!.members.some((m) => m.title === 'Exploring Azeroth: Kalimdor')).toBe(false);
+    });
+
+    /**
+     * F5 (spec review) — AC12's other branch: the book still EXISTS and the row
+     * still names it, but its `books.series_name` has moved outside this card's
+     * pool. It is no longer a member here and must not render, in either shape.
+     */
+    it('F5: a local row naming a book that left the series renders no entry and no + Add phantom', async () => {
+      const anchor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
+      const mover = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(anchor);
+
+      await db.update(books).set({ seriesName: 'Chronicles of the Horde' }).where(eq(books.id, mover));
+      const stranded = (await db.select().from(seriesMembers)).filter((r) => r.source === 'local');
+      expect(stranded).toHaveLength(1);
+      expect(stranded[0]!.bookId).toBe(mover);
+
+      const card = await svc.getSeriesForBook(anchor);
+      expect(card!.members.map((m) => m.position)).toEqual([1, 3, 4, 5]);
+      expect(card!.members.some((m) => m.libraryBookId === mover)).toBe(false);
+      expect(card!.members.some((m) => m.title === 'Exploring Azeroth: Kalimdor')).toBe(false);
+    });
+
+    /**
+     * AC13 — two owned books at one position, one Hardcover member there. The
+     * member takes the lower-`books.id` candidate (#2108's pinned claim order) and
+     * the other book gets its own entry at the same position; the two order by
+     * title. The service performs no position-based dedup of its own.
+     */
+    it('AC13: two owned books at one position — the member claims the lower id, the other renders alongside', async () => {
+      const lower = await seedBookWithSeries(db, { title: 'Zeta Chronicle', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
+      const higher = await seedBookWithSeries(db, { title: 'Alpha Chronicle', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
+      expect(higher).toBeGreaterThan(lower);
+      mockFetchHardcover({
+        data: {
+          series: [{
+            id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' },
+            book_series: [{ position: 2, book: { id: 1002, slug: 'bloody', title: 'Bloody Rose', image: null, users_count: 80 } }],
+          }],
+        },
+      });
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(lower);
+
+      expect(card!.members.map((m) => m.title)).toEqual(['Alpha Chronicle', 'Bloody Rose']);
+      expect(card!.members.every((m) => m.position === 2)).toBe(true);
+      expect(card!.members.every((m) => m.inLibrary)).toBe(true);
+      const claimed = card!.members.map((m) => m.libraryBookId);
+      expect(claimed).toEqual([higher, lower]);
+      expect(new Set(claimed).size).toBe(2);
+    });
+
+    /**
+     * AC14 — multiplicity. Two unclaimed books with IDENTICAL titles are two
+     * different books; the local unique index is keyed on `(series_id, book_id)`,
+     * not on the title, so both rows land.
+     */
+    it('AC14: two unclaimed books with identical titles get one entry and one row each', async () => {
+      const first = await seedBookWithSeries(db, { title: 'Twice Told', seriesName: 'The Band', seriesPosition: 4, authorName: 'Nicholas Eames' });
+      const second = await seedBookWithSeries(db, { title: 'Twice Told', seriesName: 'The Band', seriesPosition: 5, authorName: 'Nicholas Eames' });
+      mockFetchHardcover({
+        data: {
+          series: [{
+            id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' },
+            book_series: [{ position: 1, book: { id: 1001, slug: 'kings', title: 'Kings of the Wyld', image: null, users_count: 90 } }],
+          }],
+        },
+      });
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const card = await svc.getSeriesForBook(first);
+
+      expect(card!.members.map((m) => m.title)).toEqual(['Kings of the Wyld', 'Twice Told', 'Twice Told']);
+      expect(card!.members.filter((m) => m.title === 'Twice Told').map((m) => m.libraryBookId)).toEqual([first, second]);
+      const local = (await db.select().from(seriesMembers)).filter((r) => r.source === 'local');
+      expect(local.map((r) => r.bookId).sort((a, b) => a! - b!)).toEqual([first, second]);
+    });
+
+    /**
+     * AC7 — the seed pool is the PRIMARY name only. On the bind path a sibling
+     * still carrying the pre-bind (Audnexus) name that matched no member is not a
+     * member of the canonical series, so it gets no row. Widening the seed to
+     * `extraSeriesNames` would durably enrol it in a series the operator never
+     * asserted it belongs to.
+     */
+    it('AC7: a bind seeds no row for a pre-bind-named sibling that matched no member', async () => {
+      const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      const sibling = await seedBookWithSeries(db, { title: 'An Unrelated Sibling', seriesName: 'The Earthsea Cycle', seriesPosition: 9, authorName: 'Ursula K. Le Guin' });
+      mockFetchHardcover({
+        data: {
+          series: [{
+            id: 4242, name: 'The Earthsea Quartet', slug: 'earthsea-quartet', author: { name: 'Ursula K. Le Guin' },
+            book_series: [{ position: 1, book: { id: 5001, slug: 'wizard', title: 'A Wizard of Earthsea', image: null, users_count: 90 } }],
+          }],
+        },
+      });
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      const bound = await svc.bindHardcoverSeries(initiating, 4242);
+
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, sibling))).toHaveLength(0);
+      expect((await db.select().from(books).where(eq(books.id, sibling)))[0]!.seriesName).toBe('The Earthsea Cycle');
+      expect(bound!.card.members.map((m) => m.title)).toEqual(['A Wizard of Earthsea']);
     });
   });
 

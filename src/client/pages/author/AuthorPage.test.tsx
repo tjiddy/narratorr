@@ -290,8 +290,9 @@ describe('AuthorPage', () => {
 
     // The back button exists and is clickable
     await user.click(screen.getByText('Back'));
-    // Navigation is handled by navigate(-1), which we don't mock deeply,
-    // but clicking should not throw
+    // Navigation goes through useBackWithFallback (browser-back with a /library
+    // fallback for deep links) — branch behavior is pinned in that hook's own
+    // suite; here clicking must simply not throw
   });
 
   it('renders initials avatar when no image', async () => {

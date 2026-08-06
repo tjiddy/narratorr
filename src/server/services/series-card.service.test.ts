@@ -561,9 +561,14 @@ describe('SeriesCardService — unit', () => {
       expect(populated).toEqual([bookId]);
     });
 
-    it('does not inflate the card beyond the canonical Hardcover member list or add local members', async () => {
-      // A library book exists in the series but is NOT in the canonical Hardcover
-      // list — the service must not append it as an extra member.
+    /**
+     * #2144 NARROWS the #1139 no-inflation rule rather than deleting it. Adding an
+     * owned book Hardcover does not list is now REQUIRED — that is the whole
+     * issue. Adding anything else is still forbidden: the card's only two sources
+     * are the canonical member list and the library pool, so a title that appears
+     * in neither can never reach it.
+     */
+    it('adds owned books missing from the canonical list but nothing beyond the two sources', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Local Only', seriesName: 'The Band', seriesPosition: 9, authorName: 'Nicholas Eames' });
       const canonical: MemberInput[] = [
         { position: 1, id: 1001, slug: 'kings', title: 'Kings of the Wyld' },
@@ -575,10 +580,15 @@ describe('SeriesCardService — unit', () => {
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
       const card = await svc.getSeriesForBook(bookId);
 
-      expect(card!.members).toHaveLength(canonical.length);
-      expect(card!.members.map((m) => m.title)).toEqual(['Kings of the Wyld', 'Bloody Rose', 'Heretic']);
-      // The local-only book at position 9 was not appended.
-      expect(card!.members.some((m) => m.title === 'Local Only')).toBe(false);
+      // Canonical count + the one owned book, interleaved by position — not
+      // appended as an "extras" block that happens to land last.
+      expect(card!.members).toHaveLength(canonical.length + 1);
+      expect(card!.members.map((m) => m.title)).toEqual(['Kings of the Wyld', 'Bloody Rose', 'Heretic', 'Local Only']);
+      const owned = card!.members.find((m) => m.title === 'Local Only')!;
+      expect(owned).toMatchObject({ position: 9, inLibrary: true, libraryBookId: bookId, hardcoverBookId: null });
+      // Nothing that is neither a canonical member nor a library book appears.
+      const allowed = new Set([...canonical.map((m) => m.title), 'Local Only']);
+      expect(card!.members.every((m) => allowed.has(m.title))).toBe(true);
     });
   });
 
@@ -733,7 +743,7 @@ describe('SeriesCardService — unit', () => {
       expect(memberRows[0]!.source).toBe('hardcover');
     });
 
-    it('preserves books.seriesPosition and seeds no local member when the book is not a member', async () => {
+    it('preserves books.seriesPosition and seeds exactly one local member when the book is not a member', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Unrelated Book', seriesName: 'Earthsea', seriesPosition: 7, authorName: 'Ursula K. Le Guin' });
       mockFetchOnce(hardcoverSeriesPayload({
         id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
@@ -741,13 +751,19 @@ describe('SeriesCardService — unit', () => {
       }));
 
       const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
-      await svc.bindHardcoverSeries(bookId, 4242);
+      const bound = await svc.bindHardcoverSeries(bookId, 4242);
 
       const book = (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
       expect(book.seriesName).toBe('The Earthsea Quartet');
       expect(book.seriesPosition).toBe(7);
+      // #2144: the bind adopted the canonical name for a book that matched no
+      // member, so it is now an owned book of that series with nothing to pair
+      // with — exactly the shape that must get a local row.
       const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
-      expect(memberRows).toHaveLength(0);
+      expect(memberRows).toHaveLength(1);
+      expect(memberRows[0]!.source).toBe('local');
+      const owned = bound!.card.members.find((m) => m.title === 'Unrelated Book')!;
+      expect(owned).toMatchObject({ position: 7, inLibrary: true, libraryBookId: bookId, hardcoverBookId: null });
     });
 
     it('sets books.seriesPosition to 0 for a position-0 member (no falsy coercion)', async () => {
@@ -1096,6 +1112,176 @@ describe('SeriesCardService — unit', () => {
       const book = await readBook(bookId);
       expect(book.seriesName).toBeNull();
       expect(book.userClearedFields).toBe('["seriesName"]');
+    });
+  });
+
+  // ─── #2152 AC9 / AC9a: a bind never undoes a position clear ───
+  describe('bindHardcoverSeries — seriesPosition tombstones (#2152 AC9/AC9a)', () => {
+    async function setTombstones(bookId: number, raw: string | null): Promise<void> {
+      await db.update(books).set({ userClearedFields: raw }).where(eq(books.id, bookId));
+    }
+
+    async function readBook(bookId: number) {
+      return (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
+    }
+
+    /** Two-member Dune payload; member 7 is the one an operator unnumbered. */
+    const dunePayload = () => hardcoverSeriesPayload({
+      id: 4242, name: 'Dune', author: 'Frank Herbert',
+      members: [
+        { position: 1, id: 1, slug: 'dune', title: 'Dune' },
+        { position: 7, id: 7, slug: 'hunters', title: 'Hunters of Dune' },
+      ],
+    });
+
+    function svc() {
+      return new SeriesCardService(db, log, settingsServiceWith('K'));
+    }
+
+    it('a matched SIBLING cleared in-app adopts the name and keeps its NULL position, while an untombstoned sibling gets its own', async () => {
+      const initiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: 'Dune (Audible)', authorName: 'Frank Herbert' });
+      const cleared = await seedBookWithSeries(db, { title: 'Hunters of Dune', seriesName: 'Dune (Audible)', seriesPosition: null, authorName: 'Frank Herbert' });
+      await setTombstones(cleared, '["seriesPosition"]');
+      mockFetchOnce(dunePayload());
+
+      await svc().bindHardcoverSeries(initiating, 4242);
+
+      const clearedRow = await readBook(cleared);
+      expect(clearedRow.seriesName).toBe('Dune');
+      expect(clearedRow.seriesPosition).toBeNull();
+      expect(clearedRow.userClearedFields).toBe('["seriesPosition"]');
+      // The control that makes the assertion above non-vacuous.
+      const initiatingRow = await readBook(initiating);
+      expect(initiatingRow.seriesName).toBe('Dune');
+      expect(initiatingRow.seriesPosition).toBe(1);
+    });
+
+    it('the INITIATING book cleared in-app keeps its NULL position; its seriesName tombstone lifts and its seriesPosition tombstone survives', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'Hunters of Dune', seriesName: null, seriesPosition: null, authorName: 'Frank Herbert' });
+      await setTombstones(bookId, '["seriesName","seriesPosition"]');
+      mockFetchOnce(dunePayload());
+
+      await svc().bindHardcoverSeries(bookId, 4242);
+
+      const row = await readBook(bookId);
+      expect(row.seriesName).toBe('Dune');
+      expect(row.seriesPosition).toBeNull();
+      expect(row.userClearedFields).toBe('["seriesPosition"]');
+    });
+
+    it('an unmatched initiating book cleared in-app still adopts the canonical name with no position write', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'Some Unrelated Companion', seriesName: 'Dune (Audible)', seriesPosition: null, authorName: 'Frank Herbert' });
+      await setTombstones(bookId, '["seriesPosition"]');
+      mockFetchOnce(dunePayload());
+
+      await svc().bindHardcoverSeries(bookId, 4242);
+
+      const row = await readBook(bookId);
+      expect(row.seriesName).toBe('Dune');
+      expect(row.seriesPosition).toBeNull();
+    });
+
+    /**
+     * AC9's "UNCHANGED, not normalized" — the out-of-band decoupled state
+     * (`series_position = 7` beside a live tombstone), seeded directly because
+     * AC6a shows no in-app path can produce it. Three assertions, one per
+     * consumer, because they deliberately disagree.
+     */
+    it('decoupled state: bind leaves the stale column alone, the card still renders —, and the fast path still claims it', async () => {
+      const initiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: 'Dune (Audible)', seriesPosition: 1, authorName: 'Frank Herbert' });
+      const decoupled = await seedBookWithSeries(db, { title: 'Hunters of Dune', seriesName: 'Dune (Audible)', seriesPosition: 7, authorName: 'Frank Herbert' });
+      await setTombstones(decoupled, '["seriesPosition"]');
+      mockFetchOnce(dunePayload());
+
+      const bound = await svc().bindHardcoverSeries(initiating, 4242);
+
+      // 1. The column: neither overwritten with the member position nor normalized.
+      expect((await readBook(decoupled)).seriesPosition).toBe(7);
+      // 2. The card: this fixture is on the MATCHED-Hardcover projection path,
+      //    which is tombstone-keyed, so the member renders `—`.
+      const member = bound!.card.members.find((m) => m.title === 'Hunters of Dune')!;
+      expect(member.position).toBeNull();
+      expect(member.libraryBookId).toBe(decoupled);
+      // 3. The matcher: untouched, so the position fast path still claims the book
+      //    and no separate owned entry is emitted for it.
+      expect(bound!.card.members.filter((m) => m.libraryBookId === decoupled)).toHaveLength(1);
+    });
+
+    it('F2: the card the bind RETURNS, and a later getSeriesForBook, both expose the owned member at position null', async () => {
+      const initiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: 'Dune (Audible)', seriesPosition: 1, authorName: 'Frank Herbert' });
+      const cleared = await seedBookWithSeries(db, { title: 'Hunters of Dune', seriesName: 'Dune (Audible)', seriesPosition: null, authorName: 'Frank Herbert' });
+      await setTombstones(cleared, '["seriesPosition"]');
+      mockFetchOnce(dunePayload());
+
+      const bound = await svc().bindHardcoverSeries(initiating, 4242);
+
+      // The cached Hardcover member row still stores position 7 — the residue AC9a
+      // deliberately does not rewrite. The projection is what must read `—`.
+      const cachedRow = (await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, cleared)))[0]!;
+      expect(cachedRow.position).toBe(7);
+
+      const inBound = bound!.card.members.find((m) => m.libraryBookId === cleared)!;
+      expect(inBound.position).toBeNull();
+      // Control in the same assertion: the untombstoned sibling keeps its number.
+      expect(bound!.card.members.find((m) => m.libraryBookId === initiating)!.position).toBe(1);
+
+      const later = await svc().getSeriesForBook(cleared);
+      expect(later!.members.find((m) => m.libraryBookId === cleared)!.position).toBeNull();
+      expect(later!.members.find((m) => m.libraryBookId === initiating)!.position).toBe(1);
+    });
+
+    it('the reconcile/seed path returns the same projection', async () => {
+      // A book the Hardcover member set does NOT cover reaches the card through
+      // `reconcileUnclaimedMembers`. Its entry is column-keyed and rule **b**
+      // leaves the column NULL for an in-app clear, so it renders `—` too.
+      const initiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: 'Dune (Audible)', seriesPosition: 1, authorName: 'Frank Herbert' });
+      const unclaimed = await seedBookWithSeries(db, { title: 'Paul of Dune', seriesName: 'Dune', seriesPosition: null, authorName: 'Frank Herbert' });
+      await setTombstones(unclaimed, '["seriesPosition"]');
+      mockFetchOnce(dunePayload());
+
+      await svc().bindHardcoverSeries(initiating, 4242);
+      const card = await svc().getSeriesForBook(unclaimed);
+
+      const seeded = (await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, unclaimed)))[0]!;
+      expect(seeded.source).toBe('local');
+      expect(card!.members.find((m) => m.libraryBookId === unclaimed)!.position).toBeNull();
+    });
+
+    it('F5: reads the whole synced batch in ONE query on the transaction handle, not one per book', async () => {
+      const initiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: 'Dune (Audible)', seriesPosition: 1, authorName: 'Frank Herbert' });
+      const sibling = await seedBookWithSeries(db, { title: 'Hunters of Dune', seriesName: 'Dune (Audible)', seriesPosition: null, authorName: 'Frank Herbert' });
+      await setTombstones(sibling, '["seriesPosition"]');
+      mockFetchOnce(dunePayload());
+
+      const link = await import('./book-series-link.js');
+      const spy = vi.spyOn(link, 'readPositionClearedBookIds');
+
+      await svc().bindHardcoverSeries(initiating, 4242);
+
+      // ONE call covering every synced id — the batched read. A per-book
+      // implementation would show up as one call per synced book.
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect([...new Set(spy.mock.calls[0]![2])].sort((a, b) => a - b)).toEqual([initiating, sibling].sort((a, b) => a - b));
+    });
+
+    it('reads the tombstones INSIDE the transaction, so a position clear committed during the fetch is honored', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'Hunters of Dune', seriesName: 'Dune (Audible)', seriesPosition: null, authorName: 'Frank Herbert' });
+
+      // The operator clears the position while the Hardcover fetch is in flight.
+      globalThis.fetch = vi.fn().mockImplementation(async () => {
+        await setTombstones(bookId, '["seriesPosition"]');
+        return new Response(JSON.stringify(dunePayload()), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }) as typeof globalThis.fetch;
+
+      await svc().bindHardcoverSeries(bookId, 4242);
+
+      // An implementation reading the set from the pre-fetch `loadBook` snapshot
+      // would see no tombstone and write the member position 7 over the clear.
+      const row = await readBook(bookId);
+      expect(row.seriesName).toBe('Dune');
+      expect(row.seriesPosition).toBeNull();
     });
   });
 });

@@ -272,4 +272,27 @@ describe('ReleaseCard', () => {
       expect(screen.getByText(/Good · 64 MB\/hr/)).toBeInTheDocument();
     });
   });
+  describe('headline composition — title leads the truncated line', () => {
+    it('renders the title before the author roll, so truncation eats the authors', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      const anthology = {
+        ...baseResult,
+        title: 'Folk & Fairy Tales of Azeroth',
+        author: 'Christie Golden, Garth Nix, Madeleine Roux, Catherynne M Valente, Steve Danuser, Molly Knox Ostertag, Avalon Irons',
+      };
+      renderWithProviders(<ReleaseCard {...defaultProps} result={anthology} />);
+
+      const heading = screen.getByRole('heading', { level: 4 });
+      // The live defect: a seven-author anthology roll rendered first pushed the title
+      // past the CSS truncation entirely — the row showed only author names.
+      expect(heading.textContent).toBe('Folk & Fairy Tales of Azeroth — Christie Golden, Garth Nix, Madeleine Roux, Catherynne M Valente, Steve Danuser, Molly Knox Ostertag, Avalon Irons');
+    });
+
+    it('renders the bare title when the result carries no author', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      const { author: _author, ...rest } = baseResult;
+      renderWithProviders(<ReleaseCard {...defaultProps} result={rest} />);
+      expect(screen.getByRole('heading', { level: 4 }).textContent).toBe('Test Book');
+    });
+  });
 });

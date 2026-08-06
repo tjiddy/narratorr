@@ -134,30 +134,36 @@ describe('parseFolderStructure', () => {
     });
   });
 
-  it('strips decimal series position prefix with hyphen (6.5 - Title)', () => {
+  // #2145 — these three 3-part leaves used to have their decimal prefix stripped as noise; the
+  // position is now captured instead of discarded. Asserted as exact objects (not loosened to
+  // toMatchObject) so the newly emitted value stays pinned.
+  it('captures decimal series position prefix with hyphen (6.5 - Title)', () => {
     const result = parseFolderStructure(['Tahereh Mafi', 'Shatter Me', '6.5 - Believe Me']);
     expect(result).toEqual({
       title: 'Believe Me',
       author: 'Tahereh Mafi',
       series: 'Shatter Me',
+      seriesPosition: 6.5,
     });
   });
 
-  it('strips decimal series position prefix with en-dash (6.5 – Title)', () => {
+  it('captures decimal series position prefix with en-dash (6.5 – Title)', () => {
     const result = parseFolderStructure(['Tahereh Mafi', 'Shatter Me', '6.5 \u2013 Believe Me']);
     expect(result).toEqual({
       title: 'Believe Me',
       author: 'Tahereh Mafi',
       series: 'Shatter Me',
+      seriesPosition: 6.5,
     });
   });
 
-  it('strips two-digit decimal position prefix (10.5 - Title)', () => {
+  it('captures two-digit decimal position prefix (10.5 - Title)', () => {
     const result = parseFolderStructure(['Author', 'Series', '10.5 - Bonus Chapter']);
     expect(result).toEqual({
       title: 'Bonus Chapter',
       author: 'Author',
       series: 'Series',
+      seriesPosition: 10.5,
     });
   });
 
@@ -770,6 +776,37 @@ describe('LibraryScanService', () => {
         const result = await service.scanDirectory('/audiobooks');
 
         expect(result.discoveries[0]).not.toHaveProperty('parsedSeriesPosition');
+      });
+
+      // #2145 — the Detailed preset's own 3-level output (`Author/Series/NN - Title`) now reaches
+      // discovery with its position intact. No new plumbing: #1042 already built the spread.
+      it('emits parsedSeriesPosition for a Detailed-preset leaf (Author/Series/NN - Title)', async () => {
+        vi.mocked(discoverBooks).mockResolvedValue([
+          {
+            path: '/audiobooks/Author/Series/01 - Title',
+            folderParts: ['Author', 'Series', '01 - Title'],
+            audioFileCount: 1,
+            totalSize: 100,
+          },
+          {
+            path: '/audiobooks/Author/Series/Title',
+            folderParts: ['Author', 'Series', 'Title'],
+            audioFileCount: 1,
+            totalSize: 100,
+          },
+        ]);
+        mockPreFetch([], []);
+
+        const result = await service.scanDirectory('/audiobooks');
+        const byPath = Object.fromEntries(result.discoveries.map(d => [d.path, d]));
+
+        expect(byPath['/audiobooks/Author/Series/01 - Title']).toMatchObject({
+          parsedTitle: 'Title',
+          parsedAuthor: 'Author',
+          parsedSeries: 'Series',
+          parsedSeriesPosition: 1,
+        });
+        expect('parsedSeriesPosition' in byPath['/audiobooks/Author/Series/Title']!).toBe(false);
       });
     });
   });
