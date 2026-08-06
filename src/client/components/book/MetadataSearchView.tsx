@@ -31,7 +31,7 @@ export function MetadataSearchView({
   };
 
   return (
-    <div className="p-6 space-y-4 overflow-y-auto">
+    <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
       <div className="flex gap-2">
         <input
           type="text"

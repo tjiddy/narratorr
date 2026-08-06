@@ -141,11 +141,13 @@ export function BookFixMatchModal({ book, onClose, isOpen = true }: BookFixMatch
 
   return (
     <Modal onClose={onClose} className="w-full max-w-2xl flex flex-col max-h-[85vh]">
+      {/* Participates in the Modal's height-capped flex column — see BookMetadataModal. */}
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="book-fix-match-modal-title"
         tabIndex={-1}
+        className="flex flex-col min-h-0 flex-1"
       >
         <div className="px-6 pt-5 pb-4 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
@@ -219,7 +221,7 @@ interface FixMatchConfirmViewProps {
 
 function FixMatchConfirmView({ book, selected, renameFiles, onRenameFilesChange, retagFiles, onRetagFilesChange, errorMessage, isPending, onCancel, onConfirm }: FixMatchConfirmViewProps) {
   return (
-    <div className="p-6 space-y-4 overflow-y-auto">
+    <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
       <div className="flex gap-4">
         <div className="shrink-0 w-24 h-24 rounded-xl overflow-hidden bg-muted flex items-center justify-center ring-1 ring-white/[0.08]">
           {selected.coverUrl ? (

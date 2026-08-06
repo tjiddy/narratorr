@@ -163,11 +163,15 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
 
   return (
     <Modal onClose={onClose} className="w-full max-w-2xl flex flex-col max-h-[85vh]">
+      {/* Must participate in the Modal's height-capped flex column (`flex-1 min-h-0`), or the
+          fields' overflow-y-auto never activates and the footer renders past the card on short
+          viewports. Mirrors SearchReleasesModal's proven shape. */}
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="book-metadata-modal-title"
         tabIndex={-1}
+        className="flex flex-col min-h-0 flex-1"
       >
         {/* Header */}
         <div className="px-6 pt-5 pb-4 flex items-center justify-between shrink-0">
