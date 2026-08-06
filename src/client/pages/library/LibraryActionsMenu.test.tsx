@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { LibraryActionsMenu, type LibraryActionsMenuProps } from './LibraryActionsMenu';
 import { useBulkOperation } from '@/hooks/useBulkOperation';
-import type { BulkOpType } from '@/lib/api';
+import type { BulkOpType, BulkJobFailure } from '@/lib/api';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
@@ -36,6 +36,7 @@ interface BulkOverrides {
   completed?: number;
   total?: number;
   failures?: number;
+  failureDetails?: BulkJobFailure[];
 }
 
 function mockBulk(overrides: BulkOverrides = {}) {
@@ -46,6 +47,7 @@ function mockBulk(overrides: BulkOverrides = {}) {
       completed: overrides.completed ?? 0,
       total: overrides.total ?? 0,
       failures: overrides.failures ?? 0,
+      failureDetails: overrides.failureDetails ?? [],
     },
     startJob: mockStartJob,
   });
@@ -380,6 +382,79 @@ describe('LibraryActionsMenu', () => {
       renderMenu({}, { isRunning: true, jobType: 'retag', completed: 5, total: 10, failures: 2 });
       expect(screen.getByText(/2 failures/i)).toBeInTheDocument();
       expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    });
+  });
+
+  // #2159 — "1 failure" used to be the whole answer; finding WHICH book meant grepping container logs.
+  describe('named failure disclosure', () => {
+    const liveCase: BulkJobFailure = { bookId: 226, title: "Captain's Fury", error: 'ENOENT' };
+
+    function failureDisclosure() {
+      return screen.getByRole('button', { name: /failure/i });
+    }
+
+    it('renders nothing new when there are no failures', () => {
+      renderMenu({}, { isRunning: true, jobType: 'rename', completed: 5, total: 10, failures: 0 });
+      expect(screen.queryByText(/failure/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /failure/i })).not.toBeInTheDocument();
+    });
+
+    it('reads "1 failure" while collapsed, with the detail hidden', () => {
+      renderMenu({}, { isRunning: true, jobType: 'write_metadata_sidecars', failures: 1, failureDetails: [liveCase] });
+      expect(screen.getByText(/1 failure/i)).toBeInTheDocument();
+      expect(failureDisclosure()).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.queryByText(/Captain's Fury/)).not.toBeInTheDocument();
+    });
+
+    it('names the book when expanded — the live #2159 case', async () => {
+      const user = userEvent.setup();
+      renderMenu({}, { isRunning: true, jobType: 'write_metadata_sidecars', failures: 1, failureDetails: [liveCase] });
+
+      await user.click(failureDisclosure());
+
+      expect(screen.getByText("Captain's Fury (book 226): ENOENT")).toBeInTheDocument();
+      expect(failureDisclosure()).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('ends the expanded list with "…and N more" when the count exceeds the retained rows', async () => {
+      const user = userEvent.setup();
+      const failureDetails = Array.from({ length: 50 }, (_, i) => ({ bookId: i + 1, title: `Book ${i + 1}`, error: 'ENOENT' }));
+      renderMenu({}, { isRunning: false, jobType: 'rename', failures: 60, failureDetails });
+
+      await user.click(failureDisclosure());
+
+      expect(screen.getByText('…and 10 more')).toBeInTheDocument();
+      expect(screen.getByText('Book 1 (book 1): ENOENT')).toBeInTheDocument();
+      expect(screen.getByText('Book 50 (book 50): ENOENT')).toBeInTheDocument();
+    });
+
+    it('omits the "…and N more" row when every failure is named', async () => {
+      const user = userEvent.setup();
+      renderMenu({}, { isRunning: false, failures: 1, failureDetails: [liveCase] });
+
+      await user.click(failureDisclosure());
+
+      expect(screen.queryByText(/and \d+ more/)).not.toBeInTheDocument();
+    });
+
+    // AC17 — the answer matters most AFTER the run; the hook's progress survives completion.
+    it('still discloses the named failures after the job completes', async () => {
+      const user = userEvent.setup();
+      renderMenu({}, { isRunning: false, jobType: null, completed: 694, total: 694, failures: 1, failureDetails: [liveCase] });
+
+      expect(screen.getByText(/1 failure/i)).toBeInTheDocument();
+      await user.click(failureDisclosure());
+      expect(screen.getByText("Captain's Fury (book 226): ENOENT")).toBeInTheDocument();
+    });
+
+    it('collapses again on a second click', async () => {
+      const user = userEvent.setup();
+      renderMenu({}, { isRunning: true, failures: 1, failureDetails: [liveCase] });
+
+      await user.click(failureDisclosure());
+      expect(screen.getByText("Captain's Fury (book 226): ENOENT")).toBeInTheDocument();
+      await user.click(failureDisclosure());
+      expect(screen.queryByText("Captain's Fury (book 226): ENOENT")).not.toBeInTheDocument();
     });
   });
 

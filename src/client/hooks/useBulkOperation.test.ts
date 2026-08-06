@@ -38,6 +38,7 @@ function makeRunningJob(overrides?: Partial<BulkJobStatus>): BulkJobStatus {
     completed: 3,
     total: 10,
     failures: 0,
+    failureDetails: [],
     ...overrides,
   };
 }
@@ -50,6 +51,7 @@ function makeCompletedJob(overrides?: Partial<BulkJobStatus>): BulkJobStatus {
     completed: 10,
     total: 10,
     failures: 0,
+    failureDetails: [],
     ...overrides,
   };
 }
@@ -366,5 +368,101 @@ describe('useBulkOperation', () => {
 
     expect(result.current.isRunning).toBe(false);
     expect(Object.isFrozen(result.current.progress)).toBe(true);
+  });
+
+  // #2159 — named failure rows ride the same poll/resume/reset paths as the counts.
+  describe('failureDetails (#2159)', () => {
+    const details = [
+      { bookId: 226, title: "Captain's Fury", error: "ENOENT: no such file or directory, open '/audiobooks/x/metadata.opf'" },
+    ];
+
+    it('starts as an empty array before any poll', async () => {
+      mockGetActiveBulkJob.mockResolvedValue(null);
+
+      const { result } = renderHook(() => useBulkOperation());
+      await act(async () => {});
+
+      expect(result.current.progress.failureDetails).toEqual([]);
+    });
+
+    it('flows from a poll response into progress', async () => {
+      mockGetActiveBulkJob.mockResolvedValue(null);
+      mockGetBulkJob.mockResolvedValue(makeRunningJob({ failures: 1, failureDetails: details }));
+
+      const { result } = renderHook(() => useBulkOperation());
+      await act(async () => {});
+      await act(async () => { await result.current.startJob('write_metadata_sidecars'); });
+      await act(async () => { vi.advanceTimersByTime(2000); });
+
+      expect(result.current.progress.failureDetails).toEqual(details);
+    });
+
+    it('survives job completion so the operator can still read it', async () => {
+      mockGetActiveBulkJob.mockResolvedValue(null);
+      mockGetBulkJob.mockResolvedValue(makeCompletedJob({ failures: 1, failureDetails: details }));
+
+      const { result } = renderHook(() => useBulkOperation());
+      await act(async () => {});
+      await act(async () => { await result.current.startJob('rename'); });
+      await act(async () => { vi.advanceTimersByTime(2000); });
+
+      expect(result.current.isRunning).toBe(false);
+      expect(result.current.progress.failureDetails).toEqual(details);
+    });
+
+    it('flows from the mount-time getActiveBulkJob() resume path', async () => {
+      mockGetActiveBulkJob.mockResolvedValue(makeRunningJob({ failures: 3, failureDetails: details }));
+      mockGetBulkJob.mockResolvedValue(makeRunningJob({ failures: 3, failureDetails: details }));
+
+      const { result } = renderHook(() => useBulkOperation());
+      await act(async () => {});
+
+      expect(result.current.progress.failures).toBe(3);
+      expect(result.current.progress.failureDetails).toEqual(details);
+    });
+
+    it('is cleared back to [] by the 404 (server-restart) reset', async () => {
+      mockGetActiveBulkJob.mockResolvedValue(null);
+      mockGetBulkJob
+        .mockResolvedValueOnce(makeRunningJob({ failures: 1, failureDetails: details }))
+        .mockRejectedValue(make404Error());
+
+      const { result } = renderHook(() => useBulkOperation());
+      await act(async () => {});
+      await act(async () => { await result.current.startJob('rename'); });
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      expect(result.current.progress.failureDetails).toEqual(details);
+
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      expect(result.current.progress.failureDetails).toEqual([]);
+    });
+
+    it('is cleared back to [] by the non-404 error reset', async () => {
+      const err = new Error('Internal server error');
+      (err as { status?: number }).status = 500;
+      mockGetActiveBulkJob.mockResolvedValue(null);
+      mockGetBulkJob
+        .mockResolvedValueOnce(makeRunningJob({ failures: 1, failureDetails: details }))
+        .mockRejectedValue(err);
+
+      const { result } = renderHook(() => useBulkOperation());
+      await act(async () => {});
+      await act(async () => { await result.current.startJob('rename'); });
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      expect(result.current.progress.failureDetails).toEqual(details);
+
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      expect(result.current.progress.failureDetails).toEqual([]);
+    });
+
+    it('is [] on the frozen IDLE_PROGRESS object (regression)', async () => {
+      mockGetActiveBulkJob.mockResolvedValue(null);
+
+      const { result } = renderHook(() => useBulkOperation());
+      await act(async () => {});
+
+      expect(Object.isFrozen(result.current.progress)).toBe(true);
+      expect(result.current.progress.failureDetails).toEqual([]);
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
-import { api, type BulkOpType, type BulkJobStatus } from '@/lib/api';
+import { api, type BulkOpType, type BulkJobStatus, type BulkJobFailure } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 
 const POLL_INTERVAL = 2000;
@@ -9,6 +9,8 @@ interface BulkProgress {
   completed: number;
   total: number;
   failures: number;
+  /** Named failures, capped server-side. Always an array — `failures` may exceed its length. */
+  failureDetails: BulkJobFailure[];
 }
 
 interface UseBulkOperationReturn {
@@ -18,7 +20,7 @@ interface UseBulkOperationReturn {
   startJob: (type: BulkOpType) => Promise<void>;
 }
 
-const IDLE_PROGRESS: BulkProgress = Object.freeze({ completed: 0, total: 0, failures: 0 });
+const IDLE_PROGRESS: BulkProgress = Object.freeze({ completed: 0, total: 0, failures: 0, failureDetails: [] });
 
 /**
  * Job type → its start endpoint. Keyed on the union (not a ternary chain with a default arm), so
@@ -46,7 +48,12 @@ export function useBulkOperation(): UseBulkOperationReturn {
   }, []);
 
   const applyJobStatus = useCallback((status: BulkJobStatus) => {
-    setProgress({ completed: status.completed, total: status.total, failures: status.failures });
+    setProgress({
+      completed: status.completed,
+      total: status.total,
+      failures: status.failures,
+      failureDetails: status.failureDetails,
+    });
     if (status.status === 'completed') {
       stopPolling();
       setIsRunning(false);
@@ -89,7 +96,12 @@ export function useBulkOperation(): UseBulkOperationReturn {
       jobIdRef.current = activeJob.jobId;
       setIsRunning(true);
       setJobType(activeJob.type);
-      setProgress({ completed: activeJob.completed, total: activeJob.total, failures: activeJob.failures });
+      setProgress({
+        completed: activeJob.completed,
+        total: activeJob.total,
+        failures: activeJob.failures,
+        failureDetails: activeJob.failureDetails,
+      });
       startPolling(activeJob.jobId);
     }).catch(() => {});
 

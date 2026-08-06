@@ -18,7 +18,15 @@ const MAX_CAUSE_DEPTH = 5;
 // and quotes so we don't gobble surrounding prose.
 const URL_IN_MESSAGE_RE = /(https?:\/\/[^\s'"<>`)]+|magnet:\?[^\s'"<>`)]+)/g;
 
-function redactUrlsInMessage(message: string): string {
+/**
+ * Redact http(s) URLs and magnet URIs embedded anywhere in a free-form string, in place.
+ *
+ * Public because {@link serializeError} is not the only surface that needs it: `code` is copied
+ * verbatim (see below) and callers that COMPOSE a display string out of several serialized fields
+ * must scrub the composed result once, at the end — see `short-error-text.ts` (#2159). Formerly
+ * module-private (`redactUrlsInMessage`); exporting it is a rename-to-public, not a behavior change.
+ */
+export function redactUrlsInText(message: string): string {
   return message.replace(URL_IN_MESSAGE_RE, (match) => sanitizeLogUrl(match));
 }
 
@@ -52,17 +60,17 @@ export function serializeError(err: unknown): SerializedError {
     return serialize(err, new Set([err]), 0);
   } catch {
     // Never-throw guarantee: if serialization itself fails, return a minimal result
-    return { message: redactUrlsInMessage(String(err)), type: typeof err };
+    return { message: redactUrlsInText(String(err)), type: typeof err };
   }
 }
 
 function serialize(err: unknown, seen: Set<unknown>, depth: number): SerializedError {
   if (!(err instanceof Error)) {
-    return { message: redactUrlsInMessage(String(err)), type: typeof err };
+    return { message: redactUrlsInText(String(err)), type: typeof err };
   }
 
   const result: SerializedError = {
-    message: redactUrlsInMessage(err.message),
+    message: redactUrlsInText(err.message),
     stack: redactUrlsInStack(err.stack),
     type: err.constructor.name,
   };

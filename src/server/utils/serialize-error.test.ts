@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { serializeError } from './serialize-error.js';
+import { serializeError, redactUrlsInText } from './serialize-error.js';
 
 describe('serializeError', () => {
   describe('Error instances', () => {
@@ -247,6 +247,30 @@ describe('serializeError', () => {
       expect(result.message).toMatch(/^Newznab API failed at https:\/\/nzbgeek\.info\/api/);
       expect(result.message).toContain('— retry later');
       expect(result.message).not.toContain('ABC');
+    });
+  });
+
+  // #2159 — `redactUrlsInText` was module-private (`redactUrlsInMessage`); the composed-string
+  // formatter in `short-error-text.ts` needs it directly, so it is now a public export. These
+  // assertions pin the string-level contract; `serializeError`'s own behavior above is unchanged.
+  describe('redactUrlsInText (exported string-level redactor)', () => {
+    it('redacts a secret-bearing URL in a bare string', () => {
+      const redacted = redactUrlsInText('EACCES: failed at https://example.com/api?apikey=secret123');
+      expect(redacted).toBe('EACCES: failed at https://example.com/api');
+    });
+
+    it('collapses a magnet URI in a bare string', () => {
+      const infoHash = 'b'.repeat(40);
+      expect(redactUrlsInText(`magnet:?xt=urn:btih:${infoHash}&tr=x`)).toBe(`magnet:[${infoHash}]`);
+    });
+
+    it('returns a string with no URL unchanged', () => {
+      expect(redactUrlsInText('ENOENT: no such file or directory')).toBe('ENOENT: no such file or directory');
+    });
+
+    it('is idempotent — redacting an already-redacted string is a no-op', () => {
+      const once = redactUrlsInText('failed at https://example.com/api?apikey=secret123');
+      expect(redactUrlsInText(once)).toBe(once);
     });
   });
 

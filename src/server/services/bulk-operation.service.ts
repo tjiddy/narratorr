@@ -12,7 +12,8 @@ import type { BookService } from './book.service.js';
 import type { ConnectorService } from './connector.service.js';
 import { enqueueRetagRefresh } from '../utils/enqueue-book-refresh.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
-import { BulkJob } from './bulk-job.js';
+import { BulkJob, type BulkJobFailure } from './bulk-job.js';
+import { toShortErrorText } from '../utils/short-error-text.js';
 import { runSidecarReconcile } from './bulk-sidecar-reconcile.js';
 import { triggerCompanionSweep, type CompanionSweepTrigger } from './companion-ebook-trigger.js';
 import { toNamingOptions } from '@core/utils/naming.js';
@@ -29,7 +30,13 @@ export interface BulkJobStatus {
   status: 'running' | 'completed';
   completed: number;
   total: number;
+  /** Uncapped failure count. Always `>= failureDetails.length` (see `MAX_JOB_FAILURE_DETAILS`). */
   failures: number;
+  /**
+   * Named failures, capped at the first `MAX_JOB_FAILURE_DETAILS`. Always an array — `[]` when the
+   * job is clean — so no client needs an optional-chaining fallback (#2159).
+   */
+  failureDetails: BulkJobFailure[];
 }
 
 /** A single mismatched-folder row in the bulk rename preview (library-relative from→to). */
@@ -261,11 +268,13 @@ export class BulkOperationService {
       // ticks as a silent skip). Without a file rule, file work is impossible, so
       // fall back to the folder-mismatch-only filter.
       const rows = await this.loadRenameRows();
-      const targetIds: number[] = [];
+      // Carries the title alongside the id (rather than collapsing to `number[]`) so a failed
+      // rename can NAME the book on the job record — `loadRenameRows` already loaded it (#2159).
+      const targets: Array<{ id: number; title: string }> = [];
       for (const row of rows) {
         if (!row.path) continue;
         if (hasFileRule) {
-          targetIds.push(row.id);
+          targets.push({ id: row.id, title: row.title });
           continue;
         }
         const { changed } = computeFolderTarget(
@@ -274,12 +283,12 @@ export class BulkOperationService {
           librarySettings,
           renameNamingOptions,
         );
-        if (changed) targetIds.push(row.id);
+        if (changed) targets.push({ id: row.id, title: row.title });
       }
 
-      setTotal(targetIds.length);
+      setTotal(targets.length);
 
-      for (const bookId of targetIds) {
+      for (const { id: bookId, title } of targets) {
         try {
           await this.renameService.renameBook(bookId);
         } catch (error: unknown) {
@@ -288,7 +297,7 @@ export class BulkOperationService {
             continue;
           }
           this.log.warn({ bookId, jobId: id, error: serializeError(error) }, 'Bulk rename: book failed');
-          tick(true); // failure
+          tick(true, { bookId, title, error: toShortErrorText(error) }); // named failure
           continue;
         }
         tick(false); // success
@@ -299,7 +308,7 @@ export class BulkOperationService {
       // direct runs, and direct runs do not coalesce — only `reconcileAll()` does. Fires even
       // when some books failed (their folders may still have moved) and is skipped entirely
       // for an empty target set.
-      if (targetIds.length > 0) {
+      if (targets.length > 0) {
         triggerCompanionSweep(this.companionEbook, this.log, 'Companion ebook sweep failed after bulk rename');
       }
     }, () => this.onJobComplete(id));
@@ -311,14 +320,15 @@ export class BulkOperationService {
     this.assertNoActiveJob();
     const id = randomUUID();
     const job = new BulkJob(id, 'retag', this.log, async (setTotal, tick) => {
+      // `title` rides the projection purely so a failure row can name the book (#2159).
       const rows = await this.db
-        .select({ id: books.id })
+        .select({ id: books.id, title: books.title })
         .from(books)
         .where(this.retagEligibleWhere());
 
       setTotal(rows.length);
 
-      for (const { id: bookId } of rows) {
+      for (const { id: bookId, title } of rows) {
         try {
           const result = await this.taggingService.retagBook(bookId);
           // Fire from the result's pre-mutation refresh item (built before the in-place tag rewrite)
@@ -330,7 +340,7 @@ export class BulkOperationService {
             continue;
           }
           this.log.warn({ bookId, jobId: id, error: serializeError(error) }, 'Bulk re-tag: book failed');
-          tick(true); // failure
+          tick(true, { bookId, title, error: toShortErrorText(error) }); // named failure
           continue;
         }
         tick(false); // success

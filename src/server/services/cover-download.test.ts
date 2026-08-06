@@ -958,3 +958,128 @@ describe('isRemoteCoverUrl', () => {
     expect(isRemoteCoverUrl('')).toBe(false);
   });
 });
+
+// #2159 — the optional trailing failure sink that lets the reconcile job NAME the cause. The
+// `'written' | 'skipped' | 'failed'` union is unchanged (it is stubbed at many mock sites); the
+// underlying cause rides a side channel instead.
+describe('downloadRemoteCover — onFailure side channel (#2159)', () => {
+  let mockDb: ReturnType<typeof createMockDb>;
+  let log: FastifyBaseLogger;
+  let onFailure: Mock;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetch.mockReset();
+    mockedDnsLookup.mockReset();
+    dispatcherCloseSpy.mockClear();
+    mockDb = createMockDb();
+    log = createMockLogger();
+    onFailure = vi.fn();
+    mockPublicDns();
+  });
+
+  function download() {
+    return downloadRemoteCover(
+      1, '/books/test', 'https://cdn.example.com/cover.jpg',
+      inject<Db>(mockDb), log, onFailure,
+    );
+  }
+
+  it('reports the caught VALUE on a fetch rejection so .cause/.code survive for the formatter', async () => {
+    const cause = Object.assign(new Error('getaddrinfo ENOTFOUND cdn.example.com'), { code: 'ENOTFOUND' });
+    const thrown = new TypeError('fetch failed', { cause });
+    mockFetch.mockRejectedValue(thrown);
+
+    expect(await download()).toBe('failed');
+    expect(onFailure).toHaveBeenCalledTimes(1);
+    expect(onFailure).toHaveBeenCalledWith(thrown);
+  });
+
+  it('reports a descriptive string on a non-OK status (no error object exists there)', async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 403 }));
+
+    expect(await download()).toBe('failed');
+    expect(onFailure).toHaveBeenCalledTimes(1);
+    expect(String(onFailure.mock.calls[0]![0])).toContain('403');
+  });
+
+  it('reports a descriptive string naming the offending content-type', async () => {
+    mockFetch.mockResolvedValue(new Response('<html>Error</html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    }));
+
+    expect(await download()).toBe('failed');
+    expect(onFailure).toHaveBeenCalledTimes(1);
+    expect(String(onFailure.mock.calls[0]![0])).toContain('text/html');
+  });
+
+  it('reports the caught value when the temp write rejects after a good response', async () => {
+    const cause = Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+    mockFetch.mockResolvedValue(createImageResponse());
+    vi.mocked(writeFile).mockRejectedValueOnce(cause);
+
+    expect(await download()).toBe('failed');
+    expect(onFailure).toHaveBeenCalledWith(cause);
+  });
+
+  it('is NOT invoked on a successful write', async () => {
+    mockFetch.mockResolvedValue(createImageResponse());
+    expect(await download()).toBe('written');
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it('is NOT invoked on the caller-gated skip', async () => {
+    const result = await downloadRemoteCover(
+      1, '/books/test', '/api/books/1/cover', inject<Db>(mockDb), log, onFailure,
+    );
+    expect(result).toBe('skipped');
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it('omitting it is a no-op — the failing arm still returns the same string outcome', async () => {
+    mockFetch.mockRejectedValue(new Error('Connection refused'));
+    const result = await downloadRemoteCover(
+      1, '/books/test', 'https://cdn.example.com/cover.jpg', inject<Db>(mockDb), log,
+    );
+    expect(result).toBe('failed');
+  });
+
+  it('keeps the existing warn lines unchanged in level and content (AC14)', async () => {
+    mockFetch.mockRejectedValue(new Error('Connection refused'));
+
+    await download();
+
+    expect(log.warn).toHaveBeenCalledWith(
+      {
+        error: { message: 'Connection refused', stack: expect.any(String), type: 'Error' },
+        bookId: 1,
+        url: 'https://cdn.example.com/cover.jpg',
+      },
+      'Failed to download remote cover',
+    );
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('keeps the non-OK warn line unchanged in level and content (AC14)', async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 403 }));
+
+    await download();
+
+    expect(log.warn).toHaveBeenCalledWith(
+      { bookId: 1, status: 403, url: 'https://cdn.example.com/cover.jpg' },
+      'Remote cover download returned non-OK status',
+    );
+  });
+
+  it('keeps the non-image warn line unchanged in level and content (AC14)', async () => {
+    mockFetch.mockResolvedValue(new Response('<html/>', { status: 200, headers: { 'content-type': 'text/html' } }));
+
+    await download();
+
+    expect(log.warn).toHaveBeenCalledWith(
+      { bookId: 1, contentType: 'text/html', url: 'https://cdn.example.com/cover.jpg' },
+      'Remote cover response is not an image',
+    );
+  });
+});

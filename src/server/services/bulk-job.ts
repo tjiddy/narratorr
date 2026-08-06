@@ -2,7 +2,31 @@ import type { FastifyBaseLogger } from 'fastify';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BulkOpType, BulkJobStatus } from './bulk-operation.service.js';
 
-export type WorkFn = (setTotal: (n: number) => void, tick: (isFailure: boolean) => void) => Promise<void>;
+/**
+ * One named per-book failure on a bulk job's record (#2159). `error` is always the output of
+ * `toShortErrorText` — a short, URL-redacted, length-bounded line, NOT a serialized stack. The
+ * full serialized error still goes to the log line at the failure site; this is the operator-facing
+ * half, so "1 failure" can read "Captain's Fury (book 226): ENOENT…" instead.
+ */
+export interface BulkJobFailure {
+  bookId: number;
+  title: string;
+  error: string;
+}
+
+/**
+ * How many failure rows a job record retains. The FIRST N are kept (not the last): a full-library
+ * run that goes systematically wrong produces its most diagnostic rows at the start, and a stable
+ * head means the list does not churn while the operator is reading it. The `_failures` COUNT is
+ * uncapped, so `failures >= failureDetails.length` always holds — that gap is what the
+ * "…and N more" row is derived from.
+ */
+export const MAX_JOB_FAILURE_DETAILS = 50;
+
+export type WorkFn = (
+  setTotal: (n: number) => void,
+  tick: (isFailure: boolean, detail?: BulkJobFailure) => void,
+) => Promise<void>;
 
 /**
  * A single in-flight bulk operation. Runs its `work` callback to completion,
@@ -12,6 +36,7 @@ export type WorkFn = (setTotal: (n: number) => void, tick: (isFailure: boolean) 
 export class BulkJob {
   private _completed = 0;
   private _failures = 0;
+  private _failureDetails: BulkJobFailure[] = [];
   private _total = 0;
   private _status: 'running' | 'completed' = 'running';
   private startMs = Date.now();
@@ -32,6 +57,9 @@ export class BulkJob {
       completed: this._completed,
       total: this._total,
       failures: this._failures,
+      // Copied, never aliased: a status object handed to a poll response must not keep growing
+      // underneath the caller as later books fail. Always an array — `[]` when clean.
+      failureDetails: [...this._failureDetails],
     };
   }
 
@@ -47,9 +75,15 @@ export class BulkJob {
     try {
       await this.work(
         (n) => { this._total = n; },
-        (isFailure) => {
+        (isFailure, detail) => {
           this._completed++;
-          if (isFailure) this._failures++;
+          // A detail on a success tick is ignored outright — the seam is shared by three ops and
+          // "not a failure" must never be able to put a row on the operator's failure list.
+          if (!isFailure) return;
+          this._failures++;
+          if (detail && this._failureDetails.length < MAX_JOB_FAILURE_DETAILS) {
+            this._failureDetails.push(detail);
+          }
         },
       );
     } finally {

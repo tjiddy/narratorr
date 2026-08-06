@@ -19,7 +19,7 @@ export type { BackupMetadata, RestoreValidation, BackupJobResult } from './backu
 export type { HealthState, HealthCheckResult, HealthCheckTarget, HealthSummary, TaskMetadata, SystemInfo, SystemStatus, ThirdPartyNotices } from './system.js';
 export type { ImportList, ImportListItem, ImportListPreview } from './import-lists.js';
 export type { SuggestionRow, MarkAddedResult, RefreshResult } from './discover.js';
-export type { BulkOpType, BulkJobStatus, BulkRenamePreview, BulkRenamePreviewItem } from './bulk-operations.js';
+export type { BulkOpType, BulkJobStatus, BulkJobFailure, BulkRenamePreview, BulkRenamePreviewItem } from './bulk-operations.js';
 export type { ImportJobWithBook, ImportJobBook, ImportJobsParams } from './import-jobs.js';
 export type { CompanionEbookState, CompanionEbookCandidate, CompanionEbookMetadata } from './companion-ebook.js';
 export type { ImportSubmissionListParams, AttentionResponse, AttentionSubmission, SubmissionAttention, CreateSubmissionBody, PutItemsBody, PutItemRow, SubmissionListResponse, SubmissionResponse, SubmissionSummary, StagedItemResultDto, StagedImportItem, SubmissionAggregates } from './submissions.js';
