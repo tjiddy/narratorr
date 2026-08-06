@@ -349,6 +349,59 @@ describe('resolveDisplayedFields / mergeBookData — user-cleared fields (#2069)
     });
   });
 
+  describe('#2152 AC7 — the seriesPosition tombstone is its own gate', () => {
+    /** Hunters of Dune: in the series, deliberately unnumbered. */
+    function unnumbered(userClearedFields?: ClearableBookField[]) {
+      return createMockBook({
+        seriesName: 'Dune', seriesPosition: null,
+        ...(userClearedFields ? { userClearedFields } : {}),
+      });
+    }
+    const dune = { seriesPrimary: { name: 'Dune', position: 7 } };
+
+    it('resolves the name but NOT the position, and the meta dot carries no #n', () => {
+      const book = unnumbered(['seriesPosition']);
+      const displayed = resolveDisplayedFields(book, dune);
+
+      expect(displayed.seriesName).toBe('Dune');
+      expect(displayed.seriesPosition).toBeUndefined();
+      expect(mergeBookData(book, dune).metaDots).toContain('Dune');
+      expect(mergeBookData(book, dune).metaDots).not.toContain('Dune #7');
+    });
+
+    it('control: the same fixture WITHOUT the tombstone resurrects the provider 7', () => {
+      const book = unnumbered();
+      const displayed = resolveDisplayedFields(book, dune);
+
+      expect(displayed.seriesName).toBe('Dune');
+      expect(displayed.seriesPosition).toBe(7);
+      expect(mergeBookData(book, dune).metaDots).toContain('Dune #7');
+    });
+
+    it('suppresses a STORED position too, not just the provider fallback', () => {
+      const book = createMockBook({ seriesName: 'Dune', seriesPosition: 7, userClearedFields: ['seriesPosition'] });
+      expect(resolveDisplayedFields(book, null).seriesPosition).toBeUndefined();
+      expect(resolveDisplayedFields(book, null).seriesName).toBe('Dune');
+    });
+
+    it('composes with the seriesName tombstone in either order — both gates, one outcome', () => {
+      const both = resolveDisplayedFields(providerOnlyBook(['seriesName', 'seriesPosition']), providerMeta);
+      expect(both.seriesName).toBeUndefined();
+      expect(both.seriesPosition).toBeUndefined();
+    });
+
+    it('leaves every other field alone', () => {
+      const book = createMockBook({
+        seriesName: 'Dune', seriesPosition: null, subtitle: null, publisher: null,
+        userClearedFields: ['seriesPosition'],
+      });
+      const displayed = resolveDisplayedFields(book, { ...providerMeta, ...dune });
+      expect(displayed.subtitle).toBe('Provider Subtitle');
+      expect(displayed.publisher).toBe('Tor Books');
+      expect(displayed.publishedDate).toBe('2010-08-31');
+    });
+  });
+
   it('the header and the modal baseline derive from ONE call, so they cannot disagree', () => {
     // Consistency guard: a future divergence between what the header hides and what
     // the modal pre-fills fails here rather than shipping.

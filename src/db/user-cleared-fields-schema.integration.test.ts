@@ -632,4 +632,179 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
       expect(updated!.userClearedFields).toEqual(['seriesName']);
     });
   });
+
+  // ─── #2152: "in the series, unnumbered", end to end through BookService ───
+  describe('#2152 — the seriesPosition tombstone against a real DB', () => {
+    async function readRow(bookId: number) {
+      return (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
+    }
+
+    /** Hunters of Dune: a numbered franchise-tail book the operator unnumbers. */
+    async function seedHunters(): Promise<number> {
+      return seedBook({ title: 'Hunters of Dune', seriesName: 'Dune', seriesPosition: 7 });
+    }
+
+    it('AC4 row 3: clearing the position alone tombstones it and keeps the series name', async () => {
+      const bookId = await seedHunters();
+
+      const updated = await bookService.update(bookId, { seriesPosition: null }, { userAsserted: true });
+
+      const row = await readRow(bookId);
+      expect(row.seriesPosition).toBeNull();
+      expect(row.seriesName).toBe('Dune');
+      expect(row.userClearedFields).toBe('["seriesPosition"]');
+      expect(updated!.userClearedFields).toEqual(['seriesPosition']);
+    });
+
+    it('re-assertion: a following { seriesPosition: 12 } stores 12 and drops the tombstone', async () => {
+      const bookId = await seedHunters();
+      await bookService.update(bookId, { seriesPosition: null }, { userAsserted: true });
+
+      await bookService.update(bookId, { seriesPosition: 12 }, { userAsserted: true });
+
+      const row = await readRow(bookId);
+      expect(row.seriesPosition).toBe(12);
+      expect(row.userClearedFields).toBeNull();
+    });
+
+    it('AC4 row 2a: 0 is stored as a position, never coerced into a clear', async () => {
+      const bookId = await seedHunters();
+
+      await bookService.update(bookId, { seriesPosition: 0 }, { userAsserted: true });
+
+      const row = await readRow(bookId);
+      expect(row.seriesPosition).toBe(0);
+      expect(row.userClearedFields).toBeNull();
+    });
+
+    it('AC4 row 7: clearing the NAME nulls the position column and leaves the position tombstone alone', async () => {
+      const bookId = await seedHunters();
+      await bookService.update(bookId, { seriesPosition: null }, { userAsserted: true });
+
+      await bookService.update(bookId, { seriesName: null }, { userAsserted: true });
+
+      const row = await readRow(bookId);
+      expect(row.seriesName).toBeNull();
+      expect(row.seriesPosition).toBeNull();
+      expect(row.userClearedFields).toBe('["seriesName","seriesPosition"]');
+    });
+
+    it('AC4 row 3 from the name-cleared state: the redundant both-entry set is inert', async () => {
+      const bookId = await seedHunters();
+      await bookService.update(bookId, { seriesName: null }, { userAsserted: true });
+      const afterNameClear = await readRow(bookId);
+
+      const updated = await bookService.update(bookId, { seriesPosition: null }, { userAsserted: true });
+
+      const row = await readRow(bookId);
+      expect(row.userClearedFields).toBe('["seriesName","seriesPosition"]');
+      expect(row.seriesName).toBeNull();
+      expect(row.seriesPosition).toBeNull();
+      // Renders exactly as it did with `['seriesName']` alone.
+      expect(row.seriesName).toBe(afterNameClear.seriesName);
+      expect(row.seriesPosition).toBe(afterNameClear.seriesPosition);
+      expect(updated!.userClearedFields).toEqual(['seriesName', 'seriesPosition']);
+    });
+
+    it('AC4 row 2b: a number supplied on a name-tombstoned book is discarded by rule b', async () => {
+      const bookId = await seedBook({ title: 'Hunters of Dune', seriesName: 'Dune' });
+      await bookService.update(bookId, { seriesName: null }, { userAsserted: true });
+
+      await bookService.update(bookId, { seriesPosition: 7 }, { userAsserted: true });
+
+      const row = await readRow(bookId);
+      expect(row.seriesPosition).toBeNull();
+      expect(row.userClearedFields).toBe('["seriesName"]');
+    });
+
+    it('AC4 row 1 exemption: an unrelated PUT leaves a stale name-tombstoned position exactly as it is', async () => {
+      const bookId = await seedBook({ title: 'Hunters of Dune', seriesName: 'Dune' });
+      await bookService.update(bookId, { seriesName: null }, { userAsserted: true });
+      // Seed the stale orphan directly — rule **b** makes it unreachable in-app.
+      await db.update(books).set({ seriesPosition: 7 }).where(eq(books.id, bookId));
+
+      await bookService.update(bookId, { subtitle: 'x' }, { userAsserted: true });
+
+      const row = await readRow(bookId);
+      expect(row.seriesPosition).toBe(7);
+      expect(row.userClearedFields).toBe('["seriesName"]');
+    });
+
+    it('AC4 row 6: setting a name while blanking the position leaves the position tombstoned', async () => {
+      const bookId = await seedHunters();
+
+      await bookService.update(bookId, { seriesName: 'Dune Chronicles', seriesPosition: null }, { userAsserted: true });
+
+      const row = await readRow(bookId);
+      expect(row.seriesName).toBe('Dune Chronicles');
+      expect(row.seriesPosition).toBeNull();
+      expect(row.userClearedFields).toBe('["seriesPosition"]');
+    });
+
+    it('AC4 rule a: setting a name alone re-asserts the pair and drops the position tombstone', async () => {
+      const bookId = await seedHunters();
+      await bookService.update(bookId, { seriesPosition: null }, { userAsserted: true });
+
+      await bookService.update(bookId, { seriesName: 'Dune Chronicles' }, { userAsserted: true });
+
+      const row = await readRow(bookId);
+      expect(row.seriesName).toBe('Dune Chronicles');
+      // Rule **a** touches the TOMBSTONE only — the column it left NULL stays NULL.
+      expect(row.seriesPosition).toBeNull();
+      expect(row.userClearedFields).toBeNull();
+    });
+
+    it('a legacy both-entry row is not rewritten by an unrelated update (no rule keys on absence)', async () => {
+      const bookId = await seedBook();
+      await writeRawColumn(bookId, '["seriesName","seriesPosition"]');
+      const before = await readRawColumn(bookId);
+
+      await bookService.update(bookId, { subtitle: 'x' }, { userAsserted: true });
+
+      expect(await readRawColumn(bookId)).toBe(before);
+    });
+
+    it('an internal (non-userAsserted) caller records no position tombstone', async () => {
+      const bookId = await seedHunters();
+
+      await bookService.update(bookId, { seriesPosition: null });
+
+      const row = await readRow(bookId);
+      expect(row.seriesPosition).toBeNull();
+      expect(row.userClearedFields).toBeNull();
+    });
+
+    it('a concurrent unrelated tombstone landing during a position clear drops neither entry', async () => {
+      const bookId = await seedHunters();
+
+      await Promise.all([
+        bookService.update(bookId, { seriesPosition: null }, { userAsserted: true }),
+        bookService.update(bookId, { publisher: null }, { userAsserted: true }),
+      ]);
+
+      expect(await readRawColumn(bookId)).toBe('["publisher","seriesPosition"]');
+    });
+
+    it('a scheduled enrichment pass does not resurrect the cleared position', async () => {
+      // The orphan shape `fillSeriesFields` acts on: no stored name, stale position.
+      const bookId = await seedBook({ title: 'Tress of the Emerald Sea', asin: 'B0BTRESS01', seriesPosition: 5, enrichmentStatus: 'pending' });
+      await writeRawColumn(bookId, '["seriesPosition"]');
+
+      await runOneEnrichmentPass();
+
+      const row = await readRow(bookId);
+      expect(row.seriesName).toBe('Secret Projects');
+      expect(row.seriesPosition).toBeNull();
+    });
+
+    it('control: the same fixture without the tombstone DOES get the provider position', async () => {
+      const bookId = await seedBook({ title: 'Tress of the Emerald Sea', asin: 'B0BTRESS01', seriesPosition: 5, enrichmentStatus: 'pending' });
+
+      await runOneEnrichmentPass();
+
+      const row = await readRow(bookId);
+      expect(row.seriesName).toBe('Secret Projects');
+      expect(row.seriesPosition).toBe(1);
+    });
+  });
 });

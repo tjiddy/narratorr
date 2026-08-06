@@ -136,9 +136,13 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
 
     if (seriesName.trim() !== (baseline.seriesName ?? '')) data.seriesName = seriesName.trim() || null;
 
-    // `seriesPosition` follows `seriesName` (the pair rule) — it is never baselined
-    // against the provider independently, so it inherits whatever the resolver
-    // decided for the pair.
+    // `seriesPosition` baselines off the resolver like every other clearable
+    // field, so it inherits both the pair rule (a position resolves only when the
+    // name does) AND its own tombstone (#2152): once cleared, the input reopens
+    // BLANK — the provider number does not reappear — and blanking it sends
+    // `seriesPosition: null` alone, with no `seriesName` key. The server derives
+    // the tombstone; nothing tombstone-shaped is sent from here. Typing a number
+    // back re-asserts.
     const pos = diffSeriesPosition(seriesPosition, baseline.seriesPosition);
     if (pos) data.seriesPosition = pos.value;
 

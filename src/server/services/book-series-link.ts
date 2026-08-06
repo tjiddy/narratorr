@@ -331,3 +331,34 @@ export async function removeSeriesNameTombstone(
   const current = parseClearedFields(rows[0]?.userClearedFields ?? null, log, bookId);
   return serializeClearedFields(current.filter((field) => field !== 'seriesName'));
 }
+
+/**
+ * Which of `bookIds` carry a live `seriesPosition` tombstone (#2152 AC9) — the
+ * books a Hardcover bind must not write a position over.
+ *
+ * ONE batched `IN (…)` select on the caller's handle, never one query per book:
+ * a bind syncs the whole matched sibling set, and a single libSQL connection
+ * serializes every transaction ([[libsql-transactions-serialized-at-the-connection]]),
+ * so per-book reads inside the open transaction lengthen the window every other
+ * writer queues behind. Read INSIDE the transaction for the same reason
+ * `removeSeriesNameTombstone` is: the bind's `fetchById` is a network round-trip
+ * and a `PUT` can land a position clear while it is in flight.
+ */
+export async function readPositionClearedBookIds(
+  tx: DbOrTx,
+  log: FastifyBaseLogger,
+  bookIds: readonly number[],
+): Promise<Set<number>> {
+  if (bookIds.length === 0) return new Set();
+  const rows = await tx
+    .select({ id: books.id, userClearedFields: books.userClearedFields })
+    .from(books)
+    .where(inArray(books.id, [...new Set(bookIds)]));
+  const cleared = new Set<number>();
+  for (const row of rows) {
+    if (parseClearedFields(row.userClearedFields, log, row.id).includes('seriesPosition')) {
+      cleared.add(row.id);
+    }
+  }
+  return cleared;
+}

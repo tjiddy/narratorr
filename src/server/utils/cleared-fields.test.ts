@@ -137,6 +137,18 @@ describe('parseClearedFields', () => {
     expect(parseClearedFields('["subtitle","genres","subtitle"]', log, 1)).toEqual(['genres', 'subtitle']);
   });
 
+  it('AC3: keeps seriesPosition — no longer an unknown name to drop', () => {
+    const log = createMockLogger();
+    expect(parseClearedFields('["seriesPosition"]', log, 1)).toEqual(['seriesPosition']);
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('AC3: keeps a redundant both-entry set without warning', () => {
+    const log = createMockLogger();
+    expect(parseClearedFields('["seriesName","seriesPosition"]', log, 1)).toEqual(['seriesName', 'seriesPosition']);
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
   it('never throws for any of the malformed shapes', () => {
     const log = createMockLogger();
     for (const raw of ['{oops', '"a string"', '3', 'null', '[null]', '[{"a":1}]']) {
@@ -159,6 +171,11 @@ describe('serializeClearedFields', () => {
     expect(serializeClearedFields([...CLEARABLE_BOOK_FIELDS])).toBe(
       JSON.stringify([...CLEARABLE_BOOK_FIELDS].sort()),
     );
+  });
+
+  it('AC3: the canonical sort places seriesPosition directly after seriesName', () => {
+    expect(serializeClearedFields([...CLEARABLE_BOOK_FIELDS])).toContain('"seriesName","seriesPosition","subtitle"');
+    expect(serializeClearedFields(['seriesPosition', 'seriesName'])).toBe('["seriesName","seriesPosition"]');
   });
 
   it('throws on an unknown field name', () => {
@@ -258,19 +275,183 @@ describe('recomputeClearedFields — AC6 matrix, genres', () => {
   });
 });
 
-describe('recomputeClearedFields — pair rule and non-clearable keys', () => {
-  it('seriesPosition: null alone never adds a tombstone', () => {
-    const r = recomputeClearedFields([], { seriesPosition: null });
-    expect(r.cleared).toEqual([]);
-    expect(r.normalized).toEqual({});
+/**
+ * #2152 AC4 — the complete `userAsserted` series matrix, the SOLE statement of
+ * what a given (prior set × body) produces. Every row asserts all three outputs;
+ * every row is run from the empty prior set AND from the redundant
+ * `['seriesName','seriesPosition']` set, since a both-entry set is legal and no
+ * row may special-case it.
+ */
+describe('recomputeClearedFields — AC4 series matrix', () => {
+  const BOTH = ['seriesName', 'seriesPosition'] as const;
+
+  describe('row 1 — neither key', () => {
+    it('leaves the set, the columns and blanked untouched', () => {
+      const r = recomputeClearedFields([], { subtitle: 'x' });
+      expect(r.cleared).toEqual([]);
+      expect(r.normalized).toEqual({ subtitle: 'x' });
+      expect(r.blanked).toEqual([]);
+    });
+
+    it('does not repair or rewrite a redundant both-entry prior set (no rule keys on absence)', () => {
+      const r = recomputeClearedFields([...BOTH], { subtitle: 'x' });
+      expect(r.cleared).toEqual(['seriesName', 'seriesPosition']);
+      expect(r.normalized).toEqual({ subtitle: 'x' });
+      expect(r.blanked).toEqual([]);
+    });
   });
 
-  it('seriesName: null covers the pair — only seriesName is tombstoned', () => {
-    const r = recomputeClearedFields([], { seriesName: null, seriesPosition: null });
-    expect(r.cleared).toEqual(['seriesName']);
-    expect(r.normalized).toEqual({ seriesName: null });
+  describe('row 2a — position number, seriesName tombstone NOT live', () => {
+    it('removes the position tombstone and stores the number', () => {
+      const r = recomputeClearedFields(['seriesPosition'], { seriesPosition: 7 });
+      expect(r.cleared).toEqual([]);
+      expect(r.normalized).toEqual({ seriesPosition: 7 });
+      expect(r.blanked).toEqual([]);
+    });
+
+    it('stores 0 as a position, never as a clear (no truthiness coercion)', () => {
+      const r = recomputeClearedFields(['seriesPosition'], { seriesPosition: 0 });
+      expect(r.cleared).toEqual([]);
+      expect(r.normalized.seriesPosition).toBe(0);
+      expect(r.blanked).toEqual([]);
+    });
+
+    it('stores a fractional position verbatim', () => {
+      expect(recomputeClearedFields([], { seriesPosition: 3.5 }).normalized.seriesPosition).toBe(3.5);
+    });
   });
 
+  describe('row 2b — position number, seriesName tombstone IS live', () => {
+    it('discards the number and nulls the column (rule b), keeping the name tombstone', () => {
+      const r = recomputeClearedFields(['seriesName'], { seriesPosition: 7 });
+      expect(r.cleared).toEqual(['seriesName']);
+      expect(r.normalized.seriesPosition).toBeNull();
+      expect(r.blanked).toEqual([]);
+    });
+
+    it('behaves the same from the redundant both-entry set (the position tombstone still lifts)', () => {
+      const r = recomputeClearedFields([...BOTH], { seriesPosition: 7 });
+      expect(r.cleared).toEqual(['seriesName']);
+      expect(r.normalized.seriesPosition).toBeNull();
+      expect(r.blanked).toEqual([]);
+    });
+
+    it('counterfactual: the identical body without a live name tombstone stores 7', () => {
+      expect(recomputeClearedFields([], { seriesPosition: 7 }).normalized.seriesPosition).toBe(7);
+    });
+  });
+
+  describe('row 3 — position null', () => {
+    it('adds the position tombstone, nulls the column and lists it in blanked', () => {
+      const r = recomputeClearedFields([], { seriesPosition: null });
+      expect(r.cleared).toEqual(['seriesPosition']);
+      expect(r.normalized).toEqual({ seriesPosition: null });
+      expect(r.blanked).toEqual(['seriesPosition']);
+    });
+
+    it('from the redundant both-entry set still yields both entries', () => {
+      const r = recomputeClearedFields([...BOTH], { seriesPosition: null });
+      expect(r.cleared).toEqual(['seriesName', 'seriesPosition']);
+      expect(r.normalized).toEqual({ seriesPosition: null });
+      expect(r.blanked).toEqual(['seriesPosition']);
+    });
+  });
+
+  describe('row 4 — non-blank name, position absent', () => {
+    it('removes both tombstones (rule a) and leaves the stored position untouched', () => {
+      const r = recomputeClearedFields([...BOTH], { seriesName: 'Dune' });
+      expect(r.cleared).toEqual([]);
+      expect(r.normalized).toEqual({ seriesName: 'Dune' });
+      expect(r.blanked).toEqual([]);
+    });
+  });
+
+  describe('row 5 — non-blank name + position number', () => {
+    it('removes both tombstones and stores both values', () => {
+      const r = recomputeClearedFields([...BOTH], { seriesName: 'Dune', seriesPosition: 7 });
+      expect(r.cleared).toEqual([]);
+      expect(r.normalized).toEqual({ seriesName: 'Dune', seriesPosition: 7 });
+      expect(r.blanked).toEqual([]);
+    });
+  });
+
+  describe("row 6 — non-blank name + position null (the body's own key beats rule a)", () => {
+    it('removes the name tombstone and ADDS the position tombstone', () => {
+      const r = recomputeClearedFields([], { seriesName: 'Dune', seriesPosition: null });
+      expect(r.cleared).toEqual(['seriesPosition']);
+      expect(r.normalized).toEqual({ seriesName: 'Dune', seriesPosition: null });
+      expect(r.blanked).toEqual(['seriesPosition']);
+    });
+
+    it('same outcome from the redundant both-entry set', () => {
+      const r = recomputeClearedFields([...BOTH], { seriesName: 'Dune', seriesPosition: null });
+      expect(r.cleared).toEqual(['seriesPosition']);
+      expect(r.blanked).toEqual(['seriesPosition']);
+    });
+  });
+
+  describe('row 7 — blank name, position absent', () => {
+    it('adds the name tombstone, nulls BOTH columns and lists only seriesName in blanked', () => {
+      const r = recomputeClearedFields([], { seriesName: null });
+      expect(r.cleared).toEqual(['seriesName']);
+      expect(r.normalized).toEqual({ seriesName: null, seriesPosition: null });
+      expect(r.blanked).toEqual(['seriesName']);
+    });
+
+    it('leaves an existing position tombstone alone while rule b nulls the column', () => {
+      const r = recomputeClearedFields(['seriesPosition'], { seriesName: '   ' });
+      expect(r.cleared).toEqual(['seriesName', 'seriesPosition']);
+      expect(r.normalized.seriesName).toBeNull();
+      expect(r.normalized.seriesPosition).toBeNull();
+      expect(r.blanked).toEqual(['seriesName']);
+    });
+  });
+
+  describe('row 8 — blank name + position number', () => {
+    it('discards the number (rule b) and lists only seriesName in blanked', () => {
+      const r = recomputeClearedFields([], { seriesName: null, seriesPosition: 5 });
+      expect(r.cleared).toEqual(['seriesName']);
+      expect(r.normalized).toEqual({ seriesName: null, seriesPosition: null });
+      expect(r.blanked).toEqual(['seriesName']);
+    });
+
+    it('removes a pre-existing position tombstone even though the number is discarded', () => {
+      const r = recomputeClearedFields([...BOTH], { seriesName: '', seriesPosition: 5 });
+      expect(r.cleared).toEqual(['seriesName']);
+      expect(r.normalized.seriesPosition).toBeNull();
+      expect(r.blanked).toEqual(['seriesName']);
+    });
+  });
+
+  describe('row 9 — blank name + position null', () => {
+    it('adds both tombstones, nulls both columns and lists both in blanked', () => {
+      const r = recomputeClearedFields([], { seriesName: null, seriesPosition: null });
+      expect(r.cleared).toEqual(['seriesName', 'seriesPosition']);
+      expect(r.normalized).toEqual({ seriesName: null, seriesPosition: null });
+      expect(r.blanked).toEqual(['seriesName', 'seriesPosition']);
+    });
+
+    it('is idempotent from the redundant both-entry set', () => {
+      const r = recomputeClearedFields([...BOTH], { seriesName: null, seriesPosition: null });
+      expect(r.cleared).toEqual(['seriesName', 'seriesPosition']);
+      expect(r.blanked).toEqual(['seriesName', 'seriesPosition']);
+    });
+  });
+
+  it('AC6: a position-only update never touches the seriesName tombstone or column', () => {
+    for (const body of [{ seriesPosition: null }, { seriesPosition: 7 }, { seriesPosition: 0 }]) {
+      const fresh = recomputeClearedFields([], body);
+      expect(fresh.cleared).not.toContain('seriesName');
+      expect(fresh.normalized).not.toHaveProperty('seriesName');
+
+      const tombstoned = recomputeClearedFields(['seriesName'], body);
+      expect(tombstoned.cleared).toContain('seriesName');
+      expect(tombstoned.normalized).not.toHaveProperty('seriesName');
+    }
+  });
+});
+
+describe('recomputeClearedFields — non-clearable keys', () => {
   it('non-clearable keys never affect the set', () => {
     const r = recomputeClearedFields([], {
       coverUrl: null, status: 'wanted', title: 'x', narrators: [], authors: [{ name: 'a' }],
@@ -298,7 +479,9 @@ describe('recomputeClearedFields — idempotence and canonical form', () => {
   it('mixed body: one field blanked while another is set in the same call', () => {
     const r = recomputeClearedFields(['publisher'], { seriesName: null, publisher: 'Tor' });
     expect(r.cleared).toEqual(['seriesName']);
-    expect(r.normalized).toEqual({ seriesName: null, publisher: 'Tor' });
+    // `seriesPosition: null` rides along from AC4's rule **b** — the column
+    // follows the name tombstone even though the body never named the key.
+    expect(r.normalized).toEqual({ seriesName: null, seriesPosition: null, publisher: 'Tor' });
     expect(r.blanked).toEqual(['seriesName']);
   });
 });

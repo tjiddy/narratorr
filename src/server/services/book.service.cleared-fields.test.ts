@@ -90,6 +90,56 @@ describe('BookService — user-cleared fields (#2069)', () => {
     });
   });
 
+  // #2152 F11 — the widened tuple and AC4's rule **b** change the issued UPDATE
+  // shape at this layer, so the service pins them alongside the pure recompute.
+  describe('#2152 — the series matrix reaches the issued UPDATE verbatim', () => {
+    /** Drive one `userAsserted` update over a given stored tombstone column. */
+    async function issuedFor(stored: string | null, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+      db.select.mockReturnValueOnce(mockDbChain([{ userClearedFields: stored }]));
+      queueGetById(db);
+      await service.update(1, body, { userAsserted: true });
+      return issuedSet();
+    }
+
+    it('row 3: a position-only clear writes the tombstone and NULLs only that column', async () => {
+      const set = await issuedFor(null, { seriesPosition: null });
+
+      expect(set.userClearedFields).toBe('["seriesPosition"]');
+      expect(set.seriesPosition).toBeNull();
+      expect(set).not.toHaveProperty('seriesName');
+    });
+
+    it('row 2a: 0 reaches the UPDATE as 0 and lifts the tombstone', async () => {
+      const set = await issuedFor('["seriesPosition"]', { seriesPosition: 0 });
+
+      expect(set.seriesPosition).toBe(0);
+      expect(set.userClearedFields).toBeNull();
+    });
+
+    it('rule b: a name clear NULLs the position column even though the body never named it', async () => {
+      const set = await issuedFor(null, { seriesName: null });
+
+      expect(set.userClearedFields).toBe('["seriesName"]');
+      expect(set.seriesName).toBeNull();
+      expect(set.seriesPosition).toBeNull();
+    });
+
+    it('row 2b: rule b discards a supplied number on an already-name-tombstoned book', async () => {
+      const set = await issuedFor('["seriesName"]', { seriesPosition: 7 });
+
+      expect(set.seriesPosition).toBeNull();
+      expect(set.userClearedFields).toBe('["seriesName"]');
+    });
+
+    it('row 1 exemption: an unrelated update issues no series keys at all', async () => {
+      const set = await issuedFor('["seriesName"]', { subtitle: 'x' });
+
+      expect(set).not.toHaveProperty('seriesName');
+      expect(set).not.toHaveProperty('seriesPosition');
+      expect(set.userClearedFields).toBe('["seriesName"]');
+    });
+  });
+
   describe('AC8 / F24 — the set is re-read INSIDE the write transaction', () => {
     it('merges a clear that commits between the caller entering update() and the transaction opening', async () => {
       // The stored set is empty in the pre-transaction world; a concurrent operator

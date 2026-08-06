@@ -14,10 +14,22 @@ import {
   type BookSeriesMemberCard,
   type MemberState,
 } from './series-card-members.js';
-import { relinkBookToBoundSeries, removeSeriesNameTombstone, seedLocalMembersForUnclaimedBooks } from './book-series-link.js';
+import { readPositionClearedBookIds, relinkBookToBoundSeries, removeSeriesNameTombstone, seedLocalMembersForUnclaimedBooks } from './book-series-link.js';
 import { upsertHardcoverSeries } from './hardcover-series-upsert.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
+import { parseClearedFields } from '../utils/cleared-fields.js';
 import { serializeError } from '../utils/serialize-error.js';
+
+/**
+ * The candidate pool for one or more series names, plus the ids whose
+ * `seriesPosition` the operator cleared (#2152 AC9a). Two values rather than a
+ * widened `LibraryBookSummary`: the matcher's input type stays narrow and its
+ * claim behavior unchanged, and only the projection consults the tombstones.
+ */
+interface LibraryPool {
+  books: LibraryBookSummary[];
+  positionClearedIds: Set<number>;
+}
 
 /**
  * The card's member-entry shape. Declared beside the assembly rule that produces
@@ -276,7 +288,10 @@ export class SeriesCardService {
   }
 
   private async buildLibraryOnlyCard(seriesName: string): Promise<BookSeriesCardData> {
-    const libraryBooks = await this.loadLibraryBooksForSeries(seriesName);
+    // Column-keyed by design (#2152 AC9a): every owned entry renders from the
+    // book's own `series_position`, which rule **b** leaves NULL for an in-app
+    // clear — so a cleared position already shows `—` with no tombstone lookup.
+    const { books: libraryBooks } = await this.loadLibraryBooksForSeries(seriesName);
     const members = libraryBooks.map(libraryMemberCard).sort(compareLibraryMembers);
     return {
       id: null,
@@ -305,8 +320,8 @@ export class SeriesCardService {
       .select()
       .from(seriesMembers)
       .where(eq(seriesMembers.seriesId, seriesId));
-    const pool = await this.loadLibraryBooksForSeries(seriesName, executor);
-    return { rows, pool };
+    const { books: pool, positionClearedIds } = await this.loadLibraryBooksForSeries(seriesName, executor);
+    return { rows, pool, positionClearedIds };
   }
 
   private async buildCardFromCache(row: SeriesRow, seriesName: string): Promise<BookSeriesCardData> {
@@ -410,7 +425,7 @@ export class SeriesCardService {
    */
   private async persistMembers(tx: DbOrTx, resolved: HardcoverSeriesData, seriesName: string, extraSeriesNames: string[] = []): Promise<{ row: SeriesRow; matches: MatchedLibraryBook[] }> {
     const normalized = normalizeSeriesName(seriesName);
-    const libraryBooks = await this.loadLibraryBooksForSeriesNames([seriesName, ...extraSeriesNames], tx);
+    const { books: libraryBooks } = await this.loadLibraryBooksForSeriesNames([seriesName, ...extraSeriesNames], tx);
     const upserted = await upsertHardcoverSeries(tx, resolved, normalized);
     await tx.delete(seriesMembers).where(eq(seriesMembers.seriesId, upserted.id));
     const matchedLibraryIds = new Set<number>();
@@ -436,7 +451,7 @@ export class SeriesCardService {
     }
     const primaryPool = extraSeriesNames.length === 0
       ? libraryBooks
-      : await this.loadLibraryBooksForSeries(seriesName, tx);
+      : (await this.loadLibraryBooksForSeries(seriesName, tx)).books;
     await seedLocalMembersForUnclaimedBooks(
       tx,
       upserted.id,
@@ -454,8 +469,10 @@ export class SeriesCardService {
    * `books.series_name`/`series_position` for EVERY matched member — not just
    * the initiating book, else siblings keep the stale name and the series
    * splits in the Library view — to the canonical name + its own matched
-   * position (0 is valid). The initiating book always adopts the canonical name
-   * even when unmatched, keeping its position; (3) re-links every synced book
+   * position (0 is valid), EXCEPT that a book carrying a `seriesPosition`
+   * tombstone has its position left alone entirely (#2152 AC9). The initiating
+   * book always adopts the canonical name even when unmatched, keeping its
+   * position; (3) re-links every synced book
    * off old series rows and deletes any left empty. Any failure rolls all of it
    * back. Returns the rebuilt (id-sourced) card **alongside the ids the
    * transaction actually rewrote**, or null when the book is missing, no key is
@@ -504,6 +521,24 @@ export class SeriesCardService {
       const extraNames = priorSeriesName ? [priorSeriesName] : [];
       const { row, matches } = await this.persistMembers(tx, resolved, resolved.name, extraNames);
 
+      // Binding a series to fix its NAME must not silently undo an unrelated
+      // position clear (#2152 AC9), so no synced book — the initiating one or a
+      // matched sibling — has `series_position` written when it carries a
+      // `seriesPosition` tombstone. "Does not write the column" is the whole
+      // rule: such a row keeps whatever it already holds, UNCHANGED and not
+      // normalized. For an in-app clear that value is already NULL (AC4 rule
+      // **b**); the out-of-band decoupled state keeps its stale number, and bind
+      // performs no repair. The operator can always type a number to re-assert.
+      //
+      // ONE batched read for the whole synced batch, inside this transaction —
+      // never carried from the pre-fetch `loadBook`, whose `fetchById` is a
+      // network round-trip a `PUT` can land during.
+      const positionCleared = await readPositionClearedBookIds(
+        tx,
+        this.log,
+        [...matches.map((match) => match.bookId), bookId],
+      );
+
       const syncedIds = new Set<number>();
       for (const match of matches) {
         syncedIds.add(match.bookId);
@@ -511,7 +546,7 @@ export class SeriesCardService {
           .update(books)
           .set({
             seriesName: resolved.name,
-            seriesPosition: match.position,
+            ...(positionCleared.has(match.bookId) ? {} : { seriesPosition: match.position }),
             ...(match.bookId === bookId ? { userClearedFields: boundClearedFields } : {}),
             updatedAt: new Date(),
           })
@@ -524,7 +559,12 @@ export class SeriesCardService {
         syncedIds.add(bookId);
         await tx
           .update(books)
-          .set({ seriesName: resolved.name, seriesPosition: book.seriesPosition, userClearedFields: boundClearedFields, updatedAt: new Date() })
+          .set({
+            seriesName: resolved.name,
+            ...(positionCleared.has(bookId) ? {} : { seriesPosition: book.seriesPosition }),
+            userClearedFields: boundClearedFields,
+            updatedAt: new Date(),
+          })
           .where(eq(books.id, bookId));
       }
 
@@ -555,13 +595,21 @@ export class SeriesCardService {
     return (await client.searchSeries(query)).slice(0, 10);
   }
 
-  private async loadLibraryBooksForSeries(seriesName: string, executor: DbOrTx = this.db): Promise<LibraryBookSummary[]> {
+  private async loadLibraryBooksForSeries(seriesName: string, executor: DbOrTx = this.db): Promise<LibraryPool> {
     return this.loadLibraryBooksForSeriesNames([seriesName], executor);
   }
 
-  private async loadLibraryBooksForSeriesNames(seriesNames: string[], executor: DbOrTx = this.db): Promise<LibraryBookSummary[]> {
+  /**
+   * The candidate pool plus the `seriesPosition` tombstones that gate its
+   * projection (#2152 AC9a), read in ONE query — the tombstone column rides along
+   * on the select the pool already issues, so the card costs no extra round-trip
+   * and the two can never be read at different instants. The pool objects handed
+   * to `findInLibraryMatch` are unchanged: the tombstones leave as a separate id
+   * set, never as a field on `LibraryBookSummary`.
+   */
+  private async loadLibraryBooksForSeriesNames(seriesNames: string[], executor: DbOrTx = this.db): Promise<LibraryPool> {
     const unique = [...new Set(seriesNames)];
-    if (unique.length === 0) return [];
+    if (unique.length === 0) return { books: [], positionClearedIds: new Set() };
     // `ORDER BY books.id` is a MATCHER CONTRACT, not cosmetic (#2108).
     // `findInLibraryMatch` is greedy and first-claim-wins WITHIN a match-quality
     // tier, so the sequence these rows arrive in decides which book a member
@@ -576,10 +624,18 @@ export class SeriesCardService {
     // `loadLibraryBooksForSeries` (the render path) and `persistMembers` (the
     // bind path), so the two present candidates in the same sequence.
     const rows = await executor
-      .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition })
+      .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition, userClearedFields: books.userClearedFields })
       .from(books)
       .where(inArray(books.seriesName, unique))
       .orderBy(asc(books.id));
-    return rows;
+    const positionClearedIds = new Set<number>();
+    const pool: LibraryBookSummary[] = [];
+    for (const row of rows) {
+      pool.push({ id: row.id, title: row.title, seriesPosition: row.seriesPosition });
+      if (parseClearedFields(row.userClearedFields, this.log, row.id).includes('seriesPosition')) {
+        positionClearedIds.add(row.id);
+      }
+    }
+    return { books: pool, positionClearedIds };
   }
 }

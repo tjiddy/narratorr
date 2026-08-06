@@ -105,11 +105,28 @@ describe('Provider-only metadata clear — client E2E (#2069)', () => {
       if ('seriesName' in payload) {
         if (payload.seriesName == null || payload.seriesName.trim() === '') {
           cleared.add('seriesName');
-          storedBook = { ...storedBook, seriesName: null, seriesPosition: null };
+          storedBook = { ...storedBook, seriesName: null };
         } else {
           cleared.delete('seriesName');
           storedBook = { ...storedBook, seriesName: payload.seriesName };
         }
+      }
+      // #2152: the position carries its OWN tombstone, plus AC4's two pair rules —
+      // (a) a non-blank name re-asserts the pair unless the body names the position,
+      // (b) a live name tombstone NULLs the position column.
+      if ('seriesPosition' in payload) {
+        if (payload.seriesPosition == null) {
+          cleared.add('seriesPosition');
+          storedBook = { ...storedBook, seriesPosition: null };
+        } else {
+          cleared.delete('seriesPosition');
+          storedBook = { ...storedBook, seriesPosition: payload.seriesPosition };
+        }
+      } else if (payload.seriesName) {
+        cleared.delete('seriesPosition');
+      }
+      if (cleared.has('seriesName') && ('seriesName' in payload || 'seriesPosition' in payload)) {
+        storedBook = { ...storedBook, seriesPosition: null };
       }
       storedBook = { ...storedBook, userClearedFields: [...cleared].sort() };
       return storedBook;
@@ -254,6 +271,81 @@ describe('Provider-only metadata clear — client E2E (#2069)', () => {
     expect(payload).not.toHaveProperty('seriesName');
     // The header keeps showing the provider fallback — nothing was tombstoned.
     expect(screen.getByText(/Secret Projects #1/)).toBeInTheDocument();
+  });
+
+  // ─── #2152 AC14: clearing the POSITION alone, series kept ───
+  describe('clearing the position alone (#2152 AC14)', () => {
+    async function clearPosition(user: ReturnType<typeof userEvent.setup>) {
+      await openEditModal(user);
+      expect(screen.getByLabelText(/^position$/i)).toHaveValue('1');
+      await user.clear(screen.getByLabelText(/^position$/i));
+      await user.click(screen.getByText('Save'));
+    }
+
+    it('sends exactly { seriesPosition: null } and the header keeps the series with no #n', async () => {
+      const user = userEvent.setup();
+      renderPage();
+      await waitFor(() => expect(screen.getByText(/Secret Projects #1/)).toBeInTheDocument());
+
+      await clearPosition(user);
+
+      await waitFor(() => expect(api.updateBook).toHaveBeenCalled());
+      expect(api.updateBook).toHaveBeenCalledWith(1, { seriesPosition: null });
+      expect(vi.mocked(api.updateBook).mock.calls[0]![1]).not.toHaveProperty('seriesName');
+
+      // Invalidation → refetch → re-render: the number is gone, the series stays.
+      await waitFor(() => expect(screen.queryByText(/Secret Projects #1/)).not.toBeInTheDocument());
+      expect(screen.getByText(/Secret Projects/)).toBeInTheDocument();
+      expect(storedBook.userClearedFields).toEqual(['seriesPosition']);
+      expect(storedBook.seriesName).toBeNull();
+    });
+
+    it('the reopened modal shows Position BLANK and the Series still filled', async () => {
+      const user = userEvent.setup();
+      renderPage();
+      await waitFor(() => expect(screen.getByText(/Secret Projects #1/)).toBeInTheDocument());
+
+      await clearPosition(user);
+      await waitFor(() => expect(screen.queryByText(/Secret Projects #1/)).not.toBeInTheDocument());
+      await openEditModal(user);
+
+      expect(screen.getByLabelText(/^position$/i)).toHaveValue('');
+      expect(screen.getByLabelText(/series$/i)).toHaveValue('Secret Projects');
+    });
+
+    it('saving the reopened modal untouched does not resurrect the position', async () => {
+      const user = userEvent.setup();
+      renderPage();
+      await waitFor(() => expect(screen.getByText(/Secret Projects #1/)).toBeInTheDocument());
+
+      await clearPosition(user);
+      await waitFor(() => expect(screen.queryByText(/Secret Projects #1/)).not.toBeInTheDocument());
+
+      vi.mocked(api.updateBook).mockClear();
+      await openEditModal(user);
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => expect(api.updateBook).toHaveBeenCalled());
+      expect(api.updateBook).toHaveBeenCalledWith(1, {});
+      expect(storedBook.userClearedFields).toEqual(['seriesPosition']);
+      expect(screen.queryByText(/Secret Projects #1/)).not.toBeInTheDocument();
+    });
+
+    it('typing a number back re-asserts: the tombstone lifts and the header shows it again', async () => {
+      const user = userEvent.setup();
+      renderPage();
+      await waitFor(() => expect(screen.getByText(/Secret Projects #1/)).toBeInTheDocument());
+
+      await clearPosition(user);
+      await waitFor(() => expect(screen.queryByText(/Secret Projects #1/)).not.toBeInTheDocument());
+
+      await openEditModal(user);
+      await user.type(screen.getByLabelText(/^position$/i), '12');
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => expect(screen.getByText(/Secret Projects #12/)).toBeInTheDocument());
+      expect(storedBook.userClearedFields).toEqual([]);
+    });
   });
 
   // Standing guard (`vimock-barrel-replace-drops-named-exports`): a method left real
