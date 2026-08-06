@@ -1178,6 +1178,85 @@ describe('SeriesCardService — integration', () => {
       expect(card!.members.map((m) => m.position)).toEqual([1, 2, 3, 4, 5]);
     });
 
+    /**
+     * F1 (PR review) — AC10 requires re-reading the library POOL inside the
+     * transaction, independently of the member rows. The refresh race above
+     * changes only the rows, so an implementation that re-read rows but reused
+     * the snapshot's pool would leave it green.
+     *
+     * Here the book LEAVES the pool between the two reads — the operator re-files
+     * it under another series while the GET is in flight. The in-transaction pool
+     * read no longer returns it, so it is not unclaimed and nothing is written.
+     * Against a stale snapshot pool it is still unclaimed, and the insert lands a
+     * durable local row binding a book to a series it no longer belongs to.
+     */
+    it('F1: a book that leaves the pool between the snapshot and the reconcile gets no row', async () => {
+      const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const observed = createMockLogger();
+      const svc = new SeriesCardService(db, inject(observed), settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(kalimdor);
+      const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
+      // Positive control: the seed DOES fire for this fixture, so a zero-row
+      // assertion below means "the guard declined", not "nothing ever seeds".
+      expect((await db.select().from(seriesMembers).where(eq(seriesMembers.source, 'local')))).toHaveLength(1);
+      await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
+      (observed.warn as ReturnType<typeof vi.fn>).mockClear();
+
+      const openTransaction = db.transaction.bind(db);
+      const spy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (callback) => {
+        await db.update(books).set({ seriesName: 'Chronicles of the Horde' }).where(eq(books.id, kalimdor));
+        return openTransaction(callback);
+      });
+
+      const card = await svc.getSeriesForBook(kalimdor);
+      spy.mockRestore();
+
+      const rows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id));
+      expect(rows.filter((r) => r.source === 'local')).toHaveLength(0);
+      expect(rows.filter((r) => r.bookId === kalimdor)).toHaveLength(0);
+      // The transaction committed cleanly — no best-effort fallback was needed.
+      expect(observed.warn).not.toHaveBeenCalled();
+      expect(card!.members.map((m) => m.position)).toEqual([1, 3, 4, 5]);
+      expect(card!.members.some((m) => m.libraryBookId === kalimdor)).toBe(false);
+    });
+
+    /**
+     * F1's other branch — the book is DELETED between the two reads. The
+     * in-transaction pool read drops it, so the insert never names a row that no
+     * longer exists. Against a stale snapshot pool the insert violates the FK
+     * ([[libsql-foreign-keys-on-by-default]]), the whole transaction rejects, and
+     * the best-effort fallback renders the PRE-WRITE snapshot — a card still
+     * advertising a book the operator just deleted. Both the silence of the log
+     * and the absence of the entry are therefore load-bearing.
+     */
+    it('F1: a book deleted between the snapshot and the reconcile is dropped, not FK-rejected', async () => {
+      const anchor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
+      const doomed = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
+      mockFetchHardcover(azerothPayload(false));
+      const observed = createMockLogger();
+      const svc = new SeriesCardService(db, inject(observed), settingsServiceWith('TEST_KEY'));
+      await svc.getSeriesForBook(anchor);
+      expect((await db.select().from(seriesMembers).where(eq(seriesMembers.source, 'local')))).toHaveLength(1);
+      await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
+      (observed.warn as ReturnType<typeof vi.fn>).mockClear();
+
+      const openTransaction = db.transaction.bind(db);
+      const spy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (callback) => {
+        await db.delete(books).where(eq(books.id, doomed));
+        return openTransaction(callback);
+      });
+
+      const card = await svc.getSeriesForBook(anchor);
+      spy.mockRestore();
+
+      expect(observed.warn).not.toHaveBeenCalled();
+      const rows = await db.select().from(seriesMembers);
+      expect(rows.filter((r) => r.source === 'local')).toHaveLength(0);
+      expect(card!.members.map((m) => m.position)).toEqual([1, 3, 4, 5]);
+      expect(card!.members.some((m) => m.title === 'Exploring Azeroth: Kalimdor')).toBe(false);
+    });
+
     it('AC10: the reverse order — reconcile first, refresh after — converges on the same single canonical row', async () => {
       const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
       mockFetchHardcover(azerothPayload(false));

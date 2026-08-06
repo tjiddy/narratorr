@@ -98,9 +98,9 @@ describe('SeriesCard', () => {
   // #2144: on a Hardcover-canonical card, an owned book Hardcover does not list
   // arrives with `hardcoverBookId: null` and `inLibrary: true`. It must render
   // exactly like any other owned member — a link to the book, the In Library
-  // badge, no '+ Add' — and its row key must fall through to the `library-N`
-  // branch of `memberKeyFor`, since there is no Hardcover id to key on.
-  it('renders an owned member with no hardcoverBookId as an In Library link keyed by library id', async () => {
+  // badge, no '+ Add'. The `library-N` key branch it depends on is pinned
+  // separately below, since a React key is not observable in the DOM.
+  it('renders an owned member with no hardcoverBookId as an In Library link', async () => {
     vi.mocked(api.getBookSeries).mockResolvedValueOnce({
       series: {
         id: 1,
@@ -123,10 +123,59 @@ describe('SeriesCard', () => {
     // Exactly one '+ Add' on the card — the Hardcover member the operator does
     // NOT own. The owned entry must not have produced a second one.
     expect(screen.getAllByTestId('series-card-add')).toHaveLength(1);
-    // Both rows rendered: with `hardcoverBookId` null on one and a title-based
-    // key colliding across renames, the `library-N` branch is what keeps the
-    // owned row identified.
     expect(screen.getAllByTestId('series-card-member')).toHaveLength(2);
+  });
+
+  /**
+   * F2 (PR review) — a React key never reaches the DOM, so no query can assert it
+   * directly. What a key IS observable through is reconciliation: a row whose key
+   * is stable across a re-render keeps its DOM node when the list reorders, and a
+   * row whose key changes is unmounted and remounted as a fresh node.
+   *
+   * `memberKeyFor` keys a provider-null owned member on `library-${libraryBookId}`
+   * — stable — and falls through to `t-${title}-${index}` when that is null too,
+   * which is index-dependent and therefore NOT stable across a reorder. Deleting
+   * the `library-` branch makes Kalimdor's key move from `t-Kalimdor-1` to
+   * `t-Kalimdor-0`, React discards the node, and the identity assertion fails.
+   *
+   * The Hardcover row is the CONTROL: its `hardcover-8001` key is stable under
+   * both implementations, so its surviving node proves the reorder itself does
+   * not force a wholesale remount — without it, a framework-level change that
+   * remounted everything would make the real assertion vacuously green.
+   */
+  it('F2: a provider-null owned row keeps its DOM node across a reorder, so its key is not index-derived', async () => {
+    const eastern = makeMember({ hardcoverBookId: 8001, title: 'The Eastern Kingdoms', position: 1, inLibrary: false });
+    const kalimdor = makeMember({ hardcoverBookId: null, title: 'Kalimdor', position: 2, inLibrary: true, libraryBookId: 77 });
+    const card = (members: BookSeriesMemberCard[]) => ({
+      id: 1,
+      name: 'Exploring Azeroth',
+      hardcoverSeriesId: 25106,
+      seriesAuthor: 'Christie Golden',
+      lastFetchedAt: null,
+      members,
+    });
+
+    vi.mocked(api.getBookSeries).mockResolvedValueOnce({ series: card([eastern, kalimdor]) });
+    // A refresh reorders the two members — the position-2 owned book now sorts
+    // first. Same two members, same identities, different order.
+    vi.mocked(api.refreshBookSeries).mockResolvedValueOnce({ series: card([kalimdor, eastern]) });
+
+    const user = userEvent.setup();
+    renderCard({ bookId: 77 });
+
+    const ownedBefore = (await screen.findByRole('link', { name: 'Kalimdor' })).closest('li');
+    const hardcoverBefore = screen.getByText('The Eastern Kingdoms').closest('li');
+    expect(ownedBefore).not.toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /refresh series/i }));
+    await waitFor(() => {
+      expect(screen.getAllByTestId('series-card-member')[0]).toHaveTextContent('Kalimdor');
+    });
+
+    // Control: the Hardcover row keeps its node, so the reorder alone remounts nothing.
+    expect(screen.getByText('The Eastern Kingdoms').closest('li')).toBe(hardcoverBefore);
+    // The assertion under test: the owned row's key is stable too.
+    expect(screen.getByRole('link', { name: 'Kalimdor' }).closest('li')).toBe(ownedBefore);
   });
 
   it('renders + Add link with /search?q=<title>+<seriesAuthor> for missing members', async () => {
