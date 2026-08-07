@@ -964,14 +964,22 @@ describe('resolveConfidenceFromDuration', () => {
         reason: expect.stringContaining('Duration mismatch'),
         reasonKind: 'duration-mismatch',
       });
-      expect(resolveConfidenceFromDuration(scored, 33219.47, 33219.49)).toEqual({ confidence: 'high' });
+      expect(resolveConfidenceFromDuration(scored, 33219.47, { fullSeconds: 33219.49, trimmedSeconds: 33219.49 })).toEqual({ confidence: 'high' });
     });
 
     it('an out-of-band chapter runtime leaves the mismatch reason intact (suppress-only)', () => {
       const scored = [{ meta: makeBook({ duration: 539 }) }];
-      const result = resolveConfidenceFromDuration(scored, 33519.49, 33219.49);
+      const result = resolveConfidenceFromDuration(scored, 33519.49, { fullSeconds: 33219.49, trimmedSeconds: 33219.49 });
       expect(result.confidence).toBe('medium');
       expect(result.reasonKind).toBe('duration-mismatch');
+    });
+
+    it('#2168 the multi-result path promotes off the trimmed reference too, with NO leaked reason', () => {
+      const scored = [{ meta: makeBook({ duration: 1440 }) }, { meta: makeBook({ duration: 700 }) }];
+
+      const result = resolveConfidenceFromDuration(scored, 85_144, { fullSeconds: 86_400, trimmedSeconds: 85_134 });
+
+      expect(result).toEqual({ confidence: 'high' });
     });
   });
 });
@@ -1040,38 +1048,96 @@ describe('isDurationVerified', () => {
       // scalar 539min → 32340s vs scanned 33219.47s → Δ879s (out of band);
       // chapter runtime 33219.49s → Δ0.02s (in band).
       expect(isDurationVerified(makeBook({ duration: 539 }), 33219.47)).toBe(false);
-      expect(isDurationVerified(makeBook({ duration: 539 }), 33219.47, 33219.49)).toBe(true);
+      expect(isDurationVerified(makeBook({ duration: 539 }), 33219.47, { fullSeconds: 33219.49 })).toBe(true);
     });
 
     it('reuses the shared band: exactly 240s from the chapter runtime verifies, 241s does not', () => {
       const meta = makeBook({ duration: 539 });
-      expect(isDurationVerified(meta, 33219.47, 33219.47 + DURATION_TOLERANCE_SECONDS)).toBe(true);
-      expect(isDurationVerified(meta, 33219.47, 33219.47 + DURATION_TOLERANCE_SECONDS + 1)).toBe(false);
+      expect(isDurationVerified(meta, 33219.47, { fullSeconds: 33219.47 + DURATION_TOLERANCE_SECONDS })).toBe(true);
+      expect(isDurationVerified(meta, 33219.47, { fullSeconds: 33219.47 + DURATION_TOLERANCE_SECONDS + 1 })).toBe(false);
     });
 
     it('an out-of-band chapter runtime leaves the scalar disagreement standing', () => {
       // scanned is 300s past BOTH references (truncated/padded file) — still unverified.
-      expect(isDurationVerified(makeBook({ duration: 539 }), 33519.49, 33219.49)).toBe(false);
+      expect(isDurationVerified(makeBook({ duration: 539 }), 33519.49, { fullSeconds: 33219.49, trimmedSeconds: 33219.49 })).toBe(false);
     });
 
     it('never demotes: a scalar-verified match stays verified even with an off chapter runtime', () => {
-      expect(isDurationVerified(makeBook({ duration: 60 }), 3650, 1)).toBe(true);
+      expect(isDurationVerified(makeBook({ duration: 60 }), 3650, { fullSeconds: 1, trimmedSeconds: 1 })).toBe(true);
     });
 
     it('a zero/negative/non-finite chapter runtime is ignored', () => {
       const meta = makeBook({ duration: 539 });
-      expect(isDurationVerified(meta, 33219.47, 0)).toBe(false);
-      expect(isDurationVerified(meta, 33219.47, -33219.49)).toBe(false);
-      expect(isDurationVerified(meta, 33219.47, Number.NaN)).toBe(false);
+      expect(isDurationVerified(meta, 33219.47, { fullSeconds: 0, trimmedSeconds: 0 })).toBe(false);
+      expect(isDurationVerified(meta, 33219.47, { fullSeconds: -33219.49, trimmedSeconds: -33219.49 })).toBe(false);
+      expect(isDurationVerified(meta, 33219.47, { fullSeconds: Number.NaN, trimmedSeconds: Number.NaN })).toBe(false);
     });
 
     it('still requires a scanned runtime — a chapter runtime alone cannot verify', () => {
-      expect(isDurationVerified(makeBook({ duration: 539 }), undefined, 33219.49)).toBe(false);
-      expect(isDurationVerified(makeBook({ duration: 539 }), 0, 33219.49)).toBe(false);
+      expect(isDurationVerified(makeBook({ duration: 539 }), undefined, { fullSeconds: 33219.49 })).toBe(false);
+      expect(isDurationVerified(makeBook({ duration: 539 }), 0, { fullSeconds: 33219.49 })).toBe(false);
     });
 
     it('verifies off the chapter runtime even when the candidate has no scalar duration', () => {
-      expect(isDurationVerified(makeBook(), 33219.47, 33219.49)).toBe(true);
+      expect(isDurationVerified(makeBook(), 33219.47, { fullSeconds: 33219.49 })).toBe(true);
+    });
+  });
+
+  // #2168 — the TRIMMED chapter runtime is a third corroborating reference: the
+  // same table with its trailing `Excerpt`/`Preview`/`Bonus`/`End Credits` run
+  // removed. Same `||` shape, same shared band, still suppress-only.
+  describe('trimmed chapter-runtime corroboration (#2168)', () => {
+    /** Addie LaRue: scalar and full sum both ~21m long; the trimmed sum lands 10s off. */
+    const ADDIE = makeBook({ duration: 1440 });
+
+    it('trimmed-ONLY agreement verifies', () => {
+      expect(isDurationVerified(ADDIE, 85_144, { fullSeconds: 86_400 })).toBe(false);
+      expect(isDurationVerified(ADDIE, 85_144, { fullSeconds: 86_400, trimmedSeconds: 85_134 })).toBe(true);
+    });
+
+    it('full-ONLY agreement verifies', () => {
+      expect(isDurationVerified(ADDIE, 86_390, { fullSeconds: 86_400, trimmedSeconds: 85_134 })).toBe(true);
+    });
+
+    it('scalar-ONLY agreement verifies', () => {
+      expect(isDurationVerified(makeBook({ duration: 539 }), 32_340, { fullSeconds: 1, trimmedSeconds: 1 })).toBe(true);
+    });
+
+    it('FALSE when the file is out of band against all three references', () => {
+      expect(isDurationVerified(ADDIE, 70_000, { fullSeconds: 86_400, trimmedSeconds: 85_134 })).toBe(false);
+    });
+
+    it('the band stays SYMMETRIC — a file that runs LONG still fails (pin 2, The Rook)', () => {
+      // The Rook ran ~260s long because the rip carried thirteen duplicated-narration
+      // overlaps: a genuine defect a "longer is fine" arm would suppress. Trimming
+      // only makes the trimmed reference SMALLER, i.e. the gap wider — so this must
+      // not pass for the wrong reason. The no-trim control below is the same shape.
+      expect(isDurationVerified(ADDIE, 86_660, { fullSeconds: 86_400, trimmedSeconds: 85_134 })).toBe(false);
+      expect(isDurationVerified(ADDIE, 86_660, { fullSeconds: 86_400, trimmedSeconds: 86_400 })).toBe(false);
+    });
+
+    it('a degenerate trimmed reference is ignored, exactly as a degenerate full one is', () => {
+      const meta = makeBook({ duration: 539 });
+      expect(isDurationVerified(meta, 33219.47, { trimmedSeconds: 0 })).toBe(false);
+      expect(isDurationVerified(meta, 33219.47, { trimmedSeconds: -33219.49 })).toBe(false);
+      expect(isDurationVerified(meta, 33219.47, { trimmedSeconds: Number.NaN })).toBe(false);
+      expect(isDurationVerified(meta, 33219.47, { trimmedSeconds: Number.POSITIVE_INFINITY })).toBe(false);
+    });
+
+    it('an EMPTY reference set behaves exactly as no argument at all (AC31)', () => {
+      const meta = makeBook({ duration: 539 });
+      expect(isDurationVerified(meta, 33219.47, {})).toBe(isDurationVerified(meta, 33219.47));
+      expect(isDurationVerified(meta, 32_340, {})).toBe(isDurationVerified(meta, 32_340));
+    });
+
+    it('Legends & Lattes still flags (pin 3): the walk stopped, so both references equal the full sum', () => {
+      // Its final chapter is `Pages to Fill: A Legends & Lattes Story` — a named
+      // bonus short story with none of the trigger words — so the backward walk
+      // halts on it and never reaches the `End Credits` behind it. The file
+      // genuinely lacks 57.5m the edition includes, and that must keep flagging.
+      const lattes = makeBook({ duration: 380 });
+      const FULL = 22_800;
+      expect(isDurationVerified(lattes, FULL - 3_450, { fullSeconds: FULL, trimmedSeconds: FULL })).toBe(false);
     });
   });
 });
@@ -1142,16 +1208,38 @@ describe('resolveSingleResultConfidence', () => {
 
   describe('chapter-runtime corroboration (#1942)', () => {
     it('Fablehaven: a usable in-band chapter runtime promotes the would-be mismatch to high with NO reason', () => {
-      const result = resolveSingleResultConfidence(makeBook({ duration: 539 }), 33219.47, 33219.49);
+      const result = resolveSingleResultConfidence(makeBook({ duration: 539 }), 33219.47, { fullSeconds: 33219.49, trimmedSeconds: 33219.49 });
       expect(result.confidence).toBe('high');
       expect(result.reason).toBeUndefined();
       expect(result.reasonKind).toBeUndefined();
     });
 
     it('an out-of-band chapter runtime leaves the mismatch reason intact (suppress-only)', () => {
-      const result = resolveSingleResultConfidence(makeBook({ duration: 539 }), 33519.49, 33219.49);
+      const result = resolveSingleResultConfidence(makeBook({ duration: 539 }), 33519.49, { fullSeconds: 33219.49, trimmedSeconds: 33219.49 });
       expect(result.confidence).toBe('medium');
       expect(result.reasonKind).toBe('duration-mismatch');
+    });
+
+    it('#2168 Addie LaRue: the TRIMMED runtime alone promotes, with no leaked reason', () => {
+      const addie = makeBook({ duration: 1440 });
+      expect(resolveSingleResultConfidence(addie, 85_144, { fullSeconds: 86_400 })).toEqual({
+        confidence: 'medium',
+        reason: expect.stringContaining('Duration mismatch'),
+        reasonKind: 'duration-mismatch',
+      });
+
+      const result = resolveSingleResultConfidence(addie, 85_144, { fullSeconds: 86_400, trimmedSeconds: 85_134 });
+
+      expect(result.confidence).toBe('high');
+      expect(result.reason).toBeUndefined();
+      expect(result.reasonKind).toBeUndefined();
+    });
+
+    it('#2168 the surviving mismatch reason still renders the SCALAR expectation, not either chapter runtime', () => {
+      const result = resolveSingleResultConfidence(makeBook({ duration: 1440 }), 70_000, { fullSeconds: 86_400, trimmedSeconds: 85_134 });
+
+      // 1440 min × 60 = 86_400s → "24h 0m". Neither 85_134 nor the scanned value.
+      expect(result.reason).toBe('Duration mismatch — scanned 19h 26m vs expected 24h 0m');
     });
   });
 });

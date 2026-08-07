@@ -990,6 +990,30 @@ describe('AudnexusProvider', () => {
         if (result.kind === 'ok') {
           expect(result.runtimeLengthMs).toBe(33219490);
           expect(result.isAccurate).toBe(true);
+          // #2168 — the live record's only chapter is `Opening Credits`, which does
+          // NOT match the trailing-run pattern, so the trim contributes nothing and
+          // the full runtime rides through bit-identical (AC30).
+          expect(result.trimmedRuntimeMs).toBe(33219490);
+          expect(result.trimmedChapterCount).toBe(0);
+        }
+      });
+
+      it('#2168 — a trailing promotional run is removed and counted on the ok outcome', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json(chapterRecord({
+          runtimeLengthMs: 86_400_000,
+          chapters: [
+            { title: 'Chapter 1', startOffsetMs: 0, lengthMs: 85_134_000 },
+            { title: 'End Credits', startOffsetMs: 85_134_000, lengthMs: 1_266_000 },
+          ],
+        }))));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+
+        expect(result.kind).toBe('ok');
+        if (result.kind === 'ok') {
+          expect(result.runtimeLengthMs).toBe(86_400_000);
+          expect(result.trimmedRuntimeMs).toBe(85_134_000);
+          expect(result.trimmedChapterCount).toBe(1);
         }
       });
 
@@ -1019,6 +1043,39 @@ describe('AudnexusProvider', () => {
 
         const result = await provider.getChapterRuntime(FABLEHAVEN);
         expect(result.kind).toBe('ok');
+        // #2168 AC10 — nothing to remove, so the verdict is indistinguishable from today's.
+        if (result.kind === 'ok') {
+          expect(result.trimmedRuntimeMs).toBe(33219490);
+          expect(result.trimmedChapterCount).toBe(0);
+        }
+      });
+
+      /**
+       * #2168 AC12 — parsing chapter ENTRIES must not narrow the record predicate.
+       * A malformed entry degrades the trim (the walk stops on it); it must never
+       * turn an authoritative record into `invalid_record`, which is transient,
+       * never cached, and would re-request forever.
+       */
+      it.each([
+        ['an entry with no title', [{ startOffsetMs: 0, lengthMs: 21000 }]],
+        ['an entry with lengthMs null', [{ title: 'Chapter 1', lengthMs: null }]],
+        ['an entry with lengthMs a string', [{ title: 'Chapter 1', lengthMs: 'oops' }]],
+        ['an entry that is a bare string', ['Chapter 1']],
+        ['an entry that is a bare number', [42]],
+        ['an entry carrying extra unknown fields', [{ title: 'Chapter 1', lengthMs: 21000, brandNew: { nested: true } }]],
+        ['a mix of malformed and well-formed entries', [{ title: 'Chapter 1', lengthMs: 21000 }, null, { title: 'End Credits', lengthMs: 'oops' }]],
+      ])('%s still parses as ok — a malformed entry degrades the trim, never the record', async (_label, chapters) => {
+        server.use(chaptersHandler(() => HttpResponse.json(chapterRecord({ chapters }))));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+
+        expect(result.kind).toBe('ok');
+        if (result.kind === 'ok') {
+          expect(result.runtimeLengthMs).toBe(33219490);
+          // The walk stops on anything it cannot trust, so nothing is removed.
+          expect(result.trimmedChapterCount).toBe(0);
+          expect(result.trimmedRuntimeMs).toBe(33219490);
+        }
       });
 
       it.each([400, 404])('documented HTTP %i → not_found', async (status) => {
