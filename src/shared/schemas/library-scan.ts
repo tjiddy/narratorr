@@ -140,12 +140,21 @@ export const durationCorroborationBodySchema = z.object({
 });
 export type DurationCorroborationBody = z.infer<typeof durationCorroborationBodySchema>;
 
-/** Response of the duration-corroboration route. `chapterSeconds` is ABSENT — never
- *  `undefined` — when there is no usable chapter runtime (a truthful "no second
- *  opinion available", not a mismatch claim). */
+/** Response of the duration-corroboration route. `chapterSeconds` is the FULL chapter-table
+ *  runtime and is ABSENT — never `undefined` — when there is no usable one (a truthful "no
+ *  second opinion available", not a mismatch claim).
+ *
+ *  `trimmedChapterSeconds` (#2168) is the same table with its trailing promotional run
+ *  (`Excerpt:` / `Preview` / `Bonus` / `End Credits`) removed. `corroborated` is true when
+ *  the scanned runtime is in band against EITHER reference. The field is present only when
+ *  a usable trimmed reference exists AND its value DIFFERS from `chapterSeconds` — it
+ *  answers "what other number did the band get checked against", so a removal that leaves
+ *  the runtime unchanged (a trusted zero-length tail) has nothing distinct to report. The
+ *  trimmed chapter COUNT is deliberately never on the wire; it is a log-only diagnostic. */
 export interface DurationCorroborationResult {
   corroborated: boolean;
   chapterSeconds?: number;
+  trimmedChapterSeconds?: number;
 }
 
 const cleanNameStepSchema = z.object({

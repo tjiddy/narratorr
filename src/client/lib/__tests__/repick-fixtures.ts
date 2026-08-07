@@ -27,6 +27,21 @@ export const FABLEHAVEN = {
   scalarReason: 'Duration mismatch — scanned 9h 13m vs expected 8h 59m',
 } as const;
 
+/**
+ * #2168 — the server's TRIMMED-suppression answer, shared by both twin suites.
+ *
+ * The published chapter total is out of band (a trailing `End Credits` run the file
+ * legitimately omits) and the trimmed sum is what carried the verdict. Both numbers reuse
+ * the values already pinned above, so the fixture adds a shape, not a new magic constant.
+ * The client reads only `corroborated`; the extra field is here so the twin coverage
+ * exercises the real wire shape rather than a hand-narrowed one.
+ */
+export const FABLEHAVEN_TRIMMED_RESPONSE = {
+  corroborated: true,
+  chapterSeconds: FABLEHAVEN.outOfBandChapterSeconds,
+  trimmedChapterSeconds: FABLEHAVEN.chapterSeconds,
+} as const;
+
 /** Non-trivial match evidence, so a promotion that reconstructs the result loses something
  *  observable (B7 / carried obligation F3). */
 export const FABLEHAVEN_BEST: BookMetadata = {

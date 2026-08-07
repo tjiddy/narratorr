@@ -23,6 +23,7 @@ import { serializeError } from '../utils/serialize-error.js';
 import { lookupForFixMatch as runFixMatchLookup, type FixMatchLookupResult } from './metadata-fix-match.js';
 import { resolveBook as runResolveBook, type ResolveBookInput } from './metadata-resolve-book.js';
 import { createChapterCorroborator, type ChapterCorroborator } from './chapter-corroboration.js';
+import type { ChapterRuntimeSeconds } from './match-job.helpers.js';
 export type { FixMatchLookupResult } from './metadata-fix-match.js';
 export type { ResolveBookInput } from './metadata-resolve-book.js';
 
@@ -123,12 +124,13 @@ export class MetadataService {
   }
 
   /**
-   * The matched edition's chapter-table runtime in SECONDS, or `undefined` when
-   * there is no usable one (#1942). Thin delegator — the cache, single-flight,
-   * throttle bridge, and outcome classification live in
-   * {@link createChapterCorroborator}. Never throws.
+   * The matched edition's chapter-table runtime references in SECONDS — the full
+   * published total and the trailing-trim variant (#1942/#2168) — or `{}` when
+   * neither is usable. Thin delegator: the cache, single-flight, throttle bridge,
+   * and outcome classification live in {@link createChapterCorroborator}. Never
+   * throws.
    */
-  getChapterRuntimeSeconds(asin: string): Promise<number | undefined> {
+  getChapterRuntimeSeconds(asin: string): Promise<ChapterRuntimeSeconds> {
     return this.chapterCorroborator.getChapterRuntimeSeconds(asin);
   }
 

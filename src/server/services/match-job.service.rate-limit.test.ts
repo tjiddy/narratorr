@@ -189,7 +189,9 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
     }
 
     it('rescues the would-be mismatch through the real Audnexus bridge', async () => {
-      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
+      mockAudnexus.getChapterRuntime.mockResolvedValue({
+        kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true, trimmedRuntimeMs: 33219490, trimmedChapterCount: 0,
+      });
 
       const result = await runMatch();
 
@@ -209,7 +211,8 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
       expect(result.error).toBeUndefined();
 
       // The provider-wide gate is armed, so the next Audnexus call short-circuits.
-      await expect(metadataService.getChapterRuntimeSeconds('B_ANY_OTHER')).resolves.toBeUndefined();
+      // "No usable runtime" is the EMPTY pair (#2168) — never a bare `undefined`.
+      await expect(metadataService.getChapterRuntimeSeconds('B_ANY_OTHER')).resolves.toEqual({});
       expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
     });
   });

@@ -6,6 +6,7 @@ import type { CompanionSweepTrigger } from '../services/companion-ebook-trigger.
 import type { MatchJobService } from '../services/match-job.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { MetadataService } from '../services/metadata.service.js';
+import type { ChapterRuntimeSeconds } from '../services/match-job.helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { parseFolderStructure, parseFolderStructureRaw, cleanNameWithTrace } from '../utils/folder-parsing.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
@@ -195,9 +196,9 @@ async function handleDurationCorroboration(
 ): Promise<DurationCorroborationResult> {
   const { asin, scannedSeconds } = request.body;
 
-  let chapterSeconds: number | undefined;
+  let chapterRuntimes: ChapterRuntimeSeconds;
   try {
-    chapterSeconds = await metadataService.getChapterRuntimeSeconds(asin);
+    chapterRuntimes = await metadataService.getChapterRuntimeSeconds(asin);
   } catch (error: unknown) {
     request.log.debug({ error: serializeError(error), asin }, 'Chapter corroboration failed — no second opinion available');
     return { corroborated: false };
@@ -206,9 +207,25 @@ async function handleDurationCorroboration(
   // No usable runtime (not_found, trust-gate fail, invalid record, transient failure, or
   // a closed provider gate): a truthful "no second opinion", NOT a mismatch claim — so
   // `chapterSeconds` is absent from the response rather than present-and-undefined.
-  if (chapterSeconds === undefined) return { corroborated: false };
+  const { fullSeconds, trimmedSeconds } = chapterRuntimes;
+  if (fullSeconds === undefined && trimmedSeconds === undefined) return { corroborated: false };
 
-  return { corroborated: withinDurationTolerance(chapterSeconds, scannedSeconds), chapterSeconds };
+  // Full OR trimmed (#2168) — the same rule the match job applies. `chapterSeconds`
+  // keeps its meaning (the FULL table total); the trimmed variant is reported only
+  // when it is a genuinely DIFFERENT number, because the field answers "what OTHER
+  // value did the band get checked against". A removal that leaves the runtime
+  // unchanged (a trusted zero-length tail) has nothing distinct to report. The
+  // trimmed chapter COUNT is never exposed on the wire — it is a log-only diagnostic.
+  const corroborated = inBand(fullSeconds, scannedSeconds) || inBand(trimmedSeconds, scannedSeconds);
+  return {
+    corroborated,
+    ...(fullSeconds !== undefined && { chapterSeconds: fullSeconds }),
+    ...(trimmedSeconds !== undefined && trimmedSeconds !== fullSeconds && { trimmedChapterSeconds: trimmedSeconds }),
+  };
+}
+
+function inBand(reference: number | undefined, scannedSeconds: number): boolean {
+  return reference !== undefined && withinDurationTolerance(reference, scannedSeconds);
 }
 
 // ─── Scan Debug Helpers ─────────────────────────────────────────────

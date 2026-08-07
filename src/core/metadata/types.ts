@@ -57,9 +57,25 @@ export type ProviderLookupResult =
  *
  * `runtimeLengthMs`/`isAccurate` ride raw and nullable: the trust gate that turns
  * them into a usable runtime belongs to the service, not the transport.
+ *
+ * `trimmedRuntimeMs`/`trimmedChapterCount` (#2168) are the trailing-trim rule's
+ * output over the SAME record, in the same raw milliseconds unit and under the
+ * same contract — the trimmed runtime is the second corroboration reference (the
+ * chapter total with its trailing `Excerpt`/`Preview`/`Bonus`/`End Credits` run
+ * removed) and is subject to the service's identical trust gate; the count is
+ * ALWAYS the number of chapters the walk removed, a log-only diagnostic that is
+ * never cached, never returned to callers, and never exposed on the wire. See
+ * `computeTrimmedChapterRuntime` for why `trimmedRuntimeMs` can be `undefined`
+ * even on a record whose `runtimeLengthMs` is perfectly good.
  */
 export type ChapterRuntimeOutcome =
-  | { kind: 'ok'; runtimeLengthMs: number | null | undefined; isAccurate: boolean | null | undefined }
+  | {
+      kind: 'ok';
+      runtimeLengthMs: number | null | undefined;
+      isAccurate: boolean | null | undefined;
+      trimmedRuntimeMs: number | undefined;
+      trimmedChapterCount: number;
+    }
   | { kind: 'not_found' }
   | { kind: 'invalid_record'; reason: string }
   | { kind: 'rate_limited'; retryAfterMs: number }

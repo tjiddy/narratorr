@@ -47,7 +47,7 @@ function createMockMetadataService(): MetadataService {
     getBook: vi.fn().mockResolvedValue(null),
     // #1942 — the lazy chapter-runtime bridge. Defaults to "no usable runtime",
     // so every pre-existing duration expectation in this file is unchanged.
-    getChapterRuntimeSeconds: vi.fn().mockResolvedValue(undefined),
+    getChapterRuntimeSeconds: vi.fn().mockResolvedValue({}),
     search: vi.fn(),
     searchSeries: vi.fn(),
     getAuthor: vi.fn(),
@@ -3697,6 +3697,36 @@ describe('MatchJobService', () => {
           expect(result!.reason).toBeUndefined();
         });
 
+        it('#2168 single-result + strip cap + TRIMMED-only agreement → high (cap bypassed by the trimmed reference)', async () => {
+          // AC23's second half: the strip attempt caps at `medium`, so the promoted
+          // verdict alone is not enough — `capBypassedByDuration` reads the
+          // RECOMPUTED `durationVerified`, which must see the same reference set the
+          // promotion used. Counterfactual: hand that recomputation only the full
+          // reference and this row comes back `medium` + the capped reason.
+          //
+          // Scalar/full 36000s vs scanned 34800s → Δ1200s (out of band);
+          // trimmed 34810s (a 20-minute `End Credits` tail) → Δ10s (in band).
+          vi.mocked(metadataService.getChapterRuntimeSeconds)
+            .mockResolvedValue({ fullSeconds: 36000, trimmedSeconds: 34810 });
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 34800 }),
+          );
+          vi.mocked(metadataService.searchBooks)
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+              makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1', duration: 600, asin: 'B0IMAGINEME' }),
+            ]);
+          vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('high');
+          expect(result!.reason).toBeUndefined();
+          expect(result!.reasonKind).toBeUndefined();
+        });
+
         it('single-result + strip cap + NO scanned duration → medium + capped reason', async () => {
           // No scanned duration (totalDuration: 0) → nothing to verify against →
           // cap applies, medium with the generic review reason.
@@ -4245,6 +4275,13 @@ describe('MatchJobService', () => {
     const SCANNED_SECONDS = 33219.47;
     const SCALAR_MINUTES = 539;
     const CHAPTER_SECONDS = 33219.49;
+    /**
+     * Fablehaven has no trimmable tail (#2168 AC30), so both references carry the
+     * same value — the non-regression shape every pre-existing case here uses.
+     */
+    const CHAPTER_REFS = { fullSeconds: CHAPTER_SECONDS, trimmedSeconds: CHAPTER_SECONDS };
+    /** The one representation of "no usable runtime" — `{}`, never a bare undefined. */
+    const NO_CHAPTER_REFS = {};
     const CAP_LOG = 'Narrator wrong-edition cap fired';
     const MISMATCH = 'Duration mismatch';
 
@@ -4298,7 +4335,7 @@ describe('MatchJobService', () => {
     }
 
     beforeEach(() => {
-      vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(CHAPTER_SECONDS);
+      vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(CHAPTER_REFS);
     });
 
     describe('AC6 — rescue, run independently through BOTH assembly paths (F21)', () => {
@@ -4359,7 +4396,7 @@ describe('MatchJobService', () => {
       });
 
       it('without the corroboration the SAME inputs flag — the rescue is genuinely doing the work', async () => {
-        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(undefined);
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(NO_CHAPTER_REFS);
         vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
         vi.mocked(metadataService.searchBooks).mockResolvedValue([fablehaven()]);
 
@@ -4443,7 +4480,7 @@ describe('MatchJobService', () => {
       });
 
       it('never demotes: a scalar-VERIFIED match stays high even if the chapter runtime disagrees', async () => {
-        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(1);
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue({ fullSeconds: 1, trimmedSeconds: 1 });
         vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: SCALAR_MINUTES * 60 }));
         vi.mocked(metadataService.searchBooks).mockResolvedValue([fablehaven()]);
 
@@ -4454,7 +4491,7 @@ describe('MatchJobService', () => {
       });
 
       it('the mismatch reason still renders the SCALAR expectation when nothing rescues it', async () => {
-        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(undefined);
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(NO_CHAPTER_REFS);
         vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
         vi.mocked(metadataService.searchBooks).mockResolvedValue([fablehaven()]);
 
@@ -4536,7 +4573,7 @@ describe('MatchJobService', () => {
         ['exactly 240s from the chapter runtime verifies (inclusive)', 240, 'high'],
         ['241s flags', 241, 'medium'],
       ])('%s', async (_label, delta, expected) => {
-        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(SCANNED_SECONDS + delta);
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue({ fullSeconds: SCANNED_SECONDS + delta, trimmedSeconds: SCANNED_SECONDS + delta });
         vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
         vi.mocked(metadataService.searchBooks).mockResolvedValue([fablehaven()]);
 
@@ -4585,6 +4622,160 @@ describe('MatchJobService', () => {
         expect(Object.keys(result).sort()).toEqual(
           ['alternatives', 'bestMatch', 'confidence', 'path', 'scannedSeconds'],
         );
+      });
+    });
+
+    // ────────────────────────────────────────────────────────────────────
+    // #2168 — the TRIMMED chapter runtime. Addie LaRue's chapter table ends
+    // in a 21.1-minute `End Credits` chapter a clean retail rip legitimately
+    // omits: the file is 21m short of the published total and 10s off the
+    // trimmed one. All numbers below are the measured field diff.
+    // ────────────────────────────────────────────────────────────────────
+    describe('#2168 trimmed chapter-runtime corroboration', () => {
+      const ADDIE_ASIN = 'B0ADDIELARU';
+      const ADDIE_SCALAR_MINUTES = 1440;
+      const ADDIE_SCANNED = 85_144;
+      const ADDIE_FULL_SECONDS = 86_400;
+      const ADDIE_TRIMMED_SECONDS = 85_134;
+      /** Only the TRIMMED reference is in band — the full one is 1256s out. */
+      const ADDIE_REFS = { fullSeconds: ADDIE_FULL_SECONDS, trimmedSeconds: ADDIE_TRIMMED_SECONDS };
+
+      function addie(overrides: Partial<BookMetadata> = {}): BookMetadata {
+        return makeBookMetadata({
+          title: 'Fablehaven',
+          authors: [{ name: 'Brandon Mull' }],
+          narrators: ['E. B. Stevens'],
+          duration: ADDIE_SCALAR_MINUTES,
+          asin: ADDIE_ASIN,
+          ...overrides,
+        });
+      }
+
+      beforeEach(() => {
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(ADDIE_REFS);
+      });
+
+      /**
+       * All four match-job assembly paths (AC31's fifth is the re-pick route).
+       * The `multi` rows carry a second candidate SPECIFICALLY to drive the
+       * `single === false` branch — `resolveConfidenceFromDuration` rather than
+       * `resolveSingleResultConfidence`. That branch is invisible to a confidence
+       * assertion alone, so each row also asserts the alternatives count: if the
+       * extra candidate were filtered out upstream, the row would silently
+       * degrade to the single branch and pass while proving nothing.
+       */
+      it.each([
+        ['FILENAME single', () => makeScan({ totalDuration: ADDIE_SCANNED }), [] as BookMetadata[]],
+        ['FILENAME multi', () => makeScan({ totalDuration: ADDIE_SCANNED }), [addie({ asin: 'B0OTHEREDN', duration: 700 })]],
+        ['TAG single', () => tagScan({ totalDuration: ADDIE_SCANNED }), [] as BookMetadata[]],
+        ['TAG multi', () => tagScan({ totalDuration: ADDIE_SCANNED }), [addie({ asin: 'B0OTHEREDN', duration: 700 })]],
+      ])('%s assembly: the TRIMMED reference alone rescues the row — high with NO mismatch reason', async (_label, scan, extra) => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(scan());
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie(), ...extra]);
+
+        const result = await runSingle();
+
+        // The absence of the reason, not merely `high` — a `high` assertion alone
+        // cannot see a leaked mismatch string.
+        expect(result.confidence).toBe('high');
+        expect(result.reason).toBeUndefined();
+        expect(result.reasonKind).toBeUndefined();
+        expect(result.bestMatch?.asin).toBe(ADDIE_ASIN);
+        // The branch observation point: one alternative means the multi resolver ran.
+        expect(result.alternatives).toHaveLength(extra.length);
+        expect(chapterLookups()).toEqual([[ADDIE_ASIN]]);
+      });
+
+      it('the FULL reference alone would NOT have rescued it — the trim is doing the work', async () => {
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue({ fullSeconds: ADDIE_FULL_SECONDS });
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: ADDIE_SCANNED }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie()]);
+
+        const result = await runSingle();
+
+        expect(result.confidence).toBe('medium');
+        expect(result.reasonKind).toBe('duration-mismatch');
+      });
+
+      it('AC23 — a trimmed-driven promotion reports durationVerified TRUE to the narrator cap', async () => {
+        // Counterfactual: thread only the full reference into the `isDurationVerified`
+        // recomputation and this reads false, letting the cap demote the row back.
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: ADDIE_SCANNED, tagNarrator: 'Adriel Brandt' }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie()]);
+
+        await runSingle();
+
+        expect(log.info).toHaveBeenCalledWith(
+          expect.objectContaining({ matchSource: 'filename-single', durationVerified: true }),
+          expect.stringContaining(CAP_LOG),
+        );
+      });
+
+      it('AC23 — the TAG path reports durationVerified TRUE on the same basis', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(tagScan({ totalDuration: ADDIE_SCANNED, tagNarrator: 'Adriel Brandt' }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie()]);
+
+        await runSingle();
+
+        expect(log.info).toHaveBeenCalledWith(
+          expect.objectContaining({ matchSource: 'exact', durationVerified: true }),
+          expect.stringContaining(CAP_LOG),
+        );
+      });
+
+      it('pin 2 (The Rook) — a file that runs LONG still flags, trimmable tail or not', async () => {
+        // ~260s LONGER than the published total: thirteen duplicated-narration
+        // overlaps, a genuine defect. Trimming makes the trimmed reference SMALLER
+        // (the gap wider), so the band must stay symmetric for this to hold.
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: ADDIE_FULL_SECONDS + 260 }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie()]);
+
+        const result = await runSingle();
+
+        expect(result.confidence).toBe('medium');
+        expect(result.reasonKind).toBe('duration-mismatch');
+      });
+
+      it('pin 2 control — the same long file with NO trimmable tail also flags', async () => {
+        vi.mocked(metadataService.getChapterRuntimeSeconds)
+          .mockResolvedValue({ fullSeconds: ADDIE_FULL_SECONDS, trimmedSeconds: ADDIE_FULL_SECONDS });
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: ADDIE_FULL_SECONDS + 260 }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie()]);
+
+        const result = await runSingle();
+
+        expect(result.confidence).toBe('medium');
+        expect(result.reasonKind).toBe('duration-mismatch');
+      });
+
+      it('pin 3 (Legends & Lattes) — the walk stops on a named bonus story, so the row STILL flags', async () => {
+        // Final chapter `Pages to Fill: A Legends & Lattes Story` carries none of
+        // the trigger words, so the backward walk halts on it and never reaches the
+        // `End Credits` behind it: both references equal the full sum, and the file
+        // genuinely lacks 57.5m the edition includes.
+        const FULL = 22_800;
+        vi.mocked(metadataService.getChapterRuntimeSeconds)
+          .mockResolvedValue({ fullSeconds: FULL, trimmedSeconds: FULL });
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: FULL - 3_450 }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie({ duration: 380 })]);
+
+        const result = await runSingle();
+
+        expect(result.confidence).toBe('medium');
+        expect(result.reasonKind).toBe('duration-mismatch');
+        // ...and the reason still renders the SCALAR expectation (380min → 6h 20m).
+        expect(result.reason).toBe('Duration mismatch — scanned 5h 22m vs expected 6h 20m');
+      });
+
+      it('a trimmed reference that is present but EQUAL to the full one behaves exactly as today (AC31)', async () => {
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(CHAPTER_REFS);
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([fablehaven()]);
+
+        const result = await runSingle();
+
+        expect(result.confidence).toBe('high');
+        expect(result.reasonKind).toBeUndefined();
       });
     });
   });

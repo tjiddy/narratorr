@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { BookMetadataSchema, AuthorMetadataSchema } from './schemas.js';
 import { MetadataError, RateLimitError, TransientError } from './errors.js';
 import { normalizeGenres } from './genres.js';
+import { computeTrimmedChapterRuntime } from './chapter-trim.js';
 // All three 429 arms (chapters, book, author) route through the shared normalizer —
 // no path may hand the service a window it cannot honor. See retry-after.ts (#1944).
 import { parseRetryAfterMs } from './retry-after.js';
@@ -51,18 +52,36 @@ const audnexusBookSchema = z.object({
 }).passthrough();
 
 /**
- * Chapter-endpoint raw schema (#1942). Only the top-level fields matter — the
- * endpoint publishes its own `runtimeLengthMs`, so the chapter entries are never
- * summed client-side and stay `z.unknown()`. `runtimeLengthMs`/`isAccurate` are
- * `.nullish()` (external-API convention) so a GENUINE record with a null trust
- * field still validates and settles as a definitive trust-fail; the identity +
- * shape predicate below — not these two fields — is what proves authority.
+ * A single chapter entry (#2168). Read for `title` and `lengthMs` so the trailing
+ * promotional run can be trimmed off the published total; every field is
+ * `.nullish()` and the object `.passthrough()` per the external-API convention.
+ *
+ * The `.catch({})` is load-bearing, NOT a convenience: parsing entries must never
+ * narrow the record predicate below. A bare-string entry, a numeric entry, or one
+ * whose `lengthMs` is a string is a malformed ENTRY — it degrades the trim (the
+ * walk stops on it) but the body is still the requested edition's chapter record.
+ * Without the fallback such a body would become `invalid_record`, which is
+ * transient, never cached, and would re-request forever.
+ */
+const audnexusChapterEntrySchema = z.object({
+  title: z.string().nullish(),
+  lengthMs: z.number().nullish(),
+}).passthrough().catch({});
+
+/**
+ * Chapter-endpoint raw schema (#1942, #2168). The endpoint publishes its own
+ * `runtimeLengthMs`, which stays the primary reference — the entries are parsed
+ * only to compute the TRIMMED second reference (`computeTrimmedChapterRuntime`),
+ * never to re-sum the total. `runtimeLengthMs`/`isAccurate` are `.nullish()`
+ * (external-API convention) so a GENUINE record with a null trust field still
+ * validates and settles as a definitive trust-fail; the identity + shape predicate
+ * below — not these fields — is what proves authority.
  */
 const audnexusChaptersSchema = z.object({
   asin: z.string().nullish(),
   runtimeLengthMs: z.number().nullish(),
   isAccurate: z.boolean().nullish(),
-  chapters: z.array(z.unknown()).nullish(),
+  chapters: z.array(audnexusChapterEntrySchema).nullish(),
 }).passthrough();
 
 const audnexusAuthorSchema = z.object({
@@ -292,7 +311,17 @@ function classifyChapterBody(body: string, requestedAsin: string): ChapterRuntim
   if (parsed.data.asin !== requestedAsin) return { kind: 'invalid_record', reason: 'asin-mismatch' };
   if (!Array.isArray(parsed.data.chapters)) return { kind: 'invalid_record', reason: 'missing-chapters' };
 
-  return { kind: 'ok', runtimeLengthMs: parsed.data.runtimeLengthMs, isAccurate: parsed.data.isAccurate };
+  // #2168 — the trailing-trim rule rides on the same authoritative record. It is
+  // pure arithmetic over what was parsed; the trust gate that turns EITHER runtime
+  // into a usable reference is the service's, not the transport's.
+  const trim = computeTrimmedChapterRuntime(parsed.data.chapters, parsed.data.runtimeLengthMs);
+  return {
+    kind: 'ok',
+    runtimeLengthMs: parsed.data.runtimeLengthMs,
+    isAccurate: parsed.data.isAccurate,
+    trimmedRuntimeMs: trim.trimmedRuntimeMs,
+    trimmedChapterCount: trim.trimmedChapterCount,
+  };
 }
 
 function mapAuthor(d: AudnexusAuthorDetail): Record<string, unknown> {
