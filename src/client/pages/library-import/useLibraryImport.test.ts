@@ -10,7 +10,7 @@ import { createMockSettings } from '@/__tests__/factories';
 import { toast } from 'sonner';
 import { wireStagedComplete, acceptedRow, heldRow, skippedRow, failedRow, type StagedMockFns } from '@/lib/staged-import/__tests__/staged-fixtures';
 import { __resetOutboxCache } from '@/lib/staged-import/outbox';
-import { FABLEHAVEN, FABLEHAVEN_BEST, FABLEHAVEN_ALTERNATIVES, fablehavenMismatch, fablehavenEdit, deferred } from '@/lib/__tests__/repick-fixtures';
+import { FABLEHAVEN, FABLEHAVEN_BEST, FABLEHAVEN_ALTERNATIVES, FABLEHAVEN_TRIMMED_RESPONSE, fablehavenMismatch, fablehavenEdit, deferred } from '@/lib/__tests__/repick-fixtures';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router', async () => {
@@ -1979,6 +1979,27 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     expect(matchAt(result)?.reasonKind).toBeUndefined();
     expect(matchAt(result)?.scannedSeconds).toBe(FABLEHAVEN.scannedSeconds);
     // B7 (F3) — suppress-only: the promotion patches confidence, not the selection evidence.
+    expect(matchAt(result)?.bestMatch).toEqual(FABLEHAVEN_BEST);
+    expect(matchAt(result)?.alternatives).toEqual(FABLEHAVEN_ALTERNATIVES);
+  });
+
+  // #2168 — the server may now suppress via the TRIMMED chapter sum. The client reads
+  // only `corroborated`, so server-side parity is what discharges this; this pins that
+  // the row genuinely goes green on that answer, on this surface and its twin.
+  it('promotes the row when the server suppressed via the TRIMMED chapter sum', async () => {
+    const gate = deferred<typeof FABLEHAVEN_TRIMMED_RESPONSE>();
+    mockCorroborateImportDuration.mockReturnValue(gate.promise);
+    const { result } = await seed();
+
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    expect(matchAt(result)?.confidence).toBe('medium');
+
+    gate.resolve(FABLEHAVEN_TRIMMED_RESPONSE);
+    await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
+
+    expect(matchAt(result)?.reason).toBeUndefined();
+    expect(matchAt(result)?.reasonKind).toBeUndefined();
+    // Suppress-only still: the selection evidence survives the patch unchanged.
     expect(matchAt(result)?.bestMatch).toEqual(FABLEHAVEN_BEST);
     expect(matchAt(result)?.alternatives).toEqual(FABLEHAVEN_ALTERNATIVES);
   });

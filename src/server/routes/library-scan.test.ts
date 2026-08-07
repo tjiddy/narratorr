@@ -664,13 +664,15 @@ describe('library-scan routes', () => {
 
   // #2055 — the import editor's re-pick path asks the server for the same
   // chapter-runtime second opinion the match job already gets (#1942).
-  describe('POST /api/library/import/duration-corroboration (#2055)', () => {
+  describe('POST /api/library/import/duration-corroboration (#2055/#2168)', () => {
     // The live Fablehaven case, canonical values already pinned in-repo:
     // scanned 33219.47s (match-job.helpers.test.ts), chapter table 33219.49s
     // (chapter-corroboration.test.ts FABLEHAVEN_MS), provider scalar 539min = 32340s.
     const ASIN = 'B00CXXEX8W';
     const SCANNED = 33219.47;
     const CHAPTERS = 33219.49;
+    /** Fablehaven has no trimmable tail, so both references carry the full sum. */
+    const REFS = { fullSeconds: CHAPTERS, trimmedSeconds: CHAPTERS };
 
     const chapterStub = () => services.metadata.getChapterRuntimeSeconds as unknown as ReturnType<typeof vi.fn>;
 
@@ -678,16 +680,18 @@ describe('library-scan routes', () => {
       app.inject({ method: 'POST', url: '/api/library/import/duration-corroboration', payload: payload as object });
 
     it('corroborates the scanned runtime against the chapter table', async () => {
-      chapterStub().mockResolvedValue(CHAPTERS);
+      chapterStub().mockResolvedValue(REFS);
 
       const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
 
       expect(res.statusCode).toBe(200);
+      // The trimmed field is ABSENT: the walk removed nothing, so there is no
+      // OTHER number to report (#2168 AC27).
       expect(JSON.parse(res.payload)).toEqual({ corroborated: true, chapterSeconds: CHAPTERS });
     });
 
     it('reports a chapter runtime that is also out of band as not corroborated', async () => {
-      chapterStub().mockResolvedValue(40000);
+      chapterStub().mockResolvedValue({ fullSeconds: 40000, trimmedSeconds: 40000 });
 
       const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
 
@@ -696,7 +700,7 @@ describe('library-scan routes', () => {
     });
 
     it('omits chapterSeconds entirely when there is no usable chapter runtime', async () => {
-      chapterStub().mockResolvedValue(undefined);
+      chapterStub().mockResolvedValue({});
 
       const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
 
@@ -712,7 +716,7 @@ describe('library-scan routes', () => {
     });
 
     it('looks the edition up exactly once, with the trimmed ASIN', async () => {
-      chapterStub().mockResolvedValue(CHAPTERS);
+      chapterStub().mockResolvedValue(REFS);
 
       const res = await post({ asin: `  ${ASIN}  `, scannedSeconds: SCANNED });
 
@@ -722,11 +726,11 @@ describe('library-scan routes', () => {
     });
 
     it('pins the shared inclusive tolerance band in both directions', async () => {
-      chapterStub().mockResolvedValue(SCANNED + 240);
+      chapterStub().mockResolvedValue({ fullSeconds: SCANNED + 240, trimmedSeconds: SCANNED + 240 });
       const inBand = await post({ asin: ASIN, scannedSeconds: SCANNED });
       expect(JSON.parse(inBand.payload).corroborated).toBe(true);
 
-      chapterStub().mockResolvedValue(SCANNED + 241);
+      chapterStub().mockResolvedValue({ fullSeconds: SCANNED + 241, trimmedSeconds: SCANNED + 241 });
       const outOfBand = await post({ asin: ASIN, scannedSeconds: SCANNED });
       expect(JSON.parse(outOfBand.payload).corroborated).toBe(false);
     });
@@ -739,7 +743,7 @@ describe('library-scan routes', () => {
       ['negative scannedSeconds', { asin: ASIN, scannedSeconds: -1 }],
       ['non-numeric scannedSeconds', { asin: ASIN, scannedSeconds: 'abc' }],
     ])('rejects %s with 400 and never reaches the provider', async (_label, payload) => {
-      chapterStub().mockResolvedValue(CHAPTERS);
+      chapterStub().mockResolvedValue(REFS);
 
       const res = await post(payload);
 
@@ -771,6 +775,75 @@ describe('library-scan routes', () => {
       } finally {
         restore();
       }
+    });
+
+    // #2168 — the route applies the same full-OR-trimmed rule the match job does,
+    // and reports the trimmed reference only when it is a genuinely DIFFERENT
+    // number. The trimmed chapter COUNT is never on the wire.
+    describe('trimmed chapter runtime (#2168)', () => {
+      /** Addie LaRue: only the trimmed reference is in band. */
+      const ADDIE_SCANNED = 85_144;
+      const ADDIE_FULL = 86_400;
+      const ADDIE_TRIMMED = 85_134;
+
+      it('corroborates when ONLY the trimmed reference is in band, and reports it', async () => {
+        chapterStub().mockResolvedValue({ fullSeconds: ADDIE_FULL, trimmedSeconds: ADDIE_TRIMMED });
+
+        const res = await post({ asin: ASIN, scannedSeconds: ADDIE_SCANNED });
+
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload)).toEqual({
+          corroborated: true,
+          chapterSeconds: ADDIE_FULL,
+          trimmedChapterSeconds: ADDIE_TRIMMED,
+        });
+      });
+
+      it('reports NOT corroborated when neither reference is in band', async () => {
+        chapterStub().mockResolvedValue({ fullSeconds: ADDIE_FULL, trimmedSeconds: ADDIE_TRIMMED });
+
+        const res = await post({ asin: ASIN, scannedSeconds: 70_000 });
+
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload)).toEqual({
+          corroborated: false,
+          chapterSeconds: ADDIE_FULL,
+          trimmedChapterSeconds: ADDIE_TRIMMED,
+        });
+      });
+
+      it('OMITS the trimmed field when a chapter WAS removed but the two runtimes are equal', async () => {
+        // The trusted zero-length-tail case: the adapter counted 1 removal, but the
+        // field answers "what OTHER number did the band get checked against" — and
+        // there isn't one. Counterfactual: key the field on the trim ACT rather than
+        // the value and this leaks a duplicate of `chapterSeconds`.
+        chapterStub().mockResolvedValue({ fullSeconds: CHAPTERS, trimmedSeconds: CHAPTERS });
+
+        const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
+
+        const body = JSON.parse(res.payload);
+        expect(body).toEqual({ corroborated: true, chapterSeconds: CHAPTERS });
+        expect(body).not.toHaveProperty('trimmedChapterSeconds');
+      });
+
+      it('never puts the trimmed chapter COUNT on the wire', async () => {
+        chapterStub().mockResolvedValue({ fullSeconds: ADDIE_FULL, trimmedSeconds: ADDIE_TRIMMED });
+
+        const res = await post({ asin: ASIN, scannedSeconds: ADDIE_SCANNED });
+
+        expect(Object.keys(JSON.parse(res.payload)).sort())
+          .toEqual(['chapterSeconds', 'corroborated', 'trimmedChapterSeconds']);
+      });
+
+      it('a trimmed-only reference (no usable full one) still answers and reports it', async () => {
+        chapterStub().mockResolvedValue({ trimmedSeconds: ADDIE_TRIMMED });
+
+        const res = await post({ asin: ASIN, scannedSeconds: ADDIE_SCANNED });
+
+        const body = JSON.parse(res.payload);
+        expect(body).toEqual({ corroborated: true, trimmedChapterSeconds: ADDIE_TRIMMED });
+        expect(body).not.toHaveProperty('chapterSeconds');
+      });
     });
   });
 

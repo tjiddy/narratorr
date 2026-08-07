@@ -55,7 +55,7 @@ import { wireStagedComplete, acceptedRow, heldRow, skippedRow, failedRow, summar
 import { __resetOutboxCache, readOutbox, putOutbox } from '@/lib/staged-import/outbox';
 import { STAGED_COPY, putFailedWithCounts } from '@/lib/staged-import/messages';
 import { PREFLIGHT_COPY } from '@/lib/staged-import/preflight';
-import { FABLEHAVEN, FABLEHAVEN_BEST, FABLEHAVEN_ALTERNATIVES, fablehavenMismatch, fablehavenEdit, deferred } from '@/lib/__tests__/repick-fixtures';
+import { FABLEHAVEN, FABLEHAVEN_BEST, FABLEHAVEN_ALTERNATIVES, FABLEHAVEN_TRIMMED_RESPONSE, fablehavenMismatch, fablehavenEdit, deferred } from '@/lib/__tests__/repick-fixtures';
 
 /** A wrapper whose QueryClient is spied so tests can observe invalidation timing (F8). */
 function createSpyWrapper() {
@@ -2907,6 +2907,25 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
     expect(matchAt(result)?.reasonKind).toBeUndefined();
     expect(matchAt(result)?.scannedSeconds).toBe(FABLEHAVEN.scannedSeconds);
     // B7 (F3) — suppress-only: the selection evidence survives the patch unchanged.
+    expect(matchAt(result)?.bestMatch).toEqual(FABLEHAVEN_BEST);
+    expect(matchAt(result)?.alternatives).toEqual(FABLEHAVEN_ALTERNATIVES);
+  });
+
+  // #2168 — the twin of the library-surface case: the server suppressed via the
+  // TRIMMED chapter sum, and this surface must go green on the same answer (#1374).
+  it('promotes the row when the server suppressed via the TRIMMED chapter sum', async () => {
+    const gate = deferred<typeof FABLEHAVEN_TRIMMED_RESPONSE>();
+    corroborateMock().mockReturnValue(gate.promise);
+    const { result } = await seed();
+
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    expect(matchAt(result)?.confidence).toBe('medium');
+
+    gate.resolve(FABLEHAVEN_TRIMMED_RESPONSE);
+    await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
+
+    expect(matchAt(result)?.reason).toBeUndefined();
+    expect(matchAt(result)?.reasonKind).toBeUndefined();
     expect(matchAt(result)?.bestMatch).toEqual(FABLEHAVEN_BEST);
     expect(matchAt(result)?.alternatives).toEqual(FABLEHAVEN_ALTERNATIVES);
   });

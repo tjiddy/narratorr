@@ -1988,20 +1988,35 @@ describe('MetadataService', () => {
   // (only the provider is mocked), so they prove the corroborator is genuinely
   // wired to the service's shared throttle and provider-wide 429 backoff rather
   // than reaching Audnexus on its own.
-  describe('getChapterRuntimeSeconds bridge (#1942)', () => {
+  describe('getChapterRuntimeSeconds bridge (#1942/#2168)', () => {
     const ASIN = 'B00CXXEX8W';
+    /**
+     * Fablehaven's live record has no trimmable tail, so the trim contributes
+     * nothing and both references carry the full sum (#2168 AC30).
+     */
+    const FABLEHAVEN_OK = { kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true, trimmedRuntimeMs: 33219490, trimmedChapterCount: 0 } as const;
+    /** "No usable runtime" is the EMPTY pair — never a bare `undefined` return. */
+    const NONE = {};
+
+    it('#2168 — a trimmed record bridges BOTH references through in SECONDS', async () => {
+      mockAudnexus.getChapterRuntime.mockResolvedValue({
+        kind: 'ok', runtimeLengthMs: 86_400_000, isAccurate: true, trimmedRuntimeMs: 85_134_000, trimmedChapterCount: 1,
+      });
+
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 86_400, trimmedSeconds: 85_134 });
+    });
 
     it('returns the trusted chapter runtime in SECONDS', async () => {
-      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
+      mockAudnexus.getChapterRuntime.mockResolvedValue(FABLEHAVEN_OK);
 
-      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 33219.49, trimmedSeconds: 33219.49 });
       expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledExactlyOnceWith(ASIN);
     });
 
     it('a returned 429 sets the shared backoff, so the IMMEDIATELY subsequent Audnexus call short-circuits', async () => {
       mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'rate_limited', retryAfterMs: 60_000 });
 
-      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
       expect(mockLog.warn).toHaveBeenCalledWith(
         { provider: 'Audnexus', retryAfterMs: 60_000 },
         'Provider rate limited',
@@ -2045,22 +2060,22 @@ describe('MetadataService', () => {
 
       it('holds the gate up to the last millisecond of the window, then retries and promotes', async () => {
         mockAudnexus.getChapterRuntime.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60_000 });
-        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
         expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
 
         // 1ms short of the deadline — still gated, no request.
         vi.setSystemTime(NOW + 59_999);
-        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
         expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
 
         // Exactly at the deadline — the gate releases and the provider is retried.
         vi.setSystemTime(NOW + 60_000);
-        mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
-        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+        mockAudnexus.getChapterRuntime.mockResolvedValue(FABLEHAVEN_OK);
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 33219.49, trimmedSeconds: 33219.49 });
         expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
 
         // ...and the promotion settles, so a fourth lookup issues no request.
-        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 33219.49, trimmedSeconds: 33219.49 });
         expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
       });
 
@@ -2071,7 +2086,7 @@ describe('MetadataService', () => {
         vi.setSystemTime(NOW + 60_000);
         mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'not_found' });
 
-        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
         // Two real requests for the SAME ASIN: the 429 is transient, so it left no
         // settled verdict for the post-window call to short-circuit against.
         expect(mockAudnexus.getChapterRuntime.mock.calls).toEqual([[ASIN], [ASIN]]);
@@ -2082,18 +2097,18 @@ describe('MetadataService', () => {
       mockAudnexus.getBook.mockRejectedValue(new RateLimitError(60_000, 'Audnexus'));
       await expect(service.enrichBook(ASIN)).rejects.toBeInstanceOf(RateLimitError);
 
-      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
       expect(mockAudnexus.getChapterRuntime).not.toHaveBeenCalled();
     });
 
     it('never throws — a provider that rejects degrades to "no usable runtime"', async () => {
       mockAudnexus.getChapterRuntime.mockRejectedValue(new Error('boom'));
 
-      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
     });
 
     it('cache state is per-service-instance, so a second service performs its own lookup (F14)', async () => {
-      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
+      mockAudnexus.getChapterRuntime.mockResolvedValue(FABLEHAVEN_OK);
       await service.getChapterRuntimeSeconds(ASIN);
       await service.getChapterRuntimeSeconds(ASIN);
       expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
