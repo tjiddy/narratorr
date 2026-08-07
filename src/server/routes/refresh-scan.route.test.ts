@@ -80,7 +80,10 @@ describe('POST /api/books/:id/refresh-scan', () => {
     expect(body.durationMinutes).toBe(2);
   });
 
-  it('narratorsUpdated is true when tagNarrator was present', async () => {
+  // Names deliberately say "passes through", not "when a tag was present": since #2161 the flag
+  // means a source supplied a replacement, so it is true for an OPF-only replacement with no tag at
+  // all and false for a whitespace- or delimiter-only tag. The route only forwards the boolean.
+  it('passes a true narratorsUpdated through unchanged', async () => {
     vi.mocked(refreshScanBook).mockResolvedValue({
       bookId: 1, codec: 'mp3', bitrate: 128000, fileCount: 1, durationMinutes: 60, narratorsUpdated: true,
     });
@@ -88,7 +91,7 @@ describe('POST /api/books/:id/refresh-scan', () => {
     expect(JSON.parse(res.payload).narratorsUpdated).toBe(true);
   });
 
-  it('narratorsUpdated is false when tagNarrator was absent', async () => {
+  it('passes a false narratorsUpdated through unchanged', async () => {
     vi.mocked(refreshScanBook).mockResolvedValue({
       bookId: 1, codec: 'mp3', bitrate: 128000, fileCount: 1, durationMinutes: 60, narratorsUpdated: false,
     });
