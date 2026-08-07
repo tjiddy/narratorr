@@ -3,7 +3,7 @@ import { generatePublicId } from '../utils/public-id.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import {
@@ -17,6 +17,9 @@ import {
 } from '@db/schema.js';
 import { BookService } from './book.service.js';
 import { replaceSeriesLink } from './book-series-link.js';
+import { SeriesCardService } from './series-card.service.js';
+import type { SettingsService } from './settings.service.js';
+import { normalizeMemberTitleForMatch } from './series-title-match.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 
 /**
@@ -404,6 +407,213 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
     const after = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, created.id));
     expect(after).toHaveLength(1);
     expect(after[0]!.id).toBe(beforeRow.id);
+  });
+});
+
+/**
+ * #2150 — the operator-visible half. Fix Match onto a Hardcover-canonical series
+ * used to seed a `source: 'local'` row, and since #2144 such a row claims its
+ * book BEFORE the title matcher runs, so the canonical member rendered '+ Add'
+ * for a book the operator owns while the book rendered a second time as its own
+ * entry. These build the actual card the modal invalidates
+ * (`GET /api/books/:id/series` → `SeriesCardService.getSeriesForBook`).
+ */
+describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)', () => {
+  let dir: string;
+  let db: Db;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'fix-match-card-'));
+    const dbFile = join(dir, 'narratorr.db');
+    await runMigrations(dbFile);
+    db = createDb(dbFile);
+  });
+
+  afterEach(() => {
+    db.$client.close();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // libsql may keep the file handle on Windows
+    }
+  });
+
+  function cardService(): SeriesCardService {
+    return new SeriesCardService(db, log(), inject<SettingsService>({
+      get: vi.fn().mockResolvedValue({ hardcoverApiKey: 'hc_key' }),
+    }));
+  }
+
+  /** A canonical `series` row plus its Hardcover member set — a cache HIT, so no fetch. */
+  async function seedCanonicalBand(memberTitles: readonly string[]): Promise<number> {
+    const [row] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+      hardcoverSeriesId: 5523,
+      name: 'The Band',
+      normalizedName: 'the band',
+      authorName: 'Nicholas Eames',
+      lastFetchedAt: new Date(),
+    }).returning();
+    let hardcoverBookId = 1000;
+    let position = 1;
+    for (const title of memberTitles) {
+      await db.insert(seriesMembers).values({
+        seriesId: row!.id,
+        hardcoverBookId: ++hardcoverBookId,
+        slug: title.toLowerCase().replace(/\s+/g, '-'),
+        title,
+        normalizedTitle: normalizeMemberTitleForMatch(title),
+        authorName: 'Nicholas Eames',
+        position: position++,
+        source: 'hardcover',
+      });
+    }
+    return row!.id;
+  }
+
+  async function seedOwnedBook(svc: BookService): Promise<number> {
+    const created = await svc.create({
+      title: 'Wrong Identity',
+      authors: [{ name: 'Nicholas Eames' }],
+      asin: 'B_WRONG',
+      seriesName: 'Some Other Series',
+      seriesPosition: 1,
+    });
+    return created.id;
+  }
+
+  // AC7 — the fix. `seriesName` byte-identical to the cached `series.name`.
+  it('AC7: the fix-matched book renders as exactly one canonical member with inLibrary, and the card issues no write', async () => {
+    const svc = new BookService(db, log());
+    const seriesId = await seedCanonicalBand(['Kings of the Wyld', 'Bloody Rose']);
+    const bookId = await seedOwnedBook(svc);
+
+    await svc.fixMatch(bookId, {
+      asin: 'B_BR', title: 'Bloody Rose', authors: [{ name: 'Nicholas Eames' }],
+      seriesName: 'The Band', seriesPosition: 2,
+    });
+
+    // The matched card takes `buildCardFromCache`'s fast path — assert no
+    // transaction is opened, not merely that the row count happens to be right.
+    const txSpy = vi.spyOn(db, 'transaction');
+    const card = await cardService().getSeriesForBook(bookId);
+    expect(txSpy).not.toHaveBeenCalled();
+    txSpy.mockRestore();
+
+    expect(card).not.toBeNull();
+    expect(card!.hardcoverSeriesId).toBe(5523);
+    const owned = card!.members.filter((m) => m.libraryBookId === bookId);
+    expect(owned).toHaveLength(1);
+    // The surviving entry is the CANONICAL member, not a locally-rendered clone.
+    expect(owned[0]!.hardcoverBookId).toBe(1002);
+    expect(owned[0]!.inLibrary).toBe(true);
+    expect(card!.members).toHaveLength(2);
+    expect(card!.members.every((m) => m.hardcoverBookId !== null)).toBe(true);
+    // Nothing local was seeded into the canonical series.
+    const localRows = await db.select().from(seriesMembers)
+      .where(and(eq(seriesMembers.seriesId, seriesId), eq(seriesMembers.source, 'local')));
+    expect(localRows).toHaveLength(0);
+  });
+
+  // AC7 — name-drift variant. The replacement name is normalized-equal but
+  // byte-different from the cached `series.name`; the own card loads its pool
+  // with the BOOK's `series_name`, which is exactly what Fix Match just wrote,
+  // so the book is in its own pool either way.
+  it('AC7: a normalized-equal, byte-different replacement series name yields the identical single-entry card', async () => {
+    const svc = new BookService(db, log());
+    await seedCanonicalBand(['Kings of the Wyld', 'Bloody Rose']);
+    const bookId = await seedOwnedBook(svc);
+
+    await svc.fixMatch(bookId, {
+      asin: 'B_BR', title: 'Bloody Rose', authors: [{ name: 'Nicholas Eames' }],
+      seriesName: 'the band', seriesPosition: 2,
+    });
+    // Fix Match resolved onto the ONE canonical row rather than creating a second.
+    const bandRows = await db.select().from(series).where(eq(series.normalizedName, 'the band'));
+    expect(bandRows).toHaveLength(1);
+    expect(bandRows[0]!.hardcoverSeriesId).toBe(5523);
+
+    const card = await cardService().getSeriesForBook(bookId);
+    const owned = card!.members.filter((m) => m.libraryBookId === bookId);
+    expect(owned).toHaveLength(1);
+    expect(owned[0]!.hardcoverBookId).toBe(1002);
+    expect(card!.members).toHaveLength(2);
+  });
+
+  // AC8 — the #2144 case: the canonical member set does not contain the book
+  // (a dateless Hardcover stub). The card build's reconcile seeds the local row
+  // this call site no longer writes, so the book is never invisible.
+  it('AC8: a book the canonical member set does not contain still renders, seeded by the card reconcile', async () => {
+    const svc = new BookService(db, log());
+    const seriesId = await seedCanonicalBand(['Kings of the Wyld']);
+    const bookId = await seedOwnedBook(svc);
+
+    await svc.fixMatch(bookId, {
+      asin: 'B_OUT', title: 'Outland Interlude', authors: [{ name: 'Nicholas Eames' }],
+      seriesName: 'The Band', seriesPosition: 3,
+    });
+    // replaceSeriesLink itself seeded nothing — the reconcile is the only writer.
+    expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(0);
+
+    const card = await cardService().getSeriesForBook(bookId);
+    const owned = card!.members.filter((m) => m.libraryBookId === bookId);
+    expect(owned).toHaveLength(1);
+    expect(owned[0]!.title).toBe('Outland Interlude');
+    expect(card!.members).toHaveLength(2);
+
+    const seeded = await db.select().from(seriesMembers)
+      .where(and(eq(seriesMembers.seriesId, seriesId), eq(seriesMembers.source, 'local')));
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0]!.bookId).toBe(bookId);
+  });
+
+  // AC9 — rollback AFTER the writes were issued. `replaceSeriesLink` is the last
+  // awaited step in `fixMatch`'s transaction, so there is no later application
+  // step to reject from: let the real callback finish, then throw before commit.
+  // A rollback that never reaches the write cannot distinguish a rolled-back
+  // mutation from one that never happened, which is why the pre-write case at
+  // ':212' is not a substitute for this one.
+  it('AC9: a failure after the link writes rolls every series_members row back to its pre-call state', async () => {
+    const svc = new BookService(db, log());
+    const seriesId = await seedCanonicalBand(['Kings of the Wyld', 'Bloody Rose']);
+    const bookId = await seedOwnedBook(svc);
+    // A provider row in a SIBLING series (the null-link target) plus the book's
+    // own local row (the delete target), so all three write shapes are in flight.
+    const [sibling] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+      hardcoverSeriesId: 77, name: 'Sibling', normalizedName: 'sibling',
+    }).returning();
+    await db.insert(seriesMembers).values({
+      seriesId: sibling!.id, bookId, hardcoverBookId: 2002, slug: 'sib', title: 'Wrong Identity',
+      normalizedTitle: normalizeMemberTitleForMatch('Wrong Identity'), position: 1, source: 'hardcover',
+      updatedAt: new Date('2020-01-01T00:00:00Z'),
+    });
+
+    const snapshot = async (): Promise<string> => JSON.stringify(
+      (await db.select().from(seriesMembers))
+        .map((r) => ({ ...r, createdAt: r.createdAt.getTime(), updatedAt: r.updatedAt.getTime() }))
+        .sort((a, b) => a.id - b.id),
+    );
+    const before = await snapshot();
+
+    const origTransaction = db.transaction.bind(db);
+    const txSpy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (cb: Parameters<typeof origTransaction>[0]) => {
+      return origTransaction(async (tx) => {
+        await cb(tx);
+        throw new Error('post-write boom');
+      });
+    });
+
+    await expect(svc.fixMatch(bookId, {
+      asin: 'B_BR', title: 'Bloody Rose', authors: [{ name: 'Nicholas Eames' }],
+      seriesName: 'The Band', seriesPosition: 2,
+    })).rejects.toThrow('post-write boom');
+    txSpy.mockRestore();
+
+    expect(await snapshot()).toBe(before);
+    // And the scalar half rolled back with it.
+    const [row] = await db.select().from(books).where(eq(books.id, bookId));
+    expect(row!.asin).toBe('B_WRONG');
+    expect(row!.seriesName).toBe('Some Other Series');
+    expect(seriesId).toBeGreaterThan(0);
   });
 });
 
