@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books, series, seriesMembers } from '@db/schema.js';
-import { readPositionClearedBookIds, relinkBookToBoundSeries, replaceSeriesLink, upsertSeriesLink } from './book-series-link.js';
+import { detachBookFromSeriesMembers, readPositionClearedBookIds, relinkBookToBoundSeries, replaceSeriesLink, upsertSeriesLink } from './book-series-link.js';
 import { normalizeMemberTitleForMatch } from './series-title-match.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 
@@ -333,6 +333,70 @@ describe('book-series-link', () => {
       const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
       expect(memberRows).toHaveLength(1);
       expect(memberRows[0]!.position).toBe(2);
+    });
+  });
+
+  /**
+   * #2150 F1 — the Edit-Metadata clear (#2069 AC14) shares `replaceSeriesLink`'s
+   * detach rule through the private `detachBookRows`, so this pins the TOTAL
+   * detach arm directly on this module rather than only through `BookService`.
+   * The behavioural end-to-end pins live in
+   * `src/db/user-cleared-fields-schema.integration.test.ts:260,270`; this one
+   * additionally observes the `updated_at` bump, which that path never asserted.
+   */
+  describe('detachBookFromSeriesMembers', () => {
+    it('#2150 F1: deletes every local row and null-links every provider row, with no series exempted', async () => {
+      const bookId = await seedBook('Tress of the Emerald Sea');
+      const [localSeries] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        name: 'The Cosmere', normalizedName: 'the cosmere',
+      }).returning();
+      const [providerSeries] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 4242, name: 'Secret Projects', normalizedName: 'secret projects',
+      }).returning();
+      const [localRow] = await db.insert(seriesMembers).values({
+        seriesId: localSeries!.id, bookId, title: 'Tress of the Emerald Sea',
+        normalizedTitle: 'tress of the emerald sea', position: 1, source: 'local',
+      }).returning();
+      const stale = new Date('2020-01-01T00:00:00Z');
+      const [providerRow] = await db.insert(seriesMembers).values({
+        seriesId: providerSeries!.id, bookId, hardcoverBookId: 4242, slug: 'tress',
+        imageUrl: 'https://example.com/tress.jpg', title: 'Tress of the Emerald Sea',
+        normalizedTitle: 'tress of the emerald sea', authorName: 'Brandon Sanderson',
+        position: 1, source: 'hardcover', updatedAt: stale,
+      }).returning();
+
+      await db.transaction((tx) => detachBookFromSeriesMembers(tx, bookId));
+
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.id, localRow!.id))).toHaveLength(0);
+      const [survivor] = await db.select().from(seriesMembers).where(eq(seriesMembers.id, providerRow!.id));
+      expect(survivor).toBeDefined();
+      expect(survivor!.bookId).toBeNull();
+      expect(survivor!.hardcoverBookId).toBe(4242);
+      expect(survivor!.slug).toBe('tress');
+      expect(survivor!.imageUrl).toBe('https://example.com/tress.jpg');
+      expect(survivor!.title).toBe('Tress of the Emerald Sea');
+      expect(survivor!.position).toBe(1);
+      expect(survivor!.updatedAt.getTime()).toBeGreaterThan(stale.getTime());
+    });
+
+    // The distinguishing case: `replaceSeriesLink` exempts its resolved target
+    // from the null-link, and a clear must NOT. Wiring the clear to a
+    // target-exempting call would leave this provider row still linked.
+    it('#2150 F1: exempts no series — a provider row is unlinked even in the book\'s own current series', async () => {
+      const bookId = await seedBook('Tress of the Emerald Sea');
+      const [only] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 4242, name: 'The Cosmere', normalizedName: 'the cosmere',
+      }).returning();
+      const [row] = await db.insert(seriesMembers).values({
+        seriesId: only!.id, bookId, hardcoverBookId: 9001, slug: 'tress', title: 'Tress of the Emerald Sea',
+        normalizedTitle: 'tress of the emerald sea', position: 1, source: 'hardcover',
+      }).returning();
+
+      await db.transaction((tx) => detachBookFromSeriesMembers(tx, bookId));
+
+      const [after] = await db.select().from(seriesMembers).where(eq(seriesMembers.id, row!.id));
+      expect(after!.bookId).toBeNull();
+      expect(after!.hardcoverBookId).toBe(9001);
     });
   });
 
