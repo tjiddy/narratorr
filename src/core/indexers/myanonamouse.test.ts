@@ -890,6 +890,45 @@ describe('MyAnonamouseIndexer', () => {
     });
   });
 
+  describe('search — container format passthrough', () => {
+    it('maps filetype into SearchResult.format', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ filetype: 'm4b' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!.format).toBe('m4b');
+    });
+
+    it('lowercases and trims what MAM sent', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ filetype: ' M4B ' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!.format).toBe('m4b');
+    });
+
+    it('leaves format undefined when filetype is absent or blank', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult(), makeResult({ filetype: '   ' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!.format).toBeUndefined();
+      expect(results[1]!.format).toBeUndefined();
+    });
+  });
+
   describe('search — language parsing (#272)', () => {
     it('parses lang_code into SearchResult.language normalized to full name (ENG → english)', async () => {
       server.use(

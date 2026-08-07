@@ -41,6 +41,24 @@ export function parseDoubleEncodedNames(raw: string | undefined): string | undef
  * Numeric values pass through unchanged (future-proofing).
  * Illustrative captured MAM values: "881.8 MiB", "1.1 GiB", "830.0 MiB".
  */
+/** Freeleech if the torrent is site-wide free, personally free, or VIP-free while this account is VIP. */
+export function isMamFreeleech(
+  item: {
+    free?: boolean | null | undefined;
+    personal_freeleech?: boolean | null | undefined;
+    fl_vip?: boolean | null | undefined;
+  },
+  isVip: boolean,
+): boolean {
+  return !!(item.free || item.personal_freeleech || (item.fl_vip && isVip));
+}
+
+/** MAM's `filetype` → `SearchResult.format`. Blank/absent stays undefined (unknown, not mp3). */
+export function normalizeMamFormat(raw: string | null | undefined): string | undefined {
+  const trimmed = raw?.trim().toLowerCase();
+  return trimmed ? trimmed : undefined;
+}
+
 export function parseMamSize(raw: string | number | undefined): number | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw === 'number') return raw || undefined;

@@ -18,7 +18,7 @@ import { getUserAgent } from '@shared/user-agent.js';
 import type { WedgeMode } from '@shared/schemas/indexer.js';
 import { getErrorMessage, getErrorMessageWithCause } from '@shared/error-message.js';
 import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
-import { parseDoubleEncodedNames, parseMamSize } from './mam-helpers.js';
+import { parseDoubleEncodedNames, parseMamSize, normalizeMamFormat, isMamFreeleech } from './mam-helpers.js';
 import {
   MAM_TORRENT_SENTINEL_PREFIX,
   parseTorrentIdFromContext,
@@ -187,7 +187,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   }
 
   private mapItem(item: MAMSearchResult, downloadUrl: string | undefined): SearchResult {
-    const isFreeleech = item.free || item.personal_freeleech || (item.fl_vip && this.isVip);
+    const isFreeleech = isMamFreeleech(item, this.isVip);
     const isVipOnly = item.vip;
 
     const author = parseDoubleEncodedNames(orUndef(item.author_info));
@@ -197,6 +197,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       const seeders = orUndef(item.seeders);
       const leechers = orUndef(item.leechers);
       const language = normalizeLanguage(orUndef(item.lang_code));
+      const format = normalizeMamFormat(item.filetype);
       return {
       title: item.title!,
       ...(author !== undefined && { author }),
@@ -211,6 +212,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     indexer: this.name,
     ...(isFreeleech && { isFreeleech: true }),
     ...(isVipOnly && { isVipOnly: true }),
+    ...(format !== undefined && { format }),
     };
   }
 

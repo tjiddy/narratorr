@@ -26,6 +26,12 @@ export interface SearchResult {
   matchScore?: number;
   isFreeleech?: boolean;
   isVipOnly?: boolean;
+  /**
+   * Lowercase container (`m4b`, `mp3`). MAM-only — no other indexer exposes it
+   * structurally, so absence means unknown, not mp3. Display only; not read by
+   * the quality chain.
+   */
+  format?: string;
 }
 
 export interface SearchOptions {

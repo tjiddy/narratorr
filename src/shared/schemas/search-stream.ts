@@ -58,6 +58,8 @@ export const searchResultSchema = z.object({
   matchScore: z.number().optional(),
   isFreeleech: z.boolean().optional(),
   isVipOnly: z.boolean().optional(),
+  // No `.passthrough()` here — an undeclared field is stripped before it reaches the card.
+  format: z.string().optional(),
 });
 
 export const searchResponseSchema = z.object({

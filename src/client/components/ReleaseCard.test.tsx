@@ -75,6 +75,20 @@ describe('ReleaseCard', () => {
       expect(screen.getByText('VIP')).toBeInTheDocument();
     });
 
+    it('renders the container format verbatim, with no label prefix', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(<ReleaseCard {...defaultProps} result={{ ...baseResult, format: 'm4b' }} />);
+      expect(screen.getByText('m4b')).toBeInTheDocument();
+      expect(screen.queryByText(/filetype/i)).not.toBeInTheDocument();
+    });
+
+    it('renders no format badge when the indexer supplied none (Torznab/Newznab)', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(<ReleaseCard {...defaultProps} result={baseResult} />);
+      expect(screen.queryByText('m4b')).not.toBeInTheDocument();
+      expect(screen.queryByText('mp3')).not.toBeInTheDocument();
+    });
+
     it('does not render badges when flags are undefined', () => {
       mockCalculateQuality.mockReturnValue(null);
       renderWithProviders(<ReleaseCard {...defaultProps} />);

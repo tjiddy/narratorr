@@ -12,6 +12,7 @@ export const mamSearchResultSchema = z.object({
   narrator_info: z.string().nullish(),
   series_info: z.string().nullish(),
   lang_code: z.string().nullish(),
+  filetype: z.string().nullish(),
   size: z.union([z.string(), z.number()]).nullish(),
   seeders: z.number().nullish(),
   leechers: z.number().nullish(),

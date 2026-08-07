@@ -61,6 +61,13 @@ describe('searchResultSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it('carries format through instead of stripping it', () => {
+    const result = searchResultSchema.safeParse({
+      title: 'Book', indexer: 'MAM', protocol: 'torrent', format: 'm4b',
+    });
+    expect(result.success && result.data.format).toBe('m4b');
+  });
+
   it('rejects unknown protocol value', () => {
     const result = searchResultSchema.safeParse({ title: 'Book', indexer: 'ABB', protocol: 'http' });
     expect(result.success).toBe(false);
