@@ -354,8 +354,8 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
   /**
    * One tagged, non-silent part. `cover` embeds an attached picture; `internalChapters` gives
    * the part its OWN chapter set, which is what makes the `-map_chapters` assertion real —
-   * ffmpeg's default picks the input with the MOST chapters, so a part carrying more chapters
-   * than the generated set would win without the explicit map.
+   * ffmpeg's default takes chapters from the FIRST chapter-bearing input (#2083), so a part
+   * carrying its own chapters would win over the generated set without the explicit map.
    */
   function makeTaggedPart(dir: string, name: string, opts: {
     codecArgs: string[];

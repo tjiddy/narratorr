@@ -1,29 +1,11 @@
 import { fetchApi } from './client.js';
 
-export type BulkOpType = 'rename' | 'retag' | 'write_metadata_sidecars';
+// The bulk wire contract is declared ONCE in `src/shared` (#2063) and re-exported here so every
+// existing `@/lib/api` consumer keeps its import unchanged. The local `import type` is what the
+// call signatures below bind to — a bare `export … from` re-export creates no local binding.
+import type { BulkJobStatus } from '@shared/bulk-operation-types.js';
 
-/**
- * One named per-book failure on a bulk job's record (#2159). Mirrors the server's `BulkJobFailure`
- * (`src/server/services/bulk-job.ts`) the same way `BulkOpType`/`BulkJobStatus` already do —
- * unifying the three is chore #2063, deliberately not attempted here.
- */
-export interface BulkJobFailure {
-  bookId: number;
-  title: string;
-  error: string;
-}
-
-export interface BulkJobStatus {
-  jobId: string;
-  type: BulkOpType;
-  status: 'running' | 'completed';
-  completed: number;
-  total: number;
-  /** Uncapped count — always `>= failureDetails.length`; the gap is the "…and N more" row. */
-  failures: number;
-  /** Named failures, capped server-side at the first 50. Always an array, `[]` when clean. */
-  failureDetails: BulkJobFailure[];
-}
+export type { BulkOpType, BulkJobFailure, BulkJobStatus } from '@shared/bulk-operation-types.js';
 
 export interface BulkRenamePreviewItem {
   bookId: number;

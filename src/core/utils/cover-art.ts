@@ -131,8 +131,8 @@ async function reattachCoverArt(
       '-c', 'copy',
       // Explicit (#2078): this is a second remux over the just-merged file, so it must carry
       // forward the global tags the merge preserved and the generated chapter set #2068 pinned.
-      // ffmpeg's chapter default picks the input with the most chapters — a cover JPEG has none
-      // today, but relying on that is a silent dependency on the other input's shape.
+      // ffmpeg's chapter default takes them from the FIRST chapter-bearing input (#2083) — a cover
+      // JPEG has none today, but relying on that is a silent dependency on the other input's shape.
       '-map_metadata', '0',
       '-map_chapters', '0',
       '-disposition:v:0', 'attached_pic',

@@ -12,7 +12,7 @@ import type { BookService } from './book.service.js';
 import type { ConnectorService } from './connector.service.js';
 import { enqueueRetagRefresh } from '../utils/enqueue-book-refresh.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
-import { BulkJob, type BulkJobFailure } from './bulk-job.js';
+import { BulkJob } from './bulk-job.js';
 import { toShortErrorText } from '../utils/short-error-text.js';
 import { runSidecarReconcile } from './bulk-sidecar-reconcile.js';
 import { triggerCompanionSweep, type CompanionSweepTrigger } from './companion-ebook-trigger.js';
@@ -22,22 +22,13 @@ import { serializeError } from '../utils/serialize-error.js';
 
 // ============ Types ============
 
-export type BulkOpType = 'rename' | 'retag' | 'write_metadata_sidecars';
+// Declared ONCE in `src/shared` (#2063) — previously this file and the client each carried a
+// byte-identical copy, so #2159's failureDetails addition had to be written twice. Re-exported so
+// `bulk-job.ts` and every other server consumer keep importing from here; the local `import type`
+// is what the method signatures below bind to.
+import type { BulkJobStatus } from '@shared/bulk-operation-types.js';
 
-export interface BulkJobStatus {
-  jobId: string;
-  type: BulkOpType;
-  status: 'running' | 'completed';
-  completed: number;
-  total: number;
-  /** Uncapped failure count. Always `>= failureDetails.length` (see `MAX_JOB_FAILURE_DETAILS`). */
-  failures: number;
-  /**
-   * Named failures, capped at the first `MAX_JOB_FAILURE_DETAILS`. Always an array — `[]` when the
-   * job is clean — so no client needs an optional-chaining fallback (#2159).
-   */
-  failureDetails: BulkJobFailure[];
-}
+export type { BulkOpType, BulkJobStatus } from '@shared/bulk-operation-types.js';
 
 /** A single mismatched-folder row in the bulk rename preview (library-relative from→to). */
 export interface BulkRenamePreviewItem {

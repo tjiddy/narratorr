@@ -2,17 +2,12 @@ import type { FastifyBaseLogger } from 'fastify';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BulkOpType, BulkJobStatus } from './bulk-operation.service.js';
 
-/**
- * One named per-book failure on a bulk job's record (#2159). `error` is always the output of
- * `toShortErrorText` — a short, URL-redacted, length-bounded line, NOT a serialized stack. The
- * full serialized error still goes to the log line at the failure site; this is the operator-facing
- * half, so "1 failure" can read "Captain's Fury (book 226): ENOENT…" instead.
- */
-export interface BulkJobFailure {
-  bookId: number;
-  title: string;
-  error: string;
-}
+// `BulkJobFailure` is declared ONCE in `src/shared` (#2063) — the client carried a byte-identical
+// copy until then. Re-exported here so `bulk-operation.service.ts`, `bulk-sidecar-reconcile.ts`
+// and the suites keep importing it from this module.
+import type { BulkJobFailure } from '@shared/bulk-operation-types.js';
+
+export type { BulkJobFailure } from '@shared/bulk-operation-types.js';
 
 /**
  * How many failure rows a job record retains. The FIRST N are kept (not the last): a full-library
