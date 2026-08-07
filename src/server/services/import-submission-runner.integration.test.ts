@@ -127,6 +127,27 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
     throw new Error('waitFor timed out');
   }
 
+  /**
+   * The fake-timer counterpart to {@link waitFor} — which cannot be used under
+   * `vi.useFakeTimers()`, since its own `setTimeout(…, 10)` never fires. Each
+   * `advanceTimersByTimeAsync` both runs due timers AND flushes the microtask queue, so
+   * it is what lets the genuinely async (DB-backed) drain make progress while the clock
+   * is mocked.
+   *
+   * A single FIXED advance is what made F19 flake under full-suite load (#2176): the
+   * drain needs however many event-loop turns the saturated worker pool gives it, so a
+   * one-shot 200ms budget is a bet on scheduler timing rather than a synchronisation
+   * point. Looping on the observable state removes the timing dependency without
+   * weakening the assertion — the caller still asserts the settled value itself.
+   */
+  async function advanceUntil(cond: () => Promise<boolean> | boolean, stepMs = 100, maxSteps = 200): Promise<void> {
+    for (let i = 0; i < maxSteps; i++) {
+      if (await cond()) return;
+      await vi.advanceTimersByTimeAsync(stepMs);
+    }
+    throw new Error('advanceUntil timed out');
+  }
+
   const isComplete = (subId: number) => async (): Promise<boolean> => {
     const [h] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
     return h!.status === 'complete';
@@ -739,7 +760,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
 
         // The safety poll re-drives WITHOUT a restart and completes it.
         await vi.advanceTimersByTimeAsync(31_000);
-        await vi.advanceTimersByTimeAsync(200);
+        await advanceUntil(isComplete(subId));
         const [done] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
         expect(done!.status).toBe('complete');
         expect(await db.select().from(books)).toHaveLength(1);

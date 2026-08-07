@@ -114,17 +114,26 @@ export async function applyAudnexusEnrichment(
 
   // ASIN recovery loop — precise identity fast path; first hit wins.
   for (const asin of asinsToTry) {
+    let data;
     try {
-      const data = await deps.metadataService.enrichBook(asin);
-      if (data) {
-        await applyEnrichmentData(bookId, asin, data, opts, deps, capturedAsin);
-        return;
-      }
+      data = await deps.metadataService.enrichBook(asin);
     } catch (error: unknown) {
       // A rate limit is a transient provider state, not a miss — propagate so the
       // caller leaves the book pending/retryable (matches the import-list + job paths).
       if (error instanceof RateLimitError) throw error;
       deps.log.warn({ error: serializeError(error), bookId, asin }, 'Audnexus enrichment failed');
+      continue;
+    }
+    // `applyEnrichmentData` deliberately sits OUTSIDE that catch (#2075): the recovery
+    // is for a PROVIDER miss, and only `enrichBook` can produce one. A durable failure
+    // (the collision query, the identity re-read, the write transaction) used to be
+    // caught here, logged under the provider's name, and followed by another candidate
+    // and then the search fallback — a second write with a different payload against a
+    // row whose commit state is ambiguous. Do not re-widen this `try`; the search-
+    // fallback arm below keeps its own write outside its catch for the same reason.
+    if (data) {
+      await applyEnrichmentData(bookId, asin, data, opts, deps, capturedAsin);
+      return;
     }
   }
 
