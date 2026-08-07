@@ -80,11 +80,10 @@ function isNetworkBackedCheck(checkName: string): boolean {
  * a fresh key and starts from the default `healthy` notified state rather than
  * inheriting a deleted connector's episode.
  *
- * NOT the client's `HealthDashboard.cardKey`: its non-connector arm is
- * `kind:path`, which collides `library-root` with `disk-space` (both carry
- * `{ kind: 'route', path: '/settings' }`). Server-side that would merge two
- * independent local checks into one tracking entry; singleton checks have fixed
- * literal `checkName`s, so falling back to that avoids the merge.
+ * The client's `HealthDashboard.cardKey` mirrors this rule (#2094). Keying
+ * non-connectors by `kind:path` instead collides `library-root` with `disk-space`
+ * (both carry `{ kind: 'route', path: '/settings' }`); singleton checks have fixed
+ * literal `checkName`s, so falling back to that avoids the merge on both sides.
  */
 function trackingKey(result: HealthCheckResult): string {
   const target = result.target;

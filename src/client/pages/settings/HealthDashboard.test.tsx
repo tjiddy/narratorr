@@ -48,6 +48,26 @@ describe('HealthDashboard', () => {
     expect(screen.getByText('Low disk space: 3.2 GB free')).toBeInTheDocument();
   });
 
+  // library-root and disk-space both emit `{ kind: 'route', path: '/settings' }` from the
+  // server, so a `kind:path` card key collides them into one React key (#2094).
+  it('keys library-root and disk-space distinctly despite their shared route target', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    (api.getHealthStatus as Mock).mockResolvedValue([
+      { checkName: 'library-root', state: 'error', message: 'Path not writable', target: { kind: 'route', path: '/settings' } },
+      { checkName: 'disk-space', state: 'warning', message: 'Low disk space: 3.2 GB free', target: { kind: 'route', path: '/settings' } },
+    ]);
+
+    renderWithProviders(<HealthDashboard />);
+
+    await waitFor(() => {
+      expect(screen.getByText('library-root')).toBeInTheDocument();
+    });
+    expect(screen.getByText('disk-space')).toBeInTheDocument();
+    expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(/same key/i);
+
+    consoleError.mockRestore();
+  });
+
   it('shows per-check error messages when state is warning or error', async () => {
     (api.getHealthStatus as Mock).mockResolvedValue([
       { checkName: 'ffmpeg', state: 'error', message: 'ffmpeg not found at: /usr/bin/ffmpeg' },

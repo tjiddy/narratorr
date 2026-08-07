@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'child_process';
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
+import { sanitizedEnv } from '@core/utils/sanitized-env.js';
 
 /**
  * Build-level verification: confirms that tsup's esbuildOptions.define
@@ -14,7 +15,7 @@ describe('tsup GIT_COMMIT build-time injection', () => {
 
   it('inlines provided GIT_COMMIT value into emitted server bundle', () => {
     const result = spawnSync('pnpm', ['build:server'], { shell: true,
-      env: { ...process.env, GIT_COMMIT: 'testsha1' },
+      env: sanitizedEnv({ GIT_COMMIT: 'testsha1' }),
       encoding: 'utf-8',
       timeout: 60_000,
     });
@@ -29,7 +30,7 @@ describe('tsup GIT_COMMIT build-time injection', () => {
   it('inlines full 40-char GIT_COMMIT value into emitted server bundle', () => {
     const fullSha = 'abc1234def456789abc1234def456789abc12345';
     const result = spawnSync('pnpm', ['build:server'], { shell: true,
-      env: { ...process.env, GIT_COMMIT: fullSha },
+      env: sanitizedEnv({ GIT_COMMIT: fullSha }),
       encoding: 'utf-8',
       timeout: 60_000,
     });
@@ -41,11 +42,9 @@ describe('tsup GIT_COMMIT build-time injection', () => {
   }, 60_000);
 
   it('inlines "unknown" when GIT_COMMIT env var is absent', () => {
-    const env = { ...process.env };
-    delete env.GIT_COMMIT;
-
+    // sanitizedEnv's allowlist has no GIT_COMMIT, so omitting the extra IS the absent case.
     const result = spawnSync('pnpm', ['build:server'], { shell: true,
-      env,
+      env: sanitizedEnv(),
       encoding: 'utf-8',
       timeout: 60_000,
     });

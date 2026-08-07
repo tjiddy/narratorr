@@ -36,19 +36,16 @@ export function parseDoubleEncodedNames(raw: string | undefined): string | undef
 }
 
 /**
- * Parse a MAM size field (e.g. "881.8 MiB", "1.1 GiB") into bytes.
- * Returns undefined for zero, unparseable strings, or unknown units.
- * Numeric values pass through unchanged (future-proofing).
- * Illustrative captured MAM values: "881.8 MiB", "1.1 GiB", "830.0 MiB".
+ * Freeleech if the torrent is site-wide free, personally free, or VIP-free while this account is
+ * VIP. `isVip` is undefined until a status refresh lands — unknown must not claim VIP freeleech.
  */
-/** Freeleech if the torrent is site-wide free, personally free, or VIP-free while this account is VIP. */
 export function isMamFreeleech(
   item: {
     free?: boolean | null | undefined;
     personal_freeleech?: boolean | null | undefined;
     fl_vip?: boolean | null | undefined;
   },
-  isVip: boolean,
+  isVip: boolean | undefined,
 ): boolean {
   return !!(item.free || item.personal_freeleech || (item.fl_vip && isVip));
 }
@@ -59,6 +56,12 @@ export function normalizeMamFormat(raw: string | null | undefined): string | und
   return trimmed ? trimmed : undefined;
 }
 
+/**
+ * Parse a MAM size field (e.g. "881.8 MiB", "1.1 GiB") into bytes.
+ * Returns undefined for zero, unparseable strings, or unknown units.
+ * Numeric values pass through unchanged (future-proofing).
+ * Illustrative captured MAM values: "881.8 MiB", "1.1 GiB", "830.0 MiB".
+ */
 export function parseMamSize(raw: string | number | undefined): number | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw === 'number') return raw || undefined;

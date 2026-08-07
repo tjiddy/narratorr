@@ -40,13 +40,14 @@ function targetToHref(target: HealthCheckTarget): string {
   }
 }
 
+// Mirrors the server's `trackingKey`: `kind:path` collides library-root with disk-space
+// (both `{ kind: 'route', path: '/settings' }`). Singleton checks have literal checkNames.
 function cardKey(check: HealthCheckResult): string {
   const target = check.target;
-  if (!target) return check.checkName;
-  if (target.kind === 'indexer' || target.kind === 'download-client') {
+  if (target?.kind === 'indexer' || target?.kind === 'download-client') {
     return `${target.kind}:${target.id}`;
   }
-  return `${target.kind}:${target.path}`;
+  return check.checkName;
 }
 
 function HealthCard({ check }: { check: HealthCheckResult }) {

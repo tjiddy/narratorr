@@ -282,7 +282,9 @@ export class SeriesCardService {
       .from(bookAuthors)
       .innerJoin(authorsTable, eq(bookAuthors.authorId, authorsTable.id))
       .where(eq(bookAuthors.bookId, bookId))
-      .orderBy(asc(bookAuthors.position))
+      // Explicit tie-break on a shared `position` (NOT NULL DEFAULT 0). The (bookId, authorId)
+      // PK index already yields this order incidentally; this pins it against a plan change.
+      .orderBy(asc(bookAuthors.position), asc(bookAuthors.authorId))
       .limit(1);
     return rows[0]?.name ?? null;
   }

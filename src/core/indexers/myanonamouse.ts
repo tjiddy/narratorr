@@ -191,28 +191,28 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const isVipOnly = item.vip;
 
     const author = parseDoubleEncodedNames(orUndef(item.author_info));
-      const narrator = parseDoubleEncodedNames(orUndef(item.narrator_info));
-      const guid = item.id != null ? String(item.id) : undefined;
-      const size = parseMamSize(orUndef(item.size));
-      const seeders = orUndef(item.seeders);
-      const leechers = orUndef(item.leechers);
-      const language = normalizeLanguage(orUndef(item.lang_code));
-      const format = normalizeMamFormat(item.filetype);
-      return {
+    const narrator = parseDoubleEncodedNames(orUndef(item.narrator_info));
+    const guid = item.id != null ? String(item.id) : undefined;
+    const size = parseMamSize(orUndef(item.size));
+    const seeders = orUndef(item.seeders);
+    const leechers = orUndef(item.leechers);
+    const language = normalizeLanguage(orUndef(item.lang_code));
+    const format = normalizeMamFormat(item.filetype);
+    return {
       title: item.title!,
       ...(author !== undefined && { author }),
       ...(narrator !== undefined && { narrator }),
       protocol: 'torrent',
       ...(guid !== undefined && { guid }),
       ...(downloadUrl !== undefined && { downloadUrl }),
-    ...(size !== undefined && { size }),
-    ...(seeders !== undefined && { seeders }),
-    ...(leechers !== undefined && { leechers }),
-    ...(language !== undefined && { language }),
-    indexer: this.name,
-    ...(isFreeleech && { isFreeleech: true }),
-    ...(isVipOnly && { isVipOnly: true }),
-    ...(format !== undefined && { format }),
+      ...(size !== undefined && { size }),
+      ...(seeders !== undefined && { seeders }),
+      ...(leechers !== undefined && { leechers }),
+      ...(language !== undefined && { language }),
+      indexer: this.name,
+      ...(isFreeleech && { isFreeleech: true }),
+      ...(isVipOnly && { isVipOnly: true }),
+      ...(format !== undefined && { format }),
     };
   }
 

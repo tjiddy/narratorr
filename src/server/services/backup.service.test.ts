@@ -50,6 +50,22 @@ function createMockLog() {
   } as never;
 }
 
+// archiver is mocked suite-wide, so building real zip fixtures needs importActual.
+async function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
+  const { ZipArchive } = await vi.importActual<typeof import('archiver')>('archiver');
+  return new Promise((resolve, reject) => {
+    const archive = new ZipArchive({ zlib: { level: 0 } });
+    const chunks: Buffer[] = [];
+    archive.on('data', (chunk: Buffer) => chunks.push(chunk));
+    archive.on('end', () => resolve(Buffer.concat(chunks)));
+    archive.on('error', reject);
+    for (const entry of entries) {
+      archive.append(entry.content, { name: entry.name });
+    }
+    archive.finalize();
+  });
+}
+
 describe('BackupService', () => {
   let tempDir: string;
   let configPath: string;
@@ -586,22 +602,6 @@ describe('processRestoreUpload', () => {
   let configPath: string;
   let dbPath: string;
 
-  // Get the real archiver (unmocked) for creating test zip data
-  async function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
-    const { ZipArchive } = await vi.importActual<typeof import('archiver')>('archiver');
-    return new Promise((resolve, reject) => {
-      const archive = new ZipArchive({ zlib: { level: 0 } });
-      const chunks: Buffer[] = [];
-      archive.on('data', (chunk: Buffer) => chunks.push(chunk));
-      archive.on('end', () => resolve(Buffer.concat(chunks)));
-      archive.on('error', reject);
-      for (const entry of entries) {
-        archive.append(entry.content, { name: entry.name });
-      }
-      archive.finalize();
-    });
-  }
-
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-upload-test-'));
     configPath = tempDir;
@@ -774,22 +774,6 @@ describe('restoreServerBackup', () => {
   let tempDir: string;
   let configPath: string;
   let dbPath: string;
-
-  // Get the real archiver (unmocked) for creating test zip data
-  async function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
-    const { ZipArchive } = await vi.importActual<typeof import('archiver')>('archiver');
-    return new Promise((resolve, reject) => {
-      const archive = new ZipArchive({ zlib: { level: 0 } });
-      const chunks: Buffer[] = [];
-      archive.on('data', (chunk: Buffer) => chunks.push(chunk));
-      archive.on('end', () => resolve(Buffer.concat(chunks)));
-      archive.on('error', reject);
-      for (const entry of entries) {
-        archive.append(entry.content, { name: entry.name });
-      }
-      archive.finalize();
-    });
-  }
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-server-restore-test-'));
@@ -1054,21 +1038,6 @@ describe('#324 — restore contract change', () => {
   let tempDir: string;
   let configPath: string;
   let dbPath: string;
-
-  async function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
-    const { ZipArchive } = await vi.importActual<typeof import('archiver')>('archiver');
-    return new Promise((resolve, reject) => {
-      const archive = new ZipArchive({ zlib: { level: 0 } });
-      const chunks: Buffer[] = [];
-      archive.on('data', (chunk: Buffer) => chunks.push(chunk));
-      archive.on('end', () => resolve(Buffer.concat(chunks)));
-      archive.on('error', reject);
-      for (const entry of entries) {
-        archive.append(entry.content, { name: entry.name });
-      }
-      archive.finalize();
-    });
-  }
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-324-'));
