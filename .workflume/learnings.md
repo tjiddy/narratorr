@@ -1678,3 +1678,132 @@ Three indexed columns cover a four-column projection because `id` is the rowid, 
 Related trap: a rowid-only projection (`SELECT id FROM books`) stays in rowid order even under the covering index, so the no-ORDER-BY probe must mirror the production query's full projection.
 
 **Always assert the reordering as an explicit precondition** (`expect(await idsWithoutOrderBy()).toEqual([…non-ascending…])`) rather than trusting the index to bite. Without it the case silently degrades to the vacuous form when a schema or projection change stops the index covering — the general failure mode catalogued in [[vacuous-assertion-observation-points]]. Filtering a loaded list in JS preserves order, so pinning the loader's order pins every derived pool; assert a filtered subset too, and make its members collate opposite to their ids or that assertion survives the mutation the first one catches.
+
+## regex-v-flag-needs-es2024-target
+
+**source:** #2097  
+**added:** 2026-08-07  
+**files:** src/core/metadata/hardcover-member-dedup.ts  
+**tags:** typescript, regex, tsconfig
+
+---
+
+The repo's `tsconfig.json` pins `target: "ES2022"`, and TypeScript gates the regex `v` (unicodeSets) flag on `es2024` or later: `/[\p{L}--\p{Script=Latin}]/v` fails typecheck with `TS1501: This regular expression flag is only available when targeting 'es2024' or later`. This is a COMPILE-time gate and is independent of the runtime — `engines.node` is `>= 24.10` and Node executes the flag fine.
+
+The error message suggests raising the target, which is the wrong move — one tsconfig compiles client, server, core and db, so a language-level bump for one predicate has repo-wide reach. Write the set difference as a per-code-point scan with two separate property escapes instead. `isScriptCleanTitle` (src/core/metadata/hardcover-member-dedup.ts, #2097) is the reference implementation: hoisted `const ANY_LETTER = /\p{L}/u` and `const LATIN_LETTER = /\p{Script=Latin}/u`, then `for (const char of title) if (ANY_LETTER.test(char) && !LATIN_LETTER.test(char)) return false`. Two details matter — `for…of` over a string iterates code points, so astral letters are tested whole rather than as surrogate halves; and neither regex carries `g`, so there is no `lastIndex` carried between calls.
+
+Same applies to any other `v`-only syntax (nested classes, string properties, `\q{…}`), not just set difference.
+
+## staged-metadata-authors-min-one
+
+**source:** #2158  
+**added:** 2026-08-07  
+**files:** src/core/import-staging/schemas.ts  
+**tags:** zod, import-staging, test-fixtures
+
+---
+
+`stagedBookMetadataSchema` (`src/core/import-staging/schemas.ts`) declares `authors: z.array(stagedAuthorRefSchema).min(1).max(64)`, and `stagedImportItemSchema` refines `metadata` to it. So for any staged import item, `item.metadata?.authors?.length` is either `undefined` (metadata absent) or `>= 1` — **never 0**. Any precedence rule phrased as "only when the provider supplied no authors" is therefore reachable ONLY via the metadata-absent path, which is usually a different branch in the consuming code.
+
+The fixture trap (measured on #2158): a test meant to prove "a multi-author OPF must not override the folder author" built its item WITHOUT `metadata`. That routes through the synthesize-from-scratch branch, never reaches the guarded overlay write, and stays green under the exact mutation it exists to catch (making the `metadata.authors` write unconditional). The branch that actually needs forcing is `buildBookCreatePayload`'s multi-author preference in `enrichment-orchestration.helpers.ts` — `(meta?.authors && meta.authors.length > 1)` wins outright over `item.authorName` — so the fixture needs a provider match carrying **exactly one** author alongside **two** OPF `aut` creators. See 'AC10 headline' in `import-submission-runner.integration.test.ts`.
+
+General rule: before writing a fixture for an "only when X is absent" branch, check whether the schema permits X to be absent at all in the shape you are building — an absent *field* and an absent *parent object* are usually two different code paths, and only one of them is the branch under test. Related: [[roundtrip-fixture-must-force-the-branch]], [[vacuous-assertion-observation-points]].
+
+## variant-tag-not-slice-under-first-wins-dedup
+
+**source:** #2138  
+**added:** 2026-08-07  
+**files:** src/server/services/search-query-ladder.ts  
+**tags:** title-variants, search-ladder, dedup
+
+---
+
+`titleVariants` (src/core/utils/title-variants.ts) dedups on `normalizeTitleForVariantMatch(text)` with FIRST occurrence winning, iterating n descending and pushing `prefix(n)` before `suffix(n)`. So a variant's TAG is a promise about which slice it names; the TEXT is not. Any admission, floor or ordering policy that reasons about segment position must key on the tag.
+
+The two readings — "tag is `suffix(1)`" vs "this slice equals the last effective segment" — coincide whenever a `suffix(1)` is emitted at all, and diverge exactly where dedup reassigned the text. Both divergences are real library shapes and both are pinned in `search-query-ladder.test.ts`:
+
+- **Collapsed anchors.** `"Star Wars: The High Republic: Star Wars"` — at n=1, `prefix(1)`='star wars' is pushed first, so the identical `suffix(1)` is never emitted. A slice-based exemption admits a bare `star wars` query: the pure-franchise rung the segment budget exists to suppress.
+- **Leading punctuation-only segment.** `"---: Alpha: Beta: Gamma"` — the tail text 'gamma' is emitted under `first+last`, whose slice `['', 'gamma']` carries the normalization-empty segment. A slice-based exemption consulted before the empty-slice rejection admits a one-element garbage floor `['gamma']`.
+
+This is why `isBudgetExempt(tag)` in `src/server/services/search-query-ladder.ts` is tag-keyed, and why the empty-slice rejection (step 1) stays strictly ahead of the budget exemption (step 2) in `admitVariants`. Making the exemption slice-based AND moving it before step 1 reds five tests, including the pre-existing `#2133 AC43` first+last pin.
+
+**Corollary, measured on #2138:** step 1 is unreachable for `suffix(1)` in particular. Its slice is one element, and if that element normalizes empty the generator's own empty-`raw` guard never emits the variant — so the rejection reduces to that upstream guard. Keep step 1 regardless: it still binds `first+last`, `prefix(n)` and `suffix(n>1)`, where slices genuinely can carry an empty segment. Don't "simplify" it away on the grounds that one tag can't reach it.
+
+General form: when a generator deduplicates its own output, downstream policy may only trust the labels the generator assigns, never re-derive position from the payload.
+
+## compat-wrapper-hides-stale-test-doubles
+
+**source:** #2104  
+**added:** 2026-08-07  
+**files:** src/server/services/indexer-search.service.ts  
+**tags:** vitest, test-doubles
+
+---
+
+When you widen a service method's return type (e.g. `T[]` → `{ results: T[]; succeeded: number }`) and keep the old method as a compatibility wrapper, production callers migrate but TEST DOUBLES do not — and in this repo they are built with `inject<T>()` / `as unknown as T`, both of which erase property checking, so `pnpm typecheck` cannot see the drift.
+
+The damage is worse than a plain stale mock when the new field encodes a DEGRADED state. `#2104` added `IndexerSearchService.searchAllWithStatus`, whose `succeeded` count exists to tell a real, answered zero apart from a total indexer outage. Roughly ten suites still mocked `searchAll`, so the destructured `succeeded` was `undefined` and every one of them silently exercised the outage branch — the exact condition the field was introduced to detect. Several tests still PASSED, because 'outage' and 'genuine zero' both resolve to `no_results` on the auto-grab path; the only reason the drift surfaced at all is that a handful of call-count assertions changed.
+
+Practical rule: treat widening a service return shape as a two-part change — migrate the callers AND sweep the doubles in the same commit. Grep for the old method name across `*.test.ts` before declaring it done (`grep -rn '\.searchAll\b' src/`), and give the suite a single `withStatus(results)` helper so the envelope is spelled once rather than at ~30 call sites. If the new field has a value that means 'degraded', prefer a shape where the STALE value is impossible rather than merely wrong — e.g. return a discriminated union, or have the wide method throw on a missing count — so a forgotten double fails loudly instead of quietly taking the sad path.
+
+Related: [[mockdbchain-empty-default-masks-guarded-writes]] and [[shared-test-double-defaults-ripple]] are the Drizzle-shaped instances of the same family (a stale test double's default selecting a degraded branch); this entry is the service-return-shape instance, and its distinguishing feature is that the compatibility wrapper is precisely what keeps the compiler quiet.
+
+## raw-output-pins-incidental-whitespace
+
+**source:** #2109  
+**added:** 2026-08-07  
+**files:** src/core/utils/title-variants.ts  
+**tags:** title-variants, normalization, test-fixtures
+
+---
+
+When a function's docblock promises RAW / unnormalized output, its incidental formatting — whitespace-run width in particular — becomes part of the observable contract, because callers and tests are entitled to read it literally. A rewrite of an upstream helper that is provably equivalent AFTER normalization can therefore still be a breaking change.
+
+Concrete instance (#2109): `titleSegments` (src/core/utils/title-variants.ts) is documented as returning "RAW segment text, unnormalized", and `title-variants.test.ts` pins `[..., ' Light of the Jedi  ']` down to the two trailing spaces. `stripParentheticals` was replaced by a depth-counting scan to handle unbalanced and nested groups (which its `\([^)]*\)` regex could not match) and to remove a quadratic backtracking path. The regex emitted ONE space per balanced group; a scan emitting one space per CHARACTER is identical after `normalizeTitleForVariantMatch` but fails that fixture. The spec's AC1 described the per-character form while AC4 froze every behavioural fixture — the two collided, and the per-character phrasing turned out to be a description of the algorithm rather than of anything observable.
+
+The fix: track a `runEmitted` flag so one CONTIGUOUS stripped run contributes exactly one space. That is byte-identical to the regex form for every balanced, non-nested input, so no existing corpus moves, while the unterminated-group and nested-group defects are still fixed. It is safe here specifically because the only production consumer of the raw list — `admitVariants` in `src/server/services/search-query-ladder.ts` — normalizes each segment immediately, and every `Variant.raw` is whitespace-collapsed.
+
+General rule: before rewriting a helper that feeds a raw-output export, grep that export's consumers and its test fixtures. If the fixtures pin whitespace, preserve the run structure rather than the per-character mechanism — and if a spec's AC describes the mechanism in a way that contradicts a fixture freeze, the fixture is the contract and the AC is describing the implementation. Sibling raw/normalized pair with the same exposure: `cleanNameWithTrace` in src/server/utils/folder-parsing.ts.
+
+## security-fixture-absent-resource-negative
+
+**source:** #2158  
+**added:** 2026-08-07  
+**files:** src/server/utils/opf-reader.test.ts  
+**tags:** xxe, xml, security-tests
+
+---
+
+**A negative assertion about EXTERNAL content cannot prove a security invariant, because the fixture is inert wherever that external content is absent.**
+
+An XXE regression test written as `expect(title).not.toContain('root:')` passes for at least four different reasons, only one of which is the intended one:
+
+1. the parser correctly refused to resolve the entity (intended);
+2. the parser resolved it, but `/etc/passwd` does not exist on this host — **every Windows dev box and most distroless/hardened containers**, i.e. exactly where [[windows-hostile-test-primitives]] already warns the Linux pipeline is blind;
+3. the parser resolved it to content that happens to lack those substrings;
+4. the parser dropped the entity, or expanded it only partially.
+
+A size threshold (`length < 1000`) for a billion-laughs payload has the same defect: one expansion step satisfies it.
+
+**Assert the exact literal reference instead.** Measured on the pinned stack, `cheerio.load(xml, { xmlMode: true })` returns entity references verbatim — `&xxe;` stays `"&xxe;"`, `&lol8;` stays `"&lol8;"` — so `expect(parseOpf(xml)?.title).toBe('&xxe;')` is available and fails for every one of modes 2–4. It also fails closed for an entity-dropping parser when the title is the document's only usable field, since the reader then returns `null`.
+
+Cover all three vectors the `core/epub/xml.ts` module doc names: `SYSTEM` file entity, parameter entity declaring a general entity (`<!ENTITY % pe "<!ENTITY leaked 'expanded'>">%pe;` → `&leaked;`), and billion-laughs. Prior art in the repo, correct since #1987: `src/core/epub/xml.test.ts`. `src/server/utils/opf-reader.test.ts` now matches it (#2158/#2160 F2).
+
+Keep a wall-clock bound only as an explicitly-labelled *liveness* guard — a fully-expanding parser would hang the run rather than fail it — never as the correctness control. Validate any such fixture by simulating the parser swap (substitute the entity at the `load` call site with resolved / innocuous / dropped / partially-expanded text) and confirming every row reds. Related: [[vacuous-assertion-observation-points]] (this is its stimulus-side twin — the observation point is fine, the *assertion* is too weak), [[htmlparser2-no-attribute-normalisation]] (measure the parser, don't infer from the spec).
+
+## symmetric-mutation-cannot-observe-shared-derivation
+
+**source:** #2133  
+**added:** 2026-08-07  
+**files:** src/server/services/search-query-ladder.ts  
+**tags:** mutation-testing, counterfactual-verification, search-ladder
+
+---
+
+`countOccurrences(text, segment)` in `src/server/services/search-query-ladder.ts` serves BOTH `anchorFloor` (how many copies of each anchor the canonical title demands) and `passesSegmentFloor` (how many the release supplies). Mutating it is therefore SYMMETRIC — the demanded count and the measured count move together, the check stays self-consistent, and any test asserting "the book still matches its own release" stays GREEN.
+
+Measured on #2133: changing the scan restart from `at + segment.length + 1` to `+ 2` reds 6 tests, and all six are SIBLING-side (`Alpha: Beta Gamma: Delta` and `Alpha: Gamma` now pass, plus the AC9 property, the AC9(c) self-pass table, and the auto-path sibling-hold regression). To pin the own-side property you must mutate ONE side only — inline the broken scan inside `passesSegmentFloor` and leave `anchorFloor` correct; that asymmetric variant reds exactly the own-title rows.
+
+Two rules follow. (1) Choosing which mutation to run is part of the assertion design: a shared-derivation invariant needs an ASYMMETRIC mutation, and a spec naming a symmetric one will over-predict its red set. (2) Never predict a red set by reading — run the mutation and record what actually failed. The #2133 spec predicted observations that did not fire at all, and had additionally attributed them to the wrong fixture: `"Star Wars: The High Republic: Star Wars"` looks like the repeated-anchor case, but its two occurrences are separated by an intervening segment, so the shared-delimiter rule never touches it; only `"Alpha: Beta Gamma: Gamma"` has genuinely adjacent occurrences.
+
+Sibling: [[vacuous-assertion-observation-points]] — that one is about watching the wrong OBSERVABLE, this one is about applying the wrong MUTATION.
