@@ -241,6 +241,32 @@ describe('serializeError', () => {
       expect(result.message).not.toContain('passkey');
     });
 
+    // #2166 — `.code` used to be copied verbatim while message/stack were scrubbed, so a
+    // URL-bearing code leaked from the utility that advertises itself as log-safe.
+    it('strips secret-shaped query params from a URL embedded in err.code', () => {
+      const err = Object.assign(new Error('request failed'), {
+        code: 'connect ECONNREFUSED https://mam.test/tor/js/loadSearch.php?mam_id=SECRETID',
+      });
+      const result = serializeError(err);
+      expect(result.code).toContain('https://mam.test/tor/js/loadSearch.php');
+      expect(result.code).not.toContain('SECRETID');
+      expect(result.code).not.toContain('mam_id');
+    });
+
+    it('redacts a URL-bearing .code on a nested cause', () => {
+      const cause = Object.assign(new Error('upstream'), {
+        code: 'FETCH https://example.com/api?apikey=secret123',
+      });
+      const result = serializeError(new Error('wrapped', { cause }));
+      expect(result.cause?.code).toContain('https://example.com/api');
+      expect(result.cause?.code).not.toContain('secret123');
+    });
+
+    it('leaves a symbolic .code untouched', () => {
+      const err = Object.assign(new Error('missing'), { code: 'ENOENT' });
+      expect(serializeError(err).code).toBe('ENOENT');
+    });
+
     it('preserves prose around the URL after redaction', () => {
       const err = new Error('Newznab API failed at https://nzbgeek.info/api?apikey=ABC&q=x — retry later');
       const result = serializeError(err);

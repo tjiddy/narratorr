@@ -5,6 +5,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { formatRelativeDate } from '@/lib/format';
 import { hasReasonContent, getEventSummary } from '@/lib/eventReasonHelpers';
 import { EventReasonDetails } from '@/lib/eventReasonFormatters';
+import { actionableEventTypes, type EventType } from '@shared/schemas/event-history.js';
 import {
   ArrowDownIcon,
   CheckCircleIcon,
@@ -17,8 +18,6 @@ import {
   BookOpenIcon,
 } from '@/components/icons';
 
-const ACTIONABLE_TYPES = ['grabbed', 'download_completed', 'download_failed', 'imported', 'import_failed'];
-
 interface EventTypeConfig {
   icon: typeof ArrowDownIcon;
   label: string;
@@ -26,7 +25,10 @@ interface EventTypeConfig {
   bgColor: string;
 }
 
-const EVENT_CONFIG: Record<string, EventTypeConfig> = {
+// Keyed by EventType, not string: a new member of the shared enum is a compile error here
+// until it gets a presentation entry. The runtime fallback below still covers legacy or
+// corrupt eventType values read back from the DB, which the wire type cannot rule out.
+const EVENT_CONFIG: Record<EventType, EventTypeConfig> = {
   grabbed: { icon: ArrowDownIcon, label: 'Grabbed', color: 'text-blue-400', bgColor: 'bg-blue-500/10' },
   download_completed: { icon: CheckCircleIcon, label: 'Download Completed', color: 'text-success', bgColor: 'bg-success/10' },
   download_failed: { icon: XCircleIcon, label: 'Download Failed', color: 'text-destructive', bgColor: 'bg-destructive/10' },
@@ -51,6 +53,16 @@ const EVENT_CONFIG: Record<string, EventTypeConfig> = {
 };
 
 const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted' };
+
+const isKnownEventType = (value: string): value is EventType => value in EVENT_CONFIG;
+
+/** An eventType the DB holds but the enum doesn't know keeps its raw string as the label. */
+function resolveEventPresentation(eventType: string): { config: EventTypeConfig; actionable: boolean } {
+  if (!isKnownEventType(eventType)) {
+    return { config: { ...DEFAULT_CONFIG, label: eventType }, actionable: false };
+  }
+  return { config: EVENT_CONFIG[eventType], actionable: actionableEventTypes.includes(eventType) };
+}
 
 // Import-list events carry the synced list's name in `reason.importListName`; surface that
 // instead of the generic `import_list` source chip. Fall back to "Import list" for older
@@ -123,9 +135,9 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onRetry
   index?: number;
 }) {
   const [showReason, setShowReason] = useState(false);
-  const config = EVENT_CONFIG[event.eventType] ?? { ...DEFAULT_CONFIG, label: event.eventType };
+  const { config, actionable } = resolveEventPresentation(event.eventType);
   const Icon = config.icon;
-  const isActionable = ACTIONABLE_TYPES.includes(event.eventType) && event.downloadId != null;
+  const isActionable = actionable && event.downloadId != null;
   const canRetry = event.eventType === 'download_failed' && event.downloadId != null && event.bookId != null;
 
   const { data: indexers } = useQuery({

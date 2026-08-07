@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { EventHistoryCard } from './EventHistoryCard';
 import type { BookEvent } from '@/lib/api';
+import { eventTypeSchema } from '@shared/schemas/event-history.js';
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -151,6 +152,16 @@ describe('EventHistoryCard', () => {
     renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'unknown_type' })} />);
 
     expect(screen.getByText('unknown_type')).toBeInTheDocument();
+  });
+
+  // #2118 — EVENT_CONFIG is keyed by EventType, so a new enum member is a compile error until
+  // it gets an entry. Asserted at runtime too, so a revert to Record<string, …> still trips.
+  it('renders a label, never the raw type, for every shared EventType', () => {
+    for (const eventType of eventTypeSchema.options) {
+      const { unmount } = renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType })} />);
+      expect(screen.queryByText(eventType), `${eventType} has no EVENT_CONFIG entry`).not.toBeInTheDocument();
+      unmount();
+    }
   });
 
   // #1157 — grab_failed event rendering

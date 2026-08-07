@@ -21,10 +21,9 @@ const URL_IN_MESSAGE_RE = /(https?:\/\/[^\s'"<>`)]+|magnet:\?[^\s'"<>`)]+)/g;
 /**
  * Redact http(s) URLs and magnet URIs embedded anywhere in a free-form string, in place.
  *
- * Public because {@link serializeError} is not the only surface that needs it: `code` is copied
- * verbatim (see below) and callers that COMPOSE a display string out of several serialized fields
- * must scrub the composed result once, at the end — see `short-error-text.ts` (#2159). Formerly
- * module-private (`redactUrlsInMessage`); exporting it is a rename-to-public, not a behavior change.
+ * Public because callers that COMPOSE a display string out of several serialized fields must scrub
+ * the composed result once, at the end — see `short-error-text.ts` (#2159). Formerly module-private
+ * (`redactUrlsInMessage`); exporting it is a rename-to-public, not a behavior change.
  */
 export function redactUrlsInText(message: string): string {
   return message.replace(URL_IN_MESSAGE_RE, (match) => sanitizeLogUrl(match));
@@ -77,10 +76,11 @@ function serialize(err: unknown, seen: Set<unknown>, depth: number): SerializedE
 
   // Surface .code (undici/Node errors carry the diagnostic here:
   // UND_ERR_INVALID_ARG, ENOTFOUND, ECONNREFUSED). Without this, log readers
-  // saw `fetch failed` with no actionable hint.
+  // saw `fetch failed` with no actionable hint. Scrubbed like message/stack —
+  // nothing constrains .code to a symbolic value (#2166).
   const code = (err as { code?: unknown }).code;
   if (typeof code === 'string') {
-    result.code = code;
+    result.code = redactUrlsInText(code);
   }
 
   if (err.cause !== undefined && depth < MAX_CAUSE_DEPTH && !seen.has(err.cause)) {
