@@ -288,7 +288,7 @@ describe('withCoverArtPipeline — cancellation (#2080)', () => {
     expect(reattaches[0]).toContain(OUTPUT);
   });
 
-  it('cleans the partial temp files before the abort surfaces (AC11)', async () => {
+  it('cleans the partial temp files before a reattach abort surfaces (AC11)', async () => {
     const controller = new AbortController();
     const spawn = spawnAbortingOn(controller, MERGED, new Error('ffmpeg exited with code null'));
 
@@ -296,6 +296,19 @@ describe('withCoverArtPipeline — cancellation (#2080)', () => {
 
     expect(rm).toHaveBeenCalledWith(MERGED, { force: true }); // reattach catch
     expect(rm).toHaveBeenCalledWith(COVER, { force: true }); // pipeline finally
+  });
+
+  it('cleans the partial cover before an extraction abort surfaces (AC11)', async () => {
+    const controller = new AbortController();
+    const spawn = spawnAbortingOn(controller, COVER, new Error('ffmpeg exited with code null'));
+
+    await expect(runPipeline(spawn, controller.signal)).rejects.toThrow();
+
+    // The extraction catch is the ONLY remover on this path — `extractCoverArt` throws before
+    // returning a path, so the pipeline's `finally` sees a null `coverPath` and does nothing.
+    // Hence the exact count: it pins that nothing downstream is covering for this cleanup.
+    expect(rm).toHaveBeenCalledWith(COVER, { force: true });
+    expect(rm).toHaveBeenCalledTimes(1);
   });
 
   it.each([
