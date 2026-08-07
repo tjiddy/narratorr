@@ -4655,10 +4655,20 @@ describe('MatchJobService', () => {
         vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(ADDIE_REFS);
       });
 
+      /**
+       * All four match-job assembly paths (AC31's fifth is the re-pick route).
+       * The `multi` rows carry a second candidate SPECIFICALLY to drive the
+       * `single === false` branch — `resolveConfidenceFromDuration` rather than
+       * `resolveSingleResultConfidence`. That branch is invisible to a confidence
+       * assertion alone, so each row also asserts the alternatives count: if the
+       * extra candidate were filtered out upstream, the row would silently
+       * degrade to the single branch and pass while proving nothing.
+       */
       it.each([
         ['FILENAME single', () => makeScan({ totalDuration: ADDIE_SCANNED }), [] as BookMetadata[]],
         ['FILENAME multi', () => makeScan({ totalDuration: ADDIE_SCANNED }), [addie({ asin: 'B0OTHEREDN', duration: 700 })]],
-        ['TAG', () => tagScan({ totalDuration: ADDIE_SCANNED }), [] as BookMetadata[]],
+        ['TAG single', () => tagScan({ totalDuration: ADDIE_SCANNED }), [] as BookMetadata[]],
+        ['TAG multi', () => tagScan({ totalDuration: ADDIE_SCANNED }), [addie({ asin: 'B0OTHEREDN', duration: 700 })]],
       ])('%s assembly: the TRIMMED reference alone rescues the row — high with NO mismatch reason', async (_label, scan, extra) => {
         vi.mocked(scanAudioDirectory).mockResolvedValue(scan());
         vi.mocked(metadataService.searchBooks).mockResolvedValue([addie(), ...extra]);
@@ -4670,6 +4680,9 @@ describe('MatchJobService', () => {
         expect(result.confidence).toBe('high');
         expect(result.reason).toBeUndefined();
         expect(result.reasonKind).toBeUndefined();
+        expect(result.bestMatch?.asin).toBe(ADDIE_ASIN);
+        // The branch observation point: one alternative means the multi resolver ran.
+        expect(result.alternatives).toHaveLength(extra.length);
         expect(chapterLookups()).toEqual([[ADDIE_ASIN]]);
       });
 

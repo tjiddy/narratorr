@@ -786,6 +786,41 @@ describe('library-scan routes', () => {
       const ADDIE_FULL = 86_400;
       const ADDIE_TRIMMED = 85_134;
 
+      /**
+       * The FULL arm, made deletion-resistant. Every other positive fixture in
+       * this suite gives both references the SAME value, so deleting
+       * `inBand(fullSeconds, …)` from the route would leave them green via the
+       * trimmed arm. Here the file DOES contain the trailing run (so it agrees
+       * with the published total) and the trim over-removed relative to this
+       * particular rip — the full reference is the only thing that can rescue it.
+       */
+      it('corroborates when ONLY the full reference is in band, with a DISTINCT out-of-band trim', async () => {
+        // Δ(full, scanned) = 0.02s (in band); Δ(trimmed, scanned) = 7199.98s (out).
+        const OVER_TRIMMED = 26_019.49;
+        chapterStub().mockResolvedValue({ fullSeconds: CHAPTERS, trimmedSeconds: OVER_TRIMMED });
+
+        const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
+
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload)).toEqual({
+          corroborated: true,
+          chapterSeconds: CHAPTERS,
+          trimmedChapterSeconds: OVER_TRIMMED,
+        });
+      });
+
+      it('corroborates on the full reference when the walk produced NO usable trimmed one', async () => {
+        // The whole-list-consumed / degenerate-trim shape: the pair carries only
+        // `fullSeconds`, and the route must still answer off it.
+        chapterStub().mockResolvedValue({ fullSeconds: CHAPTERS });
+
+        const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
+
+        const body = JSON.parse(res.payload);
+        expect(body).toEqual({ corroborated: true, chapterSeconds: CHAPTERS });
+        expect(body).not.toHaveProperty('trimmedChapterSeconds');
+      });
+
       it('corroborates when ONLY the trimmed reference is in band, and reports it', async () => {
         chapterStub().mockResolvedValue({ fullSeconds: ADDIE_FULL, trimmedSeconds: ADDIE_TRIMMED });
 
