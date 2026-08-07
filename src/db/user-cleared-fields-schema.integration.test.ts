@@ -410,11 +410,16 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     it('leaves the row NOT enriched when the array write fails after the scalar write', async () => {
       const bookId = await seedBook({ asin: 'B0BATOMIC1' });
 
-      await applyAudnexusEnrichment(
-        bookId,
-        { primaryAsin: 'B0BATOMIC1', existingNarrator: null, existingGenres: null, existingSubtitle: null, existingPublisher: null },
-        enrichmentDeps(bookId, true),
-      );
+      // #2075: the durable failure now propagates instead of being swallowed as a
+      // provider miss. Additive to the rollback proof below, which is still the point
+      // of this row.
+      await expect(
+        applyAudnexusEnrichment(
+          bookId,
+          { primaryAsin: 'B0BATOMIC1', existingNarrator: null, existingGenres: null, existingSubtitle: null, existingPublisher: null },
+          enrichmentDeps(bookId, true),
+        ),
+      ).rejects.toThrow('genre write boom');
 
       const [row] = await db.select().from(books).where(eq(books.id, bookId));
       // The whole transaction rolled back: status did NOT advance, and neither did
@@ -590,11 +595,15 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
         enrichBook: vi.fn().mockResolvedValue({ genres: [UNMATCHED], narrators: ['Michael Kramer'] }),
         resolveBook: vi.fn().mockResolvedValue(null),
       } as unknown as MetadataService;
-      await applyAudnexusEnrichment(
-        bookId,
-        { primaryAsin: 'B0BGENRE06', existingNarrator: null, existingGenres: null },
-        { db, log, bookService, metadataService },
-      );
+      // #2075: propagates now (see the AC11/F14 describe) — the deferred-effect
+      // assertions underneath are unchanged.
+      await expect(
+        applyAudnexusEnrichment(
+          bookId,
+          { primaryAsin: 'B0BGENRE06', existingNarrator: null, existingGenres: null },
+          { db, log, bookService, metadataService },
+        ),
+      ).rejects.toThrow('narrator write boom');
       vi.restoreAllMocks();
 
       expect(await readTrackedGenres()).toEqual([]);

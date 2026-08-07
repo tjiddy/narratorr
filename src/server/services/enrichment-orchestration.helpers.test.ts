@@ -471,6 +471,74 @@ describe('applyAudnexusEnrichment', () => {
     expect(updateChain.set).not.toHaveBeenCalled();
   });
 
+  // ─── #2075: a DURABLE failure is not a provider miss ──────────────────
+  //
+  // The per-candidate catch exists to recover from `metadataService.enrichBook`.
+  // It used to wrap `applyEnrichmentData` too, so a rolled-back write was logged as
+  // 'Audnexus enrichment failed', the loop moved to the next ASIN, and the search
+  // fallback then attempted a SECOND write with a different payload — against a row
+  // whose commit state is ambiguous. Every assertion below is a negative, so each of
+  // these rows was verified red against the pre-#2075 shape (`applyEnrichmentData`
+  // back inside the `try`).
+  it('#2075: a durable write failure propagates — no alternate candidate, no fallback, not warned as a provider miss', async () => {
+    const { db } = dbWithUpdateChain();
+    // Named so the assertion pins error IDENTITY: a future implementation that caught
+    // this and rethrew a look-alike with the same message would fail here.
+    const writeError = new Error('db write boom');
+    (db as unknown as { transaction: ReturnType<typeof vi.fn> }).transaction.mockRejectedValueOnce(writeError);
+    mockEnrichBook(deps).mockResolvedValueOnce({ duration: 7200 });
+
+    await expect(
+      applyAudnexusEnrichment(42, { primaryAsin: 'B001', alternateAsins: ['B002'], title: 'My Book' }, { ...deps, db }),
+    ).rejects.toBe(writeError);
+
+    expect(mockEnrichBook(deps)).toHaveBeenCalledTimes(1);
+    expect(mockEnrichBook(deps)).not.toHaveBeenCalledWith('B002');
+    expect(mockResolveBook(deps)).not.toHaveBeenCalled();
+    // Matched on the MESSAGE argument specifically — a blanket "warn not called" would
+    // be both weaker and wrong, since the ASIN-collision path legitimately warns.
+    expect(deps.log.warn).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment failed');
+  });
+
+  it('#2075: a collision-query failure propagates too — the boundary moved for all of applyEnrichmentData', async () => {
+    const { db } = dbWithUpdateChain();
+    const collisionError = new Error('collision query boom');
+    // `resolveAsinWriteback` short-circuits when the resolved ASIN equals the primary,
+    // so the collision query is only REACHED once an alternate resolves. B003 exists so
+    // "no candidate followed the failure" is an observable fact rather than a vacuous one.
+    mockEnrichBook(deps).mockResolvedValueOnce(null).mockResolvedValueOnce({ duration: 7200 });
+    mockFindCollision(deps).mockRejectedValueOnce(collisionError);
+
+    await expect(
+      applyAudnexusEnrichment(42, { primaryAsin: 'B001', alternateAsins: ['B002', 'B003'], title: 'My Book' }, { ...deps, db }),
+    ).rejects.toBe(collisionError);
+
+    expect(mockEnrichBook(deps)).toHaveBeenCalledTimes(2);
+    expect(mockEnrichBook(deps)).not.toHaveBeenCalledWith('B003');
+    expect(mockResolveBook(deps)).not.toHaveBeenCalled();
+    expect(deps.log.warn).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment failed');
+    // This failure lands BEFORE the transaction opens — the other half of "the whole of
+    // applyEnrichmentData propagates", not just its `db.transaction` call.
+    expect((db as unknown as { transaction: ReturnType<typeof vi.fn> }).transaction).not.toHaveBeenCalled();
+  });
+
+  it('#2075 control: a provider ERROR still warns AND still continues to the next candidate and the fallback', async () => {
+    const { db } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockRejectedValueOnce(new Error('API error')).mockResolvedValueOnce(null);
+    mockResolveBook(deps).mockResolvedValueOnce(null);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', alternateAsins: ['B002'], title: 'My Book', author: 'An Author' }, { ...deps, db });
+
+    expect(deps.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 42, asin: 'B001' }),
+      'Audnexus enrichment failed',
+    );
+    // The continuation, not just the log line — narrowing the catch must not narrow this.
+    expect(mockEnrichBook(deps)).toHaveBeenCalledTimes(2);
+    expect(mockEnrichBook(deps)).toHaveBeenCalledWith('B002');
+    expect(mockResolveBook(deps)).toHaveBeenCalledWith({ title: 'My Book', author: 'An Author' });
+  });
+
   it('conditional fill guards hold even when the search fallback returns values', async () => {
     const { db, updateChain } = dbWithUpdateChain();
     mockEnrichBook(deps).mockResolvedValue(null);
@@ -967,6 +1035,32 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
 
     expect(updateChain.set).not.toHaveBeenCalled();
     expect(deps.bookService.update).not.toHaveBeenCalled();
+    expect(deps.log.info).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment applied');
+  });
+
+  it('#2075 AC9: a stale drop still ENDS the call — no search fallback even with a title configured', async () => {
+    // The F15 row above has no `title`, so it cannot answer the fallback question. A
+    // stale drop resolves normally rather than throwing, so the `return` after the write
+    // is what stops it — that return has to stay unconditional now that the call sits
+    // outside the recovery `try`.
+    const updateChain = mockDbChain();
+    const db = {
+      update: vi.fn().mockReturnValue(updateChain),
+      select: vi.fn()
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B001' }]))                                  // pre-fetch capture
+        .mockReturnValue(mockDbChain([{ asin: 'B999_REIDENTIFIED', userClearedFields: null }])), // in-tx re-read
+    } as unknown as Db & { transaction: unknown };
+    db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db as Db));
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+    await applyAudnexusEnrichment(
+      42,
+      { primaryAsin: 'B001', title: 'My Book', author: 'An Author', existingNarrator: null, existingGenres: null },
+      { ...deps, db: db as Db },
+    );
+
+    expect(updateChain.set).not.toHaveBeenCalled();
+    expect(deps.metadataService.resolveBook).not.toHaveBeenCalled();
     expect(deps.log.info).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment applied');
   });
 
