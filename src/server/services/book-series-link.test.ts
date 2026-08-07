@@ -7,7 +7,8 @@ import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books, series, seriesMembers } from '@db/schema.js';
-import { readPositionClearedBookIds, relinkBookToBoundSeries, replaceSeriesLink, upsertSeriesLink } from './book-series-link.js';
+import { detachBookFromSeriesMembers, readPositionClearedBookIds, relinkBookToBoundSeries, replaceSeriesLink, upsertSeriesLink } from './book-series-link.js';
+import { normalizeMemberTitleForMatch } from './series-title-match.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 
 /**
@@ -162,11 +163,13 @@ describe('book-series-link', () => {
   });
 
   describe('replaceSeriesLink', () => {
-    // AC1.3: Fix Match path is untouched — it still delete-and-inserts a
-    // fresh local row regardless of whether the target series has
-    // hardcover_series_id set. The known Fix-Match-into-Hardcover-cached
-    // duplicate pattern is deliberately deferred to a follow-up issue.
-    it('AC1.3: always inserts a fresh local row even when the series has hardcover_series_id', async () => {
+    // #2150 AC5 — this pin previously asserted the OPPOSITE (a fresh local row
+    // regardless of the target's canonicity), which is the defect: since #2144 a
+    // `source: 'local'` row claims its book BEFORE the title matcher runs, so a
+    // Fix-Match seed into a Hardcover-canonical series deterministically takes
+    // the book away from its canonical member. The card pairs the owned book to
+    // that member straight off the `books` pool, so no local row is wanted.
+    it('#2150 AC5: seeds no local row when the target series is Hardcover-canonical', async () => {
       const bookId = await seedBook('Bloody Rose');
       await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523,
@@ -183,9 +186,124 @@ describe('book-series-link', () => {
         authorName: 'Nicholas Eames',
       });
 
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(0);
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.source, 'local'))).toHaveLength(0);
+    });
+
+    it('#2150 AC6: a non-canonical target still gets exactly one local row, with the full field mapping', async () => {
+      const bookId = await seedBook('Bloody Rose');
+
+      await replaceSeriesLink(db, bookId, {
+        name: 'The Band',
+        position: 2,
+        title: 'Bloody Rose: Deluxe',
+        authorName: 'Nicholas Eames',
+      });
+
       const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
       expect(memberRows).toHaveLength(1);
       expect(memberRows[0]!.source).toBe('local');
+      expect(memberRows[0]!.title).toBe('Bloody Rose: Deluxe');
+      expect(memberRows[0]!.normalizedTitle).toBe(normalizeMemberTitleForMatch('Bloody Rose: Deluxe'));
+      expect(memberRows[0]!.authorName).toBe('Nicholas Eames');
+      expect(memberRows[0]!.position).toBe(2);
+      expect(memberRows[0]!.hardcoverBookId).toBeNull();
+
+      const seriesRows = await db.select().from(series);
+      expect(seriesRows).toHaveLength(1);
+      expect(seriesRows[0]!.hardcoverSeriesId).toBeNull();
+    });
+
+    it('#2150 AC3/AC1: deletes the local rows, null-links the provider rows in OTHER series, and bumps their updated_at', async () => {
+      const bookId = await seedBook('Bloody Rose');
+      const [seriesA] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        name: 'Old Series', normalizedName: 'old series',
+      }).returning();
+      const [seriesB] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 77, name: 'Sibling Series', normalizedName: 'sibling series',
+      }).returning();
+      await db.insert(seriesMembers).values({
+        seriesId: seriesA!.id, bookId, title: 'Bloody Rose', normalizedTitle: 'bloody rose', position: 9, source: 'local',
+      });
+      // Deliberately stale so the bump is observable — nothing in production
+      // reads `series_members.updated_at`, so only an explicit assertion pins it.
+      const stale = new Date('2020-01-01T00:00:00Z');
+      const [provider] = await db.insert(seriesMembers).values({
+        seriesId: seriesB!.id, bookId, hardcoverBookId: 1002, slug: 'bloody', imageUrl: 'https://example.com/br.jpg',
+        title: 'Bloody Rose', normalizedTitle: 'bloody rose', authorName: 'Nicholas Eames', position: 2,
+        source: 'hardcover', updatedAt: stale,
+      }).returning();
+
+      await replaceSeriesLink(db, bookId, {
+        name: 'The Band',
+        position: 2,
+        title: 'Bloody Rose',
+        authorName: 'Nicholas Eames',
+      });
+
+      // The local row is gone from every series.
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesA!.id))).toHaveLength(0);
+      // The sibling series keeps its canonical member — identity intact, link dropped.
+      const [survivor] = await db.select().from(seriesMembers).where(eq(seriesMembers.id, provider!.id));
+      expect(survivor).toBeDefined();
+      expect(survivor!.bookId).toBeNull();
+      expect(survivor!.hardcoverBookId).toBe(1002);
+      expect(survivor!.slug).toBe('bloody');
+      expect(survivor!.imageUrl).toBe('https://example.com/br.jpg');
+      expect(survivor!.title).toBe('Bloody Rose');
+      expect(survivor!.position).toBe(2);
+      expect(survivor!.updatedAt.getTime()).toBeGreaterThan(stale.getTime());
+    });
+
+    it('#2150 AC2: a provider row in the TARGET series keeps its book link and its timestamp', async () => {
+      const bookId = await seedBook('Bloody Rose');
+      const [target] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 5523, name: 'The Band', normalizedName: 'the band',
+      }).returning();
+      const stale = new Date('2020-01-01T00:00:00Z');
+      const [row] = await db.insert(seriesMembers).values({
+        seriesId: target!.id, bookId, hardcoverBookId: 1002, slug: 'bloody', title: 'Bloody Rose',
+        normalizedTitle: 'bloody rose', position: 2, source: 'hardcover', updatedAt: stale,
+      }).returning();
+
+      // Fix Match correcting only the position within the same canonical series.
+      await replaceSeriesLink(db, bookId, {
+        name: 'The Band',
+        position: 3,
+        title: 'Bloody Rose',
+        authorName: 'Nicholas Eames',
+      });
+
+      const [after] = await db.select().from(seriesMembers).where(eq(seriesMembers.id, row!.id));
+      expect(after!.bookId).toBe(bookId);
+      expect(after!.updatedAt.getTime()).toBe(stale.getTime());
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.source, 'local'))).toHaveLength(0);
+    });
+
+    it('#2150 AC4: args=null deletes the local rows, null-links every provider row, and inserts nothing', async () => {
+      const bookId = await seedBook('Bloody Rose');
+      const [seriesA] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        name: 'Old Series', normalizedName: 'old series',
+      }).returning();
+      const [seriesB] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 77, name: 'Sibling Series', normalizedName: 'sibling series',
+      }).returning();
+      await db.insert(seriesMembers).values({
+        seriesId: seriesA!.id, bookId, title: 'Bloody Rose', normalizedTitle: 'bloody rose', position: 9, source: 'local',
+      });
+      await db.insert(seriesMembers).values({
+        seriesId: seriesB!.id, bookId, hardcoverBookId: 1002, slug: 'bloody', title: 'Bloody Rose',
+        normalizedTitle: 'bloody rose', position: 2, source: 'hardcover',
+      });
+
+      await replaceSeriesLink(db, bookId, null);
+
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(0);
+      // Queried by series_id: a `book_id` query cannot see the row it just unlinked.
+      const survivors = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesB!.id));
+      expect(survivors).toHaveLength(1);
+      expect(survivors[0]!.hardcoverBookId).toBe(1002);
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesA!.id))).toHaveLength(0);
     });
 
     it('AC1.3: deletes all prior series_members rows for the book before inserting (replace semantic)', async () => {
@@ -215,6 +333,70 @@ describe('book-series-link', () => {
       const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
       expect(memberRows).toHaveLength(1);
       expect(memberRows[0]!.position).toBe(2);
+    });
+  });
+
+  /**
+   * #2150 F1 — the Edit-Metadata clear (#2069 AC14) shares `replaceSeriesLink`'s
+   * detach rule through the private `detachBookRows`, so this pins the TOTAL
+   * detach arm directly on this module rather than only through `BookService`.
+   * The behavioural end-to-end pins live in
+   * `src/db/user-cleared-fields-schema.integration.test.ts:260,270`; this one
+   * additionally observes the `updated_at` bump, which that path never asserted.
+   */
+  describe('detachBookFromSeriesMembers', () => {
+    it('#2150 F1: deletes every local row and null-links every provider row, with no series exempted', async () => {
+      const bookId = await seedBook('Tress of the Emerald Sea');
+      const [localSeries] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        name: 'The Cosmere', normalizedName: 'the cosmere',
+      }).returning();
+      const [providerSeries] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 4242, name: 'Secret Projects', normalizedName: 'secret projects',
+      }).returning();
+      const [localRow] = await db.insert(seriesMembers).values({
+        seriesId: localSeries!.id, bookId, title: 'Tress of the Emerald Sea',
+        normalizedTitle: 'tress of the emerald sea', position: 1, source: 'local',
+      }).returning();
+      const stale = new Date('2020-01-01T00:00:00Z');
+      const [providerRow] = await db.insert(seriesMembers).values({
+        seriesId: providerSeries!.id, bookId, hardcoverBookId: 4242, slug: 'tress',
+        imageUrl: 'https://example.com/tress.jpg', title: 'Tress of the Emerald Sea',
+        normalizedTitle: 'tress of the emerald sea', authorName: 'Brandon Sanderson',
+        position: 1, source: 'hardcover', updatedAt: stale,
+      }).returning();
+
+      await db.transaction((tx) => detachBookFromSeriesMembers(tx, bookId));
+
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.id, localRow!.id))).toHaveLength(0);
+      const [survivor] = await db.select().from(seriesMembers).where(eq(seriesMembers.id, providerRow!.id));
+      expect(survivor).toBeDefined();
+      expect(survivor!.bookId).toBeNull();
+      expect(survivor!.hardcoverBookId).toBe(4242);
+      expect(survivor!.slug).toBe('tress');
+      expect(survivor!.imageUrl).toBe('https://example.com/tress.jpg');
+      expect(survivor!.title).toBe('Tress of the Emerald Sea');
+      expect(survivor!.position).toBe(1);
+      expect(survivor!.updatedAt.getTime()).toBeGreaterThan(stale.getTime());
+    });
+
+    // The distinguishing case: `replaceSeriesLink` exempts its resolved target
+    // from the null-link, and a clear must NOT. Wiring the clear to a
+    // target-exempting call would leave this provider row still linked.
+    it('#2150 F1: exempts no series — a provider row is unlinked even in the book\'s own current series', async () => {
+      const bookId = await seedBook('Tress of the Emerald Sea');
+      const [only] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 4242, name: 'The Cosmere', normalizedName: 'the cosmere',
+      }).returning();
+      const [row] = await db.insert(seriesMembers).values({
+        seriesId: only!.id, bookId, hardcoverBookId: 9001, slug: 'tress', title: 'Tress of the Emerald Sea',
+        normalizedTitle: 'tress of the emerald sea', position: 1, source: 'hardcover',
+      }).returning();
+
+      await db.transaction((tx) => detachBookFromSeriesMembers(tx, bookId));
+
+      const [after] = await db.select().from(seriesMembers).where(eq(seriesMembers.id, row!.id));
+      expect(after!.bookId).toBeNull();
+      expect(after!.hardcoverBookId).toBe(9001);
     });
   });
 

@@ -42,21 +42,73 @@ async function resolveSeriesId(tx: DbOrTx, name: string, normalized: string): Pr
 }
 
 /**
- * Replace series membership for a book rematched via Fix Match. Always
- * deletes any prior `series_members` row for the book; inserts exactly one
- * fresh local-source row when `args` is non-null. Errors propagate — caller's
+ * Detach a book from its `series_members` rows, source by source (#2069 AC14,
+ * #2150). THE single definition of what "this book is no longer that row's
+ * book" means, shared by the Edit-Metadata clear and by Fix Match:
+ *
+ *   - `source: 'local'` rows are the book's own cache seed. Nothing else
+ *     references them and a book-less local row is residue the card renders as
+ *     nothing, so they are DELETED — in every series, `keepLinkedSeriesId`
+ *     included.
+ *   - `source: 'hardcover'` rows are canonical members that still belong on
+ *     their series card, so they keep their identity and only lose the book link
+ *     (`book_id = NULL`, `updated_at` bumped). `buildCardFromCache` computes a
+ *     Hardcover row's `inLibrary` by title-matching against books selected on
+ *     `books.series_name`, never off `series_members.book_id`, so the sibling
+ *     card is unaffected.
+ *
+ * `keepLinkedSeriesId` exempts ONE series' provider rows from the null-link:
+ * Fix Match passes its resolved target so a member already pointing at this book
+ * — the "same series, corrected position" case — is not needlessly degraded.
+ * `null` means no exemption.
+ */
+async function detachBookRows(tx: DbOrTx, bookId: number, keepLinkedSeriesId: number | null): Promise<void> {
+  await tx
+    .delete(seriesMembers)
+    .where(and(eq(seriesMembers.bookId, bookId), eq(seriesMembers.source, 'local')));
+  // Everything still linked to the book after that delete is provider-sourced.
+  await tx
+    .update(seriesMembers)
+    .set({ bookId: null, updatedAt: new Date() })
+    .where(keepLinkedSeriesId === null
+      ? eq(seriesMembers.bookId, bookId)
+      : and(eq(seriesMembers.bookId, bookId), ne(seriesMembers.seriesId, keepLinkedSeriesId)));
+}
+
+/**
+ * Replace series membership for a book rematched via Fix Match. Clears the
+ * book's own local rows everywhere and unlinks its provider rows outside the new
+ * target (`detachBookRows`); inserts one fresh local row only when `args` names a
+ * target that is NOT Hardcover-canonical. Errors propagate — caller's
  * transaction rolls back.
+ *
+ * The canonical guard is the same one `upsertSeriesLink` applies, and for the
+ * same reason (#2150): since #2144 a `source: 'local'` row claims its book BEFORE
+ * the title matcher runs (`series-card-members.ts`), so a local row seeded into a
+ * Hardcover-canonical series takes the book away from its canonical member — the
+ * member renders '+ Add' while the book renders as a second owned entry. A book
+ * the canonical member set does NOT contain is still covered: the card build's
+ * reconcile seeds its local row, which unlike this call site can see the whole
+ * member set and therefore knows the book was left unclaimed.
+ *
+ * `resolveSeriesId` runs FIRST — before any delete — because the null-link's
+ * exemption and the canonical branch both key on the resolved target id.
  */
 export async function replaceSeriesLink(
   tx: DbOrTx,
   bookId: number,
   args: ReplaceSeriesLinkArgs | null,
 ): Promise<void> {
-  await tx.delete(seriesMembers).where(eq(seriesMembers.bookId, bookId));
-  if (!args) return;
+  const seriesId = args ? await resolveSeriesId(tx, args.name, normalizeSeriesName(args.name)) : null;
+  await detachBookRows(tx, bookId, seriesId);
+  if (!args || seriesId === null) return;
 
-  const normalized = normalizeSeriesName(args.name);
-  const seriesId = await resolveSeriesId(tx, args.name, normalized);
+  const seriesRow = await tx
+    .select({ hardcoverSeriesId: series.hardcoverSeriesId })
+    .from(series)
+    .where(eq(series.id, seriesId))
+    .limit(1);
+  if (seriesRow[0]?.hardcoverSeriesId != null) return;
 
   await tx.insert(seriesMembers).values({
     seriesId,
@@ -160,32 +212,13 @@ export async function seedLocalMembersForUnclaimedBooks(
  * inside the same transaction as the clear, so a failure here rolls the clear
  * back rather than leaving exactly the stale residue this removes.
  *
- * The two sources are treated differently on purpose:
- *
- *   - `source: 'local'` rows are the book's own create-time cache seed. Nothing
- *     else references them, so they are DELETED.
- *   - `source: 'hardcover'` rows are canonical members of the series and still
- *     belong on the SIBLING series card. Deleting one would drop a canonical
- *     member until the weekly `series-refresh` cron rebuilds it, so the row keeps
- *     its identity and only loses the book link (`book_id = NULL`). That is safe
- *     for the cards: `buildCardFromCache` computes a HARDCOVER row's `inLibrary`
- *     by title-matching against books selected on `books.series_name`, never off
- *     `series_members.book_id`. (Since #2144 a `source: 'local'` row DOES resolve
- *     by `book_id` — which is why local rows are deleted above rather than
- *     null-linked: a book-less local row is residue the card renders as nothing.)
- *
- * Deliberately NOT `replaceSeriesLink`, which deletes unconditionally by `bookId`
- * — that behavior is correct for Fix Match and is left alone here.
+ * A total detach — no series survives the clear, so nothing is exempted from the
+ * null-link. `replaceSeriesLink` shares the same source-by-source rule through
+ * `detachBookRows` (#2150) and differs only in exempting its new target; see that
+ * helper's docblock for why local rows are deleted and provider rows are not.
  */
 export async function detachBookFromSeriesMembers(tx: DbOrTx, bookId: number): Promise<void> {
-  await tx
-    .delete(seriesMembers)
-    .where(and(eq(seriesMembers.bookId, bookId), eq(seriesMembers.source, 'local')));
-  // Everything still linked to the book after that delete is provider-sourced.
-  await tx
-    .update(seriesMembers)
-    .set({ bookId: null, updatedAt: new Date() })
-    .where(eq(seriesMembers.bookId, bookId));
+  await detachBookRows(tx, bookId, null);
 }
 
 /**
