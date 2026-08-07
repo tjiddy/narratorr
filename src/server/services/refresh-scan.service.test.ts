@@ -26,10 +26,23 @@ vi.mock('node:fs/promises', () => ({
   readdir: vi.fn().mockResolvedValue([]),
 }));
 
+// The READER is mocked, not the filesystem underneath it. Letting the real `readOpfMetadata` load
+// would make every OPF assertion vacuous: the `node:fs/promises` factory above is a full module
+// replace, so `readFile` is `undefined`, and `readOpfSource`'s catch-all swallows the resulting
+// TypeError into the same `null` an absent sidecar produces — every "OPF wins" case would go green
+// while proving nothing. (The blanket `stat` compounds it: no `size` makes the MAX_OPF_BYTES check
+// read `undefined > 4MB`, i.e. the sidecar looks present and in-bounds.) The reader's own parse and
+// failure contracts are pinned against the real filesystem in `../utils/opf-reader.fs.test.ts`.
+vi.mock('../utils/opf-reader.js', () => ({
+  readOpfMetadata: vi.fn(),
+}));
+
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { getVisiblePathSize } from '../utils/import-helpers.js';
 import { readdir } from 'node:fs/promises';
+import { readOpfMetadata } from '../utils/opf-reader.js';
+import type { OpfMetadata } from '../utils/opf-reader.js';
 import { refreshScanBook, RefreshScanError } from './refresh-scan.service.js';
 
 function createMockLogger() {
@@ -58,6 +71,24 @@ function makeScanResult(overrides: Record<string, unknown> = {}) {
     totalSize: 300_000_000,
     totalDuration: 7200,
     hasCoverArt: false,
+    ...overrides,
+  };
+}
+
+function makeOpf(overrides: Partial<OpfMetadata> = {}): OpfMetadata {
+  return {
+    title: null,
+    subtitle: null,
+    authors: [],
+    narrators: [],
+    description: null,
+    publisher: null,
+    publishedDate: null,
+    asin: null,
+    isbn: null,
+    seriesName: null,
+    seriesPosition: null,
+    genres: [],
     ...overrides,
   };
 }
@@ -111,6 +142,8 @@ describe('refreshScanBook', () => {
     vi.mocked(readdir).mockResolvedValue(
       ['ch1.mp3', 'ch2.mp3', 'ch3.mp3'] as unknown as Awaited<ReturnType<typeof readdir>>,
     );
+    // Default: no sidecar. Cases that assert OPF precedence opt in explicitly.
+    vi.mocked(readOpfMetadata).mockResolvedValue(null);
   });
 
   // Happy path
@@ -211,14 +244,98 @@ describe('refreshScanBook', () => {
     expect(updateArg).toEqual(expect.objectContaining({ duration: 120, audioDuration: 7200 }));
   });
 
-  // Narrator overwrite semantics
-  it('overwrites narrator from tags even when book already has narrators', async () => {
-    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: 'New Narrator' }));
+  // Narrator ladder (#2161): OPF sidecar → embedded tags → preserve what's stored.
+  // This case is the rewrite of the old 'overwrites narrator from tags even when book already has
+  // narrators', which pinned the defect: a curated narrator exported to the sidecar was reverted to
+  // whatever the audio tags said on every "Refresh from files".
+  it('OPF narrators win over a stale tag narrator', async () => {
+    vi.mocked(readOpfMetadata).mockResolvedValue(makeOpf({ narrators: ['Curated Narrator'] }));
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: 'Stale Tag' }));
+    const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(mockBookService.update).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ narrators: ['Curated Narrator'] }),
+    );
+    expect(result.narratorsUpdated).toBe(true);
+  });
+
+  // One case covers absent / unreadable / oversized / malformed / no-usable-field: `readOpfMetadata`
+  // collapses all five to `null` by contract, and each is pinned individually against the real
+  // filesystem in `../utils/opf-reader.fs.test.ts`.
+  it('falls through to the tag narrator when the reader yields no sidecar', async () => {
+    vi.mocked(readOpfMetadata).mockResolvedValue(null);
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: 'Tag Narrator' }));
+    const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(mockBookService.update).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ narrators: ['Tag Narrator'] }),
+    );
+    expect(result.narratorsUpdated).toBe(true);
+  });
+
+  it('falls through to the tag narrator when the sidecar carries no narrators', async () => {
+    vi.mocked(readOpfMetadata).mockResolvedValue(makeOpf({ narrators: [], title: 'Test Book' }));
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: 'Tag Narrator' }));
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
     expect(mockBookService.update).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ narrators: ['New Narrator'] }),
+      expect.objectContaining({ narrators: ['Tag Narrator'] }),
     );
+  });
+
+  it('writes OPF narrators when there is no tag narrator at all', async () => {
+    vi.mocked(readOpfMetadata).mockResolvedValue(makeOpf({ narrators: ['A', 'B'] }));
+    const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(mockBookService.update).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ narrators: ['A', 'B'] }),
+    );
+    expect(result.narratorsUpdated).toBe(true);
+  });
+
+  it('preserves stored narrators when neither source supplies names', async () => {
+    const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    const updateArg = vi.mocked(mockBookService.update).mock.calls[0]![1];
+    // Not `narrators: []` — `book.service.ts` ignores an empty array, which would leave the payload
+    // and `narratorsUpdated` disagreeing about what was written.
+    expect(updateArg).not.toHaveProperty('narrators');
+    expect(result.narratorsUpdated).toBe(false);
+  });
+
+  // `narratorsUpdated` means "a source actually supplied a replacement", not "a tag field existed".
+  // Both of these derive to `[]` and therefore write nothing.
+  it('narratorsUpdated is false for a whitespace-only tag narrator', async () => {
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: '   ' }));
+    const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(vi.mocked(mockBookService.update).mock.calls[0]![1]).not.toHaveProperty('narrators');
+    expect(result.narratorsUpdated).toBe(false);
+  });
+
+  it('narratorsUpdated is false for a delimiters-only tag narrator', async () => {
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: ',;&' }));
+    const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(vi.mocked(mockBookService.update).mock.calls[0]![1]).not.toHaveProperty('narrators');
+    expect(result.narratorsUpdated).toBe(false);
+  });
+
+  // OPF narrators are already trimmed, de-duplicated and non-empty by `normalizeArray`, and the
+  // import overlay uses them verbatim. Re-splitting would shred a duo credited under one name.
+  it('uses OPF narrators verbatim — a duo credited under one name is not split', async () => {
+    vi.mocked(readOpfMetadata).mockResolvedValue(
+      makeOpf({ narrators: ['Rosalyn Landor & Simon Vance'] }),
+    );
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(mockBookService.update).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ narrators: ['Rosalyn Landor & Simon Vance'] }),
+    );
+  });
+
+  // With the reader mocked, this is the only thing proving the service consults the sidecar at all.
+  it('reads the sidecar exactly once, from the book path', async () => {
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(readOpfMetadata).toHaveBeenCalledTimes(1);
+    expect(readOpfMetadata).toHaveBeenCalledWith('/library/author/book', log);
   });
 
   it('splits multi-narrator tag on comma, semicolon, ampersand delimiters', async () => {

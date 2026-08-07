@@ -162,9 +162,11 @@ export const createBookBodySchema = z.object({
  * is the sole home of that pair policy (#2152 AC4).
  *
  * `coverUrl` (the #1634 Audnexus overwrite carve-out), `title`/`authors` (not
- * clearable — `.min(1)` below), `narrators` (rewritten unconditionally by
- * `refreshScanBook`), and `duration` (not clearable through the modal) are out of
- * scope.
+ * clearable — `.min(1)` below), `narrators` (`refreshScanBook` no longer rewrites
+ * them unconditionally as of #2161, but it still refills them whenever the OPF
+ * sidecar or the audio tags supply names, so a tombstone here would need to
+ * survive a refresh — a separate design), and `duration` (not clearable through
+ * the modal) are out of scope.
  *
  * SQLite text columns emit no DB CHECK, so `clearedFieldsSchema.parse` at the
  * service write boundary is the ONLY enforcement — mirroring the
