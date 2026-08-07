@@ -2,6 +2,12 @@ export * from './schemas.js';
 export * from './types.js';
 export { deriveAuthorsFromBooks, deriveSeriesFromBooks } from './derivation.js';
 export { normalizeGenres, findUnmatchedGenres } from './genres.js';
+export {
+  computeTrimmedChapterRuntime,
+  PROMOTIONAL_TAIL_PATTERN,
+  type ChapterTrimEntry,
+  type ChapterTrimResult,
+} from './chapter-trim.js';
 export { RateLimitError, TransientError, MetadataError } from './errors.js';
 export { AudnexusProvider, type AudnexusConfig } from './audnexus.js';
 export { AudibleProvider, type AudibleConfig } from './audible.js';

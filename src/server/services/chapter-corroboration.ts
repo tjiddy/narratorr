@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { ChapterRuntimeOutcome } from '@core/index.js';
-import type { DurationConfidenceResult } from './match-job.helpers.js';
+import type { ChapterRuntimeSeconds, DurationConfidenceResult } from './match-job.helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 /**
@@ -39,11 +39,16 @@ export interface ChapterCorroborationDeps {
 
 export interface ChapterCorroborator {
   /**
-   * The edition's chapter-table runtime in SECONDS, or `undefined` when there is
-   * no usable one. Never throws and never rejects.
+   * The edition's chapter-table runtime references in SECONDS (#1942/#2168) — the
+   * full published total and the trailing-trim variant. "No usable runtime" is the
+   * EMPTY object, never a bare `undefined` return: one representation keeps every
+   * call site to a single check. Never throws and never rejects.
    */
-  getChapterRuntimeSeconds(asin: string): Promise<number | undefined>;
+  getChapterRuntimeSeconds(asin: string): Promise<ChapterRuntimeSeconds>;
 }
+
+/** The single "nothing usable" value. Frozen — it is shared across every miss. */
+const NO_CHAPTER_RUNTIMES: ChapterRuntimeSeconds = Object.freeze({});
 
 /**
  * Trust gate (D3). Audnexus publishes `isAccurate` as its own trust flag for the
@@ -55,14 +60,29 @@ export interface ChapterCorroborator {
  * Applied to the requested edition's COMPLETE record only (the adapter's `ok`);
  * a record that fails this gate is still an authoritative statement about the
  * edition, so it settles as a definitive "no usable runtime".
+ *
+ * **This is the ONLY validity gate for EITHER reference (#2168).** The pure trim
+ * rule performs no equivalent check — it returns `runtimeLengthMs − Σ(removed)`
+ * raw — so `0`, negatives, `NaN`, and `±Infinity` are rejected here and nowhere
+ * else, identically for the full and the trimmed runtime. Duplicating any part of
+ * it into the rule would make its no-trim invariant un-satisfiable.
  */
-function usableChapterSeconds(outcome: { runtimeLengthMs: number | null | undefined; isAccurate: boolean | null | undefined }): number | undefined {
-  if (outcome.isAccurate !== true) return undefined;
-  const ms = outcome.runtimeLengthMs;
+function usableChapterSeconds(ms: number | null | undefined, isAccurate: boolean | null | undefined): number | undefined {
+  if (isAccurate !== true) return undefined;
   if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return undefined;
   // ms → SECONDS: the shared duration band is entirely seconds-based
   // (`book-duration-minutes-vs-quality-seconds`).
   return ms / 1000;
+}
+
+/** Both references through the one gate. Absent field = no usable reference. */
+function chapterRuntimesFrom(outcome: Extract<ChapterRuntimeOutcome, { kind: 'ok' }>): ChapterRuntimeSeconds {
+  const fullSeconds = usableChapterSeconds(outcome.runtimeLengthMs, outcome.isAccurate);
+  const trimmedSeconds = usableChapterSeconds(outcome.trimmedRuntimeMs, outcome.isAccurate);
+  return {
+    ...(fullSeconds !== undefined && { fullSeconds }),
+    ...(trimmedSeconds !== undefined && { trimmedSeconds }),
+  };
 }
 
 /**
@@ -79,7 +99,7 @@ function usableChapterSeconds(outcome: { runtimeLengthMs: number | null | undefi
  *
  * | Adapter outcome | Cached |
  * |---|---|
- * | `ok` (the requested edition's complete record) → usable seconds, or a trust-fail "none" | yes |
+ * | `ok` (the requested edition's complete record) → the usable-seconds PAIR, or a trust-fail "none" | yes |
  * | `not_found` (documented HTTP 400/404 — Audnexus asserts the ASIN is absent) | yes |
  * | `invalid_record` (a 200 that is not this edition's complete record) | no |
  * | `rate_limited` / `transient_failure` | no |
@@ -95,52 +115,69 @@ function usableChapterSeconds(outcome: { runtimeLengthMs: number | null | undefi
  * one HTTP request per settle. Entries are evicted on settle (the
  * `book-admission.ts` mechanic), so coalescing is concurrency-only — a transient
  * outcome shared with waiters leaves no cache entry behind.
+ *
+ * **What does NOT settle: the trimmed chapter count (#2168).** It is read off the
+ * adapter outcome at settle time for the diagnostic log line and then discarded —
+ * not cached, not part of the return value. A cache hit therefore emits no count,
+ * exactly as it emits no log line today.
  */
 export function createChapterCorroborator(deps: ChapterCorroborationDeps): ChapterCorroborator {
   /** Settled DEFINITIVE verdicts. Presence of the key — not the value — means "settled". */
-  const settled = new Map<string, number | undefined>();
-  const inFlight = new Map<string, Promise<number | undefined>>();
+  const settled = new Map<string, ChapterRuntimeSeconds>();
+  const inFlight = new Map<string, Promise<ChapterRuntimeSeconds>>();
 
-  async function classify(asin: string): Promise<number | undefined> {
+  async function classify(asin: string): Promise<ChapterRuntimeSeconds> {
     const outcome = await deps.provider.getChapterRuntime(asin);
     switch (outcome.kind) {
       case 'ok': {
-        const seconds = usableChapterSeconds(outcome);
-        settled.set(asin, seconds);
+        const runtimes = chapterRuntimesFrom(outcome);
+        settled.set(asin, runtimes);
+        // The count is the ADAPTER's, and it is logged rather than derived: a
+        // trusted zero-length trailing match logs `1` even though the two runtimes
+        // are equal, so a field diagnosis can tell "removed nothing" from
+        // "removed 2 and still out of band" from the logs alone (#2168).
         deps.log.debug(
-          { asin, runtimeLengthMs: outcome.runtimeLengthMs, isAccurate: outcome.isAccurate, chapterSeconds: seconds },
-          seconds === undefined
+          {
+            asin,
+            runtimeLengthMs: outcome.runtimeLengthMs,
+            isAccurate: outcome.isAccurate,
+            chapterSeconds: runtimes.fullSeconds,
+            trimmedRuntimeMs: outcome.trimmedRuntimeMs,
+            trimmedChapterSeconds: runtimes.trimmedSeconds,
+            trimmedChapterCount: outcome.trimmedChapterCount,
+          },
+          runtimes.fullSeconds === undefined && runtimes.trimmedSeconds === undefined
             ? 'Chapter runtime not usable (trust gate) — settled'
             : 'Chapter runtime resolved — settled',
         );
-        return seconds;
+        return runtimes;
       }
       case 'not_found':
-        settled.set(asin, undefined);
+        settled.set(asin, NO_CHAPTER_RUNTIMES);
         deps.log.debug({ asin }, 'Chapter runtime unavailable for ASIN (documented 400/404) — settled');
-        return undefined;
+        return NO_CHAPTER_RUNTIMES;
       case 'rate_limited':
         // Feed the FINITE window back into the shared provider-wide gate so the
         // immediately subsequent Audnexus call short-circuits instead of piling on.
         deps.setRateLimited(deps.provider.name, outcome.retryAfterMs);
-        return undefined;
+        return NO_CHAPTER_RUNTIMES;
       case 'invalid_record':
         deps.log.debug({ asin, reason: outcome.reason }, 'Chapter response was not this edition\'s complete record — not settled');
-        return undefined;
+        return NO_CHAPTER_RUNTIMES;
       case 'transient_failure':
         deps.log.debug({ asin, message: outcome.message }, 'Chapter lookup failed transiently — not settled');
-        return undefined;
+        return NO_CHAPTER_RUNTIMES;
     }
   }
 
-  async function lookup(asin: string): Promise<number | undefined> {
+  async function lookup(asin: string): Promise<ChapterRuntimeSeconds> {
     try {
       if (deps.isRateLimited(deps.provider.name)) {
         deps.log.debug(
           { asin, remainingMs: deps.getRateLimitRemainingMs(deps.provider.name) },
           'Chapter lookup skipped — provider rate limited',
         );
-        return undefined;
+        return NO_CHAPTER_RUNTIMES;
       }
       // Inside the coalesced op, so waiters cost neither a throttle slot nor a request.
       await deps.acquireThrottle();
@@ -149,13 +186,13 @@ export function createChapterCorroborator(deps: ChapterCorroborationDeps): Chapt
       // The adapter never throws, but a corroboration failure must never escape
       // into `matchSingleBook`'s catch (where it would become `confidence: 'none'`).
       deps.log.debug({ error: serializeError(error), asin }, 'Chapter corroboration failed — falling back to the scalar verdict');
-      return undefined;
+      return NO_CHAPTER_RUNTIMES;
     }
   }
 
   return {
-    async getChapterRuntimeSeconds(asin: string): Promise<number | undefined> {
-      if (settled.has(asin)) return settled.get(asin);
+    async getChapterRuntimeSeconds(asin: string): Promise<ChapterRuntimeSeconds> {
+      if (settled.has(asin)) return settled.get(asin) ?? NO_CHAPTER_RUNTIMES;
 
       const existing = inFlight.get(asin);
       if (existing) return existing;
@@ -180,15 +217,21 @@ export interface CorroborateDurationArgs {
   /** Candidate folder path, for the debug trail. */
   path: string;
   log: FastifyBaseLogger;
-  lookupChapterSeconds(asin: string): Promise<number | undefined>;
-  /** Re-run the SAME sync helper, now with the chapter runtime as a second reference. */
-  recheck(chapterSeconds: number): DurationConfidenceResult;
+  lookupChapterSeconds(asin: string): Promise<ChapterRuntimeSeconds>;
+  /** Re-run the SAME sync helper, now with the chapter runtimes as extra references. */
+  recheck(chapterRuntimes: ChapterRuntimeSeconds): DurationConfidenceResult;
 }
 
 export interface CorroboratedDuration {
   verdict: DurationConfidenceResult;
-  /** The usable chapter runtime in SECONDS, when one was fetched and consulted. */
-  chapterSeconds?: number;
+  /**
+   * The usable chapter runtimes in SECONDS that the verdict was judged against —
+   * `{}` when none was fetched or none was usable. Callers must recompute
+   * `isDurationVerified` with this SAME object, or a promotion driven by the
+   * trimmed reference would leave `durationVerified` false and let the narrator
+   * cap or the attempt cap demote the row straight back (#2168).
+   */
+  chapterRuntimes: ChapterRuntimeSeconds;
 }
 
 /**
@@ -200,9 +243,9 @@ export interface CorroboratedDuration {
  * missing-duration review all issue ZERO fetches; a qualifying mismatch issues
  * exactly one (deduped further by the corroborator's cache + single-flight).
  *
- * Suppress-only: the re-check runs the same helper with an extra corroborating
- * reference, so it can only ever promote a would-be mismatch to `high`. It never
- * demotes a scalar-verified match, and a file out of band against BOTH references
+ * Suppress-only: the re-check runs the same helper with the extra corroborating
+ * references, so it can only ever promote a would-be mismatch to `high`. It never
+ * demotes a scalar-verified match, and a file out of band against ALL references
  * flags exactly as it does today.
  *
  * Degrades silently to the scalar verdict on any failure — a corroboration error
@@ -211,27 +254,30 @@ export interface CorroboratedDuration {
  */
 export async function corroborateDurationVerdict(args: CorroborateDurationArgs): Promise<CorroboratedDuration> {
   const { verdict, path, log } = args;
-  if (verdict.reasonKind !== 'duration-mismatch') return { verdict };
+  if (verdict.reasonKind !== 'duration-mismatch') return { verdict, chapterRuntimes: NO_CHAPTER_RUNTIMES };
 
   const asin = args.asin?.trim();
   if (!asin) {
     log.debug({ path }, 'Duration mismatch with no ASIN — skipping chapter corroboration');
-    return { verdict };
+    return { verdict, chapterRuntimes: NO_CHAPTER_RUNTIMES };
   }
 
-  let chapterSeconds: number | undefined;
+  let chapterRuntimes: ChapterRuntimeSeconds;
   try {
-    chapterSeconds = await args.lookupChapterSeconds(asin);
+    chapterRuntimes = await args.lookupChapterSeconds(asin);
   } catch (error: unknown) {
     log.debug({ error: serializeError(error), path, asin }, 'Chapter corroboration failed — keeping the scalar duration verdict');
-    return { verdict };
+    return { verdict, chapterRuntimes: NO_CHAPTER_RUNTIMES };
   }
-  if (chapterSeconds === undefined) return { verdict };
+  const { fullSeconds, trimmedSeconds } = chapterRuntimes;
+  if (fullSeconds === undefined && trimmedSeconds === undefined) {
+    return { verdict, chapterRuntimes: NO_CHAPTER_RUNTIMES };
+  }
 
-  const rechecked = args.recheck(chapterSeconds);
+  const rechecked = args.recheck(chapterRuntimes);
   log.debug(
-    { path, asin, chapterSeconds, promoted: rechecked.reasonKind !== 'duration-mismatch' },
+    { path, asin, chapterSeconds: fullSeconds, trimmedChapterSeconds: trimmedSeconds, promoted: rechecked.reasonKind !== 'duration-mismatch' },
     'Chapter-runtime corroboration applied to a would-be duration mismatch',
   );
-  return { verdict: rechecked, chapterSeconds };
+  return { verdict: rechecked, chapterRuntimes };
 }

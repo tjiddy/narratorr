@@ -132,6 +132,24 @@ export interface DurationConfidenceResult {
 }
 
 /**
+ * The edition's chapter-table corroboration references, in SECONDS (#1942/#2168).
+ *
+ * ONE object with exactly one representation of "nothing usable" — `{}`, both
+ * fields absent — rather than a `Pair | undefined` union, so no call site needs to
+ * keep two null-checks in sync. Absent means "no usable reference of that kind";
+ * neither field is ever present-and-`undefined`.
+ *
+ * The trimmed chapter COUNT is deliberately not here: it is a settle-time log
+ * diagnostic owned by the corroborator, never cached and never returned.
+ */
+export interface ChapterRuntimeSeconds {
+  /** The catalog's FULL chapter-table runtime. */
+  fullSeconds?: number;
+  /** The same table with its trailing promotional run removed (#2168). */
+  trimmedSeconds?: number;
+}
+
+/**
  * Single source of truth for "does the scanned runtime independently corroborate
  * this candidate?". Returns true only when both the scanned duration and the
  * candidate's metadata duration are present and positive AND the absolute gap is
@@ -152,23 +170,35 @@ export interface DurationConfidenceResult {
 export function isDurationVerified(
   meta: BookMetadata,
   scannedSeconds: number | undefined,
-  chapterSeconds?: number | undefined,
+  chapterRuntimes?: ChapterRuntimeSeconds | undefined,
 ): boolean {
   if (!scannedSeconds || scannedSeconds <= 0) return false;
   // #1942 — the edition's own chapter table is a strictly more authoritative
   // runtime than the provider's `runtimeLengthMin` scalar (for Fablehaven
   // B00CXXEX8W the scalar understates its own chapter table by ~14.6 min, so a
-  // pristine file flags). It is consulted as a CORROBORATING SECOND SOURCE, never
-  // a replacement: it is only ever passed in when the scalar check already
-  // disagreed, and the `||` shape means it can only ever ADD agreement. A file
-  // out of band against BOTH references still fails exactly as before. The
-  // caller converts `runtimeLengthMs` → seconds; the same shared band judges both.
-  if (chapterSeconds !== undefined && Number.isFinite(chapterSeconds) && chapterSeconds > 0
-    && withinDurationTolerance(chapterSeconds, scannedSeconds)) {
+  // pristine file flags). #2168 adds a SECOND chapter reference: the same table
+  // with its trailing promotional run (`Excerpt:` / `Preview` / `Bonus` /
+  // `End Credits`) removed, for the editions whose published total counts
+  // advertising a clean retail rip legitimately omits.
+  //
+  // Both are consulted as CORROBORATING SECOND SOURCES, never replacements: they
+  // are only ever passed in when the scalar check already disagreed, and the `||`
+  // shape means they can only ever ADD agreement. A file out of band against ALL
+  // THREE references still fails exactly as before — including a file that runs
+  // LONG, since the band stays symmetric (`Math.abs`) and trimming only makes the
+  // trimmed reference smaller. The caller converts ms → seconds; the same shared
+  // band judges every reference.
+  if (corroboratesScanned(chapterRuntimes?.fullSeconds, scannedSeconds)
+    || corroboratesScanned(chapterRuntimes?.trimmedSeconds, scannedSeconds)) {
     return true;
   }
   if (!meta.duration || meta.duration <= 0) return false;
   return withinDurationTolerance(meta.duration * 60, scannedSeconds);
+}
+
+function corroboratesScanned(reference: number | undefined, scannedSeconds: number): boolean {
+  return reference !== undefined && Number.isFinite(reference) && reference > 0
+    && withinDurationTolerance(reference, scannedSeconds);
 }
 
 /**
@@ -182,23 +212,24 @@ export function isDurationVerified(
  * unrounded scanner runtime in SECONDS; the mismatch reason renders it from
  * seconds and the provider side from minutes.
  *
- * `chapterSeconds` (#1942) is the optional corroborating chapter-table runtime in
- * SECONDS, supplied only on a re-check after this function already returned
- * `duration-mismatch`. It is suppress-only — see `isDurationVerified`. The
- * mismatch reason still renders the SCALAR expectation, because that is the
- * runtime the user sees on the catalog page.
+ * `chapterRuntimes` (#1942/#2168) are the optional corroborating chapter-table
+ * runtimes in SECONDS — the full table total and the trailing-trim variant —
+ * supplied only on a re-check after this function already returned
+ * `duration-mismatch`. Suppress-only — see `isDurationVerified`. The mismatch
+ * reason still renders the SCALAR expectation, because that is the runtime the
+ * user sees on the catalog page.
  */
 export function resolveConfidenceFromDuration(
   scored: { meta: BookMetadata }[],
   scannedSeconds: number | undefined,
-  chapterSeconds?: number | undefined,
+  chapterRuntimes?: ChapterRuntimeSeconds | undefined,
 ): DurationConfidenceResult {
   if (!scannedSeconds || scannedSeconds <= 0) {
     return { confidence: 'medium', reason: 'Multiple results — no duration data to disambiguate', reasonKind: 'no-duration-data' };
   }
   const topResult = scored[0]!;
   if (topResult.meta.duration && topResult.meta.duration > 0) {
-    if (isDurationVerified(topResult.meta, scannedSeconds, chapterSeconds)) return { confidence: 'high' };
+    if (isDurationVerified(topResult.meta, scannedSeconds, chapterRuntimes)) return { confidence: 'high' };
     return {
       confidence: 'medium',
       reason: `Duration mismatch — scanned ${formatDurationSeconds(scannedSeconds)} vs expected ${formatDurationSeconds(topResult.meta.duration * 60)}`,
@@ -221,17 +252,18 @@ export function resolveConfidenceFromDuration(
  * a `maxConfidence: 'medium'` attempt. The helper only ever demotes an otherwise-
  * `high` single; it never raises a capped attempt's ceiling.
  *
- * `chapterSeconds` (#1942) is the optional corroborating chapter-table runtime in
- * SECONDS, supplied only on a re-check after this function already returned
- * `duration-mismatch`. Suppress-only — see `isDurationVerified`.
+ * `chapterRuntimes` (#1942/#2168) are the optional corroborating chapter-table
+ * runtimes in SECONDS (full and trailing-trimmed), supplied only on a re-check
+ * after this function already returned `duration-mismatch`. Suppress-only — see
+ * `isDurationVerified`.
  */
 export function resolveSingleResultConfidence(
   meta: BookMetadata,
   scannedSeconds: number | undefined,
-  chapterSeconds?: number | undefined,
+  chapterRuntimes?: ChapterRuntimeSeconds | undefined,
 ): DurationConfidenceResult {
   const bothPresent = !!scannedSeconds && scannedSeconds > 0 && !!meta.duration && meta.duration > 0;
-  if (bothPresent && !isDurationVerified(meta, scannedSeconds, chapterSeconds)) {
+  if (bothPresent && !isDurationVerified(meta, scannedSeconds, chapterRuntimes)) {
     return {
       confidence: 'medium',
       reason: `Duration mismatch — scanned ${formatDurationSeconds(scannedSeconds)} vs expected ${formatDurationSeconds(meta.duration! * 60)}`,
