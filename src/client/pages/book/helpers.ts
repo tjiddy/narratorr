@@ -101,7 +101,6 @@ function orProvider(
   return stored || provider;
 }
 
-// eslint-disable-next-line complexity -- flat data coalescing across two sources, no nesting
 export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: MetadataBook | null | undefined) {
   const displayed = resolveDisplayedFields(libraryBook, metadataBook);
   const coverUrl = libraryBook.coverUrl || metadataBook?.coverUrl;
