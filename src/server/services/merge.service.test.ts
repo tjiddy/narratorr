@@ -2391,6 +2391,38 @@ describe('#257 merge observability — merge service', () => {
         const payload = failedEvents[failedEvents.length - 1]!.payload as { reason: string; error: string };
         expect(payload.reason).toBe('cancelled');
       });
+
+      // #2080 — a cancel landing in the cover extract/reattach phase produces a DIFFERENT
+      // unsuccessful result than the main encode does (`ffmpeg exited with code null`, with no
+      // cover warning attached). It must still classify as cancelled, and must not be reported
+      // to the operator as a cover-art degradation.
+      it('classifies a cover-phase abort as cancelled, not as a cover-art failure', async () => {
+        setupFsMocksForCancel();
+        const { service, emitted } = createServiceWithBroadcasterForCancel();
+
+        (processAudioFiles as Mock).mockImplementation(async (
+          _dir: string, _config: unknown, _ctx: unknown, _cb: unknown, signal?: AbortSignal,
+        ) => {
+          await new Promise<void>((resolve) => {
+            if (signal) signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          // Exactly what an aborted cover phase now yields: the abort rethrown out of
+          // withCoverArtPipeline, caught by processAudioFiles, with no cover warning.
+          return { success: false, error: 'ffmpeg exited with code null' };
+        });
+
+        await service.enqueueMerge(42);
+        await new Promise((r) => setTimeout(r, 50));
+
+        const result = await service.cancelMerge(42);
+        expect(result.status).toBe('cancelled');
+        await new Promise((r) => setTimeout(r, 100));
+
+        const failedEvents = emitted.filter(e => e.event === 'merge_failed');
+        const payload = failedEvents[failedEvents.length - 1]!.payload as { reason: string; error: string };
+        expect(payload.reason).toBe('cancelled');
+        expect(payload.error).not.toContain('Cover art');
+      });
     });
 
     describe('cancel rejected (committing phase)', () => {

@@ -2040,6 +2040,76 @@ describe('#424 cover art temp file cleanup', () => {
       expect(!result.success && result.error).toContain('aborted');
       expect(mockSpawn).not.toHaveBeenCalled();
     });
+
+    // #2080 — the cover phases now take the same signal as the encode, and an abort there
+    // propagates AS an abort rather than degrading into a cover warning.
+    it('cancel during the cover reattach fails the merge and leaves the sources on disk', async () => {
+      setupMergeFiles([120, 120]);
+      mockExecFileWithStreams({ '/lib/book/01.mp3': 1, '/lib/book/02.mp3': 0 });
+
+      const controller = new AbortController();
+      let spawnCall = 0;
+      let reattachChild: MockChildProcess | undefined;
+      mockSpawn.mockImplementation(() => {
+        spawnCall++;
+        const child = new MockChildProcess();
+        // Spawn order on the merge path: 1 = cover extract, 2 = encode, 3 = cover reattach.
+        if (spawnCall === 3) {
+          reattachChild = child;
+          // The operator hits Cancel mid-reattach: SIGTERM, then ffmpeg closes with a null code.
+          process.nextTick(() => { controller.abort(); child.emit('close', null); });
+        } else {
+          process.nextTick(() => child.emit('close', 0));
+        }
+        return child as never;
+      });
+
+      const result = await processAudioFiles(
+        '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+        undefined, controller.signal,
+      );
+
+      // Never throws out of the module — MergeService's cancelled classification keys on the
+      // unsuccessful result plus its own aborted controller.
+      expect(result.success).toBe(false);
+      expect(!result.success && result.error).not.toContain('Cover art');
+      expect(reattachChild!.kill).toHaveBeenCalledWith('SIGTERM');
+      // The throw routes through mergeFiles' catch, which never reaches removeSourceFiles.
+      expect(mockUnlink).not.toHaveBeenCalled();
+    });
+
+    it('cancel during the convert path cover phase surfaces as an unsuccessful result', async () => {
+      mockReaddir.mockResolvedValue([
+        { name: 'book.mp3', isFile: () => true, isDirectory: () => false },
+      ] as never);
+      mockReadChapterSources.mockResolvedValue([
+        { filePath: '/lib/book/book.mp3', title: 'Ch 1', trackNumber: 1 },
+      ]);
+      mockExecFileWithStreams({ '/lib/book/book.mp3': 1 });
+
+      const controller = new AbortController();
+      let extractChild: MockChildProcess | undefined;
+      mockSpawn.mockImplementation(() => {
+        const child = new MockChildProcess();
+        if (!extractChild) {
+          extractChild = child; // the convert path's first spawn is the cover extract
+          process.nextTick(() => { controller.abort(); child.emit('close', null); });
+        } else {
+          process.nextTick(() => child.emit('close', 0));
+        }
+        return child as never;
+      });
+
+      const result = await processAudioFiles(
+        '/lib/book', defaultConfig, defaultContext, undefined, controller.signal,
+      );
+
+      // convertFiles has no local catch — processAudioFiles' own catch is the only thing
+      // between the cover abort and the caller.
+      expect(result.success).toBe(false);
+      expect(mockSpawn).toHaveBeenCalledTimes(1); // the per-file encode never started
+      expect(extractChild!.kill).toHaveBeenCalledWith('SIGTERM');
+    });
   });
 });
 

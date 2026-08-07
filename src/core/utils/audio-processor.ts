@@ -369,6 +369,10 @@ async function mergeFiles(
   try {
     const result = await withCoverArtPipeline(
       config.ffmpegPath, audioFiles, targetDir, outputExt, encodeFn, spawnFfmpeg,
+      // #2080: the same signal the encode above already gets. An abort during the cover phases
+      // now throws past `removeSourceFiles` through the catch below, exactly as a main-encode
+      // abort does — the operator cancelled, so the source parts stay on disk.
+      { ...(signal !== undefined && { signal }) },
     );
     for (const w of result.warnings) callbacks?.onStderr?.(w);
 
@@ -482,6 +486,7 @@ async function convertFiles(
 
   const result = await withCoverArtPipeline(
     config.ffmpegPath, audioFiles, targetDir, config.outputFormat, encodeFn, spawnFfmpeg,
+    { ...(signal !== undefined && { signal }) }, // #2080 — same signal as the per-file encodes
   );
   for (const w of result.warnings) callbacks?.onStderr?.(w);
   warnings.push(...result.warnings);
