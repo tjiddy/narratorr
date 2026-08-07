@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { and, eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import { createDb, runMigrations, type Db } from '@db/index.js';
+import { createDb, runMigrations, type Db, type DbOrTx } from '@db/index.js';
 import {
   books,
   bookAuthors,
@@ -587,17 +587,23 @@ describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)',
       updatedAt: new Date('2020-01-01T00:00:00Z'),
     });
 
-    const snapshot = async (): Promise<string> => JSON.stringify(
-      (await db.select().from(seriesMembers))
+    const snapshot = async (executor: DbOrTx): Promise<string> => JSON.stringify(
+      (await executor.select().from(seriesMembers))
         .map((r) => ({ ...r, createdAt: r.createdAt.getTime(), updatedAt: r.updatedAt.getTime() }))
         .sort((a, b) => a.id - b.id),
     );
-    const before = await snapshot();
+    const before = await snapshot(db);
 
+    // Captured INSIDE the transaction, after the link writes and before the
+    // throw. Asserting it differs from `before` is what makes this a POST-write
+    // rollback rather than the pre-write case already covered at ':212' — a
+    // rollback that never reached the write cannot distinguish the two.
+    let uncommitted = '';
     const origTransaction = db.transaction.bind(db);
     const txSpy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (cb: Parameters<typeof origTransaction>[0]) => {
       return origTransaction(async (tx) => {
         await cb(tx);
+        uncommitted = await snapshot(tx);
         throw new Error('post-write boom');
       });
     });
@@ -608,7 +614,8 @@ describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)',
     })).rejects.toThrow('post-write boom');
     txSpy.mockRestore();
 
-    expect(await snapshot()).toBe(before);
+    expect(uncommitted).not.toBe(before);
+    expect(await snapshot(db)).toBe(before);
     // And the scalar half rolled back with it.
     const [row] = await db.select().from(books).where(eq(books.id, bookId));
     expect(row!.asin).toBe('B_WRONG');
