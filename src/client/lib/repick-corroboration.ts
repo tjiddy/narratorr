@@ -133,16 +133,19 @@ export function applyCorroboration(rows: ImportRow[], target: CorroborationTarge
  *
  * `row` may already carry `matchResult` (from {@link mergeMatchIntoRow}, or from a literal
  * built at the call site); this neither inspects nor derives it. Two invariants it exists to
- * make easy to honour, **neither of which is machine-enforced** — a hand-built row literal
- * still compiles, and `readonly` on the two fields blocks only direct mutation. The lint rule
- * that would close the gap is the open `type/chore` for `no-unstamped-match-generation`
- * (#2182):
+ * make easy to honour, each machine-enforced only as far as syntax reaches — see
+ * `eslint-rules/no-unstamped-match-generation.cjs` (#2182), registered on both hooks:
  *
  * - **B7** — every write that installs, replaces or clears `matchResult` stamps a fresh
  *   `matchGeneration`; every unrelated write stamps not at all. Over-stamping drops a valid
  *   held corroboration; under-stamping promotes a row whose evidence was rebuilt underneath it.
+ *   The rule enforces the install half at every CONSTRUCTION site. The converse is undecidable
+ *   syntactically — the two scan sites legitimately stamp while never mentioning `matchResult`
+ *   — and stays pinned by the over-stamp regression in both hook suites.
  * - **B11** — `generation` must come from a `nextGeneration()` call made OUTSIDE the `setRows`
- *   updater (see {@link useRepickCorroboration}).
+ *   updater (see {@link useRepickCorroboration}). The rule narrows this to an argument-shape
+ *   check (arg-1 must be a plain identifier): every syntactic proxy for the locality condition
+ *   itself was escaped during #2060's review, so that half also rests on the runtime regression.
  *
  * {@link applyCorroboration} deliberately does not route through here: it is the terminal
  * write for the generation it answers.
