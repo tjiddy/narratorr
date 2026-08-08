@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { needsChapterCorroboration, applyCorroboration, type CorroborationTarget } from './repick-corroboration';
+import { needsChapterCorroboration, applyCorroboration, stampRow, type CorroborationTarget } from './repick-corroboration';
 import type { MatchResult, BookMetadata } from '@/lib/api';
 import type { ImportRow } from '@/components/manual-import';
 
@@ -184,5 +184,38 @@ describe('applyCorroboration staleness guard (#2055 B8)', () => {
     const result = applyCorroboration([other, liveRow], target);
     expect(result[0]).toBe(other);
     expect(result[1]!.matchResult?.confidence).toBe('high');
+  });
+});
+
+describe('stampRow (#2060)', () => {
+  const unstamped: ImportRow = {
+    book: { path: PATH, parsedTitle: 'Fablehaven', parsedAuthor: 'Brandon Mull', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+    selected: true,
+    userEdited: false,
+    edited: { title: 'Fablehaven', author: 'Brandon Mull', series: '' },
+  };
+
+  it('returns a copy carrying the given generation, leaving the argument untouched', () => {
+    const stamped = stampRow(unstamped, 5);
+
+    expect(stamped).toEqual({ ...unstamped, matchGeneration: 5 });
+    expect(stamped).not.toBe(unstamped);
+    expect(unstamped).not.toHaveProperty('matchGeneration');
+  });
+
+  it('carries an already-installed matchResult through untouched — it neither inspects nor derives it', () => {
+    const withMatch: ImportRow = { ...unstamped, matchResult: mismatchRow };
+
+    const stamped = stampRow(withMatch, 5);
+
+    expect(stamped.matchResult).toBe(mismatchRow);
+    expect(stamped.matchGeneration).toBe(5);
+  });
+
+  // Pins the property order inside the four-line body (`{ ...row, matchGeneration }`, not the
+  // reverse): with the spread last, a row already carrying a stamp would keep the STALE one and
+  // every superseding write in both hooks would silently stop superseding.
+  it('overwrites an older stamp already on the row', () => {
+    expect(stampRow({ ...unstamped, matchGeneration: 3 }, 9).matchGeneration).toBe(9);
   });
 });

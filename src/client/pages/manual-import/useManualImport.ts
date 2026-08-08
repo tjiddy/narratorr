@@ -8,7 +8,7 @@ import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
-import { needsChapterCorroboration, useRepickCorroboration } from '@/lib/repick-corroboration.js';
+import { needsChapterCorroboration, stampRow, useRepickCorroboration } from '@/lib/repick-corroboration.js';
 import { useStagedSubmission } from '@/lib/staged-import/useStagedSubmission.js';
 
 export type Step = 'path' | 'review';
@@ -81,7 +81,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       // Duplicate rows are not in the match job — if a result somehow arrives, don't auto-select
       if (row.book.isDuplicate) return row;
 
-      return { ...mergeMatchIntoRow(row, match), matchGeneration: generation };
+      return stampRow(mergeMatchIntoRow(row, match), generation);
     }));
   }, [nextGeneration]);
 
@@ -101,19 +101,18 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       }
 
       const scanGeneration = nextGeneration();
-      const newRows: ImportRow[] = result.discoveries.map((book) => ({
+      const newRows: ImportRow[] = result.discoveries.map((book) => stampRow({
         book,
         // Duplicate rows start unchecked; new books start checked
         selected: !book.isDuplicate,
         userEdited: false,
-        matchGeneration: scanGeneration,
         edited: {
           title: book.parsedTitle,
           author: book.parsedAuthor || '',
           series: book.parsedSeries || '',
           ...(book.parsedSeriesPosition !== undefined && { seriesPosition: book.parsedSeriesPosition }),
         },
-      }));
+      }, scanGeneration));
 
       setRows(newRows);
       setScanError(null);
@@ -173,7 +172,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       if (i !== index) return r;
       const autoCheck = !r.selected && state.metadata ? true : r.selected;
       const matchResult = upgradeMatchConfidence(r.matchResult, state.metadata, r.edited.metadata);
-      return { ...r, edited: state, selected: autoCheck, userEdited: true, matchResult, matchGeneration: generation };
+      return stampRow({ ...r, edited: state, selected: autoCheck, userEdited: true, matchResult }, generation);
     }));
 
     // Optimistic first: the synchronous verdict above already rendered. The corroborated
@@ -203,7 +202,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
     if (candidates.length === 0) return;
     prevMatchCountRef.current = 0;
     const generation = nextGeneration();
-    setRows(prev => prev.map(r => r.book.isDuplicate ? r : { ...r, matchResult: undefined, matchGeneration: generation }));
+    setRows(prev => prev.map(r => r.book.isDuplicate ? r : stampRow({ ...r, matchResult: undefined }, generation)));
     restart(candidates);
   }, [rows, restart, nextGeneration]);
 

@@ -127,6 +127,30 @@ export function applyCorroboration(rows: ImportRow[], target: CorroborationTarge
   return patched ? next : rows;
 }
 
+/**
+ * The sanctioned producer of a stamped row — the one place both hooks build a row whose
+ * `matchResult` has just been installed, replaced or cleared (#2060).
+ *
+ * `row` may already carry `matchResult` (from {@link mergeMatchIntoRow}, or from a literal
+ * built at the call site); this neither inspects nor derives it. Two invariants it exists to
+ * make easy to honour, **neither of which is machine-enforced** — a hand-built row literal
+ * still compiles, and `readonly` on the two fields blocks only direct mutation. The lint rule
+ * that would close the gap is the open `type/chore` for `no-unstamped-match-generation`
+ * (#2182):
+ *
+ * - **B7** — every write that installs, replaces or clears `matchResult` stamps a fresh
+ *   `matchGeneration`; every unrelated write stamps not at all. Over-stamping drops a valid
+ *   held corroboration; under-stamping promotes a row whose evidence was rebuilt underneath it.
+ * - **B11** — `generation` must come from a `nextGeneration()` call made OUTSIDE the `setRows`
+ *   updater (see {@link useRepickCorroboration}).
+ *
+ * {@link applyCorroboration} deliberately does not route through here: it is the terminal
+ * write for the generation it answers.
+ */
+export function stampRow(row: ImportRow, generation: number): ImportRow {
+  return { ...row, matchGeneration: generation };
+}
+
 export interface RepickCorroboration {
   /** The next `ImportRow.matchGeneration` stamp. Monotonic for the hook's lifetime. */
   nextGeneration: () => number;
