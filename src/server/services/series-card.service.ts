@@ -634,9 +634,11 @@ export class SeriesCardService {
     // tier, so the sequence these rows arrive in decides which book a member
     // claims whenever two candidates pair on the same tier. Unordered, that
     // sequence is a query-planner accident: an index covering this projection
-    // flips the plan to `SCAN books USING COVERING INDEX` and the rows come back
-    // in series_name order — silently changing which book each member claims, and
-    // on the bind path durably rewriting the wrong book's series_name/
+    // flips the plan to `SEARCH books USING COVERING INDEX (series_name>?)` and
+    // the rows come back in series_name order — measured, and the reason the
+    // #2108 fixture had to escalate past a narrow index at #2175. That silently
+    // changes which book each member claims, and on the bind path durably
+    // rewrites the wrong book's series_name/
     // series_position. `Array.prototype.filter` preserves order, so this single
     // ORDER BY pins every derived pool. Both callers inherit it:
     // `buildCardFromCache` via `loadLibraryBooksForSeries` (the render path) and
