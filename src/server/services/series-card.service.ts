@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, lt } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, lt } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '@db/index.js';
 import { bookAuthors, authors as authorsTable, books, series, seriesMembers } from '@db/schema.js';
@@ -17,6 +17,7 @@ import {
 import { readPositionClearedBookIds, relinkBookToBoundSeries, removeSeriesNameTombstone, seedLocalMembersForUnclaimedBooks } from './book-series-link.js';
 import { upsertHardcoverSeries } from './hardcover-series-upsert.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
+import { buildSeriesNameTargets, seriesNameMatchesTargets } from '../utils/series-name-targets.js';
 import { parseClearedFields } from '../utils/cleared-fields.js';
 import { serializeError } from '../utils/serialize-error.js';
 
@@ -513,9 +514,9 @@ export class SeriesCardService {
       // pre-fetch snapshot would silently erase that concurrent clear
       // (`src/db/serial-transactions.ts` — re-read preconditions inside the
       // transaction). Matched SIBLINGS are never un-tombstoned, and need no guard:
-      // `loadLibraryBooksForSeriesNames` selects `WHERE series_name IN (…)` and a
-      // `seriesName`-tombstoned book has `series_name = NULL`, which SQL `IN` never
-      // matches — such a book is structurally absent from the sibling pool.
+      // `loadLibraryBooksForSeriesNames` selects `WHERE series_name IS NOT NULL`
+      // and a `seriesName`-tombstoned book has `series_name = NULL` — such a book
+      // is structurally absent from the sibling pool under EVERY spelling.
       const boundClearedFields = await removeSeriesNameTombstone(tx, this.log, bookId);
 
       // Match the whole series at once, including books still on the pre-bind
@@ -607,32 +608,50 @@ export class SeriesCardService {
    * on the select the pool already issues, so the card costs no extra round-trip
    * and the two can never be read at different instants. The pool objects handed
    * to `findInLibraryMatch` are unchanged: the tombstones leave as a separate id
-   * set, never as a field on `LibraryBookSummary`.
+   * set, never as a field on `LibraryBookSummary`. `series_name` joins the
+   * projection because the membership filter needs it, and leaves the same way.
+   *
+   * Membership is `seriesNameMatchesTargets` (#2175), the SAME equivalence class
+   * `findCachedSeries` and `resolveSeriesId` resolve the `series` row by — an
+   * exact match here is what left a case-drifted owned book off its siblings'
+   * cards. The read is not normalized on write: already-drifted rows are fixed
+   * here and nowhere else.
    */
   private async loadLibraryBooksForSeriesNames(seriesNames: string[], executor: DbOrTx = this.db): Promise<LibraryPool> {
-    const unique = [...new Set(seriesNames)];
-    if (unique.length === 0) return { books: [], positionClearedIds: new Set() };
+    if (seriesNames.length === 0) return { books: [], positionClearedIds: new Set() };
+    const targets = buildSeriesNameTargets(seriesNames);
+    // ONE statement carrying ZERO pool-derived bound parameters (#2175 AC14).
+    // The membership test is `seriesNameMatchesTargets` applied in JS below, not
+    // a dynamic `IN (…)` built from the matched spellings: the number of raw
+    // spellings that fold into one equivalence class is bounded by nothing in the
+    // schema, so an `IN` list here would grow toward libSQL's whole-statement
+    // 32766-parameter cap with the library. `books.series_name` carries no index,
+    // so this was ALREADY a full `SCAN books` — the plan class does not regress;
+    // `IS NOT NULL` keeps books with no series out of memory entirely.
+    //
     // `ORDER BY books.id` is a MATCHER CONTRACT, not cosmetic (#2108).
     // `findInLibraryMatch` is greedy and first-claim-wins WITHIN a match-quality
     // tier, so the sequence these rows arrive in decides which book a member
     // claims whenever two candidates pair on the same tier. Unordered, that
-    // sequence is a query-planner accident: today the planner emits `SCAN books`
-    // and rowid order happens to fall out, but adding an index on
-    // `books.series_name` flips it to `SEARCH … USING COVERING INDEX` and the
-    // rows come back in series_name order — silently changing which book each
-    // member claims, and on the bind path durably rewriting the wrong book's
-    // series_name/series_position. Pinning it here makes such an index safe to
-    // add later. Both callers inherit this: `buildCardFromCache` via
-    // `loadLibraryBooksForSeries` (the render path) and `persistMembers` (the
-    // bind path), so the two present candidates in the same sequence.
+    // sequence is a query-planner accident: an index covering this projection
+    // flips the plan to `SEARCH books USING COVERING INDEX (series_name>?)` and
+    // the rows come back in series_name order — measured, and the reason the
+    // #2108 fixture had to escalate past a narrow index at #2175. That silently
+    // changes which book each member claims, and on the bind path durably
+    // rewrites the wrong book's series_name/
+    // series_position. `Array.prototype.filter` preserves order, so this single
+    // ORDER BY pins every derived pool. Both callers inherit it:
+    // `buildCardFromCache` via `loadLibraryBooksForSeries` (the render path) and
+    // `persistMembers` (the bind path).
     const rows = await executor
-      .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition, userClearedFields: books.userClearedFields })
+      .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition, userClearedFields: books.userClearedFields, seriesName: books.seriesName })
       .from(books)
-      .where(inArray(books.seriesName, unique))
+      .where(isNotNull(books.seriesName))
       .orderBy(asc(books.id));
     const positionClearedIds = new Set<number>();
     const pool: LibraryBookSummary[] = [];
     for (const row of rows) {
+      if (!seriesNameMatchesTargets(targets, row.seriesName!)) continue;
       pool.push({ id: row.id, title: row.title, seriesPosition: row.seriesPosition });
       if (parseClearedFields(row.userClearedFields, this.log, row.id).includes('seriesPosition')) {
         positionClearedIds.add(row.id);

@@ -40,6 +40,60 @@ async function seedBookWithSeries(db: Db, opts: {
   return book!.id;
 }
 
+/**
+ * The library-pool loader's projection, verbatim and WITHOUT an `ORDER BY`
+ * (#2175 AC7a). Used as an explicit precondition: an ordering fixture that
+ * cannot first prove the planner reorders these rows proves nothing about the
+ * loader's `.orderBy(asc(books.id))` ([[sqlite-covering-index-forces-scan-order]]).
+ */
+async function poolProbeIds(db: Db): Promise<number[]> {
+  const rows = await db.all(sql`SELECT id, title, series_position, user_cleared_fields, series_name FROM books WHERE series_name IS NOT NULL`);
+  return (rows as { id: number }[]).map((row) => row.id);
+}
+
+/**
+ * The index that makes the probe above come back non-ascending. NOT in the
+ * production schema (#2175 AC12) — created inside the test body only.
+ *
+ * The pre-#2175 narrow `books (series_name)` index is no longer sufficient:
+ * that worked because the loader was CONSTRAINED by `series_name IN (…)` and the
+ * plan flipped to `SEARCH … USING COVERING INDEX (series_name=?)`. The loader now
+ * scans on `series_name IS NOT NULL`, and measured against this schema a narrow
+ * index leaves the plan at `SCAN books` with ids ascending. An index covering
+ * every non-rowid column the loader projects drives it to
+ * `SEARCH books USING COVERING INDEX (series_name>?)` and the order follows
+ * `series_name` (`id` is the rowid and rides along implicitly).
+ */
+async function forcePoolReorderingIndex(db: Db): Promise<void> {
+  await db.run(sql`CREATE INDEX idx_books_pool_covering_2175 ON books (series_name, title, series_position, user_cleared_fields)`);
+}
+
+/**
+ * Capture every SQL statement the libSQL client executes, with its bound args.
+ *
+ * Two distinct #2175 AC14 observables ride on this: the pool load is ONE
+ * statement, and that statement carries ZERO pool-derived bound parameters. The
+ * second is the load-bearing one — a dynamic `IN (…)` built from the matched
+ * spellings would also be a single statement returning the same rows in the same
+ * order, so a statement COUNT alone cannot see the invariant.
+ */
+function spyStatements(db: Db): { executed: { sql: string; args: unknown }[]; restore: () => void } {
+  const client = db.$client as unknown as { execute: (...a: unknown[]) => unknown };
+  const original = client.execute.bind(client);
+  const executed: { sql: string; args: unknown }[] = [];
+  client.execute = ((stmt: unknown, ...rest: unknown[]) => {
+    const text = typeof stmt === 'string' ? stmt : (stmt as { sql?: string })?.sql ?? '';
+    executed.push({ sql: text, args: typeof stmt === 'string' ? [] : (stmt as { args?: unknown })?.args ?? [] });
+    return original(stmt as never, ...(rest as never[]));
+  }) as typeof client.execute;
+  return { executed, restore: () => { client.execute = original as typeof client.execute; } };
+}
+
+/** The statements that read the candidate pool, isolated from every other read. */
+function poolStatements(executed: { sql: string; args: unknown }[]): { sql: string; args: unknown }[] {
+  return executed.filter((s) => /from "books"/i.test(s.sql) && /"series_position"/.test(s.sql) && /"user_cleared_fields"/.test(s.sql));
+}
+
 describe('SeriesCardService — integration', () => {
   let dir: string;
   let db: Db;
@@ -839,22 +893,25 @@ describe('SeriesCardService — integration', () => {
   describe('#2108 — pinned candidate claim order', () => {
     // Both traps that would make this test green-but-vacuous are closed here:
     //
-    //  - WITHOUT the forced index the planner emits `SCAN books` and rowid order
+    //  - WITHOUT a forced index the planner emits `SCAN books` and rowid order
     //    falls out anyway, so the pool is id-ascending with or without the
-    //    `.orderBy()`. The `CREATE INDEX` drives it onto
-    //    `SEARCH … USING COVERING INDEX (series_name=?)`, which returns rows in
-    //    series_name order instead — hence the deliberately INVERTED seeding
-    //    (lower id → 'Zeta Series', higher id → 'Alpha Series').
+    //    `.orderBy()`. `forcePoolReorderingIndex` drives it onto
+    //    `SEARCH … USING COVERING INDEX`, which returns rows in series_name order
+    //    instead — hence the deliberately INVERTED seeding (lower id →
+    //    'Zeta Series', higher id → 'Alpha Series') — and `poolProbeIds` asserts
+    //    that reordering as an explicit precondition rather than trusting the
+    //    index to bite ([[sqlite-covering-index-forces-scan-order]]).
     //  - With CROSS-TIER candidates the arm ranking would pick the winner
     //    regardless of order, and the `.orderBy()` could be deleted with the test
     //    still green. Both books therefore pair `full-equals-full` with the same
     //    member (both titles normalize to `chapterhouse dune`) — one tier, so
     //    only the SQL order decides.
     //
-    // Counterfactuals, both run and recorded: deleting `.orderBy(asc(books.id))`
-    // flips the claim to the higher id and this test FAILS; deleting the
-    // `CREATE INDEX` below leaves it passing on both branches, which is exactly
-    // what makes the index non-optional here.
+    // Counterfactuals, all run and recorded at #2175: deleting
+    // `.orderBy(asc(books.id))` flips the claim to the higher id and this test
+    // FAILS; dropping to the pre-#2175 NARROW `books (series_name)` index leaves
+    // the plan at `SCAN books`, the precondition assertion FAILS first, and
+    // without that assertion the whole case would silently pass on both branches.
     it('claims the lower-id book when two same-tier candidates compete under an index', async () => {
       const lowerId = await seedBookWithSeries(db, {
         title: 'Chapterhouse Dune',
@@ -870,9 +927,11 @@ describe('SeriesCardService — integration', () => {
       });
       expect(higherId).toBeGreaterThan(lowerId);
 
-      // Not in the production schema (#2108 does not add it) — created here so
-      // the planner reorders the pool, which is the whole point of the fixture.
-      await db.run(sql`CREATE INDEX idx_books_series_name_2108 ON books (series_name)`);
+      await forcePoolReorderingIndex(db);
+      // PRECONDITION: unordered, the loader's own projection now comes back
+      // DESCENDING by id. Without this the fixture cannot tell "the ORDER BY
+      // worked" from "the planner happened to return rowid order anyway".
+      expect(await poolProbeIds(db)).toEqual([higherId, lowerId]);
 
       const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
         data: {
@@ -893,8 +952,8 @@ describe('SeriesCardService — integration', () => {
 
       // Bind from the HIGHER-id book, whose prior series name is 'Alpha Series':
       // `bindHardcoverSeries` passes `resolved.name` plus the initiating book's
-      // prior name to `persistMembers`, so the pool is
-      // `IN ('Zeta Series','Alpha Series')` and spans both books.
+      // prior name to `persistMembers`, so the pool's targets are
+      // {'Zeta Series','Alpha Series'} and it spans both books.
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
       const bound = await svc.bindHardcoverSeries(higherId, 7703);
 
@@ -1560,6 +1619,527 @@ describe('SeriesCardService — integration', () => {
         .filter((b) => b.seriesName === 'The Earthsea Quartet').map((b) => b.id).sort((a, b) => a - b);
       expect([...bound!.syncedIds].sort((a, b) => a - b)).toEqual(rewritten);
       expect(bound!.syncedIds).not.toContain(unrelated);
+    });
+  });
+
+  /**
+   * #2175 — the card resolves its `series` row by NORMALIZED name but used to
+   * load its library pool by exact `books.series_name`, so a normalized-equal but
+   * byte-different owned book ('the band' vs 'The Band') was structurally absent
+   * from every pool keyed on the other spelling: a sibling's card, a manual
+   * refresh, and the weekly cron all rendered '+ Add' for a book the operator
+   * owns. The book's OWN card looked fine, which is why it could sit unnoticed.
+   *
+   * Every case below was counterfactual-checked against the pre-fix predicate
+   * (`inArray(books.seriesName, unique)`); the ones whose counterfactual is not
+   * simply "revert the predicate" name theirs inline.
+   */
+  describe('#2175 — the library pool is keyed on the normalized series name', () => {
+    function mockHardcover(payload: unknown): ReturnType<typeof vi.fn> {
+      const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+        new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      ));
+      globalThis.fetch = fetchMock as typeof globalThis.fetch;
+      return fetchMock;
+    }
+
+    /** The Band, two members — the issue's headline fixture. */
+    function bandPayload(): unknown {
+      return {
+        data: {
+          series: [{
+            id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' },
+            book_series: [
+              { position: 1, book: { id: 7711, slug: 'kings', title: 'Kings of the Wyld', image: null, users_count: 100 } },
+              { position: 2, book: { id: 7712, slug: 'bloody', title: 'Bloody Rose', image: null, users_count: 90 } },
+            ],
+          }],
+        },
+      };
+    }
+
+    /** Library-only cards render straight off the pool, so members ARE the pool. */
+    function libraryOnly(): SeriesCardService {
+      return new SeriesCardService(db, log, settingsServiceWith(''));
+    }
+
+    // --- AC1/AC2/AC6 — the equivalence class, and where it stops ---------------
+
+    describe('the equivalence class', () => {
+      it.each([
+        ['case drift (the headline case)', 'The Band', 'the band'],
+        ['whitespace drift', 'The Band', '  The   Band '],
+        ['punctuation drift', 'Wax & Wayne', 'Wax Wayne'],
+      ])('%s: BOTH books appear on BOTH cards', async (_label, nameA, nameB) => {
+        const first = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: nameA, seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const second = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: nameB, seriesPosition: 2, authorName: 'Nicholas Eames' });
+
+        for (const bookId of [first, second]) {
+          const card = await libraryOnly().getSeriesForBook(bookId);
+          expect(card!.members.map((m) => m.libraryBookId)).toEqual([first, second]);
+          expect(card!.members.every((m) => m.inLibrary)).toBe(true);
+        }
+      });
+
+      it.each([
+        ['a trailing plural is a different series', 'The Band', 'The Bands'],
+        ['a digit-separating space is significant', 'Series 2', 'Series2'],
+      ])('control — %s', async (_label, nameA, nameB) => {
+        const first = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: nameA, seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const second = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: nameB, seriesPosition: 2, authorName: 'Nicholas Eames' });
+
+        expect((await libraryOnly().getSeriesForBook(first))!.members.map((m) => m.libraryBookId)).toEqual([first]);
+        expect((await libraryOnly().getSeriesForBook(second))!.members.map((m) => m.libraryBookId)).toEqual([second]);
+      });
+
+      /**
+       * AC2 through the Hardcover path — the defect as the operator sees it. The
+       * drifted sibling used to render `inLibrary: false` with a '+ Add' link on
+       * the other book's card while being paired correctly on its own.
+       */
+      it('a drifted sibling pairs with its canonical Hardcover member on EITHER card', async () => {
+        const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const bloody = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'the band', seriesPosition: 2, authorName: 'Nicholas Eames' });
+        mockHardcover(bandPayload());
+        const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+
+        for (const bookId of [kings, bloody]) {
+          const card = await svc.getSeriesForBook(bookId);
+          expect(card!.hardcoverSeriesId).toBe(5523);
+          expect(card!.members.map((m) => [m.hardcoverBookId, m.inLibrary, m.libraryBookId]))
+            .toEqual([[7711, true, kings], [7712, true, bloody]]);
+          // No '+ Add' entry for a book the operator owns.
+          expect(card!.members.some((m) => !m.inLibrary)).toBe(false);
+        }
+      });
+    });
+
+    // --- AC5 — the empty-normalized guard --------------------------------------
+
+    describe('AC5 — an empty-normalized name falls back to exact matching', () => {
+      it('three non-Latin/punctuation series do NOT pool together', async () => {
+        const dozory = await seedBookWithSeries(db, { title: 'Ночной Дозор', seriesName: 'Дозоры', seriesPosition: 1, authorName: 'Sergei Lukyanenko' });
+        const santi = await seedBookWithSeries(db, { title: '三体', seriesName: '三体', seriesPosition: 1, authorName: 'Liu Cixin' });
+        const bangs = await seedBookWithSeries(db, { title: 'Punctuation Only', seriesName: '!!!', seriesPosition: 1, authorName: 'Someone' });
+
+        for (const bookId of [dozory, santi, bangs]) {
+          expect((await libraryOnly().getSeriesForBook(bookId))!.members.map((m) => m.libraryBookId)).toEqual([bookId]);
+        }
+      });
+
+      it('a byte-identical second spelling of an empty-normalized name DOES pool', async () => {
+        const first = await seedBookWithSeries(db, { title: '三体', seriesName: '三体', seriesPosition: 1, authorName: 'Liu Cixin' });
+        const second = await seedBookWithSeries(db, { title: '黑暗森林', seriesName: '三体', seriesPosition: 2, authorName: 'Liu Cixin' });
+        const drifted = await seedBookWithSeries(db, { title: '死神永生', seriesName: ' 三体 ', seriesPosition: 3, authorName: 'Liu Cixin' });
+
+        const card = await libraryOnly().getSeriesForBook(first);
+        expect(card!.members.map((m) => m.libraryBookId)).toEqual([first, second]);
+        // The exact arm is byte-identical: whitespace drift on an empty-normalized
+        // name is NOT folded, because folding it is what pools 'Дозоры' with '三体'.
+        expect(card!.members.some((m) => m.libraryBookId === drifted)).toBe(false);
+      });
+
+      it("a book stored with series_name = '' joins no other empty-normalized bucket", async () => {
+        const dozory = await seedBookWithSeries(db, { title: 'Ночной Дозор', seriesName: 'Дозоры', seriesPosition: 1, authorName: 'Sergei Lukyanenko' });
+        const blank = await seedBookWithSeries(db, { title: 'Blank Series', seriesName: '', seriesPosition: 1, authorName: 'Someone' });
+
+        expect((await libraryOnly().getSeriesForBook(dozory))!.members.map((m) => m.libraryBookId)).toEqual([dozory]);
+        // Its own card is unreachable: '' is falsy, so the card returns null —
+        // which is pre-existing behaviour this change must not alter.
+        expect(await libraryOnly().getSeriesForBook(blank)).toBeNull();
+      });
+
+      /**
+       * The destructive half. A bind writes `books.series_name` for every pooled
+       * book, so an empty-normalized target that widened would durably rewrite
+       * every non-Latin series in the library into the bound one.
+       */
+      it('a bind on an empty-normalized name rewrites no other series', async () => {
+        const santi = await seedBookWithSeries(db, { title: '三体', seriesName: '三体', authorName: 'Liu Cixin' });
+        const dozory = await seedBookWithSeries(db, { title: 'Ночной Дозор', seriesName: 'Дозоры', authorName: 'Sergei Lukyanenko' });
+        mockHardcover({
+          data: {
+            series: [{
+              id: 9001, name: '三体', slug: 'santi', author: { name: 'Liu Cixin' },
+              book_series: [{ position: 1, book: { id: 3001, slug: 'santi-1', title: '三体', image: null, users_count: 100 } }],
+            }],
+          },
+        });
+
+        const bound = await new SeriesCardService(db, log, settingsServiceWith('TEST_KEY')).bindHardcoverSeries(santi, 9001);
+
+        expect(bound!.syncedIds).toEqual([santi]);
+        expect((await db.select().from(books).where(eq(books.id, dozory)))[0]!.seriesName).toBe('Дозоры');
+        // The bind also SEEDS a local row for every unclaimed book in the primary
+        // pool, so a widened empty-normalized target would durably enrol every
+        // non-Latin series in the library into this one.
+        expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, dozory))).toHaveLength(0);
+      });
+    });
+
+    // --- AC7 / AC14 — ordering and query shape ---------------------------------
+
+    describe('AC7 — the pinned claim order survives the JS filter', () => {
+      /**
+       * The #2108 contract, re-proved with a DRIFTED pair: two same-tier
+       * candidates compete for one member and the lower `books.id` must win.
+       * `Array.prototype.filter` preserves order, so pinning the loader's
+       * `ORDER BY` pins the derived pool — but only the reordering precondition
+       * makes that observable ([[sqlite-covering-index-forces-scan-order]]).
+       *
+       * Seeding is inverted on purpose: the LOWER id carries 'zeta series' and the
+       * higher 'Zeta Series', which under SQLite's BINARY collation sorts the
+       * higher id FIRST.
+       */
+      it('the lower-id book wins even when it is the drifted one', async () => {
+        const lowerId = await seedBookWithSeries(db, { title: 'Chapterhouse Dune', seriesName: 'zeta series', seriesPosition: null, authorName: 'Frank Herbert' });
+        const higherId = await seedBookWithSeries(db, { title: 'Chapterhouse: Dune', seriesName: 'Zeta Series', seriesPosition: null, authorName: 'Frank Herbert' });
+        expect(higherId).toBeGreaterThan(lowerId);
+
+        await forcePoolReorderingIndex(db);
+        expect(await poolProbeIds(db)).toEqual([higherId, lowerId]);
+
+        mockHardcover({
+          data: {
+            series: [{
+              id: 7703, name: 'Zeta Series', slug: 'zeta-series', author: { name: 'Frank Herbert' },
+              book_series: [{ position: null, book: { id: 4001, slug: 'chapterhouse-dune', title: 'Chapterhouse: Dune', image: null, users_count: 50 } }],
+            }],
+          },
+        });
+
+        const card = await new SeriesCardService(db, log, settingsServiceWith('TEST_KEY')).getSeriesForBook(higherId);
+
+        const hardcover = (await db.select().from(seriesMembers)).filter((m) => m.source === 'hardcover');
+        expect(hardcover).toHaveLength(1);
+        expect(hardcover[0]!.bookId).toBe(lowerId);
+        expect(card!.members.find((m) => m.hardcoverBookId === 4001)!.libraryBookId).toBe(lowerId);
+      });
+    });
+
+    describe('AC14 — one statement, zero pool-derived parameters', () => {
+      const SEPARATORS = ['-', '_', '.', ',', ':', ';', '/', '&'];
+
+      /** 512 distinct raw spellings, every one of which normalizes to 'the band'. */
+      function driftedSpelling(index: number): string {
+        const a = SEPARATORS[index % 8]!;
+        const b = SEPARATORS[Math.floor(index / 8) % 8]!;
+        const c = SEPARATORS[Math.floor(index / 64) % 8]!;
+        return `The${a}${b}${c}Band`;
+      }
+
+      /**
+       * The number of raw spellings that fold into one equivalence class is
+       * bounded by nothing in the schema, which is why the membership test runs in
+       * JS instead of being funnelled into a dynamic `IN (…)`.
+       *
+       * Counterfactual, run and recorded: an implementation that scans the
+       * distinct spellings and feeds the matched ones back into a widened `IN`
+       * list keeps the statement COUNT at one, returns the same rows, and
+       * preserves id order via the same `ORDER BY` — so the count and ordering
+       * assertions stay green and only the zero-parameter assertion reds. That is
+       * the observation point this case exists for (spec review F2).
+       */
+      it('a pool spanning 300 distinct spellings loads in one parameterless statement', async () => {
+        const anchor = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const siblings: number[] = [];
+        for (let i = 0; i < 300; i++) {
+          siblings.push(await seedBookWithSeries(db, { title: `Drifted ${i}`, seriesName: driftedSpelling(i), seriesPosition: i + 2 }));
+        }
+        // The spellings really are distinct raw strings folding to one class.
+        expect(new Set(Array.from({ length: 300 }, (_, i) => driftedSpelling(i))).size).toBe(300);
+
+        const spy = spyStatements(db);
+        const card = await libraryOnly().getSeriesForBook(anchor);
+        spy.restore();
+
+        const pool = poolStatements(spy.executed);
+        expect(pool).toHaveLength(1);
+        expect(pool[0]!.args).toEqual([]);
+        expect(pool[0]!.sql).toMatch(/"series_name" is not null/i);
+        expect(pool[0]!.sql).not.toMatch(/ in \(/i);
+        expect(card!.members.map((m) => m.libraryBookId)).toEqual([anchor, ...siblings]);
+      });
+
+      it('an empty name list returns an empty pool without issuing a query', async () => {
+        await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const svc = libraryOnly() as unknown as {
+          loadLibraryBooksForSeriesNames: (names: string[]) => Promise<{ books: unknown[]; positionClearedIds: Set<number> }>;
+        };
+
+        const spy = spyStatements(db);
+        const pool = await svc.loadLibraryBooksForSeriesNames([]);
+        spy.restore();
+
+        expect(pool).toEqual({ books: [], positionClearedIds: new Set() });
+        expect(poolStatements(spy.executed)).toHaveLength(0);
+      });
+
+      /** AC11 — the tombstone read is still the pool read, not a second one. */
+      it('the seriesPosition tombstones ride on the pool statement', async () => {
+        const anchor = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const drifted = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'the band', seriesPosition: null, authorName: 'Nicholas Eames' });
+        await db.update(books).set({ userClearedFields: '["seriesPosition"]' }).where(eq(books.id, drifted));
+        mockHardcover(bandPayload());
+        const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+        await svc.getSeriesForBook(anchor);
+
+        const spy = spyStatements(db);
+        const card = await svc.getSeriesForBook(anchor);
+        spy.restore();
+
+        const pool = poolStatements(spy.executed);
+        expect(pool).toHaveLength(1);
+        expect(pool[0]!.sql).toMatch(/"user_cleared_fields"/);
+        // The tombstone reached the card through that one read: the drifted book
+        // claimed member 2 and still renders an unnumbered position.
+        const claimed = card!.members.find((m) => m.libraryBookId === drifted)!;
+        expect(claimed.hardcoverBookId).toBe(7712);
+        expect(claimed.position).toBeNull();
+      });
+    });
+
+    // --- Null / missing paths ---------------------------------------------------
+
+    describe('null and missing rows', () => {
+      it('a seriesName-tombstoned book never enters the pool under any spelling', async () => {
+        const anchor = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const tombstoned = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: null, seriesPosition: null, authorName: 'Nicholas Eames' });
+        await db.update(books).set({ userClearedFields: '["seriesName"]' }).where(eq(books.id, tombstoned));
+        mockHardcover(bandPayload());
+        const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+
+        const card = await svc.getSeriesForBook(anchor);
+
+        // Its title matches member 2 exactly, so only the NULL keeps it out.
+        expect(card!.members.find((m) => m.hardcoverBookId === 7712)!.inLibrary).toBe(false);
+        expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, tombstoned))).toHaveLength(0);
+      });
+
+      it('a drifted sibling with position null and one with position 0 both render', async () => {
+        const anchor = await seedBookWithSeries(db, { title: 'Anchor', seriesName: 'The Band', seriesPosition: 5, authorName: 'Nicholas Eames' });
+        const zero = await seedBookWithSeries(db, { title: 'Prequel', seriesName: 'the band', seriesPosition: 0 });
+        const none = await seedBookWithSeries(db, { title: 'Unnumbered', seriesName: 'THE BAND', seriesPosition: null });
+
+        const card = await libraryOnly().getSeriesForBook(anchor);
+
+        expect(card!.members.map((m) => [m.libraryBookId, m.position]))
+          .toEqual([[zero, 0], [anchor, 5], [none, null]]);
+      });
+    });
+
+    // --- Reconcile: the widened pool inside the transaction ----------------------
+
+    describe('the reconcile seeds and re-reads through the same widened rule', () => {
+      /** A one-member payload, so a drifted sibling is always left unclaimed. */
+      function oneMemberPayload(): unknown {
+        return {
+          data: {
+            series: [{
+              id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' },
+              book_series: [{ position: 1, book: { id: 7711, slug: 'kings', title: 'Kings of the Wyld', image: null, users_count: 100 } }],
+            }],
+          },
+        };
+      }
+
+      it('a drifted unclaimed sibling gets exactly one local row, and a second GET adds none', async () => {
+        const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const drifted = await seedBookWithSeries(db, { title: 'Outcast Sibling', seriesName: 'the band', seriesPosition: 9, authorName: 'Nicholas Eames' });
+        mockHardcover(oneMemberPayload());
+        const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+
+        const first = await svc.getSeriesForBook(kings);
+        expect(first!.members.map((m) => m.libraryBookId)).toEqual([kings, drifted]);
+        const afterFirst = (await db.select().from(seriesMembers)).filter((m) => m.bookId === drifted);
+        expect(afterFirst).toHaveLength(1);
+        expect(afterFirst[0]!.source).toBe('local');
+
+        const second = await svc.getSeriesForBook(kings);
+        expect(second!.members.map((m) => m.libraryBookId)).toEqual([kings, drifted]);
+        expect((await db.select().from(seriesMembers)).filter((m) => m.bookId === drifted)).toHaveLength(1);
+      });
+
+      it('a fully-claimed widened pool opens no transaction and issues no write', async () => {
+        const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const drifted = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'the band', seriesPosition: 2, authorName: 'Nicholas Eames' });
+        mockHardcover(bandPayload());
+        const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+        await svc.getSeriesForBook(kings);
+
+        const txSpy = vi.spyOn(db, 'transaction');
+        const spy = spyStatements(db);
+        const card = await svc.getSeriesForBook(kings);
+        spy.restore();
+        expect(txSpy).not.toHaveBeenCalled();
+        txSpy.mockRestore();
+
+        // AC10 — the render path issues no UPDATE to books.series_name.
+        expect(spy.executed.filter((s) => /^update "books"/i.test(s.sql.trim()))).toHaveLength(0);
+        expect(card!.members.map((m) => m.libraryBookId)).toEqual([kings, drifted]);
+        expect((await db.select().from(books).where(eq(books.id, drifted)))[0]!.seriesName).toBe('the band');
+      });
+
+      /**
+       * The race, driven deterministically: a refresh lands between the snapshot
+       * and the reconcile and pairs the DRIFTED book with a now-exposed member. The
+       * transaction's own re-read is what decides, so nothing is written — an
+       * implementation reusing the outer snapshot's pool resurrects a superseded
+       * local row beside the canonical one.
+       */
+      it('a refresh landing between the snapshot and the reconcile makes the guard write nothing', async () => {
+        const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const drifted = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'the band', seriesPosition: 2, authorName: 'Nicholas Eames' });
+        mockHardcover(oneMemberPayload());
+        const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+        await svc.getSeriesForBook(kings);
+        await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
+
+        const openTransaction = db.transaction.bind(db);
+        const spy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (callback) => {
+          mockHardcover(bandPayload());
+          await svc.refreshSeriesForBook(kings);
+          return openTransaction(callback);
+        });
+
+        mockHardcover(oneMemberPayload());
+        const card = await svc.getSeriesForBook(kings);
+        spy.mockRestore();
+
+        const forDrifted = (await db.select().from(seriesMembers)).filter((m) => m.bookId === drifted);
+        expect(forDrifted).toHaveLength(1);
+        expect(forDrifted[0]!.source).toBe('hardcover');
+        expect(card!.members.filter((m) => m.libraryBookId === drifted)).toHaveLength(1);
+      });
+
+      it('a drifted book deleted between the snapshot and the reconcile is dropped, not FK-rejected', async () => {
+        const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const doomed = await seedBookWithSeries(db, { title: 'Outcast Sibling', seriesName: 'the band', seriesPosition: 9, authorName: 'Nicholas Eames' });
+        mockHardcover(oneMemberPayload());
+        const observed = createMockLogger();
+        const svc = new SeriesCardService(db, inject(observed), settingsServiceWith('TEST_KEY'));
+        await svc.getSeriesForBook(kings);
+        // Positive control: the seed DOES fire for this fixture.
+        expect((await db.select().from(seriesMembers)).filter((m) => m.bookId === doomed)).toHaveLength(1);
+        await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
+        (observed.warn as ReturnType<typeof vi.fn>).mockClear();
+
+        const openTransaction = db.transaction.bind(db);
+        const spy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (callback) => {
+          await db.delete(books).where(eq(books.id, doomed));
+          return openTransaction(callback);
+        });
+
+        const card = await svc.getSeriesForBook(kings);
+        spy.mockRestore();
+
+        expect(observed.warn).not.toHaveBeenCalled();
+        expect((await db.select().from(seriesMembers)).filter((m) => m.source === 'local')).toHaveLength(0);
+        expect(card!.members.map((m) => m.libraryBookId)).toEqual([kings]);
+      });
+
+      it('a failing reconcile over a widened pool still returns the pre-write snapshot card', async () => {
+        const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const drifted = await seedBookWithSeries(db, { title: 'Outcast Sibling', seriesName: 'the band', seriesPosition: 9, authorName: 'Nicholas Eames' });
+        mockHardcover(oneMemberPayload());
+        const observed = createMockLogger();
+        const svc = new SeriesCardService(db, inject(observed), settingsServiceWith('TEST_KEY'));
+        await svc.getSeriesForBook(kings);
+        await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
+        (observed.warn as ReturnType<typeof vi.fn>).mockClear();
+
+        const spy = vi.spyOn(db, 'transaction').mockRejectedValueOnce(new Error('reconcile boom'));
+        const card = await svc.getSeriesForBook(kings);
+        spy.mockRestore();
+
+        expect(card!.members.map((m) => m.libraryBookId)).toEqual([kings, drifted]);
+        expect((await db.select().from(seriesMembers)).filter((m) => m.source === 'local')).toHaveLength(0);
+        expect((observed.warn as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+      });
+
+      /**
+       * A `source: 'local'` row claims its book by `book_id` in phase 1, BEFORE
+       * the title matcher runs — including when that book is drifted into the pool
+       * by the widening. Without that precedence the drifted book would also be
+       * title-matched to the Hardcover member and appear twice.
+       */
+      it('a local row claims its drifted book by id before the title matcher runs', async () => {
+        const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const drifted = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'the band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        mockHardcover(oneMemberPayload());
+        const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+
+        const card = await svc.getSeriesForBook(kings);
+
+        // The member claimed the lower id; the drifted same-title book is shown
+        // exactly once, through its own local row.
+        expect(card!.members.find((m) => m.hardcoverBookId === 7711)!.libraryBookId).toBe(kings);
+        expect(card!.members.filter((m) => m.libraryBookId === drifted)).toHaveLength(1);
+        expect((await db.select().from(seriesMembers)).filter((m) => m.bookId === drifted)).toHaveLength(1);
+      });
+    });
+
+    // --- AC3 — every card-building path agrees ----------------------------------
+
+    describe('AC3 — refresh and cron agree with the book’s own card', () => {
+      it('a manual refresh on the non-drifted book resolves the drifted sibling', async () => {
+        const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const drifted = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'the band', seriesPosition: 2, authorName: 'Nicholas Eames' });
+        mockHardcover(bandPayload());
+
+        const card = await new SeriesCardService(db, log, settingsServiceWith('TEST_KEY')).refreshSeriesForBook(kings);
+
+        expect(card!.members.map((m) => [m.hardcoverBookId, m.libraryBookId])).toEqual([[7711, kings], [7712, drifted]]);
+      });
+
+      it('the cron cached-id branch (pool keyed on series.name) resolves the drifted book', async () => {
+        const drifted = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'the band', seriesPosition: 2, authorName: 'Nicholas Eames' });
+        await db.insert(series).values({
+          publicId: generatePublicId('sr'),
+          name: 'The Band',
+          normalizedName: 'the band',
+          hardcoverSeriesId: 5523,
+          authorName: 'Nicholas Eames',
+          lastFetchedAt: new Date(Date.now() - 30 * 86_400_000),
+        });
+        mockHardcover(bandPayload());
+
+        const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+        expect(await svc.runScheduledRefresh()).toEqual({ refreshed: 1, skipped: 0 });
+
+        const rows = await db.select().from(seriesMembers);
+        expect(rows.find((r) => r.hardcoverBookId === 7712)!.bookId).toBe(drifted);
+        // AC10 — the cron writes no series_name; the drifted spelling survives.
+        expect((await db.select().from(books).where(eq(books.id, drifted)))[0]!.seriesName).toBe('the band');
+      });
+
+      it('the cron null-id branch (pool keyed on a linked book’s own spelling) resolves its drifted sibling', async () => {
+        const drifted = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'the band', seriesPosition: 2, authorName: 'Nicholas Eames' });
+        const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const [row] = await db.insert(series).values({
+          publicId: generatePublicId('sr'),
+          name: 'The Band',
+          normalizedName: 'the band',
+          hardcoverSeriesId: null,
+          authorName: null,
+          lastFetchedAt: new Date(Date.now() - 30 * 86_400_000),
+        }).returning();
+        // `refreshByLinkedBook` picks the LOWEST-id linked book and passes that
+        // book's own spelling through — here the drifted one.
+        await db.insert(seriesMembers).values({
+          seriesId: row!.id, bookId: drifted, title: 'Bloody Rose', normalizedTitle: 'bloody rose', authorName: 'Nicholas Eames', position: 2, source: 'local',
+        });
+        const fetchMock = mockHardcover(bandPayload());
+
+        const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+        expect(await svc.runScheduledRefresh()).toEqual({ refreshed: 1, skipped: 0 });
+
+        expect(JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string).variables.name).toBe('the band');
+        const rows = await db.select().from(seriesMembers);
+        expect(rows.find((r) => r.hardcoverBookId === 7711)!.bookId).toBe(kings);
+        expect(rows.find((r) => r.hardcoverBookId === 7712)!.bookId).toBe(drifted);
+        expect((await db.select().from(books).where(eq(books.id, kings)))[0]!.seriesName).toBe('The Band');
+      });
     });
   });
 });
