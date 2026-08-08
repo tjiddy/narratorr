@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const noRawErrorLogging = require('./eslint-rules/no-raw-error-logging.cjs');
 const noTautologicalExpect = require('./eslint-rules/no-tautological-expect.cjs');
+const noUnstampedMatchGeneration = require('./eslint-rules/no-unstamped-match-generation.cjs');
 
 export default tseslint.config(
   // Ignore patterns
@@ -85,6 +86,23 @@ export default tseslint.config(
     },
     rules: {
       'narratorr/no-raw-error-logging': 'error',
+    },
+  },
+
+  // The two import hooks own every write that installs, replaces or clears a row's
+  // `matchResult` — each must route through `stampRow` so the row carries a fresh
+  // `matchGeneration` (#2055 B7 / #2182). Registration is scoped to these two files
+  // because they are the only places rows are built with a match.
+  {
+    files: [
+      '**/src/client/pages/library-import/useLibraryImport.ts',
+      '**/src/client/pages/manual-import/useManualImport.ts',
+    ],
+    plugins: {
+      'narratorr': { rules: { 'no-unstamped-match-generation': noUnstampedMatchGeneration } },
+    },
+    rules: {
+      'narratorr/no-unstamped-match-generation': 'error',
     },
   },
 
