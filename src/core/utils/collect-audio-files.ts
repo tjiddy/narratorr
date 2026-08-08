@@ -111,9 +111,7 @@ export const compareAudioNames = (a: string, b: string): number => {
  * never numbered, and an already-unique set (a `{trackNumber}`/`{partName}` token is
  * present) passes through untouched.
  *
- * Shared by `planFileRenames` (rename path) and the convert path (`convertFiles`) so
- * both disambiguate colliding outputs byte-for-byte identically — a Rename All Books
- * pass after a convert is a no-op. Assumes `stems` is already in `compareAudioNames`
+ * Used by `planFileRenames` (rename path). Assumes `stems` is already in `compareAudioNames`
  * order so the ordinal matches the import-baked play position.
  */
 export function disambiguateStems(stems: string[]): string[] {

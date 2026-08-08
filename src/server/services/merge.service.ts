@@ -385,7 +385,7 @@ export class MergeService {
 
       // Re-validate the merge minimum on the CONVERGED folder (F9): recovery can shrink a
       // previously-valid queued merge below two top-level audio files, and processAudioFiles
-      // won't merge a single-file candidate even with mergeBehavior 'always'. Abort before
+      // refuses a sub-minimum staging set outright (#2062). Abort before
       // runStaging/commitMerge — the throw routes to the catch → merge_failed + cleanup.
       // Shared with the eligibility gates (#2142) so this mid-execution failure can never
       // drift from the enqueue-time refusal.
@@ -513,10 +513,6 @@ export class MergeService {
       outputFormat,
       ...(targetBitrateKbps !== undefined && { bitrate: targetBitrateKbps }),
       ...(sourceBitrateKbps !== undefined && { sourceBitrateKbps }),
-      // Manual Merge and auto-merge always merge by design (decision (a)): merging is the whole
-      // point of this path, so anything short of 'always' would make it silently do nothing. This
-      // is the only production caller of the core `mergeBehavior` parameter (#2056).
-      mergeBehavior: 'always',
     }, {
       author: authorName,
       title: book.title,

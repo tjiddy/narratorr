@@ -6,7 +6,6 @@ import { realpath } from 'node:fs/promises';
 import { renameFilesWithTemplate, planFileRenames, padWidth, buildBookNameTokens, assertPathInsideLibrary, assertRealPathInsideLibrary, assertRealPathInsideLibraryStrict, PathOutsideLibraryError } from './paths.js';
 import type { RenameableBook } from './paths.js';
 import { renderFilename } from '@core/utils/naming.js';
-import { compareAudioNames, disambiguateStems } from '@core/utils/collect-audio-files.js';
 
 vi.mock('node:fs/promises', async () => ({
   ...(await vi.importActual('node:fs/promises')),
@@ -849,24 +848,7 @@ describe('cross-path naming consistency (anti-drift pin)', () => {
     expect(mergeStem).toBe('Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast)');
   });
 
-  it('convert path stems equal the multi-file planFileRenames stems under a colliding book-only format', async () => {
-    // Book-only format (no per-file token) → every file collides → ordinals disambiguate.
-    const bookOnly = '{author} - {title}';
-    const files = ['Track1.mp3', 'Track2.mp3', 'Track10.mp3'];
-    await mockFiles(files);
-    const planTos = (await planFileRenames('/t', bookOnly, consistencyBook, author)).map(r => r.to.replace(/\.mp3$/, ''));
-
-    // The convert path (audio-processor computeConvertStems) computes exactly this:
-    const ordered = [...files].sort(compareAudioNames);
-    const baseTokens = { author, title: consistencyBook.title, ...buildBookNameTokens(consistencyBook, author) };
-    const stems = ordered.map(() => renderFilename(bookOnly, baseTokens));
-    const convertStems = disambiguateStems(stems);
-
-    expect(convertStems).toEqual(planTos);
-    expect(convertStems).toEqual([
-      'Brandon Sanderson - The Way of Kings (1)',
-      'Brandon Sanderson - The Way of Kings (2)',
-      'Brandon Sanderson - The Way of Kings (3)',
-    ]);
-  });
+  // #2062 deleted the convert path, so the multi-file half of this pin lost its second side —
+  // `disambiguateStems` now has one consumer (`planFileRenames`), whose ordinal width and
+  // play-order numbering are pinned directly in `colliding format → number all` above.
 });

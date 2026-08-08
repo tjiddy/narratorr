@@ -1,9 +1,8 @@
 import { execFile, spawn } from 'node:child_process';
-import { rename, unlink, writeFile, rm } from 'node:fs/promises';
-import { join, extname, basename } from 'node:path';
+import { unlink, writeFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { collectSortedAudioFiles, compareAudioNames, disambiguateStems } from './collect-audio-files.js';
-import { dotPrefixBasename } from './hidden-staging.js';
+import { collectSortedAudioFiles } from './collect-audio-files.js';
 import { getErrorMessage } from '@shared/error-message.js';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import type { ChapterSource } from './chapter-resolver.js';
@@ -15,12 +14,37 @@ import { deriveFfprobePath } from './ffprobe-path.js';
 // the Vite client build, and sanitizedEnv is Node-only. Mirrors the script
 // notifier / post-processing-script call sites.
 import { sanitizedEnv } from './sanitized-env.js';
-import { noticeMessages, resolveCodecArgs, resolveTargetBitrate } from './encode-strategy.js';
+import { resolveCodecArgs } from './encode-strategy.js';
 
 const execFileAsync = promisify(execFile);
 
 /** Fixed stall timeout for ffmpeg processes — kills after this many ms with no stdout progress. */
 const FFMPEG_STALL_TIMEOUT_MS = 60_000;
+
+/**
+ * The merge minimum, restated locally rather than imported: `requireMergeMinimum`
+ * (`src/server/services/merge-eligibility.ts`) is the authoritative enqueue/dequeue gate and
+ * `src/core/` cannot import from `src/server/`. This is the fail-closed backstop for a staging
+ * directory that reaches the processor below it anyway.
+ */
+const MERGE_MINIMUM_FILES = 2;
+
+/**
+ * The staging directory held fewer than two audio files, so there is nothing to merge.
+ *
+ * Thrown rather than silently succeeding: the caller deletes every original in its validated
+ * list once processing reports success, so a no-op "success" on a single-file set would drop
+ * the sources for an output that was never produced.
+ */
+export class InsufficientAudioFilesError extends Error {
+  constructor(
+    /** Audio files actually collected from the target directory. */
+    readonly count: number,
+  ) {
+    super(`Merge requires at least ${MERGE_MINIMUM_FILES} audio files, found ${count}`);
+    this.name = 'InsufficientAudioFilesError';
+  }
+}
 
 export interface ProcessingConfig {
   ffmpegPath: string;
@@ -50,7 +74,6 @@ export interface ProcessingConfig {
   bitrate?: number | undefined;
   /** Source bitrate in kbps (converted from bps at the call site). When set, effective bitrate is min(source, target) to prevent upsampling. */
   sourceBitrateKbps?: number | undefined;
-  mergeBehavior: 'always' | 'multi-file-only' | 'never';
 }
 
 export interface ProcessingContext {
@@ -84,7 +107,7 @@ export interface ProcessingCallbacks {
 export { detectFfmpegPath, probeFfmpeg, resolveFfmpegPath, resetFfmpegPathCache } from './ffmpeg-resolver.js';
 
 /**
- * Process audio files in a directory: merge and/or convert based on config.
+ * Merge the audio files in a directory into a single chaptered output.
  * Returns the list of output files on success, or an error message on failure.
  */
 export async function processAudioFiles(
@@ -94,43 +117,21 @@ export async function processAudioFiles(
   callbacks?: ProcessingCallbacks,
   signal?: AbortSignal,
 ): Promise<ProcessingResult> {
-  const audioFiles = await collectAudioFiles(targetDir);
-
-  if (audioFiles.length === 0) {
-    return { success: true, outputFiles: [] };
-  }
-
-  // Skip processing for single m4b (already ABS-ready) — but only when the configured target
-  // is also m4b AND no usable explicit bitrate is configured. With outputFormat 'mp3', or with
-  // a usable target, the file must fall through to the convert path instead of being returned
-  // unchanged; where the target is absent-or-unusable, returning it untouched IS the copy path
-  // with zero ffmpeg work. The unusable-target notice still has to surface here.
-  const target = resolveTargetBitrate(config.bitrate);
-  if (
-    audioFiles.length === 1 &&
-    extname(audioFiles[0]!).toLowerCase() === '.m4b' &&
-    config.outputFormat === 'm4b' &&
-    target.targetKbps === undefined
-  ) {
-    const noOpWarnings = noticeMessages(target.notices);
-    return { success: true, outputFiles: audioFiles, ...(noOpWarnings.length > 0 && { warnings: noOpWarnings }) };
-  }
-
-  const shouldMerge = config.mergeBehavior === 'always' ||
-    (config.mergeBehavior === 'multi-file-only' && audioFiles.length > 1);
-
-  // Resolver notices, accumulated in command order so a multi-file convert keeps every earlier
-  // adjustment even when a later command fails.
+  // Resolver notices, accumulated in command order so a run keeps every earlier adjustment
+  // even when a later command fails.
   const warnings: string[] = [];
 
   try {
-    // Read chapter sources once — needed for merge (chapter markers) and convert (file naming)
-    const chapterSources = await readChapterSources(audioFiles);
-
-    if (shouldMerge && audioFiles.length > 1) {
-      return await mergeFiles(targetDir, chapterSources, config, context, warnings, callbacks, signal);
+    // Inside the try on purpose (#2062): both the collection failure and the sub-minimum guard
+    // below become the unsuccessful `ProcessingResult` variant the caller already handles,
+    // instead of a raw rejection out of this module.
+    const audioFiles = await collectAudioFiles(targetDir);
+    if (audioFiles.length < MERGE_MINIMUM_FILES) {
+      throw new InsufficientAudioFilesError(audioFiles.length);
     }
-    return await convertFiles(targetDir, audioFiles, config, context, chapterSources, warnings, callbacks, signal);
+
+    const chapterSources = await readChapterSources(audioFiles);
+    return await mergeFiles(targetDir, chapterSources, config, context, warnings, callbacks, signal);
   } catch (error: unknown) {
     return {
       success: false,
@@ -390,111 +391,6 @@ async function mergeFiles(
     await cleanupTempFiles(concatPath, join(targetDir, '_metadata.txt')).catch(() => {});
     throw error;
   }
-}
-
-/**
- * Compute the output stem for every convert source file, keyed by filePath.
- *
- * Honors `fileFormat` + book/per-file tokens and disambiguates colliding stems with a
- * zero-padded ordinal — byte-for-byte matching `planFileRenames` (same shared
- * `disambiguateStems` width/ordering) so a later Rename All Books is a no-op. Per-file
- * tokens/ordinals are assigned in `compareAudioNames` order (NOT the lexicographic order
- * the convert path collects with), matching the rename path's play-order numbering.
- * When `fileFormat` is empty, falls back to the original basename (already unique).
- */
-function computeConvertStems(
-  audioFiles: string[],
-  sourceMap: Map<string, ChapterSource>,
-  context: ProcessingContext,
-): Map<string, string> {
-  if (!context.fileFormat) {
-    return new Map(audioFiles.map(f => [f, basename(f, extname(f))]));
-  }
-
-  const trackTotal = audioFiles.length;
-  // Re-sort into play order so trackNumber + collision ordinals match planFileRenames,
-  // which sorts with compareAudioNames rather than the lexicographic collect order.
-  const ordered = [...audioFiles].sort(compareAudioNames);
-
-  const baseTokens = { author: context.author, title: context.title, ...context.bookTokens };
-  const stems = ordered.map((filePath, i) => {
-    const source = sourceMap.get(filePath);
-    return renderFilename(context.fileFormat!, {
-      ...baseTokens,
-      trackNumber: i + 1, trackTotal,
-      partName: source ? resolveChapterTitle(source, i) : undefined,
-    }, context.namingOptions);
-  });
-
-  const finalStems = disambiguateStems(stems);
-  return new Map(ordered.map((filePath, i) => [filePath, finalStems[i]!]));
-}
-
-/**
- * Convert individual files to the target format/bitrate without merging.
- */
-async function convertFiles(
-  targetDir: string,
-  audioFiles: string[],
-  config: ProcessingConfig,
-  context: ProcessingContext,
-  chapterSources: ChapterSource[],
-  warnings: string[],
-  callbacks?: ProcessingCallbacks,
-  signal?: AbortSignal,
-): Promise<ProcessingResult> {
-  // Build a map from filePath → ChapterSource for quick lookup
-  const sourceMap = new Map(chapterSources.map(s => [s.filePath, s]));
-  const stemFor = computeConvertStems(audioFiles, sourceMap, context);
-
-  const encodeFn = async (): Promise<string[]> => {
-    const results: string[] = [];
-    for (const filePath of audioFiles) {
-      const stem = stemFor.get(filePath)!;
-
-      const outputPath = join(targetDir, `${stem}.${config.outputFormat}`);
-      const sameFile = filePath === outputPath;
-      // Defense-in-depth (AC12): the same-file convert temp is born hidden (`.<stem>_tmp.<ext>`) so a
-      // concurrent scan/ABS never sees a half-written encode. `rename(writePath, outputPath)` below
-      // still finalizes atomically over the original.
-      const writePath = sameFile
-        ? dotPrefixBasename(join(targetDir, `${stem}_tmp.${config.outputFormat}`))
-        : outputPath;
-
-      // One resolution per constructed command: this file's own evidence, never the directory's.
-      const codecArgs = await resolveCodecArgs(config, [filePath], warnings, callbacks?.onStderr);
-
-      const args = ['-y', '-i', filePath, ...codecArgs];
-      args.push('-vn', '-max_muxing_queue_size', '4096');
-      if (config.outputFormat === 'm4b') args.push('-f', 'mp4');
-      args.push('-progress', 'pipe:1', writePath);
-
-      await spawnFfmpeg(config.ffmpegPath, args, {
-        ...(callbacks?.onStderr !== undefined && { onStderr: callbacks.onStderr }),
-        ...(signal !== undefined && { signal }),
-      });
-
-      // rename() atomically replaces outputPath. Don't unlink first — that creates a data-loss
-      // window if the rename fails. CLAUDE.md gotcha: "rename() is atomic — just rename over the target."
-      if (sameFile) { await rename(writePath, outputPath); }
-      else { await unlink(filePath); }
-
-      results.push(outputPath);
-    }
-    return results;
-  };
-
-  const result = await withCoverArtPipeline(
-    config.ffmpegPath, audioFiles, targetDir, config.outputFormat, encodeFn, spawnFfmpeg,
-    { ...(signal !== undefined && { signal }) }, // #2080 — same signal as the per-file encodes
-  );
-  for (const w of result.warnings) callbacks?.onStderr?.(w);
-  warnings.push(...result.warnings);
-  return {
-    success: true,
-    outputFiles: result.outputFiles,
-    ...(warnings.length > 0 && { warnings }),
-  };
 }
 
 /**

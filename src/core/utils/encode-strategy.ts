@@ -135,8 +135,8 @@ export function isUsableBitrateKbps(value: number | undefined): value is number 
 }
 
 /**
- * Classify a configured target. Single-homed so the single-m4b short circuit and the resolver
- * agree on what "no usable target" means without either re-deriving the other's predicate.
+ * Classify a configured target — the one place "no usable target" is decided, so keep-original
+ * selection and target legalization can never disagree on it.
  */
 export function resolveTargetBitrate(
   raw: number | undefined,

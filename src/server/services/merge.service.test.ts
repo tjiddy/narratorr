@@ -41,6 +41,11 @@ vi.mock('@core/utils/audio-processor.js', () => ({
   resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null),
 }));
 
+// The real guard class, reached past the mock above: the sub-minimum refusal test asserts the
+// operator-visible string, and deriving it from the production error keeps the two from drifting.
+const { InsufficientAudioFilesError } =
+  await vi.importActual<typeof import('@core/utils/audio-processor.js')>('@core/utils/audio-processor.js');
+
 vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn(),
 }));
@@ -121,11 +126,11 @@ describe('MergeService', () => {
       expect(cp).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'), join(STAGING_DIR, '02.mp3'));
       expect(cp).not.toHaveBeenCalledWith(expect.stringContaining('cover.jpg'), expect.anything());
 
-      // processAudioFiles called on staging dir with mergeBehavior: always (manual Merge
-      // always merges by design) and outputFormat taken from the injected settings fixture.
+      // processAudioFiles called on the staging dir, with outputFormat taken from the injected
+      // settings fixture.
       expect(processAudioFiles).toHaveBeenCalledWith(
         STAGING_DIR,
-        expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', mergeBehavior: 'always', outputFormat: processingOverrides.processing.outputFormat }),
+        expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', outputFormat: processingOverrides.processing.outputFormat }),
         expect.objectContaining({ title: 'The Way of Kings' }),
         expect.objectContaining({ onProgress: expect.any(Function), onStderr: expect.any(Function) }),
         expect.any(AbortSignal),
@@ -795,6 +800,37 @@ describe('MergeService', () => {
       await settle();
 
       // rename (move) should NOT have been called — book.path untouched
+      expect(rename).not.toHaveBeenCalled();
+      expect(unlink).not.toHaveBeenCalled();
+    });
+
+    // #2062 — the processor now refuses a sub-minimum staging set instead of converting or
+    // silently succeeding. That refusal is an ordinary unsuccessful result, so it must reach the
+    // operator through the SAME wrapping and the same `error` classification as an ffmpeg
+    // failure — asserted here at the service boundary, not just inside the processor.
+    it('reports a sub-minimum refusal as an ordinary merge_failed with reason error', async () => {
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockResolvedValue({
+        success: false,
+        error: new InsufficientAudioFilesError(1).message,
+      });
+      (rm as Mock).mockResolvedValue(undefined);
+
+      const emitted: Array<{ event: string; payload: unknown }> = [];
+      const broadcaster = { emit: vi.fn((event: string, payload: unknown) => { emitted.push({ event, payload }); }) };
+      const { service } = createService({ eventBroadcaster: inject<EventBroadcasterService>(broadcaster) });
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      const failed = emitted.filter(e => e.event === 'merge_failed');
+      expect(failed).toHaveLength(1);
+      const payload = failed[0]!.payload as { reason: string; error: string };
+      expect(payload.reason).toBe('error');
+      expect(payload.error).toBe('Audio processing failed: Merge requires at least 2 audio files, found 1');
+      // The refusal happens before any output exists — nothing in book.path is touched.
       expect(rename).not.toHaveBeenCalled();
       expect(unlink).not.toHaveBeenCalled();
     });

@@ -1,6 +1,5 @@
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
-import { dotPrefixBasename } from './hidden-staging.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   probeFfmpeg,
@@ -9,6 +8,7 @@ import {
   resetFfmpegPathCache,
   processAudioFiles,
   buildChapterMetadata,
+  InsufficientAudioFilesError,
   type ProcessingConfig,
   type ProcessingContext,
 } from './audio-processor.js';
@@ -42,6 +42,17 @@ vi.mock('./encode-strategy.js', async (importOriginal) => {
   };
 });
 
+// Passthrough spy on the error-message reducer. `processAudioFiles` swallows every throw into the
+// unsuccessful `ProcessingResult`, which carries only a string — so this is the one observation
+// point that can still see the THROWN VALUE's type (#2062 AC4). Behaviour is unchanged.
+vi.mock('@shared/error-message.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    getErrorMessage: vi.fn().mockImplementation(actual.getErrorMessage as (...args: unknown[]) => unknown),
+  };
+});
+
 // Spy on naming.js — passthrough to real implementation
 vi.mock('./naming.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -56,11 +67,13 @@ import { readdir, rename, unlink, writeFile, rm, stat } from 'node:fs/promises';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import { renderFilename } from './naming.js';
 import { resolveCodecArgs } from './encode-strategy.js';
+import { getErrorMessage } from '@shared/error-message.js';
 
-// The real implementation, re-installed on the spy in beforeEach. `vi.clearAllMocks()` clears
+// The real implementations, re-installed on the spies in beforeEach. `vi.clearAllMocks()` clears
 // call history but neither drains `*Once()` queues nor restores implementations, so an
 // override in one test would otherwise leak into every test after it.
 const actualEncodeStrategy = await vi.importActual<typeof import('./encode-strategy.js')>('./encode-strategy.js');
+const actualErrorMessage = await vi.importActual<typeof import('@shared/error-message.js')>('@shared/error-message.js');
 
 // execFile is callback-based; mock the promisified version (used by probeFfmpeg, detectFfmpegPath, getFileDurations)
 const mockExecFile = vi.mocked(execFile);
@@ -125,7 +138,6 @@ const defaultConfig: ProcessingConfig = {
   ffmpegPath: '/usr/bin/ffmpeg',
   outputFormat: 'm4b',
   bitrate: 128,
-  mergeBehavior: 'multi-file-only',
 };
 
 const defaultContext: ProcessingContext = {
@@ -225,9 +237,17 @@ function encodeSpawnArgs(index = 0): string[] {
   return found;
 }
 
+/** The value `processAudioFiles`' catch actually received, before it was reduced to a string. */
+function caughtError(): unknown {
+  const call = vi.mocked(getErrorMessage).mock.calls.at(-1);
+  if (!call) throw new Error('getErrorMessage was never called — nothing was caught');
+  return call[0];
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(resolveCodecArgs).mockImplementation(actualEncodeStrategy.resolveCodecArgs);
+  vi.mocked(getErrorMessage).mockImplementation(actualErrorMessage.getErrorMessage);
   streamInfoByFile = {};
   mockUnlink.mockResolvedValue(undefined);
   mockRename.mockResolvedValue(undefined);
@@ -426,11 +446,8 @@ describe('media-tool env sanitization', () => {
     expect(env).toHaveProperty('PATH');
   });
 
-  it('spawnFfmpeg (via processAudioFiles convert path) runs with a sanitized env', async () => {
-    setupConvertFile();
-    mockReadChapterSources.mockResolvedValue([
-      { filePath: join('/lib/book', 'book.mp3'), title: 'Ch 1', trackNumber: 1 },
-    ]);
+  it('spawnFfmpeg (via processAudioFiles) runs with a sanitized env', async () => {
+    setupMergeFiles([300, 300]);
     mockSpawnSuccess();
 
     await processAudioFiles('/lib/book', { ...defaultConfig, outputFormat: 'mp3' }, defaultContext);
@@ -478,115 +495,7 @@ function setupMergeFiles(durations: number[] = [300, 300, 300]) {
   installExecFileDispatcher({ durations });
 }
 
-/**
- * Seed a default ffprobe (execFile) result reporting no embedded video/cover stream,
- * so the convert path's cover-art detection (detectCoverArtSource → execFileAsync)
- * resolves instead of hanging on an unmocked callback. Cover-art tests override this
- * with mockExecFileWithStreams(...). Convert-path tests that don't go through
- * setupConvertFile()/setupMergeFiles() (which seed their own execFile impl) must call
- * this, or they stay order-coupled on whatever execFile impl leaked through clearAllMocks.
- */
-function seedNoCoverFfprobe() {
-  installExecFileDispatcher();
-}
-
-/** Setup helpers for convert path tests. */
-function setupConvertFile() {
-  mockReaddir.mockResolvedValue([
-    { name: 'book.mp3', isFile: () => true, isDirectory: () => false },
-  ] as never);
-  // Seed a default single-source result so convert-path tests are self-contained
-  // and don't depend on a mockResolvedValue leaked from an earlier test through
-  // clearAllMocks. Tests needing a different set override this after calling the helper.
-  mockReadChapterSources.mockResolvedValue([
-    { filePath: join('/lib/book', 'book.mp3'), title: 'Ch 1', trackNumber: 1 },
-  ]);
-  seedNoCoverFfprobe();
-}
-
 describe('processAudioFiles', () => {
-  it('skips processing for single m4b input under keep-original', async () => {
-    mockReaddir.mockResolvedValue([
-      { name: 'book.m4b', isFile: () => true, isDirectory: () => false },
-    ] as never);
-
-    // Omits `bitrate` deliberately: the early return is the zero-work copy path, so it applies
-    // only when no usable target is configured. Passing 128 here would pin the behavior AC13
-    // removes.
-    const { bitrate: _bitrate, ...keepOriginal } = defaultConfig;
-    const result = await processAudioFiles('/lib/book', keepOriginal, defaultContext);
-    expect(result).toEqual({ success: true, outputFiles: [join('/lib/book', 'book.m4b')] });
-    expect(mockExecFile).not.toHaveBeenCalled();
-    expect(mockSpawn).not.toHaveBeenCalled();
-  });
-
-  it('takes the same no-op path for an unusable bitrate, surfacing the notice', async () => {
-    mockReaddir.mockResolvedValue([
-      { name: 'book.m4b', isFile: () => true, isDirectory: () => false },
-    ] as never);
-
-    const result = await processAudioFiles(
-      '/lib/book', { ...defaultConfig, bitrate: Number.NaN }, defaultContext,
-    );
-    expect(result.success).toBe(true);
-    expect(mockExecFile).not.toHaveBeenCalled();
-    expect(mockSpawn).not.toHaveBeenCalled();
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings![0]).toContain('NaN');
-  });
-
-  it('re-encodes a single m4b to an explicit target instead of short-circuiting', async () => {
-    mockReaddir.mockResolvedValue([
-      { name: 'book.m4b', isFile: () => true, isDirectory: () => false },
-    ] as never);
-    mockReadChapterSources.mockResolvedValue([
-      { filePath: join('/lib/book', 'book.m4b'), title: 'Ch 1', trackNumber: 1 },
-    ]);
-    seedNoCoverFfprobe();
-    mockSpawnSuccess();
-
-    const result = await processAudioFiles(
-      '/lib/book', { ...defaultConfig, bitrate: 64 }, defaultContext,
-    );
-    expect(result.success).toBe(true);
-    const args = encodeSpawnArgs();
-    expect(args).toContain('-c:a');
-    expect(args[args.indexOf('-c:a') + 1]).toBe('aac');
-    expect(args[args.indexOf('-b:a') + 1]).toBe('64k');
-  });
-
-  it('re-encodes single m4b input to mp3 when outputFormat is mp3 (does not short-circuit)', async () => {
-    mockReaddir.mockResolvedValue([
-      { name: 'book.m4b', isFile: () => true, isDirectory: () => false },
-    ] as never);
-    mockReadChapterSources.mockResolvedValue([
-      { filePath: join('/lib/book', 'book.m4b'), title: 'Ch 1', trackNumber: 1 },
-    ]);
-    seedNoCoverFfprobe();
-    mockSpawnSuccess();
-
-    const config: ProcessingConfig = { ...defaultConfig, outputFormat: 'mp3' };
-    const result = await processAudioFiles('/lib/book', config, defaultContext);
-
-    // The single-m4b skip must NOT apply for an mp3 target — convert path runs.
-    expect(mockSpawn).toHaveBeenCalled();
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.outputFiles).toEqual([join('/lib/book', 'book.mp3')]);
-    }
-    // Original .m4b removed after re-encode to a differently-named .mp3.
-    expect(mockUnlink).toHaveBeenCalledWith(join('/lib/book', 'book.m4b'));
-  });
-
-  it('returns empty output for directory with no audio files', async () => {
-    mockReaddir.mockResolvedValue([
-      { name: 'readme.txt', isFile: () => true, isDirectory: () => false },
-    ] as never);
-
-    const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
-    expect(result).toEqual({ success: true, outputFiles: [] });
-  });
-
   it('merges N files into single m4b with chapter metadata', async () => {
     setupMergeFiles([300, 300, 300]);
     mockSpawnSuccess();
@@ -603,126 +512,8 @@ describe('processAudioFiles', () => {
     expect(mockSpawn).toHaveBeenCalledTimes(1);
   });
 
-  it('converts single file format/bitrate without merge', async () => {
-    setupConvertFile();
-    mockSpawnSuccess();
-
-    const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.outputFiles).toEqual([join('/lib/book', 'book.m4b')]);
-    }
-    // Should remove original after conversion
-    expect(mockUnlink).toHaveBeenCalledWith(join('/lib/book', 'book.mp3'));
-  });
-
-  it('skips merge for single file when mergeBehavior is multi-file-only', async () => {
-    setupConvertFile();
-    mockSpawnSuccess();
-
-    const config: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'multi-file-only' };
-    const result = await processAudioFiles('/lib/book', config, defaultContext);
-    expect(result.success).toBe(true);
-    // Should convert, not merge (no concat file written)
-    expect(mockWriteFile).not.toHaveBeenCalled();
-  });
-
-  it('re-encodes single file when extension matches but bitrate differs', async () => {
-    setupConvertFile();
-    mockReadChapterSources.mockResolvedValue([
-      { filePath: join('/lib/book', 'book.mp3'), title: 'Ch 1', trackNumber: 1 },
-    ]);
-    mockSpawnSuccess();
-
-    const config: ProcessingConfig = { ...defaultConfig, outputFormat: 'mp3', bitrate: 64 };
-    const result = await processAudioFiles('/lib/book', config, defaultContext);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.outputFiles).toEqual([join('/lib/book', 'book.mp3')]);
-    }
-    expect(mockSpawn).toHaveBeenCalled();
-    expect(mockRename).toHaveBeenCalledWith(
-      dotPrefixBasename(join('/lib/book', 'book_tmp.mp3')), // born-hidden convert temp (#1852 AC12)
-      join('/lib/book', 'book.mp3'),
-    );
-    // Original must NOT be unlinked on the same-file path — rename atomically replaces it.
-    expect(mockUnlink).not.toHaveBeenCalledWith(join('/lib/book', 'book.mp3'));
-  });
-
-  it('same-file conversion: rename failure surfaces as failure result, original untouched', async () => {
-    setupConvertFile();
-    mockReadChapterSources.mockResolvedValue([
-      { filePath: join('/lib/book', 'book.mp3'), title: 'Ch 1', trackNumber: 1 },
-    ]);
-    mockSpawnSuccess();
-    mockRename.mockRejectedValueOnce(new Error('EACCES: permission denied'));
-
-    const config: ProcessingConfig = { ...defaultConfig, outputFormat: 'mp3', bitrate: 64 };
-    const result = await processAudioFiles('/lib/book', config, defaultContext);
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain('EACCES');
-    }
-    // Original file must remain on disk — never unlinked.
-    expect(mockUnlink).not.toHaveBeenCalledWith(join('/lib/book', 'book.mp3'));
-  });
-
-  it('non-sameFile conversion still unlinks the original after a successful encode', async () => {
-    setupConvertFile();
-    mockReadChapterSources.mockResolvedValue([
-      { filePath: join('/lib/book', 'book.mp3'), title: 'Ch 1', trackNumber: 1 },
-    ]);
-    mockSpawnSuccess();
-
-    // outputFormat 'm4b' with input 'book.mp3' → outputPath differs from filePath (non-sameFile branch).
-    const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.outputFiles).toEqual([join('/lib/book', 'book.m4b')]);
-    }
-    expect(mockUnlink).toHaveBeenCalledWith(join('/lib/book', 'book.mp3'));
-    // Non-sameFile path does NOT use a temp + rename — writes directly to outputPath.
-    expect(mockRename).not.toHaveBeenCalled();
-  });
-
-  it('stream-copies an eligible source under keep-original (convert path)', async () => {
-    setupConvertFile();
-    setStreamInfo({
-      '/lib/book/book.mp3': { codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2 },
-    });
-    mockSpawnSuccess();
-
-    const { bitrate: _bitrate, ...configWithoutBitrate } = defaultConfig;
-    const config: ProcessingConfig = { ...configWithoutBitrate, outputFormat: 'mp3' };
-    const result = await processAudioFiles('/lib/book', config, defaultContext);
-    expect(result.success).toBe(true);
-
-    const spawnArgs = encodeSpawnArgs();
-    expect(spawnArgs[spawnArgs.indexOf('-c:a') + 1]).toBe('copy');
-    expect(spawnArgs).not.toContain('-b:a');
-    expect(spawnArgs).not.toContain('libmp3lame');
-  });
-
-  it('encodes with an explicit -b:a under keep-original when the source is ineligible', async () => {
-    setupConvertFile();
-    setStreamInfo({
-      '/lib/book/book.mp3': { codec_name: 'mp3', bit_rate: '128000', sample_rate: '44100', channels: 2 },
-    });
-    mockSpawnSuccess();
-
-    // outputFormat m4b against an mp3 source — a genuine transcode, so `-b:a` is mandatory.
-    const { bitrate: _bitrate, ...configWithoutBitrate } = defaultConfig;
-    const result = await processAudioFiles('/lib/book', configWithoutBitrate, defaultContext);
-    expect(result.success).toBe(true);
-
-    const spawnArgs = encodeSpawnArgs();
-    expect(spawnArgs[spawnArgs.indexOf('-c:a') + 1]).toBe('aac');
-    expect(spawnArgs[spawnArgs.indexOf('-b:a') + 1]).toBe('128k');
-  });
-
   it('returns error result on non-zero ffmpeg exit', async () => {
-    setupConvertFile();
+    setupMergeFiles([120, 120]);
     mockSpawnFailure(1);
 
     const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
@@ -741,7 +532,7 @@ describe('processAudioFiles', () => {
       title: 'The Hobbit',
       fileFormat: '{title} by {author}',
     };
-    const result = await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, ctx);
+    const result = await processAudioFiles('/lib/book', defaultConfig, ctx);
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.outputFiles).toEqual([join('/lib/book', 'The Hobbit by Tolkien.m4b')]);
@@ -758,7 +549,7 @@ describe('processAudioFiles', () => {
       fileFormat: '{title} ({edition})',
       bookTokens: { edition: 'Full Cast' },
     };
-    const result = await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, ctx);
+    const result = await processAudioFiles('/lib/book', defaultConfig, ctx);
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.outputFiles).toEqual([join('/lib/book', 'Dark Matter (Full Cast).m4b')]);
@@ -775,52 +566,11 @@ describe('processAudioFiles', () => {
       fileFormat: '{title} ({edition})',
       bookTokens: { edition: null },
     };
-    const result = await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, ctx);
+    const result = await processAudioFiles('/lib/book', defaultConfig, ctx);
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.outputFiles).toEqual([join('/lib/book', 'Dark Matter.m4b')]);
     }
-  });
-
-  it('uses fileFormat template for converted output filenames', async () => {
-    mockReaddir.mockResolvedValue([
-      { name: 'ch01.mp3', isFile: () => true, isDirectory: () => false },
-      { name: 'ch02.mp3', isFile: () => true, isDirectory: () => false },
-    ] as never);
-
-    mockReadChapterSources.mockResolvedValue([
-      { filePath: join('/lib/book', 'ch01.mp3'), trackNumber: 1, title: 'Introduction' },
-      { filePath: join('/lib/book', 'ch02.mp3'), trackNumber: 2, title: 'The Journey' },
-    ]);
-    mockResolveChapterTitle
-      .mockReturnValueOnce('Introduction')
-      .mockReturnValueOnce('The Journey');
-
-    seedNoCoverFfprobe();
-    // spawn called once per file (2 convert calls)
-    let spawnCallCount = 0;
-    mockSpawn.mockImplementation(() => {
-      spawnCallCount++;
-      const child = new MockChildProcess();
-      process.nextTick(() => child.emit('close', 0));
-      return child as never;
-    });
-
-    const ctx: ProcessingContext = {
-      author: 'Tolkien',
-      title: 'The Hobbit',
-      fileFormat: '{trackNumber:00} - {partName}',
-    };
-    const config: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'never' };
-    const result = await processAudioFiles('/lib/book', config, ctx);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.outputFiles).toEqual([
-        join('/lib/book', '01 - Introduction.m4b'),
-        join('/lib/book', '02 - The Journey.m4b'),
-      ]);
-    }
-    expect(spawnCallCount).toBe(2);
   });
 
   it('forwards namingOptions to renderFilename for merged output', async () => {
@@ -833,7 +583,7 @@ describe('processAudioFiles', () => {
       fileFormat: '{author} - {title}',
       namingOptions: { separator: 'period', case: 'upper' },
     };
-    await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, ctx);
+    await processAudioFiles('/lib/book', defaultConfig, ctx);
 
     expect(renderFilename).toHaveBeenCalledWith(
       '{author} - {title}',
@@ -842,140 +592,147 @@ describe('processAudioFiles', () => {
     );
   });
 
-  it('forwards namingOptions to renderFilename for converted (non-merge) output', async () => {
-    mockReaddir.mockResolvedValue([
-      { name: 'ch01.mp3', isFile: () => true, isDirectory: () => false },
-      { name: 'ch02.mp3', isFile: () => true, isDirectory: () => false },
-    ] as never);
-
-    mockReadChapterSources.mockResolvedValue([
-      { filePath: join('/lib/book', 'ch01.mp3'), trackNumber: 1, title: 'Introduction' },
-      { filePath: join('/lib/book', 'ch02.mp3'), trackNumber: 2, title: 'The Journey' },
-    ]);
-    mockResolveChapterTitle
-      .mockReturnValueOnce('Introduction')
-      .mockReturnValueOnce('The Journey');
-
-    seedNoCoverFfprobe();
-    mockSpawn.mockImplementation(() => {
-      const child = new MockChildProcess();
-      process.nextTick(() => child.emit('close', 0));
-      return child as never;
-    });
-
-    const ctx: ProcessingContext = {
-      author: 'Tolkien',
-      title: 'The Hobbit',
-      fileFormat: '{trackNumber:00} - {partName}',
-      namingOptions: { separator: 'period', case: 'upper' },
-    };
-    const config: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'never' };
-    await processAudioFiles('/lib/book', config, ctx);
-
-    expect(renderFilename).toHaveBeenCalledWith(
-      '{trackNumber:00} - {partName}',
-      expect.objectContaining({ author: 'Tolkien', title: 'The Hobbit' }),
-      expect.objectContaining({ separator: 'period', case: 'upper' }),
-    );
-  });
-
-  it('convertFiles uses positional i+1 for trackNumber, ignoring metadata trackNumber', async () => {
-    mockReaddir.mockResolvedValue([
-      { name: 'ch01.mp3', isFile: () => true, isDirectory: () => false },
-      { name: 'ch02.mp3', isFile: () => true, isDirectory: () => false },
-    ] as never);
-
-    // Metadata has track numbers 5 and 10, but positional should be 1 and 2
-    mockReadChapterSources.mockResolvedValue([
-      { filePath: join('/lib/book', 'ch01.mp3'), trackNumber: 5, title: 'Ch A' },
-      { filePath: join('/lib/book', 'ch02.mp3'), trackNumber: 10, title: 'Ch B' },
-    ]);
-    mockResolveChapterTitle
-      .mockReturnValueOnce('Ch A')
-      .mockReturnValueOnce('Ch B');
-
-    seedNoCoverFfprobe();
-    mockSpawn.mockImplementation(() => {
-      const child = new MockChildProcess();
-      process.nextTick(() => child.emit('close', 0));
-      return child as never;
-    });
-
-    const ctx: ProcessingContext = {
-      author: 'Author',
-      title: 'Book',
-      fileFormat: '{trackNumber:00} - {partName}',
-    };
-    const config: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'never' };
-    const result = await processAudioFiles('/lib/book', config, ctx);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      // Should use positional 1,2 not metadata 5,10
-      expect(result.outputFiles).toEqual([
-        join('/lib/book', '01 - Ch A.m4b'),
-        join('/lib/book', '02 - Ch B.m4b'),
-      ]);
-    }
-  });
-
-  it('convertFiles with multi-disc metadata — positional produces 1,2,3,4 not 1,2,1,2', async () => {
-    // Simulates 4 files from 2 discs, already sorted by disc+track by readChapterSources
-    mockReaddir.mockResolvedValue([
-      { name: '001.mp3', isFile: () => true, isDirectory: () => false },
-      { name: '002.mp3', isFile: () => true, isDirectory: () => false },
-      { name: '003.mp3', isFile: () => true, isDirectory: () => false },
-      { name: '004.mp3', isFile: () => true, isDirectory: () => false },
-    ] as never);
-
-    // Metadata still has per-disc track numbers (1,2 for disc 1 and 1,2 for disc 2)
-    mockReadChapterSources.mockResolvedValue([
-      { filePath: join('/lib/book', '001.mp3'), trackNumber: 1, discNumber: 1, title: 'D1T1' },
-      { filePath: join('/lib/book', '002.mp3'), trackNumber: 2, discNumber: 1, title: 'D1T2' },
-      { filePath: join('/lib/book', '003.mp3'), trackNumber: 1, discNumber: 2, title: 'D2T1' },
-      { filePath: join('/lib/book', '004.mp3'), trackNumber: 2, discNumber: 2, title: 'D2T2' },
-    ]);
-    mockResolveChapterTitle
-      .mockReturnValueOnce('D1T1')
-      .mockReturnValueOnce('D1T2')
-      .mockReturnValueOnce('D2T1')
-      .mockReturnValueOnce('D2T2');
-
-    seedNoCoverFfprobe();
-    mockSpawn.mockImplementation(() => {
-      const child = new MockChildProcess();
-      process.nextTick(() => child.emit('close', 0));
-      return child as never;
-    });
-
-    const ctx: ProcessingContext = {
-      author: 'Author',
-      title: 'Book',
-      fileFormat: '{trackNumber:00} - {partName}',
-    };
-    const config: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'never' };
-    const result = await processAudioFiles('/lib/book', config, ctx);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      // Positional: 1,2,3,4 — NOT metadata's 1,2,1,2
-      expect(result.outputFiles).toEqual([
-        join('/lib/book', '01 - D1T1.m4b'),
-        join('/lib/book', '02 - D1T2.m4b'),
-        join('/lib/book', '03 - D2T1.m4b'),
-        join('/lib/book', '04 - D2T2.m4b'),
-      ]);
-    }
-  });
-
   it('output file named {Author} - {Title}.m4b for merged output', async () => {
     setupMergeFiles([120, 120]);
     mockSpawnSuccess();
 
     const ctx: ProcessingContext = { author: 'Tolkien', title: 'The Hobbit' };
-    const result = await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, ctx);
+    const result = await processAudioFiles('/lib/book', defaultConfig, ctx);
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.outputFiles).toEqual([join('/lib/book', 'Tolkien - The Hobbit.m4b')]);
     }
+  });
+});
+
+// ============================================================================
+// #2062 — the processor is merge-only, and fails closed below the merge minimum
+// ============================================================================
+
+describe('#2062 fail-closed below the merge minimum', () => {
+  /**
+   * Seed a directory whose merge would OTHERWISE succeed — chapter sources, probes and a
+   * successful spawn are all installed. Installing a mock implementation is not calling it, so
+   * the "touched nothing" assertions still hold; what this buys is the counterfactual. With the
+   * guard deleted these cases fail on the assertions themselves rather than hanging on an
+   * unmocked ffprobe, which is the difference between a red that names the defect and a timeout.
+   */
+  function seedDirectory(names: string[]): void {
+    mockReaddir.mockResolvedValue(
+      names.map((name) => ({ name, isFile: () => true, isDirectory: () => false })) as never,
+    );
+    mockReadChapterSources.mockResolvedValue(
+      names.map((name, i) => ({ filePath: join('/lib/book', name), title: `Ch ${i + 1}`, trackNumber: i + 1 })),
+    );
+    mockResolveChapterTitle.mockImplementation((_s, i) => `Chapter ${i + 1}`);
+    installExecFileDispatcher();
+    mockSpawnSuccess();
+  }
+
+  /** Nothing downstream of the guard may run: no probe, no encode, no deletion, no output. */
+  function expectNoWork(): void {
+    expect(mockReadChapterSources).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(mockUnlink).not.toHaveBeenCalled();
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  }
+
+  it('refuses a single-file staging set, naming the count, and touches nothing', async () => {
+    seedDirectory(['book.mp3']);
+
+    const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    expect(result.success).toBe(false);
+    expect(!result.success && result.error).toBe('Merge requires at least 2 audio files, found 1');
+    expectNoWork();
+  });
+
+  it('throws the typed error, not a bare Error carrying the same string', async () => {
+    seedDirectory(['book.mp3']);
+
+    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    // Asserted at the throw site: `getErrorMessage` flattens any Error subclass to its message,
+    // so the ProcessingResult alone cannot tell this class from `new Error(sameString)`.
+    const thrown = caughtError();
+    expect(thrown).toBeInstanceOf(InsufficientAudioFilesError);
+    expect((thrown as InsufficientAudioFilesError).count).toBe(1);
+  });
+
+  it('refuses an EMPTY directory instead of succeeding with no output files', async () => {
+    // Behaviour change, not a refactor: this returned `{ success: true, outputFiles: [] }` before
+    // #2062 — a success that produced nothing, on a path whose caller then deletes the originals.
+    seedDirectory([]);
+
+    const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    expect(result).toEqual({ success: false, error: 'Merge requires at least 2 audio files, found 0' });
+    expect(caughtError()).toBeInstanceOf(InsufficientAudioFilesError);
+    expectNoWork();
+  });
+
+  it('refuses a directory holding only non-audio files', async () => {
+    seedDirectory(['readme.txt', 'cover.jpg']);
+
+    const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    // collectAudioFiles filters by extension before the guard sees the set, so this is a zero.
+    expect(!result.success && result.error).toBe('Merge requires at least 2 audio files, found 0');
+    expectNoWork();
+  });
+
+  it('does not count dot-prefixed audio toward the minimum', async () => {
+    // The premise the whole deletion rests on: the processor's collector and the eligibility
+    // gate's `listTopLevelAudioFiles` share `isHiddenName`, so a born-hidden transient is not a
+    // part on either side. One real file plus a dotfile is still a single-file book.
+    seedDirectory(['01.mp3', '.02.tmp.mp3']);
+
+    const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    expect(!result.success && result.error).toBe('Merge requires at least 2 audio files, found 1');
+    expectNoWork();
+  });
+
+  it('merges at exactly two files — the inclusive edge of the guard', async () => {
+    setupMergeFiles([120, 120]);
+    mockSpawnSuccess();
+
+    const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.outputFiles).toEqual([
+      join('/lib/book', 'Brandon Sanderson - The Way of Kings.m4b'),
+    ]);
+  });
+
+  it('turns a failed directory read into an unsuccessful result, not a rejection', async () => {
+    // #2062 moved collection inside the try, so a rejected readdir now lands on the same catch
+    // as every other processing failure instead of rejecting out of the module.
+    mockReaddir.mockRejectedValue(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
+
+    const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    expect(result.success).toBe(false);
+    expect(!result.success && result.error).toContain('EACCES');
+    expect(caughtError()).not.toBeInstanceOf(InsufficientAudioFilesError);
+    expectNoWork();
+  });
+});
+
+describe('#2062 the notices the deleted keep-original short circuit used to carry', () => {
+  it('surfaces the unusable-target notice on a merge set', async () => {
+    // The single-m4b early return was the only direct `noticeMessages` call site. The merge path
+    // has to deliver the same notice through `resolveCodecArgs`.
+    setupMergeSet(['01.m4b', '02.m4b']);
+    mockSpawnSuccess();
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, bitrate: Number.NaN }, defaultContext,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.warnings!.some((w) => w.includes('NaN'))).toBe(true);
   });
 });
 
@@ -1006,27 +763,12 @@ describe('buildChapterMetadata', () => {
 
 describe('bitrate capping — sourceBitrateKbps', () => {
   beforeEach(() => {
-    // Single file setup for convert path tests
-    setupConvertFile();
-    mockSpawnSuccess();
-  });
-
-  it('uses source bitrate when lower than target (convert path)', async () => {
-    const config: ProcessingConfig = { ...defaultConfig, bitrate: 128, sourceBitrateKbps: 64 };
-    await processAudioFiles('/lib/book', config, defaultContext);
-
-    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
-    const bitrateIdx = spawnArgs.indexOf('-b:a');
-    expect(bitrateIdx).toBeGreaterThan(-1);
-    expect(spawnArgs[bitrateIdx + 1]).toBe('64k');
-  });
-
-  it('uses source bitrate when lower than target (merge path)', async () => {
     setupMergeFiles([120, 120]);
-    // Reset the spawn mock since beforeEach already set one
     mockSpawnSuccess();
+  });
 
-    const config: ProcessingConfig = { ...defaultConfig, bitrate: 128, sourceBitrateKbps: 64, mergeBehavior: 'always' };
+  it('uses source bitrate when lower than target', async () => {
+    const config: ProcessingConfig = { ...defaultConfig, bitrate: 128, sourceBitrateKbps: 64 };
     await processAudioFiles('/lib/book', config, defaultContext);
 
     const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
@@ -1095,7 +837,7 @@ describe('#257 merge observability — audio-processor', () => {
       setupMergeFiles([120, 120]);
       mockSpawnSuccess();
 
-      await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext);
+      await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
       const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
       const idx = spawnArgs.indexOf('-max_muxing_queue_size');
@@ -1107,7 +849,7 @@ describe('#257 merge observability — audio-processor', () => {
       setupMergeFiles([120, 120]);
       mockSpawnSuccess();
 
-      await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext);
+      await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
       const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
       const idx = spawnArgs.indexOf('-progress');
@@ -1119,7 +861,7 @@ describe('#257 merge observability — audio-processor', () => {
       setupMergeFiles([120, 120]);
       mockSpawnSuccess();
 
-      await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext);
+      await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
       // spawn called once for ffmpeg merge, execFile only for ffprobe
       expect(mockSpawn).toHaveBeenCalledTimes(1);
@@ -1128,30 +870,6 @@ describe('#257 merge observability — audio-processor', () => {
       for (const call of mockExecFile.mock.calls) {
         expect(call[0]).toContain('ffprobe');
       }
-    });
-  });
-
-  describe('convertFiles() ffmpeg args', () => {
-    it('passes -max_muxing_queue_size 4096 in ffmpeg args', async () => {
-      setupConvertFile();
-      mockSpawnSuccess();
-
-      await processAudioFiles('/lib/book', defaultConfig, defaultContext);
-
-      const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
-      expect(spawnArgs).toContain('-max_muxing_queue_size');
-      const idx = spawnArgs.indexOf('-max_muxing_queue_size');
-      expect(spawnArgs[idx + 1]).toBe('4096');
-    });
-
-    it('uses spawn instead of execFile for ffmpeg invocation', async () => {
-      setupConvertFile();
-      mockSpawnSuccess();
-
-      await processAudioFiles('/lib/book', defaultConfig, defaultContext);
-
-      expect(mockSpawn).toHaveBeenCalledTimes(1);
-      expect(mockSpawn.mock.calls[0]![0]).toBe('/usr/bin/ffmpeg');
     });
   });
 
@@ -1164,7 +882,7 @@ describe('#257 merge observability — audio-processor', () => {
       mockSpawn.mockReturnValue(child as never);
 
       const promise = processAudioFiles(
-        '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+        '/lib/book', defaultConfig, defaultContext,
         { onProgress },
       );
 
@@ -1187,7 +905,7 @@ describe('#257 merge observability — audio-processor', () => {
       mockSpawn.mockReturnValue(child as never);
 
       const promise = processAudioFiles(
-        '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+        '/lib/book', defaultConfig, defaultContext,
         { onProgress },
       );
 
@@ -1209,7 +927,7 @@ describe('#257 merge observability — audio-processor', () => {
       mockSpawn.mockReturnValue(child as never);
 
       const promise = processAudioFiles(
-        '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+        '/lib/book', defaultConfig, defaultContext,
         { onProgress },
       );
 
@@ -1231,7 +949,7 @@ describe('#257 merge observability — audio-processor', () => {
       mockSpawn.mockReturnValue(child as never);
 
       const promise = processAudioFiles(
-        '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+        '/lib/book', defaultConfig, defaultContext,
         { onProgress },
       );
 
@@ -1247,7 +965,7 @@ describe('#257 merge observability — audio-processor', () => {
 
   describe('onStderr callback', () => {
     it('invoked for each stderr line from ffmpeg', async () => {
-      setupConvertFile();
+      setupMergeFiles([120, 120]);
       const onStderr = vi.fn();
 
       const child = new MockChildProcess();
@@ -1278,7 +996,7 @@ describe('#257 merge observability — audio-processor', () => {
       mockSpawn.mockReturnValue(child as never);
 
       const promise = processAudioFiles(
-        '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+        '/lib/book', defaultConfig, defaultContext,
         { onProgress },
       );
 
@@ -1296,7 +1014,7 @@ describe('#257 merge observability — audio-processor', () => {
       mockSpawnFailure(1);
 
       const result = await processAudioFiles(
-        '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+        '/lib/book', defaultConfig, defaultContext,
       );
 
       expect(result.success).toBe(false);
@@ -1309,7 +1027,7 @@ describe('#257 merge observability — audio-processor', () => {
 
   describe('backward compatibility', () => {
     it('processAudioFiles works without onProgress/onStderr callbacks (optional params)', async () => {
-      setupConvertFile();
+      setupMergeFiles([120, 120]);
       mockSpawnSuccess();
 
       // Call without callbacks (3-arg form)
@@ -1328,68 +1046,10 @@ describe('#424 stream mapping — unconditional -vn flag', () => {
     setupMergeFiles([120, 120]);
     mockSpawnSuccess();
 
-    await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext);
-
-    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
-    expect(spawnArgs).toContain('-vn');
-  });
-
-  it('convertFiles includes -vn flag in ffmpeg args', async () => {
-    setupConvertFile();
-    mockSpawnSuccess();
-
     await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
     const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
     expect(spawnArgs).toContain('-vn');
-  });
-
-  it('-vn is present even when source files have no embedded cover art', async () => {
-    // Default setup has no cover art detection — -vn should still be there
-    setupConvertFile();
-    mockSpawnSuccess();
-
-    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
-
-    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
-    expect(spawnArgs).toContain('-vn');
-  });
-});
-
-describe('#424 convertFiles — progress output', () => {
-  it('convertFiles includes -progress pipe:1 in ffmpeg args', async () => {
-    setupConvertFile();
-    mockSpawnSuccess();
-
-    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
-
-    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
-    const idx = spawnArgs.indexOf('-progress');
-    expect(idx).toBeGreaterThan(-1);
-    expect(spawnArgs[idx + 1]).toBe('pipe:1');
-  });
-
-  it('convert-path stall timeout kills process after 60s with no progress', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    setupConvertFile();
-    const child = new MockChildProcess();
-    child.kill = vi.fn().mockImplementation(() => {
-      process.nextTick(() => child.emit('close', null));
-    });
-    mockSpawn.mockReturnValue(child as never);
-
-    const promise = processAudioFiles('/lib/book', defaultConfig, defaultContext);
-    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
-
-    vi.advanceTimersByTime(61_000);
-
-    const result = await promise;
-    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain('ffmpeg stalled');
-    }
-    vi.useRealTimers();
   });
 });
 
@@ -1402,7 +1062,7 @@ describe('#424 spawnFfmpeg — stall timeout', () => {
   });
 
   it('kills ffmpeg process after 60s with no progress output', async () => {
-    setupConvertFile();
+    setupMergeFiles([120, 120]);
     const child = new MockChildProcess();
     child.kill = vi.fn();
     mockSpawn.mockReturnValue(child as never);
@@ -1419,7 +1079,7 @@ describe('#424 spawnFfmpeg — stall timeout', () => {
   });
 
   it('rejects with descriptive error message including ffmpeg stalled', async () => {
-    setupConvertFile();
+    setupMergeFiles([120, 120]);
     const child = new MockChildProcess();
     child.kill = vi.fn().mockImplementation(() => {
       process.nextTick(() => child.emit('close', null));
@@ -1445,7 +1105,7 @@ describe('#424 spawnFfmpeg — stall timeout', () => {
     mockSpawn.mockReturnValue(child as never);
 
     const promise = processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
     await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 
@@ -1465,7 +1125,7 @@ describe('#424 spawnFfmpeg — stall timeout', () => {
   });
 
   it('normal completion within timeout resolves successfully', async () => {
-    setupConvertFile();
+    setupMergeFiles([120, 120]);
     const child = new MockChildProcess();
     child.kill = vi.fn();
     mockSpawn.mockReturnValue(child as never);
@@ -1509,7 +1169,7 @@ describe('#424 cover art detection and extraction', () => {
     });
 
     const result = await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
     expect(result.success).toBe(true);
     // 3 spawn calls: extract + encode + reattach
@@ -1537,7 +1197,7 @@ describe('#424 cover art detection and extraction', () => {
     });
 
     const result = await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
     expect(result.success).toBe(true);
 
@@ -1561,7 +1221,7 @@ describe('#424 cover art detection and extraction', () => {
     });
 
     const result = await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
     expect(result.success).toBe(true);
     // Only 1 spawn call: encode (no extract, no reattach)
@@ -1582,7 +1242,7 @@ describe('#424 cover art detection and extraction', () => {
     });
 
     await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
 
     const extractArgs = mockSpawn.mock.calls[0]![1] as string[];
@@ -1611,7 +1271,7 @@ describe('#424 cover art detection and extraction', () => {
     });
 
     const result = await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
     // Merge still succeeds despite extraction failure
     expect(result.success).toBe(true);
@@ -1640,7 +1300,7 @@ describe('#424 cover art detection and extraction', () => {
 
     const onStderr = vi.fn();
     await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
       { onStderr },
     );
 
@@ -1670,7 +1330,7 @@ describe('#424 cover art detection and extraction', () => {
 
     // No callbacks — exercises the optional-callback path
     const result = await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
     expect(result.success).toBe(true);
     if (result.success) {
@@ -1697,7 +1357,7 @@ describe('#424 cover art detection and extraction', () => {
     mockStat.mockResolvedValueOnce({ size: 0 } as never);
 
     const result = await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
     expect(result.success).toBe(true);
     // Only 2 calls: extract + encode (no reattach for zero-byte cover)
@@ -1720,7 +1380,7 @@ describe('#424 cover art reattach (M4B only)', () => {
     });
 
     await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
 
     // Third spawn call = reattach
@@ -1746,7 +1406,7 @@ describe('#424 cover art reattach (M4B only)', () => {
     });
 
     await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
 
     const reattachArgs = mockSpawn.mock.calls[2]![1] as string[];
@@ -1756,9 +1416,10 @@ describe('#424 cover art reattach (M4B only)', () => {
   });
 
   it('no cover reattach for MP3 output format', async () => {
-    setupConvertFile();
+    setupMergeFiles([120, 120]);
     mockExecFileWithStreams({
-      [join('/lib/book', 'book.mp3')]: 1,
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
     });
 
     mockSpawn.mockImplementation(() => {
@@ -1796,7 +1457,7 @@ describe('#424 cover art reattach (M4B only)', () => {
     });
 
     const result = await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
     // 3 spawn calls happened: extract + encode + reattach (failed)
     expect(mockSpawn).toHaveBeenCalledTimes(3);
@@ -1825,7 +1486,7 @@ describe('#424 cover art reattach (M4B only)', () => {
 
     const onStderr = vi.fn();
     await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
       { onStderr },
     );
 
@@ -1855,7 +1516,7 @@ describe('#424 cover art reattach (M4B only)', () => {
 
     // No callbacks — exercises the optional-callback path
     const result = await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
     expect(result.success).toBe(true);
     if (result.success) {
@@ -1881,7 +1542,7 @@ describe('#424 cover art temp file cleanup', () => {
     });
 
     await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
 
     // rm called for temp cover file
@@ -1912,7 +1573,7 @@ describe('#424 cover art temp file cleanup', () => {
     });
 
     await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
 
     // rm still called for temp cover file despite reattach failure
@@ -1943,7 +1604,7 @@ describe('#424 cover art temp file cleanup', () => {
     });
 
     const result = await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
     expect(result.success).toBe(false);
 
@@ -1968,7 +1629,7 @@ describe('#424 cover art temp file cleanup', () => {
     });
 
     await processAudioFiles(
-      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      '/lib/book', defaultConfig, defaultContext,
     );
 
     // rm should only be called for concat/metadata temp files, not cover
@@ -1997,7 +1658,7 @@ describe('#424 cover art temp file cleanup', () => {
 
       // Start processAudioFiles — it will await spawnFfmpeg
       const promise = processAudioFiles(
-        '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+        '/lib/book', defaultConfig, defaultContext,
         undefined, controller.signal,
       );
 
@@ -2032,7 +1693,7 @@ describe('#424 cover art temp file cleanup', () => {
       controller.abort(); // Abort before calling
 
       const result = await processAudioFiles(
-        '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+        '/lib/book', defaultConfig, defaultContext,
         undefined, controller.signal,
       );
 
@@ -2065,7 +1726,7 @@ describe('#424 cover art temp file cleanup', () => {
       });
 
       const result = await processAudioFiles(
-        '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+        '/lib/book', defaultConfig, defaultContext,
         undefined, controller.signal,
       );
 
@@ -2078,160 +1739,14 @@ describe('#424 cover art temp file cleanup', () => {
       expect(mockUnlink).not.toHaveBeenCalled();
     });
 
-    it('cancel during the convert path cover phase surfaces as an unsuccessful result', async () => {
-      mockReaddir.mockResolvedValue([
-        { name: 'book.mp3', isFile: () => true, isDirectory: () => false },
-      ] as never);
-      mockReadChapterSources.mockResolvedValue([
-        { filePath: '/lib/book/book.mp3', title: 'Ch 1', trackNumber: 1 },
-      ]);
-      mockExecFileWithStreams({ '/lib/book/book.mp3': 1 });
-
-      const controller = new AbortController();
-      let extractChild: MockChildProcess | undefined;
-      mockSpawn.mockImplementation(() => {
-        const child = new MockChildProcess();
-        if (!extractChild) {
-          extractChild = child; // the convert path's first spawn is the cover extract
-          process.nextTick(() => { controller.abort(); child.emit('close', null); });
-        } else {
-          process.nextTick(() => child.emit('close', 0));
-        }
-        return child as never;
-      });
-
-      const result = await processAudioFiles(
-        '/lib/book', defaultConfig, defaultContext, undefined, controller.signal,
-      );
-
-      // convertFiles has no local catch — processAudioFiles' own catch is the only thing
-      // between the cover abort and the caller.
-      expect(result.success).toBe(false);
-      expect(mockSpawn).toHaveBeenCalledTimes(1); // the per-file encode never started
-      expect(extractChild!.kill).toHaveBeenCalledWith('SIGTERM');
-    });
   });
 });
 
-// #1720 — convert/merge now render the configured fileFormat + book-level tokens, with the
-// convert path disambiguating colliding stems byte-for-byte like planFileRenames.
+// #1720 — the merged output renders the configured fileFormat + book-level tokens. (#1720's
+// convert-side stem disambiguation went with the convert path itself in #2062; `disambiguateStems`
+// is now pinned only through its surviving consumer, `planFileRenames`.)
 describe('processAudioFiles — fileFormat token threading (#1720)', () => {
-  /** Seed a multi-file directory for the convert path. `names` are bare basenames. */
-  function setupConvertMulti(names: string[]): void {
-    mockReaddir.mockResolvedValue(
-      names.map(n => ({ name: n, isFile: () => true, isDirectory: () => false })) as never,
-    );
-    mockReadChapterSources.mockResolvedValue(
-      names.map(n => ({ filePath: join('/lib/book', n), title: n })),
-    );
-    mockResolveChapterTitle.mockImplementation((_s, i) => `Chapter ${i + 1}`);
-    seedNoCoverFfprobe();
-    mockSpawn.mockImplementation(() => {
-      const child = new MockChildProcess();
-      process.nextTick(() => child.emit('close', 0));
-      return child as never;
-    });
-  }
-
-  const neverMerge: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'never' };
-
-  describe('convert collision disambiguation', () => {
-    it('numbers colliding book-only stems with single-digit ordinals — all distinct, no clobber', async () => {
-      setupConvertMulti(['01.mp3', '02.mp3', '03.mp3']);
-      const ctx: ProcessingContext = { author: 'Author', title: 'Title', fileFormat: '{author} - {title}' };
-
-      const result = await processAudioFiles('/lib/book', neverMerge, ctx);
-
-      expect(result.success).toBe(true);
-      if (!result.success) return;
-      // padWidth(3) === 1 → single-digit ordinals (mirrors paths.test.ts:411-425).
-      expect(result.outputFiles).toEqual([
-        join('/lib/book', 'Author - Title (1).m4b'),
-        join('/lib/book', 'Author - Title (2).m4b'),
-        join('/lib/book', 'Author - Title (3).m4b'),
-      ]);
-      expect(new Set(result.outputFiles).size).toBe(3); // no output overwrites another
-      // Every original is removed only because a distinct replacement exists (no data loss).
-      for (const n of ['01.mp3', '02.mp3', '03.mp3']) {
-        expect(mockUnlink).toHaveBeenCalledWith(join('/lib/book', n));
-      }
-    });
-
-    it('pads ordinals to 3 digits at 100 files (width tracks padWidth, not hard-coded)', async () => {
-      const names = Array.from({ length: 100 }, (_, i) => `${String(i + 1).padStart(3, '0')}.mp3`);
-      setupConvertMulti(names);
-      const ctx: ProcessingContext = { author: 'A', title: 'B', fileFormat: '{author} - {title}' };
-
-      const result = await processAudioFiles('/lib/book', neverMerge, ctx);
-
-      expect(result.success).toBe(true);
-      if (!result.success) return;
-      expect(result.outputFiles).toHaveLength(100);
-      expect(new Set(result.outputFiles).size).toBe(100);
-      expect(result.outputFiles[0]).toBe(join('/lib/book', 'A - B (001).m4b'));
-      expect(result.outputFiles[99]).toBe(join('/lib/book', 'A - B (100).m4b'));
-      expect(result.outputFiles.every(f => /\(\d{3}\)\.m4b$/.test(f))).toBe(true);
-    });
-
-    it('assigns per-file tokens in compareAudioNames order, not lexicographic collect order', async () => {
-      // Lexicographic collect order is Track1, Track10, Track2; numeric play order is Track1, Track2, Track10.
-      setupConvertMulti(['Track1.mp3', 'Track2.mp3', 'Track10.mp3']);
-      // Discriminating format ({trackNumber}) → unique stems, NO collision ordinal appended.
-      const ctx: ProcessingContext = { author: 'A', title: 'Book', fileFormat: '{trackNumber:00} - {title}' };
-
-      const result = await processAudioFiles('/lib/book', neverMerge, ctx);
-
-      expect(result.success).toBe(true);
-      if (!result.success) return;
-      // No ordinal suffix — discriminating format renders unique stems already.
-      expect(result.outputFiles.every(f => !/\(\d+\)\.m4b$/.test(f))).toBe(true);
-      // Track10 is 2nd in the (lexicographic) encode/output order, but gets trackNumber 03 —
-      // proving the ordinal follows compareAudioNames play order (Track1→01, Track2→02, Track10→03),
-      // matching the numbers planFileRenames would assign. A lexicographic assignment would give Track10→02.
-      expect(result.outputFiles).toEqual([
-        join('/lib/book', '01 - Book.m4b'), // Track1
-        join('/lib/book', '03 - Book.m4b'), // Track10 (encoded 2nd, numbered 3rd)
-        join('/lib/book', '02 - Book.m4b'), // Track2
-      ]);
-    });
-
-    it('renders {series}/{edition} book tokens into each converted stem', async () => {
-      setupConvertMulti(['01.mp3', '02.mp3']);
-      const ctx: ProcessingContext = {
-        author: 'Brandon Sanderson',
-        title: 'The Way of Kings',
-        fileFormat: '{author} - {series} - {title} ({edition}) - {trackNumber:00}',
-        bookTokens: { series: 'The Stormlight Archive', edition: 'Full Cast' },
-      };
-
-      const result = await processAudioFiles('/lib/book', neverMerge, ctx);
-
-      expect(result.success).toBe(true);
-      if (!result.success) return;
-      expect(result.outputFiles).toEqual([
-        join('/lib/book', 'Brandon Sanderson - The Stormlight Archive - The Way of Kings (Full Cast) - 01.m4b'),
-        join('/lib/book', 'Brandon Sanderson - The Stormlight Archive - The Way of Kings (Full Cast) - 02.m4b'),
-      ]);
-    });
-
-    it('falls back to the original basename when fileFormat is empty', async () => {
-      setupConvertMulti(['alpha.mp3', 'beta.mp3']);
-      const ctx: ProcessingContext = { author: 'A', title: 'B' }; // no fileFormat
-
-      const result = await processAudioFiles('/lib/book', neverMerge, ctx);
-
-      expect(result.success).toBe(true);
-      if (!result.success) return;
-      expect(result.outputFiles).toEqual([
-        join('/lib/book', 'alpha.m4b'),
-        join('/lib/book', 'beta.m4b'),
-      ]);
-    });
-  });
-
   describe('merge book-level token rendering', () => {
-    const alwaysMerge: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'always' };
-
     it('renders {series}/{seriesPosition}/{edition} into the collapsed merged filename', async () => {
       setupMergeFiles([120, 120]);
       mockSpawnSuccess();
@@ -2242,7 +1757,7 @@ describe('processAudioFiles — fileFormat token threading (#1720)', () => {
         bookTokens: { series: 'The Stormlight Archive', seriesPosition: 1, edition: 'Full Cast' },
       };
 
-      const result = await processAudioFiles('/lib/book', alwaysMerge, ctx);
+      const result = await processAudioFiles('/lib/book', defaultConfig, ctx);
 
       expect(result.success).toBe(true);
       if (!result.success) return;
@@ -2262,7 +1777,7 @@ describe('processAudioFiles — fileFormat token threading (#1720)', () => {
         bookTokens: { series: 'The Stormlight Archive', seriesPosition: 1, edition: 'Full Cast' },
       };
 
-      const result = await processAudioFiles('/lib/book', alwaysMerge, ctx);
+      const result = await processAudioFiles('/lib/book', defaultConfig, ctx);
 
       expect(result.success).toBe(true);
       if (!result.success) return;
@@ -2282,7 +1797,7 @@ describe('processAudioFiles — fileFormat token threading (#1720)', () => {
         fileFormat: '{author} - {partName} - {title}',
       };
 
-      const result = await processAudioFiles('/lib/book', alwaysMerge, ctx);
+      const result = await processAudioFiles('/lib/book', defaultConfig, ctx);
 
       expect(result.success).toBe(true);
       if (!result.success) return;
@@ -2300,7 +1815,7 @@ describe('processAudioFiles — fileFormat token threading (#1720)', () => {
         bookTokens: { series: 'Ignored', edition: 'Ignored' }, // present but unused on the fallback path
       };
 
-      const result = await processAudioFiles('/lib/book', alwaysMerge, ctx);
+      const result = await processAudioFiles('/lib/book', defaultConfig, ctx);
 
       expect(result.success).toBe(true);
       if (!result.success) return;
@@ -2331,9 +1846,8 @@ function streamInfoFor(paths: string[], fixture: StreamInfoFixture): Record<stri
   return Object.fromEntries(paths.map((p) => [p, fixture]));
 }
 
-const MERGE_ALWAYS = { ...defaultConfig, mergeBehavior: 'always' as const };
 const KEEP_ORIGINAL = (() => {
-  const { bitrate: _bitrate, ...rest } = MERGE_ALWAYS;
+  const { bitrate: _bitrate, ...rest } = defaultConfig;
   return rest;
 })();
 const MERGED_M4B = join('/lib/book', 'Brandon Sanderson - The Way of Kings.m4b');
@@ -2553,7 +2067,7 @@ describe('#2068 explicit -b:a on every encode (AC5–AC11)', () => {
     mockSpawnSuccess();
 
     const result = await processAudioFiles(
-      '/lib/book', { ...MERGE_ALWAYS, outputFormat: 'mp3', bitrate: 512 }, defaultContext,
+      '/lib/book', { ...defaultConfig, outputFormat: 'mp3', bitrate: 512 }, defaultContext,
     );
 
     expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe(expected);
@@ -2566,7 +2080,7 @@ describe('#2068 explicit -b:a on every encode (AC5–AC11)', () => {
     mockSpawnSuccess();
 
     const result = await processAudioFiles(
-      '/lib/book', { ...MERGE_ALWAYS, outputFormat: 'mp3', bitrate: 200 }, defaultContext,
+      '/lib/book', { ...defaultConfig, outputFormat: 'mp3', bitrate: 200 }, defaultContext,
     );
 
     expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe('192k');
@@ -2578,7 +2092,7 @@ describe('#2068 explicit -b:a on every encode (AC5–AC11)', () => {
     mockSpawnSuccess();
 
     const result = await processAudioFiles(
-      '/lib/book', { ...MERGE_ALWAYS, bitrate: 128, sourceBitrateKbps: 64 }, defaultContext,
+      '/lib/book', { ...defaultConfig, bitrate: 128, sourceBitrateKbps: 64 }, defaultContext,
     );
 
     expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe('64k');
@@ -2591,7 +2105,7 @@ describe('#2068 explicit -b:a on every encode (AC5–AC11)', () => {
     mockSpawnSuccess();
 
     const result = await processAudioFiles(
-      '/lib/book', { ...MERGE_ALWAYS, bitrate: 128, sourceBitrateKbps: 251 }, defaultContext,
+      '/lib/book', { ...defaultConfig, bitrate: 128, sourceBitrateKbps: 251 }, defaultContext,
     );
 
     expect(encodeSpawnArgs()[encodeSpawnArgs().indexOf('-b:a') + 1]).toBe('128k');
@@ -2599,33 +2113,7 @@ describe('#2068 explicit -b:a on every encode (AC5–AC11)', () => {
   });
 });
 
-describe('#2068 per-command resolution and probe cost (AC12)', () => {
-  it('resolves a strategy and a bitrate per file on a multi-file convert', async () => {
-    const paths = setupMergeSet(['a.m4a', 'b.mp3']);
-    setStreamInfo({
-      [paths[0]!]: { codec_name: 'aac', bit_rate: '64000', sample_rate: '44100', channels: 2 },
-      [paths[1]!]: { codec_name: 'mp3', bit_rate: '251000', sample_rate: '44100', channels: 2 },
-    });
-    mockSpawn.mockImplementation(() => {
-      const child = new MockChildProcess();
-      process.nextTick(() => child.emit('close', 0));
-      return child as never;
-    });
-
-    const result = await processAudioFiles(
-      '/lib/book', { ...KEEP_ORIGINAL, mergeBehavior: 'never' }, defaultContext,
-    );
-    expect(result.success).toBe(true);
-
-    // a.m4a is copy-eligible into m4b on its own; b.mp3 is not, and carries its own 251 kbps.
-    const first = encodeSpawnArgs(0);
-    const second = encodeSpawnArgs(1);
-    expect(first[first.indexOf('-c:a') + 1]).toBe('copy');
-    expect(first).not.toContain('-b:a');
-    expect(second[second.indexOf('-c:a') + 1]).toBe('aac');
-    expect(second[second.indexOf('-b:a') + 1]).toBe('251k');
-  });
-
+describe('#2068 probe cost and notice preservation (AC12)', () => {
   it('probes each source exactly once on the keep-original merge path', async () => {
     const paths = setupMergeSet(['01.mp3', '02.mp3', '03.mp3']);
     setStreamInfo(streamInfoFor(paths, {
@@ -2647,54 +2135,25 @@ describe('#2068 per-command resolution and probe cost (AC12)', () => {
     }));
     mockSpawnSuccess();
 
-    await processAudioFiles('/lib/book', { ...MERGE_ALWAYS, bitrate: 320 }, defaultContext);
+    await processAudioFiles('/lib/book', { ...defaultConfig, bitrate: 320 }, defaultContext);
 
     expect(streamProbeCalls()).toHaveLength(2);
   });
 
-  it('accumulates notices in command order across a multi-file convert', async () => {
-    const paths = setupMergeSet(['x.m4a', 'y.m4a']);
-    setStreamInfo({
-      [paths[0]!]: { codec_name: 'aac', bit_rate: '200000', sample_rate: '44100', channels: 2 },
-      [paths[1]!]: { codec_name: 'aac', bit_rate: '700000', sample_rate: '44100', channels: 2 },
-    });
-    mockSpawn.mockImplementation(() => {
-      const child = new MockChildProcess();
-      process.nextTick(() => child.emit('close', 0));
-      return child as never;
-    });
+  // The convert path's `keeps earlier notices when a later convert command fails` case died with
+  // it (#2062). This is the same contract on the surviving path: `warnings` is on BOTH
+  // ProcessingResult variants, so an adjustment made before the encode failed is still reported.
+  it('keeps the resolver notices when the merge encode fails', async () => {
+    const paths = setupMergeSet(['01.wav', '02.wav']);
+    setStreamInfo(streamInfoFor(paths, { codec_name: 'pcm_s16le', sample_rate: '44100', channels: 2 }));
+    mockSpawnFailure(1);
 
     const result = await processAudioFiles(
-      '/lib/book', { ...KEEP_ORIGINAL, outputFormat: 'mp3', mergeBehavior: 'never' }, defaultContext,
+      '/lib/book', { ...defaultConfig, outputFormat: 'mp3', bitrate: 200 }, defaultContext,
     );
-    expect(result.success).toBe(true);
-    expect(result.warnings).toHaveLength(2);
-    expect(result.warnings![0]).toMatch(/200.*192/);
-    expect(result.warnings![1]).toMatch(/700.*320/);
-  });
 
-  it('keeps earlier notices when a later convert command fails', async () => {
-    const paths = setupMergeSet(['x.m4a', 'y.m4a']);
-    setStreamInfo({
-      [paths[0]!]: { codec_name: 'aac', bit_rate: '200000', sample_rate: '44100', channels: 2 },
-      [paths[1]!]: { codec_name: 'aac', bit_rate: '700000', sample_rate: '44100', channels: 2 },
-    });
-    let spawnCount = 0;
-    mockSpawn.mockImplementation(() => {
-      spawnCount++;
-      const child = new MockChildProcess();
-      const code = spawnCount === 2 ? 1 : 0;
-      process.nextTick(() => child.emit('close', code));
-      return child as never;
-    });
-
-    const result = await processAudioFiles(
-      '/lib/book', { ...KEEP_ORIGINAL, outputFormat: 'mp3', mergeBehavior: 'never' }, defaultContext,
-    );
     expect(result.success).toBe(false);
-    expect(result.warnings).toBeDefined();
-    expect(result.warnings!.some((w) => /200.*192/.test(w))).toBe(true);
-    expect(result.warnings!.some((w) => /700.*320/.test(w))).toBe(true);
+    expect(result.warnings!.some((w) => w.includes('200') && w.includes('192'))).toBe(true);
   });
 });
 
@@ -2727,7 +2186,7 @@ describe('#2068 invariant — an encoder token never appears without -b:a (AC5)'
         setStreamInfo(probe ? streamInfoFor(paths, probe) : {});
         mockSpawnSuccess();
 
-        const { bitrate: _drop, ...base } = MERGE_ALWAYS;
+        const { bitrate: _drop, ...base } = defaultConfig;
         await processAudioFiles('/lib/book', { ...base, outputFormat, ...overrides }, defaultContext);
 
         const args = encodeSpawnArgs();
@@ -2758,7 +2217,7 @@ describe('#2068 the caller delivers the resolver notices verbatim (AC14)', () =>
       return ['-c:a', 'aac', '-b:a', '96k'];
     });
 
-    const result = await processAudioFiles('/lib/book', MERGE_ALWAYS, defaultContext);
+    const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
     expect(result.success).toBe(true);
     expect(result.warnings).toEqual(stubbed);
@@ -2879,9 +2338,9 @@ describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () 
     }));
     mockSpawnSuccess();
 
-    // A usable explicit bitrate always re-encodes: MERGE_ALWAYS keeps `bitrate`, KEEP_ORIGINAL drops it.
+    // A usable explicit bitrate always re-encodes: defaultConfig keeps `bitrate`, KEEP_ORIGINAL drops it.
     await processAudioFiles(
-      '/lib/book', { ...MERGE_ALWAYS, outputFormat: 'mp3' }, defaultContext,
+      '/lib/book', { ...defaultConfig, outputFormat: 'mp3' }, defaultContext,
     );
 
     const args = encodeSpawnArgs();
@@ -2928,18 +2387,4 @@ describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () 
     expect(args).not.toContain('aac');
   });
 
-  it('convert emits no -map_metadata override — ffmpeg\'s default already keeps them (AC18a)', async () => {
-    setupConvertFile();
-    mockSpawnSuccess();
-
-    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
-
-    const args = encodeSpawnArgs();
-    expect(inputPaths(args)).toEqual([join('/lib/book', 'book.mp3')]);
-    expect(args).not.toContain('-map_metadata');
-    // #2083 AC9 — and no `-map_chapters` either, in EITHER direction. A single-file convert has
-    // no metadata donor, so ffmpeg's default carries the file's own chapters forward, which is
-    // correct here; the merge path's suppression must not be generalized onto this command.
-    expect(args).not.toContain('-map_chapters');
-  });
 });

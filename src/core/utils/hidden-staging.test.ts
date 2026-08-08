@@ -23,7 +23,7 @@ describe('dotPrefixBasename (#1852)', () => {
   });
 
   it('the produced basename is always born hidden', () => {
-    for (const p of ['/lib/A/Book.merge-tmp', '/lib/A/Book.import-staging', '/lib/A/Book/x_tmp.m4b']) {
+    for (const p of ['/lib/A/Book.merge-tmp', '/lib/A/Book.import-staging', '/lib/A/Book/x.tmp.m4b']) {
       expect(basename(dotPrefixBasename(p)).startsWith('.')).toBe(true);
     }
   });
@@ -39,7 +39,6 @@ describe('ABS-parity: every v1 staging entry name is ignored by Audiobookshelf (
   const stagingEntryNames = [
     basename(dotPrefixBasename('/lib/Book.merge-tmp')),        // AC11 merge staging dir
     basename(dotPrefixBasename('/lib/Book/Chapter 01.tmp.m4b')), // AC9 tagging temp file
-    basename(dotPrefixBasename('/lib/Book/Chapter 01_tmp.m4b')),  // AC12 per-file convert temp
   ];
 
   it('ignores each v1 staging basename', () => {
