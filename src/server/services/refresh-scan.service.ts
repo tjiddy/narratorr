@@ -1,5 +1,6 @@
 import { stat, readdir } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { basename, extname } from 'node:path';
+import type { Stats } from 'node:fs';
 import type { FastifyBaseLogger } from 'fastify';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
@@ -70,6 +71,38 @@ export function selectRefreshNarrators(
   return fromTags.length > 0 ? fromTags : undefined;
 }
 
+/**
+ * The one root `stat` this surface performs: it answers both "does the path exist?" (the
+ * PATH_MISSING probe) and "is the root a file?" (the top-level count's branch). Deliberately one
+ * call — a second stat would add a second, unmapped failure surface for the same question.
+ */
+async function statRoot(path: string): Promise<Stats> {
+  try {
+    return await stat(path);
+  } catch (error: unknown) {
+    // `isDefinitiveAbsence` is the shared discriminator for "the filesystem looked
+    // and found nothing" (src/server/utils/fs-errno.ts, #1955). It covers ENOTDIR as
+    // well as ENOENT — a book whose library path became a regular file, or whose
+    // parent did, statted ENOTDIR and used to escape as a raw errno instead of the
+    // intended PATH_MISSING. Everything else (EACCES on a re-mounting share, ESTALE,
+    // EIO) is undetermined and must still rethrow rather than claim the path is gone.
+    if (isDefinitiveAbsence(error)) {
+      throw new RefreshScanError('PATH_MISSING', `Book path does not exist on disk: ${path}`);
+    }
+    throw error;
+  }
+}
+
+/**
+ * "Does this entry name count as book audio?" — byte-identical to the two other readers on this
+ * path (`collectAudioFiles`, src/core/utils/audio-scanner.ts; `walkSize`'s audio-only root arm,
+ * src/server/utils/import-helpers.ts), so a pointer book classifies the same way in all three.
+ * Takes a **basename**, per `isHiddenName`'s contract.
+ */
+function isVisibleAudioName(name: string): boolean {
+  return !isHiddenName(name) && AUDIO_EXTENSIONS.has(extname(name).toLowerCase());
+}
+
 export async function refreshScanBook(
   bookId: number,
   bookService: BookService,
@@ -85,20 +118,7 @@ export async function refreshScanBook(
     throw new RefreshScanError('NO_PATH', `Book ${bookId} has no library path — import it first`);
   }
 
-  try {
-    await stat(book.path);
-  } catch (error: unknown) {
-    // `isDefinitiveAbsence` is the shared discriminator for "the filesystem looked
-    // and found nothing" (src/server/utils/fs-errno.ts, #1955). It covers ENOTDIR as
-    // well as ENOENT — a book whose library path became a regular file, or whose
-    // parent did, statted ENOTDIR and used to escape as a raw errno instead of the
-    // intended PATH_MISSING. Everything else (EACCES on a re-mounting share, ESTALE,
-    // EIO) is undetermined and must still rethrow rather than claim the path is gone.
-    if (isDefinitiveAbsence(error)) {
-      throw new RefreshScanError('PATH_MISSING', `Book path does not exist on disk: ${book.path}`);
-    }
-    throw error;
-  }
+  const rootStat = await statRoot(book.path);
 
   const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
 
@@ -112,11 +132,21 @@ export async function refreshScanBook(
     throw new RefreshScanError('NO_AUDIO_FILES', 'No audio files found in book directory');
   }
 
-  // Count top-level (non-recursive) audio files — exclude born-hidden transients (`.002.tmp.mp3`)
-  const topLevelEntries = await readdir(book.path);
-  const topLevelAudioFileCount = topLevelEntries.filter(
-    (f) => !isHiddenName(String(f)) && AUDIO_EXTENSIONS.has(extname(String(f)).toLowerCase()),
-  ).length;
+  // Count top-level (non-recursive) audio files — exclude born-hidden transients (`.002.tmp.mp3`).
+  //
+  // The root kind comes from the stat above, never from the extension: a pointer import persists a
+  // FILE path (`/audiobooks/Doctor Sleep.m4b`) that `readdir` rejects ENOTDIR (#2172), but a
+  // *directory* named `Doctor Sleep.m4b` is a real post-botched-import shape that must still be
+  // read. Only `isFile()` branches — a FIFO/socket/device root falls through to the readdir, as it
+  // always has. The directory arm deliberately carries NO catch: a readdir failure must reach the
+  // caller rather than persist a silently-zeroed count (see the propagation test in the suite).
+  let topLevelAudioFileCount: number;
+  if (rootStat.isFile()) {
+    topLevelAudioFileCount = isVisibleAudioName(basename(book.path)) ? 1 : 0;
+  } else {
+    const topLevelEntries = await readdir(book.path);
+    topLevelAudioFileCount = topLevelEntries.filter((f) => isVisibleAudioName(String(f))).length;
+  }
 
   // Total directory size (all visible files, not just audio) — the visibility-aware walk skips
   // leading-dot files and dot-dir subtrees so a mid-op `.merge-tmp/` never inflates stored `size`.
