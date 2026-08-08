@@ -445,6 +445,14 @@ describe('refreshScanBook', () => {
     );
   });
 
+  // The one-root-stat invariant holds for BOTH arms — the directory arm can regress the same way,
+  // by re-statting to classify instead of consuming the probe's result. See the file-root twin.
+  it('probes the root exactly once for a directory root too', async () => {
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledWith('/library/author/book');
+  });
+
   // #2172 — single-file pointer books. A pointer import persists a FILE path
   // (`/audiobooks/Doctor Sleep.m4b`), which the count's `readdir` used to reject ENOTDIR, failing the
   // whole refresh before `bookService.update` was reached.
@@ -476,6 +484,19 @@ describe('refreshScanBook', () => {
       // whose ENOTDIR was swallowed, which is exactly the shape that would destroy the directory
       // propagation contract pinned above.
       expect(readdir).not.toHaveBeenCalled();
+    });
+
+    // F1/AC1 — the root is probed exactly ONCE, and that one stat answers both questions: "does the
+    // path exist?" (the PATH_MISSING probe) and "is the root a file?" (this branch). Nothing else in
+    // the count path may re-stat: a second probe reintroduces a TOCTOU window between the two
+    // answers and a second failure surface that the `isDefinitiveAbsence` mapping does not cover.
+    // Without this assertion an inline `(await stat(book.path)).isFile()` added before the branch
+    // would leave the whole suite green.
+    it('probes the root exactly once, with the book path', async () => {
+      armPointerBook('/audiobooks/Doctor Sleep.m4b');
+      await refreshScanBook(1, mockBookService, mockSettingsService, log);
+      expect(stat).toHaveBeenCalledTimes(1);
+      expect(stat).toHaveBeenCalledWith('/audiobooks/Doctor Sleep.m4b');
     });
 
     it('lowercases the extension — a .M4B pointer counts 1', async () => {
