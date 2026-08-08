@@ -202,7 +202,7 @@ export function buildNamingContext(
  *
  * The single shared source of the `{author}`/`{title}`/`{series}`/`{narrator}`/`{year}`/
  * `{edition}` (+ sort variants) tokens consumed at rename time (`planFileRenames`) and at merge
- * time (`MergeService.runStaging`, which reaches audio-processor's merge/convert stem builders).
+ * time (`MergeService.runStaging`, which reaches audio-processor's merged-output stem builder).
  * Keeping the book→tokens decision in ONE place stops those paths from drifting on how a book row
  * maps to filename tokens (the anti-drift consistency-test target). Per-FILE tokens
  * (`trackNumber`/`trackTotal`/`partName`) are computed per file by each caller and are
@@ -290,7 +290,7 @@ export async function planFileRenames(
 
   // Forced sequential numbering is keyed off rendered-stem *collisions* (the shared
   // helper appends an ordinal to every file when any two stems collide), NOT the
-  // absence of {trackNumber} — same disambiguation the convert path uses.
+  // absence of {trackNumber}.
   const finalStems = disambiguateStems(stems);
 
   const renames: { from: string; to: string }[] = [];

@@ -77,7 +77,7 @@ function audioPacketDigest(inputArgs: string[]): string {
 const CONTEXT: ProcessingContext = { author: 'Sanderson', title: 'Oathbringer' };
 
 function keepOriginal(outputFormat: 'm4b' | 'mp3'): ProcessingConfig {
-  return { ffmpegPath: FFMPEG, outputFormat, mergeBehavior: 'always' };
+  return { ffmpegPath: FFMPEG, outputFormat };
 }
 
 describe.skipIf(!FFMPEG_PRESENT)('#2068 encode strategy round-trip (real ffmpeg)', () => {
@@ -529,21 +529,5 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     expectSourceTagsPreserved(merged, 'Part 1');
     expect(hasAttachedPic(merged)).toBe(false);
     expect(result.warnings ?? []).toEqual([]);
-  });
-
-  it('convert path: a per-file convert keeps its tags and its cover (AC18)', async () => {
-    const dir = caseDir();
-    const cover = makeCover(dir);
-    makeTaggedPart(dir, 'book.m4b', { codecArgs: ['-c:a', 'aac', '-b:a', '128k'], title: 'Oathbringer', cover });
-    rmSync(cover);
-
-    // An explicit target defeats the single-m4b keep-original short-circuit, so this really
-    // runs `convertFiles` — which emits no `-map_metadata` at all and relies on ffmpeg's default.
-    const result = await processAudioFiles(dir, { ...keepOriginal('m4b'), bitrate: 64 }, CONTEXT);
-    expect(result.success).toBe(true);
-
-    const converted = outputIn(dir, '.m4b');
-    expectSourceTagsPreserved(converted, 'Oathbringer');
-    expect(hasAttachedPic(converted)).toBe(true);
   });
 });
