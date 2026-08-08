@@ -1,9 +1,36 @@
+<!--
+TAG VOCABULARY — pick from this list; do not mint new tags casually.
+
+Tags are matched against the CONCEPTS IN AN ISSUE, not against each other, so the test for a
+new tag is "would someone plausibly type this word when describing the problem?" A rare tag is
+fine (`xxe`, `dns`, `csrf` are each used once and each is a word an issue would contain). A tag
+nobody would type is dead weight no matter how accurate it is.
+
+Do NOT tag with: internal identifiers (`parseFolderStructure`, `resolveBookQualityInputs`),
+coined phrases (`fold-lockstep`, `live-corpus-sweep`), editorial flavor (`silent-null`,
+`evidence-discipline`, `gotcha`), or words too generic to select on (`testing`, `db`, `async`,
+`validation`). Put those in the body, where they are searchable prose.
+
+Max 5 tags per entry. Prefer the specific stack/domain tag over a generic testing one.
+
+  stack     vitest drizzle zod fastify sqlite libsql react react-query react-hook-form
+            typescript eslint node-fs undici sse epub xml css z-index useEffect
+            useLayoutEffect dns csrf auth
+  media     ffmpeg ffprobe music-metadata audio-tags round-trip
+  domain    settings migrations import-staging title-matching search-ladder indexers
+            metadata-providers filesystem logging folder-parsing cron caching
+  testing   test-doubles test-fixtures test-observability mutation-testing e2e xxe
+  platform  windows cancellation audit-sweep
+
+Audited 2026-08-08: 264 tags -> 48. Rationale in .scratch/learnings-audit-2026-08-08.md.
+-->
+
 ## sse-inject-helper-gap
 
 **source:** #755
 **added:** 2026-05-04
 **files:** src/server/__tests__/search-grab-flow.e2e.test.ts, src/server/__tests__/sse-helpers.ts
-**tags:** testing, sse, fastify, e2e, test-harness
+**tags:** sse, fastify, e2e
 
 ---
 
@@ -18,7 +45,7 @@ For true end-to-end SSE coverage in this harness, that helper now exists: `fetch
 **source:** #827
 **added:** 2026-05-04
 **files:** src/client/hooks/useConnectionTest.ts, src/client/hooks/useCrudSettings.ts
-**tags:** forms, settings, react, secrets, dry
+**tags:** react-hook-form, settings, react
 
 ---
 
@@ -32,7 +59,7 @@ Known exception: the import-list form does NOT need this — it routes through a
 
 **source:** #940
 **added:** 2026-05-04
-**tags:** typescript, codemod, compiler-api, strict-flags, nuia
+**tags:** typescript
 
 ---
 
@@ -59,7 +86,7 @@ for (const d of ts.getPreEmitDiagnostics(program)) {
 **source:** #938
 **added:** 2026-05-04
 **files:** src/server/services/search-pipeline.test.ts
-**tags:** typescript, exactoptionalpropertytypes, fixture-builders, test-helpers, eopt
+**tags:** typescript, test-fixtures
 
 ---
 
@@ -80,7 +107,7 @@ When reviewing or adding a fixture builder under eopt: check whether callers nee
 **source:** #966
 **added:** 2026-05-04
 **files:** src/core/utils/network-service.ts
-**tags:** undici, dns, node, callback-shape, network
+**tags:** undici, dns
 
 ---
 
@@ -100,7 +127,7 @@ Custom `LookupFunction` implementations (e.g. `validatingLookup` in `src/core/ut
 **source:** #1017
 **added:** 2026-05-07
 **files:** src/server/fastify-options.ts, src/server/__tests__/helpers.ts
-**tags:** fastify, routing, path-params, tokens
+**tags:** fastify
 
 ---
 
@@ -119,7 +146,7 @@ Fastify 5 defaults `routerOptions.maxParamLength` to 100 chars per dynamic path 
 **source:** #1133
 **added:** 2026-05-18
 **files:** drizzle/, src/db/schema.ts
-**tags:** drizzle, migrations, db, automation, watchdog, agent-dispatch
+**tags:** drizzle, migrations
 
 ---
 
@@ -158,7 +185,7 @@ After either path, commit the whole `drizzle/` folder — the SQL file plus `met
 **source:** #1198
 **added:** 2026-06-01
 **files:** src/server/routes/prowlarr-compat.ts, src/server/utils/readarr-echo-fields.ts
-**tags:** zod, prowlarr-compat, api-impersonation, request-validation
+**tags:** zod, indexers
 
 ---
 
@@ -169,7 +196,7 @@ Request-body schemas for API-impersonation/compatibility surfaces (narratorr's P
 **source:** #1129, #1957
 **added:** 2026-05-15
 **files:** src/db/schema.ts
-**tags:** drizzle, sqlite, enums, migrations, check-constraints, drizzle-kit
+**tags:** drizzle, sqlite, migrations
 
 ---
 
@@ -191,7 +218,7 @@ Related: `migrated-db-assertions-through-drizzle` (the constraint message is on 
 **source:** #1362  
 **added:** 2026-06-12  
 **files:** src/client/lib/eventReasonFormatters.tsx  
-**tags:** eslint, no-console, react-hooks, react-render
+**tags:** eslint
 
 ---
 
@@ -202,7 +229,7 @@ In this repo, logging a validation/parse failure from inside a React component's
 **source:** #1336  
 **added:** 2026-06-12  
 **files:** src/server/services/import.service.test.ts  
-**tags:** vitest, fs-mock, import-staging, disk-state-gate
+**tags:** vitest, test-doubles, import-staging
 
 ---
 
@@ -213,7 +240,7 @@ After #1336, the import failure-cleanup paths (`handleImportFailure` in import-s
 **source:** #1331  
 **added:** 2026-06-12  
 **files:** src/server/utils/folder-parsing.ts  
-**tags:** folder-parsing, parseFolderStructure, cleanName
+**tags:** folder-parsing
 
 ---
 
@@ -224,7 +251,7 @@ After #1336, the import failure-cleanup paths (`handleImportFailure` in import-s
 **source:** #1404, #1963  
 **added:** 2026-06-12  
 **files:** src/client/hooks/useCrudSettings.ts, src/client/pages/book/BookPage.test.tsx  
-**tags:** vitest, vi-mock, barrel-exports, importOriginal, tanstack-query, jsdom, fetch
+**tags:** vitest, react-query
 
 ---
 
@@ -253,7 +280,7 @@ Two details: await the fully-loaded page or the secondary queries have not fired
 **source:** #1418  
 **added:** 2026-06-12  
 **files:** src/server/utils/import-staging.ts  
-**tags:** import-staging, commit-pending-marker, recovery
+**tags:** import-staging
 
 ---
 
@@ -264,7 +291,7 @@ The commit-pending recovery sequence (recoverInterruptedBackup in src/server/uti
 **source:** #1470
 **added:** 2026-06-14
 **files:** src/server/services/import-queue-worker.test.ts
-**tags:** drizzle, vitest, transaction-mock, transitionBookStatus, expected-guard
+**tags:** drizzle, vitest
 
 ---
 
@@ -275,7 +302,7 @@ transitionBookStatus (src/server/utils/book-status.ts) and the symmetric transit
 **source:** #1452
 **added:** 2026-06-14
 **files:** src/server/routes/v1/actions.ts
-**tags:** fastify, fastify-type-provider-zod, zod, response-schema, error-envelope
+**tags:** fastify, zod
 
 ---
 
@@ -286,7 +313,7 @@ fastify-type-provider-zod types FastifyReply.send() as the union of the schemas 
 **source:** #1454
 **added:** 2026-06-14
 **files:** src/server/routes/v1/openapi.ts
-**tags:** fastify-swagger, openapi, url-base
+**tags:** fastify
 
 ---
 
@@ -297,7 +324,7 @@ fastify-type-provider-zod types FastifyReply.send() as the union of the schemas 
 **source:** #1491
 **added:** 2026-06-15
 **files:** src/client/components/settings/ConnectorCardForm.tsx, src/client/components/settings/ConnectorCard.tsx
-**tags:** react-hook-form, useEffect, setError, component-testing
+**tags:** react-hook-form, useEffect
 
 ---
 
@@ -307,7 +334,7 @@ React runs child effects before parent effects. If a child form component applie
 
 **added:** 2026-06-17
 **files:** src/db/schema.ts, drizzle/**
-**tags:** sqlite, drizzle, unique-index, null, migrations
+**tags:** sqlite, drizzle, migrations
 
 ---
 
@@ -317,7 +344,7 @@ In SQLite, NULL ≠ NULL inside a UNIQUE index — a nullable column does NOT pr
 
 **added:** 2026-06-17
 **files:** src/server/services/types.ts, src/db/schema.ts
-**tags:** drizzle, typescript, enums, inferselect, inferinsert
+**tags:** drizzle, typescript
 
 ---
 
@@ -327,7 +354,7 @@ Drizzle widens enum columns to `string` at the TS boundary. On READ, `typeof tab
 
 **added:** 2026-06-17
 **files:** src/server/services/blacklist.service.ts, src/server/services/discovery.service.ts
-**tags:** sqlite, libsql, bind-limit, in-clause
+**tags:** sqlite, libsql
 
 ---
 
@@ -337,7 +364,7 @@ When building a dynamic `IN (...)` query, chunk to stay under SQLite's bound-par
 
 **added:** 2026-06-17
 **files:** src/core/indexers/**, src/core/metadata/**, src/core/import-lists/**
-**tags:** zod, validation, nullish, external-api, metadata, indexers
+**tags:** zod, indexers
 
 ---
 
@@ -347,7 +374,7 @@ When building a dynamic `IN (...)` query, chunk to stay under SQLite's bound-par
 
 **added:** 2026-06-17
 **files:** src/shared/schemas/**
-**tags:** zod, defaults, validation, coercion
+**tags:** zod
 
 ---
 
@@ -357,7 +384,7 @@ When building a dynamic `IN (...)` query, chunk to stay under SQLite's bound-par
 
 **added:** 2026-06-17
 **files:** src/shared/schemas/**
-**tags:** zod, validation, trim, user-input
+**tags:** zod
 
 ---
 
@@ -367,7 +394,7 @@ When building a dynamic `IN (...)` query, chunk to stay under SQLite's bound-par
 
 **added:** 2026-06-17
 **files:** src/client/components/**, src/client/pages/settings/**, src/shared/schemas/settings/strip-defaults.ts
-**tags:** zod, zodresolver, react-hook-form, forms
+**tags:** zod, react-hook-form
 
 ---
 
@@ -377,7 +404,7 @@ When building a dynamic `IN (...)` query, chunk to stay under SQLite's bound-par
 
 **added:** 2026-06-17
 **files:** src/shared/schemas/settings/**
-**tags:** settings, zod, defaults, registry, mock-factory
+**tags:** settings, zod
 
 ---
 
@@ -387,7 +414,7 @@ A new settings field needs TWO edits: the Zod schema `.default(...)` AND `settin
 
 **added:** 2026-06-17
 **files:** src/client/components/settings/**
-**tags:** settings, forms, registry, strict-schema, adapters
+**tags:** settings, react-hook-form
 
 ---
 
@@ -397,7 +424,7 @@ A `settingsFromX` helper that derives form state from a stored entity must sprea
 
 **added:** 2026-06-17
 **files:** src/client/hooks/**
-**tags:** react-query, sse, setquerydata, realtime
+**tags:** react-query, sse
 
 ---
 
@@ -408,7 +435,7 @@ For high-frequency SSE/stream updates, patch rows in place with `setQueryData()`
 **source:** #1963
 **added:** 2026-06-17
 **files:** src/client/hooks/**, src/client/pages/book/useCompanionEbookSelection.ts
-**tags:** react-query, optimistic-update, mutations, test-observability
+**tags:** react-query, test-observability
 
 ---
 
@@ -432,7 +459,7 @@ Example: `src/client/pages/book/CompanionEbookSection.test.tsx`, 'cancels an in-
 
 **added:** 2026-06-17
 **files:** src/client/hooks/**, src/client/lib/**
-**tags:** react, usesyncexternalstore, module-state
+**tags:** react
 
 ---
 
@@ -441,7 +468,7 @@ Module-level mutable state read by React components must be exposed via `useSync
 ## derived-state-over-copied
 
 **added:** 2026-06-17
-**tags:** react, react-query, derived-state, race
+**tags:** react, react-query
 
 ---
 
@@ -451,7 +478,7 @@ Prefer derived state to copied state: `override ?? queryDefault ?? fallback` ins
 
 **added:** 2026-06-17
 **files:** src/client/components/**
-**tags:** css, tailwind, portal, z-index
+**tags:** css, z-index
 
 ---
 
@@ -460,7 +487,7 @@ An element with `backdrop-filter` (e.g. glass-card containers) creates a stackin
 ## dropdown-option-case-insensitive-dedup
 
 **added:** 2026-06-17
-**tags:** react, filters, dedup
+**tags:** react
 
 ---
 
@@ -470,7 +497,7 @@ Deduplicate dropdown/filter options case-insensitively (a Map keyed by the lower
 
 **added:** 2026-06-17
 **files:** src/client/lib/stableKeys.ts
-**tags:** react, keys, lists
+**tags:** react
 
 ---
 
@@ -480,7 +507,7 @@ Use field-based React keys, not array indices. Append an index suffix only at ac
 
 **added:** 2026-06-17
 **files:** src/server/server-utils.ts
-**tags:** fastify, spa, url-base, routing
+**tags:** fastify
 
 ---
 
@@ -490,7 +517,7 @@ The SPA index.html fallback must reject any request whose path doesn't start wit
 
 **added:** 2026-06-17
 **files:** src/server/services/**
-**tags:** fastify, background-jobs, async, validation
+**tags:** fastify, zod
 
 ---
 
@@ -500,7 +527,7 @@ When a service method kicks off a background job (`.start()`), do all pre-flight
 
 **added:** 2026-06-17
 **files:** src/server/utils/import-staging.ts, src/server/services/import.service.ts, src/server/services/merge.service.ts, src/server/services/book-rejection.service.ts, src/server/services/bulk-convert.ts
-**tags:** import, filesystem, db-consistency
+**tags:** import-staging, filesystem
 
 ---
 
@@ -510,7 +537,7 @@ In a pipeline that mutates the filesystem, update the database immediately after
 
 **added:** 2026-06-17
 **files:** src/server/services/**, src/server/utils/find-or-create-person.ts
-**tags:** backup, restore, foreign-keys, db
+**tags:** sqlite, drizzle
 
 ---
 
@@ -520,7 +547,7 @@ When restoring records (backup import, re-import), find-or-create the related FK
 
 **added:** 2026-06-17
 **files:** src/server/utils/import-staging.ts
-**tags:** import, filesystem, rename, atomicity
+**tags:** import-staging, filesystem
 
 ---
 
@@ -529,7 +556,7 @@ The import commit/rollback in `import-staging.ts` relies on `rename()` atomicall
 ## variable-length-format-most-specific-first
 
 **added:** 2026-06-17
-**tags:** parsing, cron, schedule
+**tags:** cron
 
 ---
 
@@ -539,7 +566,7 @@ When parsing a format with a variable field count, check the MOST specific shape
 
 **added:** 2026-06-17
 **files:** src/core/utils/**
-**tags:** audio, bitrate, music-metadata, units
+**tags:** music-metadata
 
 ---
 
@@ -549,7 +576,7 @@ When parsing a format with a variable field count, check the MOST specific shape
 
 **added:** 2026-06-17
 **files:** src/server/jobs/**, src/server/services/event-history.service.ts
-**tags:** retention, cleanup, date-boundary
+**tags:** cron
 
 ---
 
@@ -559,7 +586,7 @@ When parsing a format with a variable field count, check the MOST specific shape
 
 **added:** 2026-06-17
 **files:** src/shared/schemas/settings/create-mock-settings.fixtures.ts
-**tags:** test-fixtures, settings, deep-clone, test-isolation
+**tags:** test-fixtures, settings
 
 ---
 
@@ -568,7 +595,7 @@ The mock-settings factory deep-clones `DEFAULT_SETTINGS` (via `structuredClone`)
 ## vitest-clearallmocks-once-queue
 
 **added:** 2026-06-17
-**tags:** vitest, mocks, test-isolation
+**tags:** vitest
 
 ---
 
@@ -577,7 +604,7 @@ The mock-settings factory deep-clones `DEFAULT_SETTINGS` (via `structuredClone`)
 ## vitest-faketimers-react-query
 
 **added:** 2026-06-17
-**tags:** vitest, faketimers, react-query
+**tags:** vitest, react-query
 
 ---
 
@@ -587,7 +614,7 @@ A full `vi.useFakeTimers()` deadlocks TanStack Query's internal `setTimeout`. In
 
 **added:** 2026-06-17
 **files:** src/core/utils/network-service.ts
-**tags:** vitest, vi-mock, esm, module-binding
+**tags:** vitest
 
 ---
 
@@ -598,7 +625,7 @@ When an exported function calls another exported function from the SAME module (
 **source:** #1974
 **added:** 2026-06-17
 **files:** src/server/services/companion-ebook-open.test.ts
-**tags:** eslint, pino, serialize-error, logging, test-assertions
+**tags:** eslint, logging
 
 ---
 
@@ -619,7 +646,7 @@ The key set is also what Pino actually emits, since it serializes own-enumerable
 **source:** #1527
 **added:** 2026-06-18
 **files:** src/core/utils/network-service.ts
-**tags:** abortsignal, fetch-timeout, retry-backoff
+**tags:** cancellation
 
 ---
 
@@ -630,7 +657,7 @@ Node 24's `AbortSignal.timeout(ms)` schedules on an internal native timer, NOT t
 **source:** #1671  
 **added:** 2026-06-29  
 **files:** src/server/services/retag-plan.ts  
-**tags:** music-metadata, audio-tags, tag-readback
+**tags:** music-metadata, audio-tags
 
 ---
 
@@ -641,7 +668,7 @@ music-metadata's `common` (ICommonTagsResult) returns these as `string[]` — re
 **source:** #1797
 **added:** 2026-07-02
 **files:** src/core/utils/quality.ts, src/server/services/book-list.service.ts, src/server/services/match-job.helpers.ts
-**tags:** quality, duration-units, audiobook, grab-floor, resolveBookQualityInputs
+**tags:** ffprobe
 
 ---
 
@@ -654,7 +681,7 @@ music-metadata's `common` (ICommonTagsResult) returns these as `string[]` — re
 **source:** #1736
 **added:** 2026-06-30
 **files:** src/db/client.ts, src/db/schema.ts
-**tags:** libsql, sqlite, foreign-keys, drizzle
+**tags:** libsql, sqlite, drizzle
 
 ---
 
@@ -665,7 +692,7 @@ music-metadata's `common` (ICommonTagsResult) returns these as `string[]` — re
 **source:** #1711
 **added:** 2026-06-30
 **files:** src/server/__tests__/factories.ts, src/server/services/types.ts
-**tags:** drizzle, inferselect, test-fixtures, schema-migration
+**tags:** drizzle, test-fixtures
 
 ---
 
@@ -678,7 +705,7 @@ Adding a nullable column to the `books` table (e.g. #1711 `edition_label`) break
 **source:** #1846
 **added:** 2026-07-08
 **files:** src/core/utils/audio-probe.ts
-**tags:** ffprobe, music-metadata, audio-duration, mp3-xing, plausibility-guard
+**tags:** ffprobe, music-metadata
 
 ---
 
@@ -689,7 +716,7 @@ The scanner's two duration sources fail in disjoint ways, so neither is trustwor
 **source:** #1879
 **added:** 2026-07-17
 **files:** src/shared/schemas/import-list.ts
-**tags:** zod, settings-schema, superRefine, transform
+**tags:** zod
 
 ---
 
@@ -700,7 +727,7 @@ Per-adapter settings schemas that must emit ONLY the effective type's own keys (
 **source:** #1894
 **added:** 2026-07-21
 **files:** src/server/services/import-submission-report.service.ts
-**tags:** drizzle, vitest, vi-mock, db-schema, module-load
+**tags:** drizzle, vitest
 
 ---
 
@@ -711,7 +738,7 @@ A module-level constant that dereferences Drizzle schema columns (e.g. `const PR
 **source:** #1905
 **added:** 2026-07-21
 **files:** src/client/hooks/useReplaceGrab.ts, src/client/components/SearchReleasesModal.tsx
-**tags:** react-query, tanstack-query, mutations, unmount, keyed-remount
+**tags:** react-query
 
 ---
 
@@ -722,7 +749,7 @@ TanStack Query v5's `useMutation({ onSuccess, onError, onSettled })` callbacks f
 **source:** #1905
 **added:** 2026-07-21
 **files:** src/client/components/SearchReleasesModal.book-change.test.tsx
-**tags:** useLayoutEffect, effect-ordering, act
+**tags:** useLayoutEffect
 
 ---
 
@@ -733,7 +760,7 @@ React Testing Library's `render`/`rerender` wrap updates in `act`, which flushes
 **source:** #1942
 **added:** 2026-07-25
 **files:** src/core/utils/network-service.ts, src/core/metadata/audnexus.ts
-**tags:** fetch, http-status, network-service, provider-adapters, caching
+**tags:** metadata-providers
 
 ---
 
@@ -752,7 +779,7 @@ Reference implementation and full status/body test matrix: `AudnexusProvider.get
 **source:** #1959, #1976, #1989
 **added:** 2026-07-27
 **files:** src/server/**/*.test.ts, src/server/__tests__/**/*.ts, src/core/**/*.test.ts, src/core/__tests__/**/*.ts, src/db/**/*.test.ts, src/shared/**/*.test.ts
-**tags:** windows, vitest, filesystem, symlink, chmod, libsql, tmpdir, cross-platform
+**tags:** windows, vitest, filesystem, libsql
 
 ---
 
@@ -832,7 +859,7 @@ POSIX because the app runs in Docker.
 **source:** #1989
 **added:** 2026-07-27
 **files:** eslint.config.js, src/**/*.ts
-**tags:** eslint, max-lines, file-splitting, comments
+**tags:** eslint
 
 ---
 
@@ -859,7 +886,7 @@ a false positive unless lint actually fires.
 **source:** #1992, #1993, #2002, #2012, #2017, #2020, #2032
 **added:** 2026-07-28
 **files:** src/**/*.test.ts, src/**/*.test.tsx
-**tags:** mutation-testing, test-observability, counterfactual-verification, async-ordering
+**tags:** mutation-testing, test-observability
 
 ---
 
@@ -972,7 +999,7 @@ Related: [[serialize-error-assertion-needs-enumerable-keys]] is the same defect 
 **source:** #1987, #1988, #1989
 **added:** 2026-07-28
 **files:** src/core/epub/xml.ts, src/core/epub/zip-source.ts, src/core/epub/validate.test.ts
-**tags:** cheerio, htmlparser2, unzipper, type-declarations, pnpm, epub
+**tags:** epub, typescript
 
 ---
 
@@ -1039,7 +1066,7 @@ structural alias, not `@types/unzipper`'s `CentralDirectory`/`File` — those ne
 **source:** #1990
 **added:** 2026-07-28
 **files:** src/core/epub/xml.ts, src/core/epub/extract.ts
-**tags:** cheerio, htmlparser2, xml, attribute-values, token-lists, epub
+**tags:** epub, xml
 
 ---
 
@@ -1072,7 +1099,7 @@ silently repairing unclosed and mismatched tags, which is why `malformed_xml` in
 **source:** #1957
 **added:** 2026-07-28
 **files:** src/db/**/*.integration.test.ts
-**tags:** drizzle, libsql, sqlite, migrations, integration-tests, error-handling
+**tags:** drizzle, libsql, sqlite, migrations
 
 ---
 
@@ -1128,7 +1155,7 @@ Related: `drizzle-sqlite-text-enum-no-db-check` (which constraints Drizzle does 
 **source:** #1959
 **added:** 2026-07-28
 **files:** src/db/client.ts, src/db/serial-transactions.ts, src/server/services/**
-**tags:** libsql, drizzle, transactions, concurrency, sqlite-busy
+**tags:** libsql, drizzle
 
 ---
 
@@ -1169,7 +1196,7 @@ for this explanation whenever a newly-concurrent write path starts dropping reco
 **source:** #1974
 **added:** 2026-07-28
 **files:** src/server/utils/companion-ebook-stream.ts, src/server/routes/companion-ebook.ts
-**tags:** node-fs, filehandle, streams, fastify
+**tags:** node-fs, fastify
 
 ---
 
@@ -1192,7 +1219,7 @@ tests: `streamCompanionEbook` in `src/server/utils/companion-ebook-stream.ts`, p
 **source:** #1944
 **added:** 2026-07-28
 **files:** src/server/services/metadata.service.ts, src/core/metadata/**
-**tags:** rate-limiting, retry-after, metadata-providers, rfc-9110, falsy-guard
+**tags:** metadata-providers
 
 ---
 
@@ -1237,7 +1264,7 @@ and closed not-planned.
 **source:** #1916
 **added:** 2026-07-28
 **files:** src/client/hooks/useLibrary.ts, src/client/lib/helpers.ts
-**tags:** react-query, pagination, duplicate-detection, api-contract
+**tags:** react-query
 
 ---
 
@@ -1279,7 +1306,7 @@ duplicate.
 **source:** #1960, #1975
 **added:** 2026-07-28
 **files:** src/server/__tests__/helpers.ts
-**tags:** vitest, test-helpers, fastify-routes, fire-and-forget, mocking
+**tags:** vitest, test-fixtures
 
 ---
 
@@ -1330,7 +1357,7 @@ Applies to any v1 route that resolves a publicId and then reads a second table.
 **source:** #2034  
 **added:** 2026-07-30  
 **files:** src/server/__tests__/helpers.ts  
-**tags:** fastify, csrf, test-helpers, auth, vitest
+**tags:** fastify, csrf, test-fixtures, auth, vitest
 
 ---
 
@@ -1349,7 +1376,7 @@ Related: [[vacuous-assertion-observation-points]] — a distinct mechanism (the 
 **source:** #2065
 **added:** 2026-08-04
 **files:** src/server/services/backup.service.test.ts, src/server/services/backup.service.ts
-**tags:** vitest, vi-mock, test-doubles, esm-migration, archiver
+**tags:** vitest, test-doubles
 
 ---
 
@@ -1377,7 +1404,7 @@ vi.mock('archiver', () => ({
 **source:** #2071
 **added:** 2026-08-04
 **files:** src/core/utils/audio-processor.test.ts, src/core/utils/audio-probe.ts, src/core/utils/audio-processor.ts, src/core/utils/cover-art.ts
-**tags:** vitest, child-process, ffprobe, callback-shape, silent-null
+**tags:** vitest, node-fs, ffprobe
 
 ---
 
@@ -1392,7 +1419,7 @@ Pattern: dispatch on argv **and** branch the callback shape per arm (`installExe
 **source:** #2072
 **added:** 2026-08-04
 **files:** src/core/utils/audio-processor.roundtrip.test.ts, src/core/utils/encode-strategy.ts
-**tags:** ffmpeg, round-trip-tests, test-fixtures, branch-coverage, mutation-testing
+**tags:** ffmpeg, round-trip, test-fixtures, mutation-testing
 
 ---
 
@@ -1415,7 +1442,7 @@ Related fixture trap in the same family: an encoder may silently rewrite your fi
 **added:** 2026-08-04
 **files:** src/server/__tests__/helpers.ts, src/server/jobs/enrichment.ts, src/server/**/*.test.ts
 
-**tags:** vitest, drizzle, test-doubles, guarded-writes, silent-pass
+**tags:** vitest, drizzle, test-doubles
 
 ---
 
@@ -1458,7 +1485,7 @@ property the test claimed to prove.
 **added:** 2026-08-04
 **files:** src/server/utils/cleared-fields.ts, src/server/utils/parse-phase-history.ts, src/server/utils/serialize-error.ts, src/server/services/quality-gate.service.ts, src/server/utils/cleared-fields.test.ts
 
-**tags:** json, logging, serialize-error, zod, persisted-columns
+**tags:** logging, zod
 
 ---
 
@@ -1477,7 +1504,7 @@ property the test claimed to prove.
 **source:** #2077
 **added:** 2026-08-04
 **files:** src/server/services/book.service.ts, src/server/jobs/enrichment.ts, src/server/services/enrichment-orchestration.helpers.ts
-**tags:** transactions, drizzle, side-effects, api-design
+**tags:** drizzle
 
 ---
 
@@ -1509,7 +1536,7 @@ if (committed.genresWritten) {
 **source:** #2081
 **added:** 2026-08-04
 **files:** src/core/utils/audio-processor.roundtrip.test.ts, src/server/services/tagging.roundtrip.test.ts, src/core/utils/audio-processor.ts
-**tags:** ffmpeg, ffprobe, round-trip-fixtures, m4b, test-observability
+**tags:** ffmpeg, ffprobe, round-trip, test-observability
 
 ---
 
@@ -1528,7 +1555,7 @@ Related: `vacuous-assertion-observation-points` (the general form — an asserti
 **source:** #2086
 **added:** 2026-08-04
 **files:** src/core/utils/audio-processor.roundtrip.test.ts, src/server/services/tagging.roundtrip.test.ts
-**tags:** ffmpeg, round-trip-tests, vitest-skipif, verify-gate, evidence-discipline
+**tags:** ffmpeg, round-trip
 
 ---
 
@@ -1553,7 +1580,7 @@ Measured with no ffmpeg on PATH: `Test Files 2 skipped (2) / Tests 23 skipped (2
 **source:** #2095
 **added:** 2026-08-04
 **files:** src/server/services/health-check.service.ts, src/db/schema.ts, src/client/pages/settings/HealthDashboard.tsx, src/server/services/health-check.service.test.ts
-**tags:** drizzle-schema, sqlite-autoincrement, connectors, state-keying, health-checks
+**tags:** drizzle, sqlite, settings
 
 ---
 
@@ -1574,7 +1601,7 @@ Related: [[stable-list-keys]] is the client-side instance of the same 'a field-b
 **source:** #2103
 **added:** 2026-08-04
 **files:** src/core/utils/title-variants.ts, src/server/services/series-title-match.ts
-**tags:** title-matching, unicode-normalization, series-matching, live-corpus-sweep
+**tags:** title-matching
 
 ---
 
@@ -1597,7 +1624,7 @@ Verified non-vulnerable rather than assumed: `src/shared/dedup.ts` (`normalizeTi
 **source:** #2107
 **added:** 2026-08-04
 **files:** src/server/services/merge-boot-recovery.test.ts, src/server/utils/paths.ts
-**tags:** vitest, fs-mock, node-fs-promises, importActual, errno-injection, partial-mock
+**tags:** vitest, test-doubles, node-fs
 
 ---
 
@@ -1639,7 +1666,7 @@ Related but distinct: `import-cleanup-marker-aware-fs-mock` (defaulting a *fully
 **added:** 2026-08-04
 **files:** src/core/utils/title-variants.ts, src/core/utils/title-variants.test.ts, src/server/services/series-title-match.ts
 
-**tags:** unicode-normalization, title-matching, nfd-nfc, combining-marks, fold-lockstep
+**tags:** title-matching
 
 ---
 
@@ -1656,7 +1683,7 @@ Corollary, decided in #2110 and not to be relitigated without new corpus evidenc
 **source:** #2115
 **added:** 2026-08-04
 **files:** src/server/services/series-title-match-blast-check.test.ts, src/server/services/series-card.integration.test.ts
-**tags:** sqlite, libsql, query-planner, order-by, integration-tests
+**tags:** sqlite, libsql
 
 ---
 
@@ -1684,7 +1711,7 @@ Related trap: a rowid-only projection (`SELECT id FROM books`) stays in rowid or
 **source:** #2097  
 **added:** 2026-08-07  
 **files:** src/core/metadata/hardcover-member-dedup.ts  
-**tags:** typescript, regex, tsconfig
+**tags:** typescript
 
 ---
 
@@ -1714,7 +1741,7 @@ General rule: before writing a fixture for an "only when X is absent" branch, ch
 **source:** #2138  
 **added:** 2026-08-07  
 **files:** src/server/services/search-query-ladder.ts  
-**tags:** title-variants, search-ladder, dedup
+**tags:** title-matching, search-ladder
 
 ---
 
@@ -1753,7 +1780,7 @@ Related: [[mockdbchain-empty-default-masks-guarded-writes]] and [[shared-test-do
 **source:** #2109  
 **added:** 2026-08-07  
 **files:** src/core/utils/title-variants.ts  
-**tags:** title-variants, normalization, test-fixtures
+**tags:** title-matching, test-fixtures
 
 ---
 
@@ -1770,7 +1797,7 @@ General rule: before rewriting a helper that feeds a raw-output export, grep tha
 **source:** #2158  
 **added:** 2026-08-07  
 **files:** src/server/utils/opf-reader.test.ts  
-**tags:** xxe, xml, security-tests
+**tags:** xxe, xml
 
 ---
 
@@ -1796,7 +1823,7 @@ Keep a wall-clock bound only as an explicitly-labelled *liveness* guard — a fu
 **source:** #2133, #2060  
 **added:** 2026-08-07  
 **files:** src/server/services/search-query-ladder.ts, src/client/pages/library-import/useLibraryImport.ts  
-**tags:** mutation-testing, counterfactual-verification, search-ladder
+**tags:** mutation-testing, search-ladder
 
 ---
 
@@ -1826,7 +1853,7 @@ Sibling: [[vacuous-assertion-observation-points]] — that one is about watching
 **source:** #2080  
 **added:** 2026-08-08  
 **files:** src/core/utils/cover-art.ts  
-**tags:** abortsignal, cancellation, error-handling
+**tags:** cancellation
 
 ---
 
@@ -1845,7 +1872,7 @@ Keep a control test proving a genuine failure under a LIVE (un-aborted) signal s
 **source:** #2168  
 **added:** 2026-08-08  
 **files:** src/core/metadata/audnexus.ts  
-**tags:** zod, provider-adapters, response-caching
+**tags:** zod, metadata-providers
 
 ---
 
@@ -1867,7 +1894,7 @@ The rule: a malformed ELEMENT is a data-quality problem that should degrade the 
 
 **source:** #2075  
 **added:** 2026-08-08  
-**tags:** grep, audit-sweep, refactor-inventory, completeness-claims
+**tags:** audit-sweep
 
 ---
 
