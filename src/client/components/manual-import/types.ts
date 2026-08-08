@@ -37,10 +37,14 @@ export interface ImportRow {
    *
    * Both this and `matchResult` are `readonly` (#2060) so the pair can only ever be set by
    * CONSTRUCTION — `stampRow` for every write that installs, replaces or clears the match, and
-   * `applyCorroboration` for the terminal patch. That blocks direct mutation only; a
-   * structurally-compatible mutable alias still writes freely (TypeScript ignores `readonly`
-   * in assignability), as do `Object.defineProperty` / `Reflect.set`. Closing that gap is
-   * #2182.
+   * `applyCorroboration` for the terminal patch. `narratorr/no-unstamped-match-generation`
+   * (#2182) closes the CONSTRUCTION bypass: in both import hooks, a row literal or a
+   * `mergeMatchIntoRow` result carrying a match that does not route through `stampRow` is a
+   * lint error. The MUTATION forms remain open and unowned — `readonly` blocks only direct
+   * assignment, and a structurally-compatible mutable alias still writes freely (TypeScript
+   * ignores `readonly` in assignability), as do `Object.defineProperty` / `Reflect.set`. No
+   * syntactic rule can see those: the alias has no `matchResult` key at its own construction
+   * site.
    */
   readonly matchGeneration?: number | undefined;
 }

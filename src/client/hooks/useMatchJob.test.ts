@@ -667,6 +667,76 @@ describe('useMatchJob', () => {
     });
   });
 
+  // #2182 — the engine's RESULT-side path collapse, pinned directly.
+  //
+  // Both import hooks detect new results by array LENGTH and consume only the suffix
+  // (`useLibraryImport.ts:105-110`, `useManualImport.ts:88-93`). That is only safe because
+  // `ingest` is a path-keyed merge into `observed`, so an already-seen path can never
+  // re-enter the suffix — which is what makes `mergeMatchResults` merge into a given row at
+  // most once per logical run, and therefore unable to install a fresh match into a row
+  // holding a live chapter corroboration.
+  //
+  // If this contract changes, that merge-stamp hazard becomes REACHABLE and a hook-level
+  // regression for it becomes both possible and required (#2182 supersedes #2184's premise
+  // on the strength of these three assertions).
+  //
+  // Distinct from the F2 describe above: that one pins first-occurrence-wins collapse of
+  // duplicate CANDIDATES at `startMatching`; these pin last-write-wins overwrite of
+  // duplicate RESULTS at ingest. Different rule, different side.
+  describe('path-keyed result ingestion (#2182)', () => {
+    it('a same-path result re-delivery does not grow results', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      mockGetMatchJob
+        .mockResolvedValueOnce(matching('job-1', [R('/a')]))
+        .mockResolvedValueOnce(completed('job-1', [R('/a'), R('/a')]));
+      const { result } = renderHook(() => useMatchJob());
+
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL);
+      expect(result.current.results).toHaveLength(1);
+
+      await advance(POLL);
+      expect(result.current.results).toHaveLength(1);
+      expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+    });
+
+    it('a later same-path result replaces the earlier one rather than appending', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      mockGetMatchJob
+        .mockResolvedValueOnce(matching('job-1', [{ ...R('/a'), confidence: 'medium', reason: 'first' }]))
+        .mockResolvedValueOnce(completed('job-1', [{ ...R('/a'), confidence: 'high', reason: 'second' }]));
+      const { result } = renderHook(() => useMatchJob());
+
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL);
+      expect(result.current.results[0]!.reason).toBe('first');
+
+      await advance(POLL);
+      // Last write wins — NOT first-occurrence-wins, which is the separate rule
+      // `dedupeByPath` applies to candidates.
+      expect(result.current.results).toHaveLength(1);
+      expect(result.current.results[0]!.reason).toBe('second');
+      expect(result.current.results[0]!.confidence).toBe('high');
+    });
+
+    it('results grow only on a new path, preserving first-observation order', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      mockGetMatchJob
+        .mockResolvedValueOnce(matching('job-1', [R('/a')]))
+        .mockResolvedValueOnce(completed('job-1', [R('/a'), R('/b')]));
+      const { result } = renderHook(() => useMatchJob());
+
+      await act(async () => {
+        result.current.startMatching([{ path: '/a', title: 'A' }, { path: '/b', title: 'B' }]);
+      });
+      await advance(POLL);
+      expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+
+      await advance(POLL);
+      expect(result.current.results.map(r => r.path)).toEqual(['/a', '/b']);
+    });
+  });
+
   // #1864 F3 — the three-context probe/allowance table (§3).
   describe('probe table across contexts (F3)', () => {
     // Reaches an automatic-entry PROBE: transport exhaustion (1 + 3) in the still-automatic

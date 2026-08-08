@@ -59,6 +59,9 @@ export default defineConfig({
             'e2e/fixtures/**/*.test.ts',
             'e2e/fakes/**/*.test.ts',
             'e2e/*.test.ts',
+            // Local ESLint rule suites. `.test.js` only: the two legacy `.test.cjs`
+            // scripts here register no vitest tests and would fail the run outright.
+            'eslint-rules/**/*.test.js',
           ],
         },
       },
