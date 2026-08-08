@@ -10,7 +10,7 @@ import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import type { DiscoveredBook } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
-import { needsChapterCorroboration, useRepickCorroboration } from '@/lib/repick-corroboration.js';
+import { needsChapterCorroboration, stampRow, useRepickCorroboration } from '@/lib/repick-corroboration.js';
 import { useStagedSubmission } from '@/lib/staged-import/useStagedSubmission.js';
 import { isLibraryDbDuplicate } from './isLibraryDbDuplicate.js';
 
@@ -98,7 +98,7 @@ export function useLibraryImport() {
       const match = resultMap.get(row.book.path);
       if (!match) return row;
       if (isLibraryDbDuplicate(row.book)) return row;
-      return { ...mergeMatchIntoRow(row, match), matchGeneration: generation };
+      return stampRow(mergeMatchIntoRow(row, match), generation);
     }));
   }, [nextGeneration]);
 
@@ -119,18 +119,17 @@ export function useLibraryImport() {
       }
 
       const scanGeneration = nextGeneration();
-      const newRows: ImportRow[] = result.discoveries.map((book) => ({
+      const newRows: ImportRow[] = result.discoveries.map((book) => stampRow({
         book,
         selected: !book.isDuplicate,
         userEdited: false,
-        matchGeneration: scanGeneration,
         edited: {
           title: book.parsedTitle,
           author: book.parsedAuthor || '',
           series: book.parsedSeries || '',
           ...(book.parsedSeriesPosition !== undefined && { seriesPosition: book.parsedSeriesPosition }),
         },
-      }));
+      }, scanGeneration));
 
       setRows(newRows);
       setScanError(null);
@@ -218,8 +217,7 @@ export function useLibraryImport() {
         }
       }
 
-      const updated: ImportRow = { ...r, book: updatedBook, edited: state, selected: autoCheck, userEdited: true, matchGeneration: generation, ...(matchResult !== undefined && { matchResult }) };
-      return updated;
+      return stampRow({ ...r, book: updatedBook, edited: state, selected: autoCheck, userEdited: true, ...(matchResult !== undefined && { matchResult }) }, generation);
     }));
 
     // Optimistic first: the synchronous verdict above already rendered. The corroborated
@@ -267,7 +265,7 @@ export function useLibraryImport() {
     if (candidates.length === 0) return;
     prevMatchCountRef.current = 0;
     const generation = nextGeneration();
-    setRows(prev => prev.map(r => isLibraryDbDuplicate(r.book) ? r : { ...r, matchResult: undefined, matchGeneration: generation }));
+    setRows(prev => prev.map(r => isLibraryDbDuplicate(r.book) ? r : stampRow({ ...r, matchResult: undefined }, generation)));
     restart(candidates);
   }, [rows, restart, nextGeneration]);
 

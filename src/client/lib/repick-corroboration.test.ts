@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { needsChapterCorroboration, applyCorroboration, type CorroborationTarget } from './repick-corroboration';
+import { needsChapterCorroboration, applyCorroboration, stampRow, type CorroborationTarget } from './repick-corroboration';
 import type { MatchResult, BookMetadata } from '@/lib/api';
 import type { ImportRow } from '@/components/manual-import';
 
@@ -184,5 +184,68 @@ describe('applyCorroboration staleness guard (#2055 B8)', () => {
     const result = applyCorroboration([other, liveRow], target);
     expect(result[0]).toBe(other);
     expect(result[1]!.matchResult?.confidence).toBe('high');
+  });
+});
+
+describe('stampRow (#2060)', () => {
+  const unstamped: ImportRow = {
+    book: { path: PATH, parsedTitle: 'Fablehaven', parsedAuthor: 'Brandon Mull', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+    selected: true,
+    userEdited: false,
+    edited: { title: 'Fablehaven', author: 'Brandon Mull', series: '' },
+  };
+
+  it('returns a copy carrying the given generation, leaving the argument untouched', () => {
+    const stamped = stampRow(unstamped, 5);
+
+    expect(stamped).toEqual({ ...unstamped, matchGeneration: 5 });
+    expect(stamped).not.toBe(unstamped);
+    expect(unstamped).not.toHaveProperty('matchGeneration');
+  });
+
+  it('carries an already-installed matchResult through untouched — it neither inspects nor derives it', () => {
+    const withMatch: ImportRow = { ...unstamped, matchResult: mismatchRow };
+
+    const stamped = stampRow(withMatch, 5);
+
+    expect(stamped.matchResult).toBe(mismatchRow);
+    expect(stamped.matchGeneration).toBe(5);
+  });
+
+  // Pins the property order inside the four-line body (`{ ...row, matchGeneration }`, not the
+  // reverse): with the spread last, a row already carrying a stamp would keep the STALE one and
+  // every superseding write in both hooks would silently stop superseding.
+  it('overwrites an older stamp already on the row', () => {
+    expect(stampRow({ ...unstamped, matchGeneration: 3 }, 9).matchGeneration).toBe(9);
+  });
+
+  // Type-level regression, checked by `pnpm typecheck` rather than by this run: `readonly`
+  // means the pair can only be set by construction, so a write that installs `matchResult`
+  // cannot skip the stamp by mutating a row in place. Each directive below would go unused —
+  // TS2578, a typecheck failure — the moment a `readonly` is dropped. The assigned values are
+  // well-typed, so `readonly` is the ONLY error each line can raise.
+  //
+  // Deliberately NOT pinned here because it is NOT caught: assigning through a structurally
+  // compatible mutable alias (`const m: MutableRow = row; m.matchResult = next;`) compiles with
+  // no cast and no error, because TypeScript ignores `readonly` in assignability. Nor are
+  // `Object.defineProperty` / `Reflect.set`. `readonly` blocks the realistic accident, not the
+  // invariant — #2182 is the enforcement work.
+  it('rejects every direct write to matchResult / matchGeneration, and still allows construction', () => {
+    const row: ImportRow = stampRow(unstamped, 1);
+    const next: MatchResult = mismatchRow;
+    const g = 2;
+
+    // @ts-expect-error -- TS2540: matchResult is readonly
+    row.matchResult = next;
+    // @ts-expect-error -- TS2540: readonly holds through a literal-key element access
+    row['matchGeneration'] = g;
+    // @ts-expect-error -- TS2704: a readonly property cannot be deleted
+    delete row.matchResult;
+    // @ts-expect-error -- TS2540: compound assignment is still an assignment
+    row.matchResult ??= next;
+
+    const ok: ImportRow = { ...row, matchResult: next, matchGeneration: g };
+    expect(ok.matchResult).toBe(next);
+    expect(ok.matchGeneration).toBe(g);
   });
 });
