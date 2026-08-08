@@ -22,7 +22,7 @@ export interface ImportRow {
    * fixed. Bare checkbox toggles deliberately do NOT set this (#1374).
    */
   userEdited: boolean;
-  matchResult?: MatchResult | undefined;
+  readonly matchResult?: MatchResult | undefined;
   /**
    * Transient, client-only logical generation of this row's match evidence (#2055).
    * Stamped by every write that installs, replaces, or clears `matchResult`, from a
@@ -34,6 +34,13 @@ export interface ImportRow {
    * Optional so existing inline row fixtures need no change; an undefined stamp on either
    * side makes the staleness guard reject, which is the safe direction (the row simply
    * keeps its synchronous verdict).
+   *
+   * Both this and `matchResult` are `readonly` (#2060) so the pair can only ever be set by
+   * CONSTRUCTION — `stampRow` for every write that installs, replaces or clears the match, and
+   * `applyCorroboration` for the terminal patch. That blocks direct mutation only; a
+   * structurally-compatible mutable alias still writes freely (TypeScript ignores `readonly`
+   * in assignability), as do `Object.defineProperty` / `Reflect.set`. Closing that gap is
+   * #2182.
    */
-  matchGeneration?: number | undefined;
+  readonly matchGeneration?: number | undefined;
 }

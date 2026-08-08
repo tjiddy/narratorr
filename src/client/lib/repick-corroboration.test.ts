@@ -218,4 +218,34 @@ describe('stampRow (#2060)', () => {
   it('overwrites an older stamp already on the row', () => {
     expect(stampRow({ ...unstamped, matchGeneration: 3 }, 9).matchGeneration).toBe(9);
   });
+
+  // Type-level regression, checked by `pnpm typecheck` rather than by this run: `readonly`
+  // means the pair can only be set by construction, so a write that installs `matchResult`
+  // cannot skip the stamp by mutating a row in place. Each directive below would go unused —
+  // TS2578, a typecheck failure — the moment a `readonly` is dropped. The assigned values are
+  // well-typed, so `readonly` is the ONLY error each line can raise.
+  //
+  // Deliberately NOT pinned here because it is NOT caught: assigning through a structurally
+  // compatible mutable alias (`const m: MutableRow = row; m.matchResult = next;`) compiles with
+  // no cast and no error, because TypeScript ignores `readonly` in assignability. Nor are
+  // `Object.defineProperty` / `Reflect.set`. `readonly` blocks the realistic accident, not the
+  // invariant — #2182 is the enforcement work.
+  it('rejects every direct write to matchResult / matchGeneration, and still allows construction', () => {
+    const row: ImportRow = stampRow(unstamped, 1);
+    const next: MatchResult = mismatchRow;
+    const g = 2;
+
+    // @ts-expect-error -- TS2540: matchResult is readonly
+    row.matchResult = next;
+    // @ts-expect-error -- TS2540: readonly holds through a literal-key element access
+    row['matchGeneration'] = g;
+    // @ts-expect-error -- TS2704: a readonly property cannot be deleted
+    delete row.matchResult;
+    // @ts-expect-error -- TS2540: compound assignment is still an assignment
+    row.matchResult ??= next;
+
+    const ok: ImportRow = { ...row, matchResult: next, matchGeneration: g };
+    expect(ok.matchResult).toBe(next);
+    expect(ok.matchGeneration).toBe(g);
+  });
 });
