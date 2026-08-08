@@ -1186,7 +1186,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
     // ── AC13: nothing about a bad OPF can fail an import ──────────────────
 
     it.each([
-      ['binary-garbage', ' not xmlÿ'],
+      ['binary-garbage', '\x00\x01not xml\u00ff'],
       ['an-unparseable-fragment', '<package><metadata><dc:title>unclosed'],
       ['a-valid-but-empty-document', '<package><metadata></metadata></package>'],
     ])('AC13: %s produces the no-OPF baseline outcome', async (label, contents) => {

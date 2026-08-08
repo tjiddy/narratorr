@@ -3,6 +3,7 @@ import { extname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
+import { tokenizeNarrators } from '@core/utils/similarity.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import { getVisiblePathSize } from '../utils/import-helpers.js';
@@ -65,7 +66,7 @@ export function selectRefreshNarrators(
   if (opf?.narrators.length) return opf.narrators;
 
   // Tag derivation is unchanged: split on delimiters, trim, drop empties.
-  const fromTags = tagNarrator?.split(/[,;&]/).map((n) => n.trim()).filter((n) => n.length > 0) ?? [];
+  const fromTags = tagNarrator ? tokenizeNarrators(tagNarrator) : [];
   return fromTags.length > 0 ? fromTags : undefined;
 }
 

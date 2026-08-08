@@ -6,6 +6,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { books } from '@db/schema.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
+import { tokenizeNarrators } from '@core/utils/similarity.js';
 import type { BookService } from './book.service.js';
 import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
 import { mimeToExt } from '../utils/mime.js';
@@ -125,7 +126,7 @@ export async function enrichBookFromAudio(
     // Tag data: only fill empty fields (don't overwrite user edits)
     // Narrator writes go through the junction table via bookService
     if (tagNarratorFillAllowed(book) && scanResult.tagNarrator && bookService) {
-      const narratorNames = scanResult.tagNarrator.split(/[,;&]/).map(n => n.trim()).filter(n => n.length > 0);
+      const narratorNames = tokenizeNarrators(scanResult.tagNarrator);
       await bookService.update(bookId, { narrators: narratorNames });
     }
 
