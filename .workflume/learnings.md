@@ -1793,12 +1793,17 @@ Keep a wall-clock bound only as an explicitly-labelled *liveness* guard — a fu
 
 ## symmetric-mutation-cannot-observe-shared-derivation
 
-**source:** #2133  
+**source:** #2133, #2060  
 **added:** 2026-08-07  
-**files:** src/server/services/search-query-ladder.ts  
+**files:** src/server/services/search-query-ladder.ts, src/client/pages/library-import/useLibraryImport.ts  
 **tags:** mutation-testing, counterfactual-verification, search-ladder
 
 ---
+
+Two ways the mutation you ran fails to isolate the property you claim. Both produce a confident,
+wrong red-set prediction that survives spec review.
+
+**A — shared derivation, mutated symmetrically (#2133).**
 
 `countOccurrences(text, segment)` in `src/server/services/search-query-ladder.ts` serves BOTH `anchorFloor` (how many copies of each anchor the canonical title demands) and `passesSegmentFloor` (how many the release supplies). Mutating it is therefore SYMMETRIC — the demanded count and the measured count move together, the check stays self-consistent, and any test asserting "the book still matches its own release" stays GREEN.
 
@@ -1806,4 +1811,72 @@ Measured on #2133: changing the scan restart from `at + segment.length + 1` to `
 
 Two rules follow. (1) Choosing which mutation to run is part of the assertion design: a shared-derivation invariant needs an ASYMMETRIC mutation, and a spec naming a symmetric one will over-predict its red set. (2) Never predict a red set by reading — run the mutation and record what actually failed. The #2133 spec predicted observations that did not fire at all, and had additionally attributed them to the wrong fixture: `"Star Wars: The High Republic: Star Wars"` looks like the repeated-anchor case, but its two occurrences are separated by an intervening segment, so the shared-delimiter rule never touches it; only `"Alpha: Beta Gamma: Gamma"` has genuinely adjacent occurrences.
 
+**B — redundant sites, mutated one at a time (#2060).**
+
+When two production sites are INDEPENDENTLY SUFFICIENT to produce the asserted outcome, mutating either one alone leaves the suite green — the other still produces it. `ImportRow.matchGeneration` is stamped at four sites per hook (`useLibraryImport.ts`, `useManualImport.ts`); the Restart regressions exercise a timeline where a Restart is ALWAYS followed by a match merge, so the `handleRestartMatch` stamp and the `mergeMatchResults` stamp are each enough on their own to make `isLiveTarget` reject the held response.
+
+Measured against the full client project (287 files / 5912 tests): dropping the restart stamp — green. Forwarding `r.matchGeneration` instead of a fresh generation at restart — green. Dropping the `stampRow` wrapper at the merge — green. Dropping restart AND merge together — red. #2060's spec asserted the second of those would red, and that survived eight spec-review rounds before first execution falsified it.
+
+Procedure: before mutating, trace every write that can produce the asserted post-state ALONG THE TEST'S TIMELINE, not just the one the spec names. If more than one exists, mutate them as a set — and separately cover each site with a test whose timeline reaches only that site (here, a merge with no preceding Restart). Note the observation point was never the problem: the test reds correctly once both stamps go.
+
 Sibling: [[vacuous-assertion-observation-points]] — that one is about watching the wrong OBSERVABLE, this one is about applying the wrong MUTATION.
+
+## abort-verdict-not-error-shape
+
+**source:** #2080  
+**added:** 2026-08-08  
+**files:** src/core/utils/cover-art.ts  
+**tags:** abortsignal, cancellation, error-handling
+
+---
+
+**A catch-and-degrade block is a cancellation sink.** Best-effort code that swallows an error and returns a fallback (`return null` / `return false` / push a warning) swallows cancellation on the same path. Where the block runs BEFORE the main work the cost is a lost feature; where it runs AFTER it reports SUCCESS for a cancelled operation — in #2080 a degraded cover-reattach returned a successful result that flowed into `removeSourceFiles`, deleting the sources of a merge the operator had just cancelled.
+
+Shape for every such catch: existing cleanup first (the partial temp file must still go), then `if (signal?.aborted) throw error;`, then today's degradation return.
+
+**Key the verdict on `signal.aborted`, never on the error.** One cancellation produces at least three error shapes: a pre-spawn guard's own `Error('Processing aborted')`, `Error('ffmpeg exited with code null')` when the abort listener SIGTERMs a running child, and `AbortError`/`ABORT_ERR` from an aborted `execFile`. Only the first is recognisable by message, and the second is textually identical to an ordinary encode failure — so any message/name/instanceof check passes one case and silently degrades the other two.
+
+**Swallow-and-continue loops are the same defect with a worse symptom.** A loop that treats each item's error as "skip this one" will, under an already-aborted signal, fail every remaining item instantly and return an empty result — cancellation reading as a legitimate "nothing found" while the caller proceeds. The abort check must sit inside the per-item catch, not only around the loop.
+
+Keep a control test proving a genuine failure under a LIVE (un-aborted) signal still degrades; without it, a rethrow-on-every-error regression is invisible. Related: [[symmetric-mutation-cannot-observe-shared-derivation]] — prove each rethrow by reverting one at a time.
+
+## zod-entry-catch-preserves-record-predicate
+
+**source:** #2168  
+**added:** 2026-08-08  
+**files:** src/core/metadata/audnexus.ts  
+**tags:** zod, provider-adapters, response-caching
+
+---
+
+When a Zod schema gates a CACHED definitive-vs-transient classification, adding per-entry parsing to one of its arrays narrows the record predicate unless each entry carries a fallback. `z.array(z.unknown())` accepts any element; `z.array(z.object({...}))` rejects the WHOLE body on one malformed element — and in a cached adapter that reclassifies a genuine record as `invalid_record`, which is transient, never settled, and therefore re-requested on every lookup forever. The derived value it was added for is lost too.
+
+Use a per-entry `.catch()`:
+
+```ts
+const entrySchema = z.object({ title: z.string().nullish(), lengthMs: z.number().nullish() })
+  .passthrough()
+  .catch({});
+```
+
+Verified on zod 4.4.3: a bare string, a bare number, `null`, or `{ lengthMs: 'oops' }` each become `{}` while well-formed entries parse normally, so the outer authority predicate admits exactly the same set of bodies as before. The consumer must then narrow (never coerce) the fields — a `{}` entry simply fails whatever check it feeds.
+
+The rule: a malformed ELEMENT is a data-quality problem that should degrade the derived value; only a malformed RECORD should change whether the response was authoritative. Those two decisions belong in different places.
+
+## ugrep-nul-fixtures-hide-files
+
+**source:** #2075  
+**added:** 2026-08-08  
+**tags:** grep, audit-sweep, refactor-inventory, completeness-claims
+
+---
+
+*(No `files:` scope on purpose — this is a tooling rule that applies to any sweep, not to one code path.)*
+
+`grep` on the pipeline image is **ugrep 7.5.0**, not GNU grep. A file containing NUL/control bytes is classified as binary and yields **zero matches, exit 1, and no notice** unless `-a`/`--text` is passed — under `-r`/`-l` there is not even a "Binary file … matches" line. The file is silently absent from the result set.
+
+Measured: `grep -rl --include=*.ts -a "import" src` → 1085 files; the same search without `-a` → 1083. The two that drop out both write raw control bytes into a test string literal instead of using escapes. Both are valid UTF-8, so this is triggered by the control bytes, not by an encoding error.
+
+**The rule.** Any grep whose *absence of hits* is load-bearing — an audit-completeness sweep, a refactor site inventory, a "no remaining callers" claim — must pass `-a`. A plain `grep -rn` returning nothing is not evidence that nothing matches. When authoring a binary fixture, write it with `'\^@\^A'`-style escapes: the runtime string is byte-identical and the source file stays plain text, so it remains visible to every tool.
+
+This is an environment fact about the pipeline image; re-verify it if the base image changes. Related: [[vacuous-assertion-observation-points]] — same shape, an observable that cannot see the property being claimed.
