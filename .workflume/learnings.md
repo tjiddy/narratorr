@@ -1623,7 +1623,7 @@ Related: [[stable-list-keys]] is the client-side instance of the same 'a field-b
 
 **source:** #2103, #2110, #2113
 **added:** 2026-08-04
-**files:** src/core/utils/title-variants.ts, src/core/utils/title-variants.test.ts, src/server/services/series-title-match.ts
+**files:** src/core/utils/title-variants.ts, src/core/utils/title-variants.test.ts, src/server/services/series-title-match.ts, src/server/utils/series-name-targets.ts, src/server/utils/series-normalize.ts
 **tags:** title-matching
 
 ---
@@ -1708,6 +1708,24 @@ does no character-class strip, and `titlesMatchForDedup` at `:119` already block
 via `hadSubtitle`), `match-validation.ts` (token-set containment; an empty significant-token set
 returns false by design at `:108`), `series-normalize.ts` (`:6`) and `hardcover-series-resolver.ts`
 (lossy ASCII keys but exact-equality only, no prefix arm).
+
+**A second mechanism in the same family, found later (#2175).** The prefix/fragment arm is not the
+only way a lossy fold does damage: a fold that can EMPTY a string collapses every emptying input into
+one bucket. `normalizeSeriesName` keeps only `[a-z0-9]`, so `'Dozory'` in Cyrillic, CJK titles, `'!!!'`
+and `''` all fold to `''` — and keying a candidate POOL on that puts every non-Latin-script series in
+the library together, which on the bind path becomes a durable cross-series rewrite of
+`books.series_name`. The fix is two arms, always a union and never a mode switch: the normalized
+equivalence class for names whose fold survives, and byte-identical spelling only for names that fold
+to empty (`buildSeriesNameTargets` / `seriesNameMatchesTargets`, `src/server/utils/series-name-targets.ts`).
+
+This is invisible to the degeneracy audit above, which asks what the fold DISCARDS from one title —
+not what two titles collapse ONTO. Any equality or pooling decision built on a lossy fold needs both
+questions asked.
+
+`hardcover-series-resolver.ts` survives this one too, by construction rather than luck: the normalized
+retry is gated on `normalizedName.length > 0`, `searchSeries` falls back to the raw name via
+`normalizedName || opts.seriesName`, and `scoreCandidate` runs a dice coefficient on RAW names behind
+a separate author-overlap gate — so it never compares two empty folds.
 
 ## fs-spy-over-importactual
 
