@@ -404,6 +404,23 @@ ruleTester.run('no-unstamped-match-generation', rule, {
       code: withTrustRoots('const out = stampRow(row, state.generation);'),
       errors: [{ messageId: 'generationNotIdentifier' }],
     },
+    {
+      // An ABSENT generation is not a plain Identifier either. TS2554 also catches this
+      // against today's 2-arity signature, but that is redundant coverage, not a
+      // guarantee — see the rule's note at the guard.
+      name: 'generation omitted entirely',
+      filename: LIBRARY_HOOK,
+      code: withTrustRoots('const out = stampRow(row);'),
+      errors: [{ messageId: 'generationNotIdentifier' }],
+    },
+    {
+      // The two checks are independent: the producer IS at arg-0 of a trusted stampRow, so
+      // it is stamped and `unstamped` must NOT fire — only the missing generation reports.
+      name: 'stamped producer with the generation omitted',
+      filename: LIBRARY_HOOK,
+      code: withTrustRoots('const out = stampRow({ ...r, matchResult: fresh });'),
+      errors: [{ messageId: 'generationNotIdentifier' }],
+    },
 
     // ── AC6 exemption twins: identical source, hook filename ──
     {

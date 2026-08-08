@@ -200,9 +200,14 @@ const rule = {
 
       CallExpression(node) {
         if (isTrustedCallee(node.callee, TRUSTED_STAMP, context)) {
+          // An ABSENT second argument is not a plain Identifier either. TypeScript rejects
+          // `stampRow(row)` as TS2554 today, but that is redundant coverage rather than a
+          // guarantee: give `generation` a default or make it optional and TS goes quiet
+          // while the invariant still needs a guard. Anchor the report on the call when
+          // there is no argument node to point at.
           const generation = node.arguments[1];
-          if (generation && generation.type !== 'Identifier') {
-            context.report({ node: generation, messageId: 'generationNotIdentifier' });
+          if (!generation || generation.type !== 'Identifier') {
+            context.report({ node: generation ?? node, messageId: 'generationNotIdentifier' });
           }
           return;
         }
