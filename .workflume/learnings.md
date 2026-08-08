@@ -275,6 +275,8 @@ it('issues no real network request while rendering the fully-loaded page', async
 
 Two details: await the fully-loaded page or the secondary queries have not fired yet; and type the handle as `MockInstance<typeof globalThis.fetch>` — `ReturnType<typeof vi.spyOn>` loses the generic and trips TS7006 on `.mock.calls`. This is a per-suite audit, not an automatic consequence: `BookDetails.test.tsx` and `BookDetailsContent.test.tsx` use the same shape and were already clean.
 
+**The `vi.mock` family — nothing here is typechecked.** A mock factory's return value is unconstrained by `@types/*`, and this repo's doubles use `inject<T>()` / `as unknown as T`, which erase property checking. Five ways that drifts, each silent until runtime and each in its own entry because they bite different files: the factory does not intercept a same-module call ([[esm-same-module-vi-mock-bypass]]); it omits a schema table and crashes an unrelated suite at import ([[drizzle-schema-toplevel-deref-breaks-partial-mocks]]); it replaces a barrel and drops named exports, or preserves one and leaks real network calls ([[vimock-barrel-replace-drops-named-exports]]); its implementation is an arrow where production uses `new` ([[vifn-arrow-not-constructable]]); or its return SHAPE goes stale behind a compatibility wrapper ([[compat-wrapper-hides-stale-test-doubles]]). Deliberately not merged: the five have disjoint file scopes, so one entry would inject all of it whenever any one file is touched.
+
 ## marker-recovery-is-additive
 
 **source:** #1418  
@@ -286,16 +288,97 @@ Two details: await the fully-loaded page or the secondary queries have not fired
 
 The commit-pending recovery sequence (recoverInterruptedBackup in src/server/utils/import-staging.ts, reached via recoverInterruptedCommit in src/server/utils/recover-interrupted-commit.ts) is ADDITIVE: it renames files from `<target>.import-bak` into the target (overwriting only same-named files), then clears the backup and marker. It never deletes existing target files, so the top-level audio count after recovery is always >= the count before. Do not reason about recovery as 'swapping in' or 'replacing' the target's file set — that's what the #1287 staged swap (stagedAudioReplace/commitStagedImport) does, not bare recovery. Practical effect: a guard that re-checks a minimum-file-count AFTER recovery (e.g. the #1418 merge >=2 re-validation) is correct defense-in-depth but cannot be triggered by the real recovery flow when a pre-recovery validation already enforced that minimum; test such guards by simulating divergent pre/post-recovery readdir results in a mocked-fs suite rather than trying to arrange a real-tmpdir shrink.
 
-## guarded-transition-needs-returning-in-tx-mocks
+## shared-test-double-defaults
 
-**source:** #1470
-**added:** 2026-06-14
-**files:** src/server/services/import-queue-worker.test.ts
-**tags:** drizzle, vitest
+**source:** #1470, #1960, #1975, #2074
+**added:** 2026-07-28
+**files:** src/server/__tests__/helpers.ts, src/server/routes/**/*.test.ts, src/shared/schemas/settings/create-mock-settings.fixtures.ts
+**tags:** test-doubles, vitest, drizzle, test-fixtures
 
 ---
 
-transitionBookStatus (src/server/utils/book-status.ts) and the symmetric transitionDownloadState compile to two different SQL shapes: an UNGUARDED transition is `db.update(t).set(s).where(eq(id))` and is awaited directly; a GUARDED transition (`expected: { status: X }`) is `...where(and(eq(id), eq(status, X))).returning({ id })` and reads `result.length > 0` to learn whether the precondition matched. Consequence for tests: worker/service transaction-spy mocks that build an update terminus as `where: vi.fn().mockResolvedValue({ rowsAffected: 1 })` work for unguarded writes but throw `TypeError: returning is not a function` the moment a write becomes guarded — and that TypeError reads like a behavior failure, not a stale-mock failure. When you add an `expected` guard to any of these transitions, update the test doubles in the same change: give the update terminus a value that is BOTH awaitable AND exposes `.returning()` (see the `updateWhereTerminus()` thenable helper in import-queue-worker.test.ts), and to assert guard semantics use a stateful mock that returns `[{id}]` on match / `[]` on miss keyed off a mutable tracked status (see `makeGuardedTxUpdate`). Rollback mocks that previously threw inside an async `where` must move the throw to `.returning()` for the guarded (books/downloads) write. Discriminate import_jobs writes (payload has `phase`) from book writes (no `phase`). This is broader than #1470's books axis — the downloads axis has the same shape.
+**A shared test double's default value IS production behaviour for every suite that uses it.** Four
+ways that bites here, all of them silent: the suite that breaks is usually not the suite that changed.
+
+**1. `mockDbChain()` returns `[]`, so a guarded write never matches (#2074).**
+`mockDbChain(result = [])` (`src/server/__tests__/helpers.ts:248`) hands back an EMPTY array by
+default. A guarded write — `db.update(t).set(s).where(and(eq(id), <precondition>)).returning({ id })`
+branching on `rows.length === 0` — therefore ALWAYS takes the not-matched arm under a no-arg
+`db.update.mockReturnValue(mockDbChain())`. Invisible whenever the production code's success
+bookkeeping (counters, `log.info`) runs regardless of the guard's outcome.
+
+`enrichment.ts` before #2069 was the worst version: `applyScalarWrite` returned a boolean meaning "a
+unique-constraint race was recovered, `continue`", NOT "the write applied" — its own doc comment read
+*"Returns false on the normal path (including a scalar stale-drop) so the caller falls through to the
+success log."* The zero-row case logged at `debug` and returned `false`, structurally
+indistinguishable from success, and the caller then ran `enrichedCount++` plus `'Book enriched
+successfully'`. 36 tests asserted that log line against a write that had matched nothing; all 36 went
+red once the guard's outcome gated the bookkeeping.
+
+- A test whose subject is the SUCCESS path of a guarded write must seed a matching row: `mockDbChain([{ id: 1 }])`.
+- Reserve `mockDbChain([])` for tests where the stale drop IS the assertion, and write the `[]` explicitly so the intent is on the page (`enrichment.test.ts:1168+`).
+- When a write GAINS a precondition, grep the suite for no-arg `mockDbChain()` on `update`/`delete` stubs in the same change — the default silently flips every one of those to the drop path. Latent today in `discovery.service.test.ts`, `secret-migration.test.ts`, `blacklist.service.test.ts`.
+- Never let a guarded write report through a boolean whose `false` is shared by "didn't match" and "nothing to report". Return a discriminated outcome and switch on it — the shipped fix is `EnrichmentWriteOutcome = 'applied' | 'stale' | 'unique-conflict'` with `if (written.outcome !== 'applied') continue;`. That is what turns this class from silent to loud.
+
+**2. A guarded transition needs `.returning()` on the terminus (#1470).** `transitionBookStatus`
+(`src/server/utils/book-status.ts`) and the symmetric `transitionDownloadState` compile to two
+different SQL shapes. UNGUARDED is `db.update(t).set(s).where(eq(id))`, awaited directly. GUARDED
+(`expected: { status: X }`) is `...where(and(eq(id), eq(status, X))).returning({ id })` and reads
+`result.length > 0` to learn whether the precondition matched. So a transaction-spy mock building the
+terminus as `where: vi.fn().mockResolvedValue({ rowsAffected: 1 })` works for unguarded writes and
+throws `TypeError: returning is not a function` the moment a write becomes guarded — and that
+TypeError reads like a behaviour failure, not a stale-mock failure.
+
+When you add an `expected` guard, update the doubles in the same change: give the terminus a value
+that is BOTH awaitable AND exposes `.returning()` (the `updateWhereTerminus()` thenable in
+`import-queue-worker.test.ts`), and to assert guard semantics use a stateful mock returning `[{id}]`
+on match / `[]` on miss keyed off a mutable tracked status (`makeGuardedTxUpdate`). Rollback mocks
+that threw inside an async `where` must move the throw to `.returning()`. Discriminate `import_jobs`
+writes (payload has `phase`) from book writes (no `phase`). The downloads axis has the same shape.
+
+*Distinct from mechanism 1:* there `.returning()` exists and resolves, the write just never matched;
+here it is ABSENT and throws.
+
+**3. `createMockServices` defaults every unconfigured method to a REJECTING `vi.fn()` (#1960).**
+`createMockServices` / `resetMockServices` (`helpers.ts:348-417`) give every unconfigured service
+method `vi.fn().mockRejectedValue(new Error('mock not configured: <svc>.<method>'))`. That default is
+deliberate and good — an awaited-but-unconfigured method fails loudly instead of returning
+`undefined`. But it means **adding a new service call to a SHARED route retroactively changes the
+behaviour of every pre-existing test in that route's suite**, two ways:
+
+- **Awaited read → unexplained 500.** Adding `await settingsService.get('library')` ahead of the write in `PUT /api/settings` made every existing PUT test 500. Fix: add a category-resolving default in `beforeEach`, AFTER `resetMockServices(services)` (which re-applies the rejecting default).
+- **Fire-and-forget call → an extra `warn` record.** `fireAndForget` catches the rejection and logs at `warn`, so any test asserting `expect(mockLog.spies.warn).toHaveBeenCalledTimes(1)` — the route-boundary-record convention — now sees 2. Fix: `mockResolvedValue(undefined)` for the new method in `beforeEach`; keep the rejection opt-in for the isolation test that wants it.
+
+Mode 2 is the harder diagnosis: the failing assertion is about a completely unrelated log record and
+the error says nothing about the new call. **Checklist when adding a service call to a shared route:**
+grep that route's suite for (a) warn/error call-count assertions and (b) tests asserting a 2xx without
+configuring the new dependency.
+
+**4. `createMockDb`'s single `select` stub must be split by PROJECTION, not call order (#1975).** When
+a route issues two `db.select` calls per request, discriminate by the projection argument:
+`resolveByPublicId` (`src/server/utils/public-id.ts:47`) calls `db.select({ id: t.id })` with a
+projection; repository free functions like `findCompanionEbook` call `x.select()` with none.
+
+```ts
+db.select.mockImplementation((projection?: unknown) =>
+  projection === undefined ? mockDbChain([observationRow]) : mockDbChain([{ id: rowid }]),
+);
+```
+
+Stateless, so it holds however many requests a test issues. Both order-based alternatives break:
+`mockReturnValueOnce` queues survive `vi.clearAllMocks()` and leak into the next test
+([[vitest-clearallmocks-once-queue]]), and a call-index counter desynchronises the moment a test sends
+a second request — which is every concurrency test. Reference: `setDb()` in
+`src/server/routes/v1/companion-ebook.test.ts`, used by tests issuing up to 5 concurrent requests.
+Applies to any v1 route that resolves a publicId then reads a second table.
+
+**5. A fixture factory built on a shared default must DEEP-clone it.** The mock-settings factory
+deep-clones `DEFAULT_SETTINGS` via `structuredClone` so a test mutating the returned object cannot
+pollute the shared default for later tests. A shallow `{ ...obj }` shares nested references and leaks
+mutations across tests.
+
+All five are instances of [[vacuous-assertion-observation-points]] — the observable could not see the
+property the test claimed to prove.
 
 ## zod-type-provider-send-union-narrowing
 
@@ -330,15 +413,39 @@ fastify-type-provider-zod types FastifyReply.send() as the union of the schemas 
 
 React runs child effects before parent effects. If a child form component applies RHF setError() in a mount effect (e.g. mapping server test `fieldErrors` onto nested `settings.*` inputs) while the parent component resets the same form via form.reset() in its own mount effect, the parent reset wipes the child's errors because it runs second. This is invisible in production (the failing test result arrives after a user click, long after mount, so reset() has already run and its deps don't change), but it breaks component tests that pass the failing result as an initial prop. Fix in tests: deliver the result AFTER mount via a small stateful wrapper that setStates it in a useEffect, mirroring the real click-driven flow — do not pass it at initial render. Applies to any entity-edit card that pairs a parent reset() effect with child-applied field errors (currently ConnectorCard; the indexer/download-client/notifier cards would hit the same trap if they add fieldError mapping). See src/client/components/settings/ConnectorCard.test.tsx.
 
-## sqlite-null-unique-index
+## sqlite-libsql-engine-facts
 
+**source:** #1736
 **added:** 2026-06-17
-**files:** src/db/schema.ts, drizzle/**
-**tags:** sqlite, drizzle, migrations
+**files:** src/db/schema.ts, src/db/client.ts, drizzle/**, src/server/services/blacklist.service.ts, src/server/services/discovery.service.ts
+**tags:** sqlite, libsql, drizzle, migrations
 
 ---
 
-In SQLite, NULL ≠ NULL inside a UNIQUE index — a nullable column does NOT prevent duplicate rows where that column is NULL. Don't rely on a unique constraint over a nullable column to dedupe; populate the column before insert, or add a service-layer dedupe guard. (Surfaced during the publicId work, where a nullable unique column silently allowed dupes at the migration boundary.)
+Engine behaviours that differ from what the schema or the docs imply.
+
+**Foreign keys are ON by default under libSQL — the opposite of vanilla SQLite (#1736).**
+`@libsql/client` (`src/db/client.ts` `createDb`) enables `PRAGMA foreign_keys` itself; a fresh
+connection returns `foreign_keys=1` even though nothing in the codebase sets it. Verified empirically.
+Three consequences. (1) Every `onDelete: 'set null' | 'cascade'` clause in `src/db/schema.ts` is
+enforced at runtime — deleting a `books` row nulls `import_jobs.book_id` / `book_events.book_id` and
+cascade-deletes `book_authors` / `book_narrators`, which is why `BookService.delete` deletes only the
+`books` row and code can rely on FK set-null instead of manually nulling linkage columns. (2)
+Inserting a child row referencing an already-deleted parent throws, so mind write ordering — record an
+event with `bookId: null` after deleting the book, never the dead id. (3) Real-DB tests via
+`createDb`/`runMigrations` enforce FKs the same way. Do not add a `PRAGMA foreign_keys=ON` thinking it
+is missing, and do not assume schema FK clauses are inert.
+
+**NULL ≠ NULL inside a UNIQUE index.** A nullable column does NOT prevent duplicate rows where that
+column is NULL, so a unique constraint over a nullable column will not dedupe. Populate the column
+before insert, or add a service-layer guard. Surfaced during the publicId work, where a nullable
+unique column silently allowed dupes at the migration boundary.
+
+**Bound-parameter cap applies to the WHOLE statement.** When building a dynamic `IN (...)` query,
+chunk to stay under the cap and count ALL bound params — the WHERE clause AND the IN list, not just
+the list length. The old "999" figure is stale; modern SQLite (≥ 3.32) and libSQL set
+`SQLITE_MAX_VARIABLE_NUMBER` to 32766. The failure mode is unchanged: exceed it and the statement
+errors at runtime.
 
 ## drizzle-enum-type-derivation
 
@@ -350,45 +457,29 @@ In SQLite, NULL ≠ NULL inside a UNIQUE index — a nullable column does NOT pr
 
 Drizzle widens enum columns to `string` at the TS boundary. On READ, `typeof table.$inferSelect` re-widens enum columns — do NOT redeclare `type FooRow = typeof foos.$inferSelect` per file; import the canonical narrowed Row type from `src/server/services/types.ts` (`BookRow`, `DownloadRow`, `IndexerRow`, `BookEventRow`, etc.). A hand-rolled DB-shaped type that types an enum column as `string` is the same anti-pattern in different syntax — import the canonical type instead. On WRITE/derive, get the narrow union from `NonNullable<typeof table.$inferInsert['col']>`, never bare `string`.
 
-## sqlite-in-clause-bind-limit
+## zod-field-authoring
 
+**source:** —
 **added:** 2026-06-17
-**files:** src/server/services/blacklist.service.ts, src/server/services/discovery.service.ts
-**tags:** sqlite, libsql
-
----
-
-When building a dynamic `IN (...)` query, chunk to stay under SQLite's bound-parameter cap and account for ALL bound params in the statement (the WHERE clause AND the IN list), not just the list length. The old "999" figure is stale — modern SQLite (≥ 3.32) / libSQL set `SQLITE_MAX_VARIABLE_NUMBER` to 32766 — but the failure mode is the same: exceed it and the statement errors at runtime. Count every placeholder when sizing chunks.
-
-## zod-nullish-external-api
-
-**added:** 2026-06-17
-**files:** src/core/indexers/**, src/core/metadata/**, src/core/import-lists/**
+**files:** src/shared/schemas/**, src/core/indexers/**, src/core/metadata/**, src/core/import-lists/**
 **tags:** zod, indexers
 
 ---
 
-`z.string().optional()` accepts `undefined` but REJECTS `null` (zod v4: "Invalid input: expected string, received null"). Real external APIs (NYT, Audible, ABS, Hardcover, MAM, Audnexus) return `null` for absent values, so ANY field parsed from an external response must use `.nullish()` (accepts both null and undefined). Reserve `.optional()` for schemas we own (request validators, DB-derived shapes, form data, settings) where we control the contract.
+Three field-level traps, each one where the obvious modifier does not do what its name suggests.
 
-## zod-default-ignores-empty-string
+**`.default()` does not coalesce empty strings.** `z.string().default('x')` applies the default only
+for `undefined`; an empty string `''` passes through unchanged. To coalesce empty or whitespace input,
+use `.transform(v => v || default)` (trim first if needed), not `.default()`.
 
-**added:** 2026-06-17
-**files:** src/shared/schemas/**
-**tags:** zod
+**`.min(1)` accepts whitespace.** `z.string().min(1)` accepts `'   '`. For user-facing text fields use
+`.trim().min(1)` so a spaces-only value is rejected.
 
----
-
-`z.string().default('x')` only applies the default for `undefined` — an empty string `''` passes through unchanged. To coalesce empty/whitespace input to a default, use `.transform(v => v || default)` (trim first if needed), not `.default()`.
-
-## zod-trim-min-one
-
-**added:** 2026-06-17
-**files:** src/shared/schemas/**
-**tags:** zod
-
----
-
-`z.string().min(1)` accepts `'   '` (whitespace-only). For user-facing text fields use `.trim().min(1)` so a spaces-only value is rejected.
+**`.optional()` rejects `null`.** It accepts `undefined` but rejects `null` (zod v4: *"Invalid input:
+expected string, received null"*). Real external APIs — NYT, Audible, ABS, Hardcover, MAM, Audnexus —
+return `null` for absent values, so ANY field parsed from an external response must use `.nullish()`,
+which accepts both. Reserve `.optional()` for schemas we own (request validators, DB-derived shapes,
+form data, settings) where we control the contract.
 
 ## zod-resolver-effects-divergence
 
@@ -582,16 +673,6 @@ When parsing a format with a variable field count, check the MOST specific shape
 
 "Older than N days" means strictly-less-than: use `lt`, not `lte`, on the cutoff timestamp. `lte` includes the boundary day and deletes one day too much.
 
-## mock-settings-deep-clone
-
-**added:** 2026-06-17
-**files:** src/shared/schemas/settings/create-mock-settings.fixtures.ts
-**tags:** test-fixtures, settings
-
----
-
-The mock-settings factory deep-clones `DEFAULT_SETTINGS` (via `structuredClone`) so a test mutating the returned object can't pollute the shared default for later tests. Any new factory built off a shared default object must deep-clone it — a shallow `{ ...obj }` shares nested references and leaks mutations across tests.
-
 ## vitest-clearallmocks-once-queue
 
 **added:** 2026-06-17
@@ -619,6 +700,8 @@ A full `vi.useFakeTimers()` deadlocks TanStack Query's internal `setTimeout`. In
 ---
 
 When an exported function calls another exported function from the SAME module (e.g. `fetchWithSsrfRedirect` → `fetchWithOptionalDispatcher` in `network-service.ts`), the inner call uses the local binding, not the module's export — so a `vi.mock` factory overriding the inner export will NOT intercept it (only external callers see the override). Workarounds, in order of preference: (1) mock at the OS boundary (`node:dns/promises`, `node:fs/promises`, `vi.stubGlobal('fetch', ...)`); (2) stub the entry point itself, not its inner deps; (3) replace the entry-point implementation in the mock factory. Do NOT add `__internal` indirection to production code just to enable mocking.
+
+**The `vi.mock` family — nothing here is typechecked.** A mock factory's return value is unconstrained by `@types/*`, and this repo's doubles use `inject<T>()` / `as unknown as T`, which erase property checking. Five ways that drifts, each silent until runtime and each in its own entry because they bite different files: the factory does not intercept a same-module call ([[esm-same-module-vi-mock-bypass]]); it omits a schema table and crashes an unrelated suite at import ([[drizzle-schema-toplevel-deref-breaks-partial-mocks]]); it replaces a barrel and drops named exports, or preserves one and leaks real network calls ([[vimock-barrel-replace-drops-named-exports]]); its implementation is an arrow where production uses `new` ([[vifn-arrow-not-constructable]]); or its return SHAPE goes stale behind a compatibility wrapper ([[compat-wrapper-hides-stale-test-doubles]]). Deliberately not merged: the five have disjoint file scopes, so one entry would inject all of it whenever any one file is touched.
 
 ## serialize-error-catch-binding-tracing
 
@@ -676,17 +759,6 @@ music-metadata's `common` (ICommonTagsResult) returns these as `string[]` — re
 
 **Note (triage-verified, #1804):** there is also a deliberate normalization home the grep-guard does not catch — the library list-sort path re-expresses the same conversion in SQL as `${books.duration} * 60` at `src/server/services/book-list.service.ts:355` (a Drizzle order-by can't call the JS helper), and it's DRY-3-commented there. The guard counts only the JS `duration * 60` literals; the SQL twin is expected and must be kept in sync with the helper's precedence.
 
-## libsql-foreign-keys-on-by-default
-
-**source:** #1736
-**added:** 2026-06-30
-**files:** src/db/client.ts, src/db/schema.ts
-**tags:** libsql, sqlite, drizzle
-
----
-
-`@libsql/client` (used in `src/db/client.ts` `createDb`) enables `PRAGMA foreign_keys` by default — a fresh connection returns `foreign_keys=1` even though nothing in the codebase sets the pragma. This is the OPPOSITE of vanilla SQLite, which defaults FK enforcement OFF. Verified empirically. Implications: (1) every `onDelete: 'set null' | 'cascade'` clause in `src/db/schema.ts` is enforced at runtime — deleting a `books` row nulls `import_jobs.book_id`/`book_events.book_id` and cascade-deletes `book_authors`/`book_narrators`, which is why `BookService.delete` only deletes the `books` row and code can rely on FK set-null rather than manually nulling linkage columns (#1736); (2) inserting a child row that references an already-deleted parent throws a FK violation, so mind write ordering (e.g. record an event with `bookId: null` after deleting the book, never the dead id); (3) real-DB tests via `createDb`/`runMigrations` enforce FKs the same way. Don't add a `PRAGMA foreign_keys=ON` thinking it's missing, and don't assume schema FK clauses are inert.
-
 ## new-books-column-breaks-inline-fixtures
 
 **source:** #1711
@@ -731,7 +803,9 @@ Per-adapter settings schemas that must emit ONLY the effective type's own keys (
 
 ---
 
-A module-level constant that dereferences Drizzle schema columns (e.g. `const PROJ = { disposition: importSubmissionItems.disposition }`) is evaluated at import time. Any suite that `vi.mock`s `db/schema` with a partial factory omitting that table will then crash on load of ANY module in the import graph — the error is `No "<table>" export is defined on the "@db/schema.js" mock` (the specifier follows however the suite mocks it — `@db/schema.js` post-alias-conversion), thrown from the const's line, not from the test. Existing services avoid this by only referencing tables inside method bodies (evaluated at call time). Build such column projections lazily (a function returning the object, called at query time). Symptom is invisible to typecheck and to the module's own focused tests; it only appears when an unrelated suite that partial-mocks the schema pulls the module into its graph — so validate with the full `vitest run`, not just the changed files. Seen: top-level `REPORT_ITEM_PROJECTION` in import-submission-report.service.ts vs the partial db/schema mock in tagging.service.test.ts (#1894). Related: vimock-barrel-replace-drops-named-exports.
+A module-level constant that dereferences Drizzle schema columns (e.g. `const PROJ = { disposition: importSubmissionItems.disposition }`) is evaluated at import time. Any suite that `vi.mock`s `db/schema` with a partial factory omitting that table will then crash on load of ANY module in the import graph — the error is `No "<table>" export is defined on the "@db/schema.js" mock` (the specifier follows however the suite mocks it — `@db/schema.js` post-alias-conversion), thrown from the const's line, not from the test. Existing services avoid this by only referencing tables inside method bodies (evaluated at call time). Build such column projections lazily (a function returning the object, called at query time). Symptom is invisible to typecheck and to the module's own focused tests; it only appears when an unrelated suite that partial-mocks the schema pulls the module into its graph — so validate with the full `vitest run`, not just the changed files. Seen: top-level `REPORT_ITEM_PROJECTION` in import-submission-report.service.ts vs the partial db/schema mock in tagging.service.test.ts (#1894).
+
+**The `vi.mock` family — nothing here is typechecked.** A mock factory's return value is unconstrained by `@types/*`, and this repo's doubles use `inject<T>()` / `as unknown as T`, which erase property checking. Five ways that drifts, each silent until runtime and each in its own entry because they bite different files: the factory does not intercept a same-module call ([[esm-same-module-vi-mock-bypass]]); it omits a schema table and crashes an unrelated suite at import ([[drizzle-schema-toplevel-deref-breaks-partial-mocks]]); it replaces a barrel and drops named exports, or preserves one and leaks real network calls ([[vimock-barrel-replace-drops-named-exports]]); its implementation is an arrow where production uses `new` ([[vifn-arrow-not-constructable]]); or its return SHAPE goes stale behind a compatibility wrapper ([[compat-wrapper-hides-stale-test-doubles]]). Deliberately not merged: the five have disjoint file scopes, so one entry would inject all of it whenever any one file is touched.
 
 ## react-query-mutation-callbacks-post-unmount
 
@@ -772,7 +846,7 @@ Any adapter whose outcome gets CACHED must classify the response deliberately; t
 - **Split at the body boundary.** `fetchWithTimeout` returns the Response with its `AbortSignal.timeout` still attached, so the body stream can reject after headers. `response.json()` reads AND parses in one call, conflating 'the exchange never completed' with 'the body arrived and is garbage'. Do `await response.text()` (rejection → transient) then `JSON.parse` (failure → invalid-record).
 - **Bytes arriving is not authority.** This boundary explicitly expects HTML interstitials, rate-limit pages, and upstream shape changes. If the cached verdict is about a specific entity, require an identity predicate (`body.asin === requestedAsin`) AND a shape predicate (the expected collection is present) — an OR admits both wrong-entity records and error envelopes.
 
-Reference implementation and full status/body test matrix: `AudnexusProvider.getChapterRuntime` / `classifyChapterBody` in src/core/metadata/audnexus.ts, tests in audnexus.test.ts ('getChapterRuntime — chapter-runtime adapter (#1942)'). Related: zod-nullish-external-api (optional external fields alone cannot prove a record is genuine).
+Reference implementation and full status/body test matrix: `AudnexusProvider.getChapterRuntime` / `classifyChapterBody` in src/core/metadata/audnexus.ts, tests in audnexus.test.ts ('getChapterRuntime — chapter-runtime adapter (#1942)'). Related: [[zod-field-authoring]] (optional external fields alone cannot prove a record is genuine).
 
 ## windows-hostile-test-primitives
 
@@ -883,7 +957,7 @@ a false positive unless lint actually fires.
 
 ## vacuous-assertion-observation-points
 
-**source:** #1992, #1993, #2002, #2012, #2017, #2020, #2032, #2082
+**source:** #1992, #1993, #2002, #2012, #2020, #2032, #2017, #2082
 **added:** 2026-07-28
 **files:** src/**/*.test.ts, src/**/*.test.tsx
 **tags:** mutation-testing, test-observability
@@ -893,62 +967,20 @@ a false positive unless lint actually fires.
 **An assertion is only as strong as its observation point.** One slate produced this defect seven
 times in seven different media, every time with a green pre-existing test: the observable the test
 watched could not see the property the test claimed to prove, so it passed against broken production
-code. Seven shapes, one entry, because the fix is always the same — change what you watch.
+code.
 
 **The closing step is non-negotiable: reproduce the counterfactual.** Break production exactly as the
 assertion claims to prevent, and confirm the new test fails while the pre-existing ones stay green.
 If the old tests also fail, the new one may be redundant. If nothing fails, the test proves nothing.
-(When nothing reds, suspect a redundant production path before blaming the observable — see
-[[symmetric-mutation-cannot-observe-shared-derivation]] arm B.)
+When nothing reds, suspect a redundant production path before blaming the observable — see
+[[symmetric-mutation-cannot-observe-shared-derivation]] arm B.
 
-**1. Issuance ≠ persistence (#2017, #2082).** A Drizzle chain mock's `where()` body runs
-SYNCHRONOUSLY as the statement is built, so tracing inside it records when the write was *issued* —
-drop the `await` on the caller and the trace is unchanged. Gate the terminus instead, and it must be
-both awaitable and `.returning()`-capable ([[guarded-transition-needs-returning-in-tx-mocks]]):
+The seven shapes. Four are medium-specific and live in the two entries below, scoped so they only
+reach the dispatches they apply to; three cannot be narrowed by path and stay here.
 
-```ts
-const settle = () => gate.then(() => { trace.push('persisted'); });
-return {
-  then: (res, rej) => settle().then(() => ({ rowsAffected: 1 })).then(res, rej),
-  returning: vi.fn().mockImplementation(() => settle().then(() => [{ id: 1 }])),
-};
-```
-
-Then: await issuance → assert the follow-up has NOT started → release → assert it has. Three
-siblings. Call counts are **order-blind** (`3 renames, 1 sweep` reads the same whichever ran first —
-hold the final iteration pending instead). **Hard-coded post-state** reports the post-condition
-regardless of when the dependent code ran — use one shared mutable state object that the production
-write itself advances, and make the pre-condition genuinely able to fail. And a payload-only `set()`
-assertion **misses the WHERE**: capture `setMock.mock.results[0].value.where`, so the filter half of
-the write is asserted too.
-
-**2. react-query holds the error until the retry ladder ends (#2020).** TanStack Query v5 keeps a
-failed fetch in `failureReason`/`failureCount` and promotes it to `state.error` only once retries are
-exhausted, so a test waiting on the fetch mock's CALL COUNT asserts before the error exists — it
-passed for two different wrong error-path implementations. Watch the query state, not the mock:
-`waitFor(() => expect(client.getQueryState(key)?.status).toBe('error'))`. Easy to miss because
-`renderWithProviders` sets `retry: false` but a QUERY-level `retry` predicate overrides it. Pass
-`retryDelay: 0` to keep it fast — that changes how long a retry waits, never whether one happens.
-`failureCount` starts at 0 against a default of three retries, so `failureCount < 3` yields FOUR
-requests.
-
-**3. Route-level status flattening masks guard removal (#2032).** Where routes collapse every
-rejection into one response on purpose (a bare 404, a single `UNAVAILABLE_BODY`) — because the
-distinction would leak an existence oracle — a route-status assertion **cannot attribute a red to a
-specific guard**, and stays green after that guard is deleted. Three such mutations were verified
-green-under-removal. Two observables that work: assert the persisted `validationCode` (poll the state
-endpoint until it settles; seed a deliberately stale `mtimeMs`/`ctimeMs` or the unchanged-check
-short-circuits first), or make the fixture valid on every other axis so removing the guard yields a
-200 rather than a differently-caused 404. Pick the observable BEFORE writing the fixture — a fixture
-that trips a second guard identically is indistinguishable from one that trips the intended guard.
-
-**4. A same-turn `stop()` test must gate PRE-lock setup (#2012).** Per-book methods register their run
-promise synchronously before the first `await`, and `stop()` drains that set — but every locked pass
-also re-checks `stopping` as its first statement inside the lock. So gating a collaborator called
-*inside* the lock is vacuous: the gate never fires and the assertion fails against CORRECT code. Park
-the run on its pre-lock setup instead, which leaves it observable only through the registration —
-precisely the property under test. The complementary gated-in-flight case proves a different half;
-neither substitutes for the other.
+- *Issuance ≠ persistence*, *route-status flattening hides a deleted guard*, *a same-turn `stop()`
+  test must gate PRE-lock setup* → [[observation-points-server-writes-and-routes]]
+- *react-query withholds the error until the retry ladder ends* → [[observation-points-react-query-error-state]]
 
 **5. Aborting a Transform discards already-pushed chunks (#1992).** `callback(err)` inside
 `_transform` destroys the stream and drops chunks it had `push()`ed but the consumer had not pulled.
@@ -978,6 +1010,81 @@ is legitimately in file order, so a suite using both must keep the two orderings
 Related: [[serialize-error-catch-binding-tracing]] carries the logging instance;
 [[react-query-optimistic-cancel]] the `invalidateQueries` instance;
 [[migrated-db-assertions-through-drizzle]] the ORM-vs-DDL instance.
+
+## observation-points-server-writes-and-routes
+
+**source:** #2012, #2017, #2032, #2082
+**added:** 2026-07-28
+**files:** src/server/**/*.test.ts
+**tags:** drizzle, test-doubles, test-observability, fastify
+
+---
+
+The server-side arms of [[vacuous-assertion-observation-points]] — read that entry's rule first; this
+one carries the three mechanisms that only bite server suites.
+
+**1. Issuance ≠ persistence (#2017, #2082).** A Drizzle chain mock's `where()` body runs
+SYNCHRONOUSLY as the statement is built, so tracing inside it records when the write was *issued* —
+drop the `await` on the caller and the trace is unchanged. Gate the terminus instead, and it must be
+both awaitable and `.returning()`-capable ([[shared-test-double-defaults]]):
+
+```ts
+const settle = () => gate.then(() => { trace.push('persisted'); });
+return {
+  then: (res, rej) => settle().then(() => ({ rowsAffected: 1 })).then(res, rej),
+  returning: vi.fn().mockImplementation(() => settle().then(() => [{ id: 1 }])),
+};
+```
+
+Then: await issuance → assert the follow-up has NOT started → release → assert it has. Three
+siblings. Call counts are **order-blind** (`3 renames, 1 sweep` reads the same whichever ran first —
+hold the final iteration pending instead). **Hard-coded post-state** reports the post-condition
+regardless of when the dependent code ran — use one shared mutable state object that the production
+write itself advances, and make the pre-condition genuinely able to fail. And a payload-only `set()`
+assertion **misses the WHERE**: capture `setMock.mock.results[0].value.where`, so the filter half of
+the write is asserted too.
+
+**3. Route-level status flattening masks guard removal (#2032).** Where routes collapse every
+rejection into one response on purpose (a bare 404, a single `UNAVAILABLE_BODY`) — because the
+distinction would leak an existence oracle — a route-status assertion **cannot attribute a red to a
+specific guard**, and stays green after that guard is deleted. Three such mutations were verified
+green-under-removal. Two observables that work: assert the persisted `validationCode` (poll the state
+endpoint until it settles; seed a deliberately stale `mtimeMs`/`ctimeMs` or the unchanged-check
+short-circuits first), or make the fixture valid on every other axis so removing the guard yields a
+200 rather than a differently-caused 404. Pick the observable BEFORE writing the fixture — a fixture
+that trips a second guard identically is indistinguishable from one that trips the intended guard.
+
+**4. A same-turn `stop()` test must gate PRE-lock setup (#2012).** Per-book methods register their run
+promise synchronously before the first `await`, and `stop()` drains that set — but every locked pass
+also re-checks `stopping` as its first statement inside the lock. So gating a collaborator called
+*inside* the lock is vacuous: the gate never fires and the assertion fails against CORRECT code. Park
+the run on its pre-lock setup instead, which leaves it observable only through the registration —
+precisely the property under test. The complementary gated-in-flight case proves a different half;
+neither substitutes for the other.
+
+## observation-points-react-query-error-state
+
+**source:** #2020
+**added:** 2026-07-28
+**files:** src/client/**/*.test.tsx, src/client/**/*.test.ts
+**tags:** react-query, test-observability
+
+---
+
+The client-side arm of [[vacuous-assertion-observation-points]] — read that entry's rule first.
+
+**react-query holds the error until the retry ladder ends.** TanStack Query v5 keeps a failed fetch in
+`failureReason`/`failureCount` and promotes it to `state.error` only once retries are exhausted, so a
+test waiting on the fetch mock's CALL COUNT asserts before the error exists — it passed for two
+different wrong error-path implementations, including an any-4xx generalisation of a 409-only rule.
+
+Watch the query state, not the mock:
+`await waitFor(() => expect(client.getQueryState(queryKeys.X(id))?.status).toBe('error'))`.
+
+Easy to miss because `renderWithProviders` sets `retry: false`, but a QUERY-level `retry` predicate
+overrides the client default. Pass `retryDelay: 0` to keep the ladder fast — that changes how long a
+retry waits, never whether one happens. `failureCount` starts at 0 against a default of three retries,
+so a `failureCount < 3` predicate yields FOUR requests.
 
 ## epub-stack-type-declaration-gaps
 
@@ -1174,7 +1281,7 @@ Two things that follow:
 inside the losing task, so a service that catches per-item errors reports it as an ordinary item
 failure. The symptom presents as nondeterministic missing writes, not an obvious driver error — reach
 for this explanation whenever a newly-concurrent write path starts dropping records. Related:
-`libsql-foreign-keys-on-by-default`, `guarded-transition-needs-returning-in-tx-mocks`.
+[[sqlite-libsql-engine-facts]], [[shared-test-double-defaults]].
 
 ## filehandle-stream-close-ownership
 
@@ -1286,57 +1393,6 @@ Ownership loading/failure is deliberately fail-open (undefined → Add shown); t
 409-with-incumbent verdict is the real duplicate backstop, so a missing hint can never create a
 duplicate.
 
-## shared-test-double-defaults-ripple
-
-**source:** #1960, #1975
-**added:** 2026-07-28
-**files:** src/server/__tests__/helpers.ts
-**tags:** vitest, test-fixtures
-
----
-
-This repo's shared server-test doubles have defaults that bite suites which did not change.
-
-**1. `createMockServices` defaults every unconfigured method to a REJECTING `vi.fn()` (#1960).**
-`createMockServices` / `resetMockServices` (`src/server/__tests__/helpers.ts:348-417`) give every
-unconfigured service method `vi.fn().mockRejectedValue(new Error('mock not configured: <svc>.<method>'))`.
-That default is deliberate and good — an awaited-but-unconfigured method fails loudly instead of
-returning `undefined`. But it means **adding a new service call to a SHARED route retroactively changes
-the behaviour of every pre-existing test in that route's suite**, in one of two ways:
-
-- **Awaited read → unexplained 500.** Adding `await settingsService.get('library')` ahead of the write
-  in `PUT /api/settings` made every existing PUT test return 500. Fix: add a category-resolving default
-  in `beforeEach`, AFTER `resetMockServices(services)` (which re-applies the rejecting default):
-  `(services.settings.get as Mock).mockImplementation((cat: string) => Promise.resolve(mockSettings[cat as keyof typeof mockSettings]))`.
-- **Fire-and-forget call → an extra `warn` record.** `fireAndForget`
-  (`src/server/utils/fire-and-forget.ts:9-10`) catches the rejection and logs it at `warn`. Any test
-  asserting `expect(mockLog.spies.warn).toHaveBeenCalledTimes(1)` — the route-boundary-record
-  convention — now sees 2. Fix: `mockResolvedValue(undefined)` for the new method in `beforeEach`;
-  keep the rejection opt-in for the isolation test that actually wants it.
-
-Mode 2 is the harder diagnosis: the failing assertion is about a completely unrelated log record, and
-the error message says nothing about the new call. **Checklist when adding a service call to a shared
-route:** grep that route's suite for (a) warn/error call-count assertions and (b) tests asserting a 2xx
-without configuring the new dependency.
-
-**2. `createMockDb`'s single `select` stub must be split by PROJECTION, not call order (#1975).** When
-a route issues two `db.select` calls per request, discriminate them by the projection argument:
-`resolveByPublicId` (`src/server/utils/public-id.ts:47`) calls `db.select({ id: t.id })` with a
-projection; repository free functions like `findCompanionEbook` call `x.select()` with none.
-
-```ts
-db.select.mockImplementation((projection?: unknown) =>
-  projection === undefined ? mockDbChain([observationRow]) : mockDbChain([{ id: rowid }]),
-);
-```
-
-This is stateless, so it holds however many requests a single test issues. Both order-based
-alternatives break in practice: `mockReturnValueOnce` queues survive `vi.clearAllMocks()` and leak into
-the next test (`vitest-clearallmocks-once-queue`), and a call-index counter desynchronises the moment a
-test sends a second request — which is every concurrency/saturation test. Reference: `setDb()` in
-`src/server/routes/v1/companion-ebook.test.ts`, used by tests issuing up to 5 concurrent requests.
-Applies to any v1 route that resolves a publicId and then reads a second table.
-
 ## createtestapp-omits-auth-plugin
 
 **source:** #2034  
@@ -1384,6 +1440,8 @@ vi.mock('archiver', () => ({
 
 **Do not treat the rename as done.** Per `vacuous-assertion-observation-points`, the only evidence the double is genuinely constructable is the counterfactual: revert `function ()` to `() =>` and confirm the suite goes red with "is not a constructor" (11 tests, in that suite's case). A double that is never actually driven through `new` by the code under test will stay green either way — and that green is exactly the signal you cannot trust.
 
+**The `vi.mock` family — nothing here is typechecked.** A mock factory's return value is unconstrained by `@types/*`, and this repo's doubles use `inject<T>()` / `as unknown as T`, which erase property checking. Five ways that drifts, each silent until runtime and each in its own entry because they bite different files: the factory does not intercept a same-module call ([[esm-same-module-vi-mock-bypass]]); it omits a schema table and crashes an unrelated suite at import ([[drizzle-schema-toplevel-deref-breaks-partial-mocks]]); it replaces a barrel and drops named exports, or preserves one and leaks real network calls ([[vimock-barrel-replace-drops-named-exports]]); its implementation is an arrow where production uses `new` ([[vifn-arrow-not-constructable]]); or its return SHAPE goes stale behind a compatibility wrapper ([[compat-wrapper-hides-stale-test-doubles]]). Deliberately not merged: the five have disjoint file scopes, so one entry would inject all of it whenever any one file is touched.
+
 ## execfile-mock-dual-callback-shape
 
 **source:** #2071
@@ -1399,70 +1457,94 @@ Getting it wrong is silent, not loud: handing the object form to a raw caller ma
 
 Pattern: dispatch on argv **and** branch the callback shape per arm (`installExecFileDispatcher`, `src/core/utils/audio-processor.test.ts:172-209`, is the reference). Dispatch on the right key: the `show_entries` value alone is ambiguous — `format=duration` is issued by both a promisified caller (`-of default=noprint_wrappers=1:nokey=1`) and a raw one (`-of json`). Every `runFfprobeJson` caller passes `-of json`, so that flag is the reliable positional-vs-object discriminator. Then add a positive assertion that the new probe parsed non-null fields (see `parses the stream probe into non-null technical fields (mock-shape regression)`) — without it a shape regression is indistinguishable from a source set that was genuinely ineligible, which is `vacuous-assertion-observation-points` in a new medium.
 
-## roundtrip-fixture-must-force-the-branch
+## round-trip-fixture-discipline
 
-**source:** #2072
+**source:** #2072, #2081, #2086
 **added:** 2026-08-04
-**files:** src/core/utils/audio-processor.roundtrip.test.ts, src/core/utils/encode-strategy.ts
-**tags:** ffmpeg, round-trip, test-fixtures, mutation-testing
+**files:** src/core/utils/audio-processor.roundtrip.test.ts, src/server/services/tagging.roundtrip.test.ts, src/core/utils/audio-processor.ts, src/core/utils/encode-strategy.ts
+**tags:** ffmpeg, ffprobe, round-trip, test-fixtures
 
 ---
 
-Real-media round-trip tests have two independent failure modes, and reviewers reliably check only one. The familiar one is the observation point (`vacuous-assertion-observation-points`): the test watches something that cannot see the property. The other is the **stimulus**: the fixture is shaped so production takes a *different branch* than the test claims, and the assertion then measures a value the fixture already had.
+Three questions to answer, in this order, before trusting a real-media round-trip assertion: did it
+run at all, did the fixture force the branch you meant, and can the observable see the property.
 
-Concrete instance (#2068). `isCopyEligible` in `src/core/utils/encode-strategy.ts:166-176` selects `-c:a copy` for mp3 output when every source is `.mp3`/`mp3` with a present, set-wide-equal `sampleRate` and `channels` and no usable `config.bitrate` — which is exactly the shape `keepOriginalBitrate` produces. A round-trip case meant to prove 22.05 kHz MP3 legalization built its fixtures with `-c:a libmp3lame` at 22 050 Hz — textbook copy-eligible. `libmp3lame` was never invoked; the `<= 160 kbps` read-back observed the fixture's own rate. The suite passed 8/8, and stayed green when `selectMp3Table` was mutated to always return the MPEG-1 table — the exact regression the case existed to catch.
+**1. Did it run? The suites are capability-gated and skip SILENTLY (#2086).** They do not fail and
+they do not announce themselves in a full-suite summary.
 
-Two defenses, use both:
+| File | Line | Gate |
+|---|---|---|
+| `audio-processor.roundtrip.test.ts` | `:83`, `:330` | `!FFMPEG_PRESENT` (probe: `ffmpeg -version` AND `ffprobe -version`, `:27-37`) |
+| `tagging.roundtrip.test.ts` | `:82` | `!hasFfmpeg8` (the xHE-AAC/USAC floor, #1679) |
+| `tagging.roundtrip.test.ts` | `:212`, `:303` | `!hasAnyFfmpeg` |
 
-1. **Force the branch structurally.** Choose an input that cannot reach the other branch — `pcm_s16le` `.wav` can never copy into mp3, so the run must encode. Prefer this over an input that merely happens to be ineligible today.
-2. **Assert a branch-exclusive side effect.** In this module only the encode path calls `legalize()`, so a chain-step notice (`mp3-table`, `evidence-cap`, `aac-max`, `mp3-table-minimum`) in `ProcessingResult.warnings` is an assertion the copy branch structurally cannot satisfy. Note the near-miss: copy is *not* "always `notices: []`" — a present-but-unusable `config.bitrate` puts an `unusable-target` notice on the copy path — so assert the specific chain step, not merely non-empty warnings. Codec identity works too when the source codec differs from the output (`pcm_s16le` in, `mp3` out).
+Measured with no ffmpeg on PATH: `Test Files 2 skipped (2) / Tests 23 skipped (23)`, **exit 0**. Folded
+into a 6500-test `pnpm verify` that is indistinguishable from having proved something. `verify`
+inherits the caller's PATH, so in an agent container without ffmpeg a green `run-verify` receipt
+carries **zero** evidence for any AC whose proof lives in these files — which is most merge/tag/encode
+issues. GitHub CI is in the same position (the test job installs no ffmpeg); the ffmpeg-8 guarantee
+that IS enforced covers the shipped runtime image only, not the environment vitest runs in. Todd's own
+machine has ffmpeg 8.1 on PATH and executes all 23, which is exactly why the gap is invisible from the
+human side. Before claiming a real-media AC is proved, run the file explicitly and read back the
+EXECUTED count — `Tests N passed` with N > 0, never `N skipped` — and say in the hand-off whether it
+ran. A self-contained static ffmpeg satisfies the probe; the merge suites gate on PRESENCE only, so a
+6.0 static build suffices (the ffmpeg-8 floor is scoped to `tagging.roundtrip.test.ts:82` alone).
 
-**Detection recipe, cheap and decisive:** before trusting a real-media assertion, run the fixture through the decision function directly (`collectSourceEvidence(...)` then `resolveEncodeStrategy(...)` under `pnpm exec tsx`) and print the resolved mode. Then mutate the production rule the test names and confirm *this* test reds. A real-media test that stays green under its own named regression is measuring its fixture, not the code.
+**2. Did the fixture force the branch? (#2072)** The familiar failure is the observation point; the
+other is the **stimulus** — the fixture is shaped so production takes a *different* branch than the
+test claims, and the assertion then measures a value the fixture already had. `isCopyEligible`
+(`encode-strategy.ts:166-176`) selects `-c:a copy` for mp3 output when every source is mp3 with a
+present, set-wide-equal `sampleRate` and `channels` and no usable `config.bitrate` — exactly what
+`keepOriginalBitrate` produces. A case meant to prove 22.05 kHz MP3 legalization built its fixtures
+with `-c:a libmp3lame` at 22 050 Hz, textbook copy-eligible: `libmp3lame` was never invoked, the
+`<= 160 kbps` read-back observed the fixture's own rate, the suite passed 8/8 and stayed green when
+`selectMp3Table` was mutated to always return the MPEG-1 table.
 
-Related fixture trap in the same family: an encoder may silently rewrite your fixture's parameters. `-b:a 8k` at 44.1 kHz does not yield an 8 kbps 44.1 kHz MP3 — LAME clamps (measured on ffmpeg 6.0: 32 kbps, 44 100 Hz retained). Symmetrically, `-b:a 320k` at 22 050 Hz is not rejected but silently re-rated to 160 kbps, which is why the target is snapped to the table before it is emitted. Always probe the fixture you generated rather than trusting the flags you passed it.
+Two defenses, use both. **Force the branch structurally** — `pcm_s16le` `.wav` can never copy into
+mp3, so the run must encode; prefer that over an input that merely happens to be ineligible today.
+**Assert a branch-exclusive side effect** — only the encode path calls `legalize()`, so a chain-step
+notice (`mp3-table`, `evidence-cap`, `aac-max`, `mp3-table-minimum`) is something the copy branch
+structurally cannot satisfy. Note the near-miss: copy is NOT "always `notices: []`" (a
+present-but-unusable `config.bitrate` puts an `unusable-target` notice on the copy path), so assert
+the specific chain step, not merely non-empty warnings. Recipe: run the fixture through the decision
+function directly (`collectSourceEvidence` then `resolveEncodeStrategy` under `pnpm exec tsx`), print
+the resolved mode, then mutate the production rule the test names and confirm THIS test reds.
 
-## mockdbchain-empty-default-masks-guarded-writes
+Related trap: an encoder silently rewrites your fixture's parameters. `-b:a 8k` at 44.1 kHz does not
+yield an 8 kbps file (measured on ffmpeg 6.0: LAME clamps to 32 kbps, 44 100 Hz retained), and
+`-b:a 320k` at 22 050 Hz is silently re-rated to 160 kbps. Always probe the fixture you generated
+rather than trusting the flags you passed it.
 
-**source:** #2074
-**added:** 2026-08-04
-**files:** src/server/__tests__/helpers.ts, src/server/jobs/enrichment.ts, src/server/**/*.test.ts
+**3. Can the observable see it? (#2081)**
 
-**tags:** vitest, drizzle, test-doubles
+*`format=duration` on an m4b cannot see audio truncation.* The MP4 container duration is the max TRACK
+duration, and the chapter text track written via `-map_chapters` spans the full generated timeline
+regardless of what audio was muxed. A merge that maps the wrong audio input (`-map 2:a` instead of
+`-map 0:a`) still reports full length, so a container-level duration assertion passes against exactly
+the defect it claims to prevent. Measured on ffmpeg 6.0 with three 3 s parts: correct output
+`format=duration` 9.024 / `a:0` stream duration 9.023991; truncated output 9.000 / 3.000000. The audio
+stream's own duration is the oracle:
+`ffprobe -v quiet -select_streams a:0 -show_entries stream=duration -of json`. (Production keeps both
+entries distinct: `getFFprobeDuration` vs `getFFprobeStreamDuration`.)
 
----
+*Size the duration tolerance to the encoder's padding and state it as an explicit band.* AAC
+priming/padding is version- and bitrate-dependent: measured 0.024 s under `-c:a copy` but 0.042 s at
+`-b:a 64k` on the same fixture. `toBeCloseTo`'s window is `10**-precision / 2`, so the DEFAULT
+precision 2 is 0.005 — five to eight times tighter than the padding, an instant flake — and precision
+1 leaves 8 ms of headroom a different ffmpeg major will eat. Prefer an explicit
+`> total - 0.5 && < total + 0.5` band: it states the intended tolerance instead of encoding it in a
+precision digit nobody converts correctly, and half a second still separates a 9 s whole from a
+truncated 3 s part.
 
-`mockDbChain(result = [])` (`src/server/__tests__/helpers.ts:248`) hands back an EMPTY array by default.
-A guarded write — `db.update(t).set(s).where(and(eq(id), <precondition>)).returning({ id })` branching on
-`rows.length === 0` — therefore ALWAYS takes the not-matched arm under a no-arg
-`db.update.mockReturnValue(mockDbChain())`. That is invisible whenever the production code's success
-bookkeeping (counters, `log.info`) runs regardless of the guard's outcome.
+*A positional `-t` binds to the NEXT `-i`, not the previous one.*
+`['-f','lavfi','-i','anullsrc=r=44100:cl=mono','-t','6','-i',cover]` applies `-t 6` to the cover and
+leaves `anullsrc` unbounded — the process runs forever and the only symptom is a vitest timeout with
+no error output. Harmless with a single input, fatal the moment a second `-i` appears. Put the
+duration inside the filter: `anullsrc=r=44100:cl=mono:d=6`, `sine=frequency=440:duration=3`,
+`color=c=red:s=64x64:d=1`.
 
-`enrichment.ts` before #2069 was the worst version of this shape: `applyScalarWrite` returned a boolean
-that meant "a unique-constraint race was recovered, `continue`", NOT "the write applied" — its own doc
-comment read *"Returns false on the normal path (including a scalar stale-drop) so the caller falls
-through to the success log."* The zero-row case was logged at `debug` and returned `false`, structurally
-indistinguishable from success, and the caller then ran `enrichedCount++` plus
-`'Book enriched successfully'`. 36 tests in `enrichment.test.ts` asserted that log line against a write
-that had matched nothing; all 36 went red the moment the guard's outcome started gating the bookkeeping.
-
-Rules:
-- Any test whose subject is the SUCCESS path of a guarded write must seed a matching row:
-  `mockDbChain([{ id: 1 }])`.
-- Reserve `mockDbChain([])` for tests where the stale drop IS the assertion; write the `[]` explicitly so
-  the intent is on the page (see `enrichment.test.ts:1168+`).
-- When a write GAINS a precondition, grep the suite for no-arg `mockDbChain()` on `update`/`delete` stubs
-  in the same change — the default silently flips every one of those tests to the drop path. Latent today
-  in `discovery.service.test.ts`, `secret-migration.test.ts`, `blacklist.service.test.ts`.
-- Never let a guarded write report through a boolean whose `false` is shared by "didn't match" and
-  "nothing to report". Return a discriminated outcome and make the caller switch on it — the shipped fix
-  is `EnrichmentWriteOutcome = 'applied' | 'stale' | 'unique-conflict'` (`src/server/jobs/enrichment.ts:141`)
-  with `if (written.outcome !== 'applied') continue;` (`:490`). That is what turns this class of bug from
-  silent to loud.
-
-Distinct from `guarded-transition-needs-returning-in-tx-mocks`, where `.returning()` is ABSENT and throws
-a TypeError. Here it exists and resolves — the write just never matched. Instance of the general failure in
-`vacuous-assertion-observation-points`: the observable (an unconditional log line) could not see the
-property the test claimed to prove.
+Related: [[vacuous-assertion-observation-points]] (the general form), [[ffprobe-mm-disjoint-duration-lies]]
+(the production-scanner duration lie, a different mechanism).
 
 ## json-parse-error-echoes-source
 
@@ -1516,50 +1598,6 @@ if (committed.genresWritten) {
 
 **Testing.** Assert ordering against the TRANSACTION'S RESOLUTION, never statement issuance: `db.transaction.mockImplementation(async (cb) => { const r = await cb(db); order.push('tx-committed'); return r })` then expect `['tx-committed', 'effect']` (`src/server/jobs/enrichment.test.ts:1743-1761`). Pair each positive control with a rollback negative whose failure lands AFTER the effect-producing write was issued — a rollback that never reaches the write cannot distinguish a deferred effect from a pre-commit one. Prefer observing the committed artifact (the actual table row) over a call on a mock. Related: [[libsql-transactions-serialized-at-the-connection]], [[vacuous-assertion-observation-points]] (§1, issuance ≠ persistence).
 
-## m4b-duration-observation-point-and-lavfi-arg-order
-
-**source:** #2081
-**added:** 2026-08-04
-**files:** src/core/utils/audio-processor.roundtrip.test.ts, src/server/services/tagging.roundtrip.test.ts, src/core/utils/audio-processor.ts
-**tags:** ffmpeg, ffprobe, round-trip, test-observability
-
----
-
-Three traps when writing real-ffmpeg round-trip fixtures (all hit in #2078).
-
-**1. `format=duration` on an m4b cannot see audio truncation.** The MP4 container duration is the max TRACK duration, and the chapter text track written via `-map_chapters` (`src/core/utils/audio-processor.ts:345`) spans the full generated timeline regardless of what audio was muxed. A merge that maps the wrong audio input (`-map 2:a` instead of the correct `-map 0:a` at `audio-processor.ts:328`) still reports the full length, so a container-level duration assertion passes against exactly the defect it claims to prevent. Measured on ffmpeg 6.0 with three 3 s parts: correct output `format=duration` 9.024 / `a:0` stream duration 9.023991; truncated output `format=duration` 9.000 / `a:0` stream duration 3.000000. The audio stream's own duration is the oracle: `ffprobe -v quiet -select_streams a:0 -show_entries stream=duration -of json`. See `audioStreamDuration()` and `expectFullBookDuration()` in `src/core/utils/audio-processor.roundtrip.test.ts`. (Production already keeps both entries distinct: `getFFprobeDuration` vs `getFFprobeStreamDuration` in `src/core/utils/audio-probe.ts`.)
-
-**2. Size the duration tolerance to the encoder's padding, and state it as an explicit band.** AAC priming/padding is version- and bitrate-dependent: measured 0.024 s under `-c:a copy` but 0.042 s at `-b:a 64k` on the same fixture. `toBeCloseTo`'s window is `10**-precision / 2` (verified in `@vitest/expect`), so the DEFAULT precision 2 is 0.005 — five to eight times tighter than the padding, an instant flake — and precision 1 is 0.05, leaving 8 ms of headroom that a different ffmpeg major will eat. Precision 0 happens to be 0.5, i.e. the same window as the explicit `> total - 0.5 && < total + 0.5` band the suite uses; prefer the explicit band anyway, because it states the intended tolerance instead of encoding it in a precision digit nobody converts correctly. Half a second still separates a 9 s whole from a truncated 3 s part by a factor no assertion can confuse.
-
-**3. A positional `-t` binds to the NEXT `-i`, not the previous one.** `['-f','lavfi','-i','anullsrc=r=44100:cl=mono','-t','6','-i',cover]` applies `-t 6` to the cover input and leaves `anullsrc` unbounded — the process runs forever and the only symptom is a vitest timeout with no error output. Harmless with a single input (see `tagging.roundtrip.test.ts:95,101`), fatal the moment a second `-i` is added. Put the duration inside the filter instead: `anullsrc=r=44100:cl=mono:d=6`, `sine=frequency=440:duration=3`, `color=c=red:s=64x64:d=1` — the form every multi-input fixture in both round-trip suites now uses.
-
-Related: `vacuous-assertion-observation-points` (the general form — an assertion is only as strong as its observation point), `ffprobe-mm-disjoint-duration-lies` (the production-scanner duration lie, a different mechanism), and #2072 for the copy-vs-encode branch-selection trap in the same suites.
-
-## ffmpeg-gated-roundtrip-suites-skip-silently
-
-**source:** #2086
-**added:** 2026-08-04
-**files:** src/core/utils/audio-processor.roundtrip.test.ts, src/server/services/tagging.roundtrip.test.ts
-**tags:** ffmpeg, round-trip
-
----
-
-The real-media round-trip suites are capability-gated and **skip silently** — they do not fail, and they do not announce themselves in a full-suite summary.
-
-Gated describes:
-
-| File | Line | Gate |
-|---|---|---|
-| `src/core/utils/audio-processor.roundtrip.test.ts` | `:83`, `:330` | `!FFMPEG_PRESENT` (presence probe: `ffmpeg -version` AND `ffprobe -version`, `:27-37`) |
-| `src/server/services/tagging.roundtrip.test.ts` | `:82` | `!hasFfmpeg8` (the xHE-AAC/USAC floor, #1679) |
-| `src/server/services/tagging.roundtrip.test.ts` | `:212`, `:303` | `!hasAnyFfmpeg` |
-
-Measured with no ffmpeg on PATH: `Test Files 2 skipped (2) / Tests 23 skipped (23)`, **exit 0** (23 = 14 + 9 cases). Folded into a 6500-test `pnpm verify`, that is indistinguishable from having proved something.
-
-**Consequence for the pipeline.** `verify` (`package.json:22` → `pnpm test` → `vitest run`) inherits whatever PATH the caller has. In an agent container without ffmpeg, a green `run-verify` receipt carries **zero** evidence for any AC whose proof lives in these files — which is most merge/tag/encode issues (#2068, #2078, #2083 all had such ACs). GitHub CI is in the same position: the test job (`.github/workflows/ci.yml:57-58`, ubuntu-latest) installs no ffmpeg. The ffmpeg-8 guarantee that *is* enforced covers the shipped runtime image only (`Dockerfile:53`, asserted at `.github/workflows/docker.yml:186-241`), not the environment vitest runs in. Todd's own machine does have ffmpeg 8.1 on PATH, so his local `pnpm verify` executes all 23 — which is exactly why the gap is invisible from the human side. This is `vacuous-assertion-observation-points` one level up: not a weak observable, but no execution at all.
-
-**What to do.** Before claiming a real-media AC is proved: run the round-trip file explicitly, and read back the executed count rather than the pass/fail word — `Tests N passed` where N > 0, never `N skipped`. State in the hand-off whether those checks actually ran. A self-contained static ffmpeg satisfies the probe; the merge suites gate on PRESENCE only, so a 6.0 static build is enough (the ffmpeg-8 floor is scoped to `tagging.roundtrip.test.ts:82` alone). Verified on #2083: the mp3 donor-chapter defect reproduces identically on static 6.0 and on the 8.1 used for the original repro — and the counterfactual (revert the production push, expect exactly the new assertions to red) is only meaningful once you have confirmed the suite ran.
-
 ## connector-names-not-unique-or-immutable
 
 **source:** #2095
@@ -1583,26 +1621,93 @@ Related: [[stable-list-keys]] is the client-side instance of the same 'a field-b
 
 ## degenerate-full-form-under-lossy-fold
 
-**source:** #2103
+**source:** #2103, #2110, #2113
 **added:** 2026-08-04
-**files:** src/core/utils/title-variants.ts, src/server/services/series-title-match.ts
+**files:** src/core/utils/title-variants.ts, src/core/utils/title-variants.test.ts, src/server/services/series-title-match.ts
 **tags:** title-matching
 
 ---
 
-An asymmetric matching rule of the form "a FRAGMENT of one title may match the COMPLETE other title, but fragment≡fragment never matches" is only sound while the normalizer cannot turn a complete title INTO one of its own fragments. A lossy character-class normalizer breaks that precondition, and the rule's safety is therefore a property of the PAIR (rule + normalizer), not of the rule.
+An asymmetric matching rule of the form "a FRAGMENT of one title may match the COMPLETE other title,
+but fragment≡fragment never matches" is only sound while the normalizer cannot turn a complete title
+INTO one of its own fragments. A lossy character-class normalizer breaks that precondition, so the
+rule's safety is a property of the PAIR (rule + normalizer), not of the rule.
 
-Concretely: `normalizeTitleForVariantMatch` (src/core/utils/title-variants.ts:93-105) strips everything outside `[a-z0-9' ]` after an NFD fold that only rescues DECOMPOSING letters — ß/ø/æ stay unfolded per the #1547 scope pin, and no non-Latin script survives at all. `"World of Warcraft: Перед бурей"` normalizes to exactly `world of warcraft`: a bare franchise prefix wearing the costume of a complete title, which the asymmetric rule then legally matched against the `prefix(1)` of every sibling in the franchise. That rewrites `books.series_name`/`series_position` on the wrong book — data corruption, not a cosmetic miss.
+Concretely: `normalizeTitleForVariantMatch` (`title-variants.ts:93-105`) strips everything outside
+`[a-z0-9' ]` after an NFD fold that only rescues DECOMPOSING letters — ß/ø/æ stay unfolded per the
+#1547 scope pin, and no non-Latin script survives at all. `"World of Warcraft: Перед бурей"`
+normalizes to exactly `world of warcraft`: a bare franchise prefix wearing the costume of a complete
+title, which the asymmetric rule then legally matched against the `prefix(1)` of every sibling in the
+franchise. That rewrites `books.series_name`/`series_position` on the wrong book — data corruption,
+not a cosmetic miss.
 
-**Detection is by character survival, not structure and not tokens.** `hasDegenerateFullForm` (title-variants.ts:256-260) asks whether the LOSSLESS normalization retains any character the ASCII fold would drop: `/[^a-z0-9' ]/.test(normalizeTitleLosslessly(title))`, with an empty FULL form excluded (the G5 empty-variant guard owns that case). Two earlier shapes were shipped and both were wrong, which is the reusable part: a STRUCTURAL test ("qualifying colon boundary whose tail vanished") had to enumerate every shape the erased content could take and missed each one it was not told about (`"World of Warcraft (Перед бурей)"`); a TOKEN test ("does some whole token normalize to nothing?") missed MIXED tokens — `"…: A前夜"` and `"…: A後夜"` both reduce to `world of warcraft a`, each tail a single token whose scalar form is the non-empty `a`. Partial loss is loss. Characters are the granularity at which the fold actually discards information, so that is where the question belongs.
+**Detection is by character survival, not structure and not tokens.** `hasDegenerateFullForm`
+(`:256-260`) asks whether the LOSSLESS normalization retains any character the ASCII fold would drop:
+`/[^a-z0-9' ]/.test(normalizeTitleLosslessly(title))`, with an empty FULL form excluded (the G5
+empty-variant guard owns that case). Two earlier shapes shipped and both were wrong, which is the
+reusable part. A STRUCTURAL test ("qualifying colon boundary whose tail vanished") had to enumerate
+every shape the erased content could take and missed each one it was not told about
+(`"World of Warcraft (Перед бурей)"`). A TOKEN test ("does some whole token normalize to nothing?")
+missed MIXED tokens — `"…: A前夜"` and `"…: A後夜"` both reduce to `world of warcraft a`, each tail a
+single token whose scalar form is the non-empty `a`. Partial loss is loss. Characters are the
+granularity at which the fold actually discards information, so that is where the question belongs.
 
-**The gate is two-sided and FULL≡FULL is NOT exempt.** In `explainShapePairing` (src/server/services/series-title-match.ts:204-237, rows 4-8): the derived arm refuses a degenerate TARGET *and* a lossy OFFERED variant (`findDerivedOffer`, :133-136 — `"…: Тревелер (Traveler)"` must not claim a bare `"World of Warcraft"` through a fragment whose distinguishing characters the fold ate, #2110); and equal FULL forms with either side degenerate demand agreement under `normalizeTitleLosslessly` before pairing (`explainEqualFulls`, :240-260). A book genuinely titled `"World of Warcraft"` still matches its own copy — via that lossless equality, not via an ungated arm. Position rescue is untouched (evaluated first and independently, :311-313), so a degenerate title is never made unmatchable.
+**The gate is two-sided and FULL≡FULL is NOT exempt.** In `explainShapePairing`
+(`series-title-match.ts:204-237`, rows 4-8): the derived arm refuses a degenerate TARGET *and* a lossy
+OFFERED variant (`findDerivedOffer`, `:133-136` — `"…: Тревелер (Traveler)"` must not claim a bare
+`"World of Warcraft"` through a fragment whose distinguishing characters the fold ate, #2110); and
+equal FULL forms with either side degenerate demand agreement under `normalizeTitleLosslessly` before
+pairing (`explainEqualFulls`, `:240-260`). A book genuinely titled `"World of Warcraft"` still matches
+its own copy — via that lossless equality, not via an ungated arm. Position rescue is untouched
+(evaluated first and independently, `:311-313`), so a degenerate title is never made unmatchable.
 
-The lossless twin must be bounded as carefully as the lossy one: `normalizeTitleLosslessly` (title-variants.ts:181-194) strips combining marks ONLY on a Latin base and ONLY in U+0300–036F. A script-agnostic strip pairs `"…: май"` with `"…: маи"`; widening to `\p{M}` breaks the lockstep premise the degeneracy guard rests on, since the SCALAR fold does not reach those marks either.
+**The lossless twin must be bounded as carefully as the lossy one (#2113).** A normalizer that claims
+to preserve identity must not inherit an unqualified combining-mark strip from its lossy twin. `NFD` +
+an unqualified U+0300–036F strip is script-agnostic, and outside Latin the thing it deletes is often a
+letter, not an accent: Cyrillic й decomposes to и + U+0306, so `'…: май'` and `'…: маи'` fold together
+— through exactly the arm whose purpose is refusing that. A keep class that omits `\p{M}` compounds
+it, turning Devanagari matras, Arabic harakat and Hebrew niqqud into word-fragmenting spaces
+(`'किताब'` → `'क त ब'`), producing false pairs AND false refusals.
 
-Two transferable lessons. (1) When designing any "one side must be the whole thing" rule, ask what the normalizer can destroy — then gate every arm that leans on completeness, including the symmetric one. (2) This class is structurally invisible to a hand-written fixture corpus, because authors write test titles in the script they think in; it took the live-library sweep (633 books) to surface it. That is the concrete argument for keeping a real-corpus blast check as a merge requirement.
+So `normalizeTitleLosslessly` (`title-variants.ts:181-194`) strips only when the preceding base is
+Latin — `.replace(/(\p{Script=Latin})[\u0300-\u036F]+/gu, '$1')` — keeps `\p{M}` in the class, and
+puts `.normalize('NFC')` at the very END, after the whitespace collapse and trim. That trailing NFC is
+load-bearing, not cosmetic: the pipeline decomposes, so without recomposing, an ordinary composed test
+literal never equals the function's output. Vietnamese tone marks (U+0323 in `'Sạch'`) are inside the
+band and correctly still fold.
 
-Verified non-vulnerable rather than assumed: `src/shared/dedup.ts` (`normalizeTitleCore` at :51-63 does no character-class strip, and `titlesMatchForDedup` at :119 already blocks two subtitled titles via `hadSubtitle`), `match-validation.ts` (token-set containment; an empty significant-token set returns false by design at :108), `series-normalize.ts` (:6) and `hardcover-series-resolver.ts` (lossy ASCII keys but exact-equality only, no prefix arm).
+**The trap: do NOT widen that strip to `(\p{Script=Latin})\p{M}+`.** It passes every in-block fixture
+— accent-drift tolerance, the Cyrillic refusals, the Devanagari refusals — while breaking the lockstep
+premise the degeneracy detector rests on. `hasDegenerateFullForm` compares this fold's output against
+`[a-z0-9' ]` to decide what the SCALAR fold discarded, and the scalar's diacritic step is also
+U+0300–036F-bounded. A mark outside the band on a Latin base (U+1DC0, U+20DD) is therefore NOT removed
+by the scalar either — it falls through to `[^a-z0-9' ]+` and fragments the word. `'Sa᷀ga: Book One'`
+scalar-folds to `'sa ga book one'`; keeping the mark here yields `'sa᷀ga book one'` and a correct
+`degenerateFull: true`, stripping it yields `'saga book one'` and a genuinely lossy title silently
+trusted as complete. Mutation-verified: the widened strip fails exactly one test
+(`'flags an out-of-block combining mark on a Latin base (AC9)'`) and leaves the rest green. **When two
+folds must agree about what was lost, any asymmetry in their character bands is a silent divergence —
+pin the boundary with a fixture on each side of it.**
+
+Corollary, decided in #2110 and not to be relitigated without new corpus evidence: optional
+pointing/vocalization is NOT equivalent to its unpointed spelling (`'סֵפֶר'` ≠ `'ספר'`,
+`'كِتاب'` ≠ `'كتاب'`). "Pronunciation aid" vs "identity-bearing vowel" is not decidable from
+`\p{Mn}`/`\p{Mc}` — Devanagari matras span both, and any rule equating pointed with unpointed would
+also have to fold the Devanagari refusal case. In a matcher a false refusal costs a missing badge
+(other signals still rescue it); a false pair puts a wrong badge on a different book. Same posture the
+module already takes on non-decomposing ß/ø/æ.
+
+Two transferable lessons. (1) When designing any "one side must be the whole thing" rule, ask what the
+normalizer can destroy — then gate every arm that leans on completeness, including the symmetric one.
+(2) This class is structurally invisible to a hand-written fixture corpus, because authors write test
+titles in the script they think in; it took the live-library sweep (633 books) to surface it. That is
+the concrete argument for keeping a real-corpus check as a merge requirement.
+
+Verified non-vulnerable rather than assumed: `src/shared/dedup.ts` (`normalizeTitleCore` at `:51-63`
+does no character-class strip, and `titlesMatchForDedup` at `:119` already blocks two subtitled titles
+via `hadSubtitle`), `match-validation.ts` (token-set containment; an empty significant-token set
+returns false by design at `:108`), `series-normalize.ts` (`:6`) and `hardcover-series-resolver.ts`
+(lossy ASCII keys but exact-equality only, no prefix arm).
 
 ## fs-spy-over-importactual
 
@@ -1644,24 +1749,6 @@ Spying `realpath` also reaches `src/server/utils/paths.ts`, which imports it fro
 **Prove it isn't vacuous.** The pattern's whole value is that the real-fs assertions *can* fail; close with the counterfactual (e.g. swap `assertRealPathInsideLibrary` for the lexical `assertPathInsideLibrary` and confirm the symlink-escape test goes red). See `vacuous-assertion-observation-points`.
 
 Related but distinct: `import-cleanup-marker-aware-fs-mock` (defaulting a *fully* mocked `stat` so a marker doesn't read as present) and `windows-hostile-test-primitives` (the `symlink()` capability probe and tolerant tmpdir teardown these fixtures still need).
-
-## latin-bounded-combining-mark-strip
-
-**source:** #2113
-**added:** 2026-08-04
-**files:** src/core/utils/title-variants.ts, src/core/utils/title-variants.test.ts, src/server/services/series-title-match.ts
-
-**tags:** title-matching
-
----
-
-A normalizer that claims to preserve identity must not inherit an unqualified combining-mark strip from its lossy twin. `NFD` + `replace(/[̀-ͯ]/g,'')` is script-agnostic, and outside Latin the thing it deletes is often a letter, not an accent: Cyrillic й decomposes to и + U+0306, so `'World of Warcraft: май'` and `'…: маи'` fold together — through exactly the arm whose purpose is refusing that. A keep class that omits `\p{M}` compounds it, turning Devanagari matras, Arabic harakat and Hebrew niqqud into word-fragmenting spaces (`'किताब'` → `'क त ब'`), which produces false pairs AND false refusals.
-
-The fix in `normalizeTitleLosslessly` (src/core/utils/title-variants.ts): strip only when the preceding base is Latin — `.replace(/(\p{Script=Latin})[̀-ͯ]+/gu, '$1')` — keep `\p{M}` in the class, and put `.normalize('NFC')` at the very END, after the whitespace collapse and trim. That trailing NFC is load-bearing, not cosmetic: the pipeline decomposes, so without recomposing, an ordinary composed test literal never equals the function's output. Vietnamese tone marks (U+0323 in `'Sạch'`) are inside the band and correctly still fold.
-
-**The trap, and the reason this entry exists.** Do NOT widen the strip to `(\p{Script=Latin})\p{M}+`. That version passes every in-block fixture — accent-drift tolerance, the Cyrillic refusals, the Devanagari refusals — while breaking the lockstep premise the damage detector rests on. `hasDegenerateFullForm` compares this fold's output against `[a-z0-9' ]` to decide what the SCALAR fold discarded, and the scalar's diacritic step is also U+0300–036F-bounded. So a mark outside the band on a Latin base (U+1DC0, U+20DD) is NOT removed by the scalar either — it falls through to `[^a-z0-9' ]+` and fragments the word. `'Sa᷀ga: Book One'` scalar-folds to `'sa ga book one'`; keeping the mark here yields `'sa᷀ga book one'` and a correct `degenerateFull: true`, stripping it yields `'saga book one'` and a genuinely lossy title silently trusted as complete. Mutation-verified: the widened strip fails exactly one test, `'flags an out-of-block combining mark on a Latin base (AC9)'`, and leaves the rest of src/core/utils/title-variants.test.ts green. When two folds are required to agree about what was lost, any asymmetry in their character bands is a silent divergence — pin the boundary with a fixture on each side of it.
-
-Corollary, decided in #2110 and not to be relitigated without new corpus evidence: optional pointing/vocalization is NOT equivalent to its unpointed spelling (`'סֵפֶר'` ≠ `'ספר'`, `'كِتاب'` ≠ `'كتاب'`). "Pronunciation aid" vs "identity-bearing vowel" is not decidable from `\p{Mn}`/`\p{Mc}` — Devanagari matras span both, and any rule equating pointed with unpointed would also have to fold the Devanagari refusal case. In a matcher, a false refusal costs a missing badge (other signals still rescue it); a false pair puts a wrong badge on a different book. Same posture the module already takes on non-decomposing `ß`/`ø`/`æ`.
 
 ## sqlite-covering-index-forces-scan-order
 
@@ -1719,7 +1806,7 @@ Same applies to any other `v`-only syntax (nested classes, string properties, `\
 
 The fixture trap (measured on #2158): a test meant to prove "a multi-author OPF must not override the folder author" built its item WITHOUT `metadata`. That routes through the synthesize-from-scratch branch, never reaches the guarded overlay write, and stays green under the exact mutation it exists to catch (making the `metadata.authors` write unconditional). The branch that actually needs forcing is `buildBookCreatePayload`'s multi-author preference in `enrichment-orchestration.helpers.ts` — `(meta?.authors && meta.authors.length > 1)` wins outright over `item.authorName` — so the fixture needs a provider match carrying **exactly one** author alongside **two** OPF `aut` creators. See 'AC10 headline' in `import-submission-runner.integration.test.ts`.
 
-General rule: before writing a fixture for an "only when X is absent" branch, check whether the schema permits X to be absent at all in the shape you are building — an absent *field* and an absent *parent object* are usually two different code paths, and only one of them is the branch under test. Related: [[roundtrip-fixture-must-force-the-branch]], [[vacuous-assertion-observation-points]].
+General rule: before writing a fixture for an "only when X is absent" branch, check whether the schema permits X to be absent at all in the shape you are building — an absent *field* and an absent *parent object* are usually two different code paths, and only one of them is the branch under test. Related: [[round-trip-fixture-discipline]] (arm 2), [[vacuous-assertion-observation-points]].
 
 ## variant-tag-not-slice-under-first-wins-dedup
 
@@ -1758,7 +1845,9 @@ The damage is worse than a plain stale mock when the new field encodes a DEGRADE
 
 Practical rule: treat widening a service return shape as a two-part change — migrate the callers AND sweep the doubles in the same commit. Grep for the old method name across `*.test.ts` before declaring it done (`grep -rn '\.searchAll\b' src/`), and give the suite a single `withStatus(results)` helper so the envelope is spelled once rather than at ~30 call sites. If the new field has a value that means 'degraded', prefer a shape where the STALE value is impossible rather than merely wrong — e.g. return a discriminated union, or have the wide method throw on a missing count — so a forgotten double fails loudly instead of quietly taking the sad path.
 
-Related: [[mockdbchain-empty-default-masks-guarded-writes]] and [[shared-test-double-defaults-ripple]] are the Drizzle-shaped instances of the same family (a stale test double's default selecting a degraded branch); this entry is the service-return-shape instance, and its distinguishing feature is that the compatibility wrapper is precisely what keeps the compiler quiet.
+Related: [[shared-test-double-defaults]] carries the Drizzle-shaped instances of the same family (a stale test double's default selecting a degraded branch); this entry is the service-return-shape instance, and its distinguishing feature is that the compatibility wrapper is precisely what keeps the compiler quiet.
+
+**The `vi.mock` family — nothing here is typechecked.** A mock factory's return value is unconstrained by `@types/*`, and this repo's doubles use `inject<T>()` / `as unknown as T`, which erase property checking. Five ways that drifts, each silent until runtime and each in its own entry because they bite different files: the factory does not intercept a same-module call ([[esm-same-module-vi-mock-bypass]]); it omits a schema table and crashes an unrelated suite at import ([[drizzle-schema-toplevel-deref-breaks-partial-mocks]]); it replaces a barrel and drops named exports, or preserves one and leaks real network calls ([[vimock-barrel-replace-drops-named-exports]]); its implementation is an arrow where production uses `new` ([[vifn-arrow-not-constructable]]); or its return SHAPE goes stale behind a compatibility wrapper ([[compat-wrapper-hides-stale-test-doubles]]). Deliberately not merged: the five have disjoint file scopes, so one entry would inject all of it whenever any one file is touched.
 
 ## raw-output-pins-incidental-whitespace
 
