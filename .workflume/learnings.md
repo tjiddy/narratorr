@@ -883,31 +883,28 @@ a false positive unless lint actually fires.
 
 ## vacuous-assertion-observation-points
 
-**source:** #1992, #1993, #2002, #2012, #2017, #2020, #2032
+**source:** #1992, #1993, #2002, #2012, #2017, #2020, #2032, #2082
 **added:** 2026-07-28
 **files:** src/**/*.test.ts, src/**/*.test.tsx
 **tags:** mutation-testing, test-observability
 
 ---
 
-**An assertion is only as strong as its observation point.** The companion-EPUB slate produced this
-same defect seven times in seven different media, every time with a green pre-existing test: the
-observable the test watched could not see the property the test claimed to prove, so it passed
-against broken production code. This is the single most repeated mistake in that slate, which is why
-these live in one entry rather than seven.
+**An assertion is only as strong as its observation point.** One slate produced this defect seven
+times in seven different media, every time with a green pre-existing test: the observable the test
+watched could not see the property the test claimed to prove, so it passed against broken production
+code. Seven shapes, one entry, because the fix is always the same — change what you watch.
 
-**The closing step is non-negotiable: reproduce the counterfactual.** Break production exactly as
-the assertion claims to prevent, and confirm the new test fails while the pre-existing ones stay
-green. If the old tests also fail, the new one may be redundant. If nothing fails, the test proves
-nothing — and you have just written the eighth instance of this entry.
+**The closing step is non-negotiable: reproduce the counterfactual.** Break production exactly as the
+assertion claims to prevent, and confirm the new test fails while the pre-existing ones stay green.
+If the old tests also fail, the new one may be redundant. If nothing fails, the test proves nothing.
+(When nothing reds, suspect a redundant production path before blaming the observable — see
+[[symmetric-mutation-cannot-observe-shared-derivation]] arm B.)
 
-The seven verified mechanisms, each with the observable that actually works:
-
-**1. Issuance ≠ persistence (#2017).** A Drizzle chain mock's `where()` body executes SYNCHRONOUSLY
-as the statement is built, so `where: () => { trace.push('update'); return terminus; }` records when
-the write was *issued*. Drop the `await` on the calling helper and the trace order is unchanged. Gate
-the terminus instead — and it must be BOTH awaitable and `.returning()`-capable (see
-`guarded-transition-needs-returning-in-tx-mocks`):
+**1. Issuance ≠ persistence (#2017, #2082).** A Drizzle chain mock's `where()` body runs
+SYNCHRONOUSLY as the statement is built, so tracing inside it records when the write was *issued* —
+drop the `await` on the caller and the trace is unchanged. Gate the terminus instead, and it must be
+both awaitable and `.returning()`-capable ([[guarded-transition-needs-returning-in-tx-mocks]]):
 
 ```ts
 const settle = () => gate.then(() => { trace.push('persisted'); });
@@ -917,82 +914,70 @@ return {
 };
 ```
 
-Then: await issuance → assert the follow-up has NOT started → release → assert it has. Two siblings
-from the same review round: **call counts are order-blind** (`3 renames, 1 sweep` is identical whether
-the sweep precedes or follows the loop — hold the FINAL iteration pending instead), and **hard-coded
-post-state** reports the post-condition no matter when the dependent code ran (use ONE shared mutable
-state object that the production write itself advances, and make the pre-condition genuinely able to
-produce the failure). A third sibling (#2082): a payload-only `set()` assertion also misses the WHERE —
-for a `db.update(...).set(...).where(...)` chain, capture `setMock.mock.results[0].value.where` (or use
-`toHaveBeenCalledWith(eq(...))` on the where spy, the shape `book-status.test.ts:26,50` has pinned since
-#350/#437) so the filter half of the write is asserted, not just the payload.
+Then: await issuance → assert the follow-up has NOT started → release → assert it has. Three
+siblings. Call counts are **order-blind** (`3 renames, 1 sweep` reads the same whichever ran first —
+hold the final iteration pending instead). **Hard-coded post-state** reports the post-condition
+regardless of when the dependent code ran — use one shared mutable state object that the production
+write itself advances, and make the pre-condition genuinely able to fail. And a payload-only `set()`
+assertion **misses the WHERE**: capture `setMock.mock.results[0].value.where`, so the filter half of
+the write is asserted too.
 
 **2. react-query holds the error until the retry ladder ends (#2020).** TanStack Query v5 keeps a
-failed fetch in `failureReason`/`failureCount` and promotes it to `state.error` only after retries are
-exhausted. A test that waits on the fetch mock's CALL COUNT asserts before the error exists and passes
-for implementations that get the error path wrong — in #1963 it let both `if (isError) return null`
-and an any-4xx generalisation of a 409-only rule survive. Easy to miss because `renderWithProviders`
-sets `retry: false`, but a QUERY-level `retry` predicate overrides the client default. Wrong:
-`await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1))`. Right:
-`await waitFor(() => expect(client.getQueryState(queryKeys.X(id))?.status).toBe('error'))`. Supply
-`retryDelay: 0` to keep the ladder fast — it changes how long a retry waits, never whether one happens.
-`failureCount` starts at 0 and the default is three retries, so `failureCount < 3` yields FOUR requests.
+failed fetch in `failureReason`/`failureCount` and promotes it to `state.error` only once retries are
+exhausted, so a test waiting on the fetch mock's CALL COUNT asserts before the error exists — it
+passed for two different wrong error-path implementations. Watch the query state, not the mock:
+`waitFor(() => expect(client.getQueryState(key)?.status).toBe('error'))`. Easy to miss because
+`renderWithProviders` sets `retry: false` but a QUERY-level `retry` predicate overrides it. Pass
+`retryDelay: 0` to keep it fast — that changes how long a retry waits, never whether one happens.
+`failureCount` starts at 0 against a default of three retries, so `failureCount < 3` yields FOUR
+requests.
 
-**3. Route-level status flattening masks guard removal (#2032).** The companion read routes collapse
-every rejection into one response *on purpose* — `loadCompanionInspection` maps every non-`available`
-inspection to a bare 404, and the v1 stream maps every non-`ok` open outcome to a single
-`UNAVAILABLE_BODY`, since the distinction is the existence oracle the endpoint must not become.
-Consequence: **a route-status assertion cannot attribute a red to a specific `src/core/epub/` guard**,
-and a test written that way stays green after the guard is deleted. Three mutations verified
-green-under-removal. Two observables that DO work: assert the persisted `validationCode` (poll
-`GET /api/books/:id/companion-epub/state` until it settles — requires seeding a deliberately stale
-`mtimeMs`/`ctimeMs`, or `isUnchanged` returns before any validation), or make the fixture valid on
-every other axis so removing the guard yields a 200 rather than a differently-caused 404. Corollary:
-pick the sharper observable BEFORE writing the fixture — a fixture that trips a second guard
-identically is indistinguishable from one that trips the intended guard.
+**3. Route-level status flattening masks guard removal (#2032).** Where routes collapse every
+rejection into one response on purpose (a bare 404, a single `UNAVAILABLE_BODY`) — because the
+distinction would leak an existence oracle — a route-status assertion **cannot attribute a red to a
+specific guard**, and stays green after that guard is deleted. Three such mutations were verified
+green-under-removal. Two observables that work: assert the persisted `validationCode` (poll the state
+endpoint until it settles; seed a deliberately stale `mtimeMs`/`ctimeMs` or the unchanged-check
+short-circuits first), or make the fixture valid on every other axis so removing the guard yields a
+200 rather than a differently-caused 404. Pick the observable BEFORE writing the fixture — a fixture
+that trips a second guard identically is indistinguishable from one that trips the intended guard.
 
-**4. A same-turn `stop()` test must gate PRE-lock setup (#2012).** `CompanionEbookReconciler`'s
-per-book methods register their run promise in `activeBookRuns` synchronously before the first
-`await`, and `stop()` drains that set — but every locked pass also re-checks `this.stopping` as its
-first statement inside `withBookAdmissionLock`. So a same-turn drain test that gates a collaborator
-called *inside* the lock is vacuous: the gate never fires, `stop()` resolves promptly, and the
-assertion fails against CORRECT code. Park the run on its pre-lock setup instead (make
-`settings.get('companionEpub')` return a deferred), which leaves the run observable only through the
-`activeBookRuns` registration — precisely the property under test. The complementary 'gated in-flight'
-case proves a different half; both are needed, neither substitutes for the other.
+**4. A same-turn `stop()` test must gate PRE-lock setup (#2012).** Per-book methods register their run
+promise synchronously before the first `await`, and `stop()` drains that set — but every locked pass
+also re-checks `stopping` as its first statement inside the lock. So gating a collaborator called
+*inside* the lock is vacuous: the gate never fires and the assertion fails against CORRECT code. Park
+the run on its pre-lock setup instead, which leaves it observable only through the registration —
+precisely the property under test. The complementary gated-in-flight case proves a different half;
+neither substitutes for the other.
 
 **5. Aborting a Transform discards already-pushed chunks (#1992).** `callback(err)` inside
-`_transform` destroys the stream and drops chunks it had `push()`ed but whose consumer had not yet
-pulled. A "N chunks reached the sink before the abort" assertion reads 0 whenever the source feeds
-synchronously — under `stream.promises.pipeline` the source drains into the transform before the
-sink's `for await` begins. Source-side counters lie in the other direction (a Readable buffers to
-highWaterMark, 16 KiB). The transform's own running counter is the observable:
-`createCountingStream(4)` fed twenty 1-byte chunks yields `bytesCounted === 5`, and the raised error
-carries the same total.
+`_transform` destroys the stream and drops chunks it had `push()`ed but the consumer had not pulled.
+A "N chunks reached the sink before the abort" assertion reads 0 whenever the source feeds
+synchronously, since under `pipeline` the source drains into the transform before the sink's
+`for await` begins. Source-side counters lie the other way (a Readable buffers to highWaterMark,
+16 KiB). The transform's own running counter is the observable, and the raised error carries the same
+total.
 
 **6. `@ts-expect-error` is satisfied by ANY error on the next line (#1993).** A negative type test
 that supplies a WRONG VALUE for a field does not pin that field's requiredness — make the field
 optional and the assignment still errors on the value, the directive stays used, and no TS2578 fires.
 To pin requiredness, OMIT the field. The union analogue: instantiating one arm leaves the others
-unpinned — use a plain positive assignment per arm (deleting an arm then fails TS2322) plus
-`@ts-expect-error` on a cross-arm property access, and a bogus-discriminant negative to pin the closed
-status set. A type-only module has no runtime surface, so none of this is judgeable by reading the
-test: mutation-verify with `pnpm exec tsc --noEmit` and confirm non-zero exit. **Strip ANSI codes
-before grepping tsc output** (`sed -e 's/\x1b\[[0-9;]*m//g'`) or `grep 'error TS'` silently matches
-nothing. Worked example covering six mutations: `src/core/epub/result.test.ts:64-192`.
+unpinned — use a plain positive assignment per arm (deleting an arm then fails TS2322), plus
+`@ts-expect-error` on a cross-arm property access and a bogus-discriminant negative to pin the closed
+set. A type-only module has no runtime surface, so none of this is judgeable by reading: mutation-
+verify with `pnpm exec tsc --noEmit` and confirm a non-zero exit. **Strip ANSI codes before grepping
+tsc output** (`sed -e 's/\x1b\[[0-9;]*m//g'`) or `grep 'error TS'` silently matches nothing.
 
-**7. Under Vitest, a dynamic import's `Object.keys()` is SOURCE order (#2002).** A module namespace in
-native Node ESM is an exotic object that sorts its own string keys (ECMA-262 §10.4.6.1), so
-`Object.keys(ns)` is lexicographic. Under Vitest that does not hold — `await import('./m.js')`
-resolves through Vite's SSR transform to an ordinary `__vite_ssr_exports__` object, yielding the order
-the `export` statements appear in the file. When pinning a module's public surface, `.sort()` before
-comparing: it is ordering-agnostic and asserts exactly the property under test (the set of exports).
-A source-text scan that reads the `.ts` and filters `^export` lines is legitimately in file order, so a
-suite using both must keep the two orderings distinct.
+**7. Under Vitest, a dynamic import's `Object.keys()` is SOURCE order (#2002).** A native ESM module
+namespace sorts its own string keys (ECMA-262 §10.4.6.1), so `Object.keys(ns)` is lexicographic.
+Under Vitest it is not — `await import()` resolves through Vite's SSR transform to an ordinary object
+in `export`-statement order. When pinning a module's public surface, `.sort()` before comparing: it is
+ordering-agnostic and asserts exactly the property under test. A source-text scan that greps `^export`
+is legitimately in file order, so a suite using both must keep the two orderings distinct.
 
-Related: [[serialize-error-assertion-needs-enumerable-keys]] is the same defect in logging assertions
-(folded into `serialize-error-catch-binding-tracing`); `react-query-optimistic-cancel` carries the
-`invalidateQueries` instance; `migrated-db-assertions-through-drizzle` carries the ORM-vs-DDL instance.
+Related: [[serialize-error-catch-binding-tracing]] carries the logging instance;
+[[react-query-optimistic-cancel]] the `invalidateQueries` instance;
+[[migrated-db-assertions-through-drizzle]] the ORM-vs-DDL instance.
 
 ## epub-stack-type-declaration-gaps
 
