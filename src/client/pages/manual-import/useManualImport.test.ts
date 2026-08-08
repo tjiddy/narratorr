@@ -3128,4 +3128,24 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
 
     expect(result.current.state.rows[1]).toBe(otherBefore);
   });
+
+  // #2060 — the converse of B7, pinned at runtime. An unrelated `setRows` (a bare selection
+  // toggle) must NOT advance the generation: over-stamping rejects a corroboration the user is
+  // still waiting on and strands a correct re-pick on "Duration mismatch". Test 16 above is the
+  // other direction; neither substitutes for the other.
+  it('keeps a held response live across an unrelated selection toggle', async () => {
+    const held = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
+    corroborateMock().mockReturnValue(held.promise);
+    const { result } = await seed();
+
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    expect(corroborateMock()).toHaveBeenCalledTimes(1);
+
+    const selectedBefore = result.current.state.rows[0]!.selected;
+    act(() => { result.current.actions.handleToggle(0); });
+    expect(result.current.state.rows[0]!.selected).toBe(!selectedBefore);
+
+    held.resolve({ corroborated: true, chapterSeconds: FABLEHAVEN.chapterSeconds });
+    await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
+  });
 });
