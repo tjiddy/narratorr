@@ -1284,4 +1284,172 @@ describe('SeriesCardService — unit', () => {
       expect(row.seriesPosition).toBeNull();
     });
   });
+
+  /**
+   * #2175 — the bind path shares the pool loader, so keying it on the normalized
+   * series name widens what a bind WRITES: normalized-equal siblings are now
+   * matched, their `books.series_name` / `series_position` rewritten, and their
+   * ids returned in `syncedIds` — which the route iterates to rewrite each book's
+   * `metadata.opf` and embedded tags ([[caller-owned-tx-drops-post-commit-effects]]).
+   * That is the desired canonicalization, but it is a durable, on-disk-visible
+   * widening of an existing write, so it gets its own cases rather than riding
+   * along untested.
+   */
+  describe('bindHardcoverSeries — the widened normalized pool (#2175)', () => {
+    async function readBookRow(bookId: number) {
+      return (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
+    }
+
+    function svc() {
+      return new SeriesCardService(db, log, settingsServiceWith('K'));
+    }
+
+    const dunePayload = () => hardcoverSeriesPayload({
+      id: 4242, name: 'Dune', author: 'Frank Herbert',
+      members: [
+        { position: 1, id: 1, slug: 'dune', title: 'Dune' },
+        { position: 2, id: 2, slug: 'messiah', title: 'Dune Messiah' },
+      ],
+    });
+
+    it('AC8: a case-drifted sibling is matched, rewritten, and reported in syncedIds', async () => {
+      const initiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: 'Dune (Audible)', seriesPosition: 1, authorName: 'Frank Herbert' });
+      const drifted = await seedBookWithSeries(db, { title: 'Dune Messiah', seriesName: 'dune  (audible)', seriesPosition: 9, authorName: 'Frank Herbert' });
+      mockFetchOnce(dunePayload());
+
+      const bound = await svc().bindHardcoverSeries(initiating, 4242);
+
+      expect(bound!.syncedIds).toEqual([initiating, drifted]);
+      const row = await readBookRow(drifted);
+      expect(row.seriesName).toBe('Dune');
+      expect(row.seriesPosition).toBe(2);
+      expect(bound!.card.members.map((m) => m.libraryBookId)).toEqual([initiating, drifted]);
+    });
+
+    it('AC8: an unrelated series is neither matched nor rewritten', async () => {
+      const initiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: 'Dune (Audible)', seriesPosition: 1, authorName: 'Frank Herbert' });
+      const unrelated = await seedBookWithSeries(db, { title: 'Dune Messiah', seriesName: 'Dune Chronicles', seriesPosition: 2, authorName: 'Frank Herbert' });
+      mockFetchOnce(dunePayload());
+
+      const bound = await svc().bindHardcoverSeries(initiating, 4242);
+
+      expect(bound!.syncedIds).toEqual([initiating]);
+      expect((await readBookRow(unrelated)).seriesName).toBe('Dune Chronicles');
+    });
+
+    /**
+     * AC9 — the canonical name and the pre-bind name are BOTH targets, and the
+     * dedupe collapses on the normalized form. A pair differing only by case is
+     * one equivalence class, not two entries.
+     */
+    it('AC9: a canonical/prior pair differing only by case is one target class', async () => {
+      const initiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: 'dune', seriesPosition: 1, authorName: 'Frank Herbert' });
+      const sibling = await seedBookWithSeries(db, { title: 'Dune Messiah', seriesName: 'DUNE', seriesPosition: 2, authorName: 'Frank Herbert' });
+      mockFetchOnce(dunePayload());
+
+      const bound = await svc().bindHardcoverSeries(initiating, 4242);
+
+      expect(bound!.syncedIds).toEqual([initiating, sibling]);
+      expect((await readBookRow(sibling)).seriesName).toBe('Dune');
+    });
+
+    /**
+     * AC5 + AC9 — a bind whose canonical name normalizes non-empty and whose
+     * PRIOR name normalizes empty. The pool is the union of the two rules with
+     * neither leaking into the other's bucket.
+     */
+    it('AC5: mixed target kinds — a non-Latin prior name matches only itself, the canonical name its whole class', async () => {
+      const initiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: '三体', seriesPosition: 1, authorName: 'Frank Herbert' });
+      const priorSpelling = await seedBookWithSeries(db, { title: 'Dune Messiah', seriesName: '三体', seriesPosition: 2, authorName: 'Frank Herbert' });
+      const otherNonLatin = await seedBookWithSeries(db, { title: 'Дозор', seriesName: 'Дозоры', seriesPosition: 1, authorName: 'Sergei Lukyanenko' });
+      const canonicalClass = await seedBookWithSeries(db, { title: 'Children of Dune', seriesName: 'dune', seriesPosition: 3, authorName: 'Frank Herbert' });
+      mockFetchOnce(dunePayload());
+
+      const bound = await svc().bindHardcoverSeries(initiating, 4242);
+
+      // Matched: the byte-identical prior-name sibling. Not matched: the other
+      // empty-normalizing series.
+      expect(bound!.syncedIds).toEqual([initiating, priorSpelling]);
+      expect((await readBookRow(otherNonLatin)).seriesName).toBe('Дозоры');
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, otherNonLatin))).toHaveLength(0);
+      // The canonical name's own class is in the pool: it matched no member here,
+      // but it is enrolled as an owned local row rather than ignored.
+      expect((await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, canonicalClass)))[0]!.source).toBe('local');
+    });
+
+    it('AC5: the reverse mix — an empty-normalizing CANONICAL name with a Latin prior name', async () => {
+      const initiating = await seedBookWithSeries(db, { title: '三体', seriesName: 'Remembrance', seriesPosition: 1, authorName: 'Liu Cixin' });
+      const priorClass = await seedBookWithSeries(db, { title: '黑暗森林', seriesName: 'remembrance', seriesPosition: 2, authorName: 'Liu Cixin' });
+      const otherNonLatin = await seedBookWithSeries(db, { title: 'Дозор', seriesName: 'Дозоры', seriesPosition: 1, authorName: 'Sergei Lukyanenko' });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 9001, name: '三体', author: 'Liu Cixin',
+        members: [
+          { position: 1, id: 1, slug: 'santi', title: '三体' },
+          { position: 2, id: 2, slug: 'dark-forest', title: '黑暗森林' },
+        ],
+      }));
+
+      const bound = await svc().bindHardcoverSeries(initiating, 9001);
+
+      expect(bound!.syncedIds).toEqual([initiating, priorClass]);
+      expect((await readBookRow(priorClass)).seriesName).toBe('三体');
+      expect((await readBookRow(otherNonLatin)).seriesName).toBe('Дозоры');
+    });
+
+    it('a seriesPosition tombstone on a DRIFTED sibling still suppresses the position write', async () => {
+      const initiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: 'Dune (Audible)', seriesPosition: 1, authorName: 'Frank Herbert' });
+      const drifted = await seedBookWithSeries(db, { title: 'Dune Messiah', seriesName: 'dune (audible)', seriesPosition: null, authorName: 'Frank Herbert' });
+      await db.update(books).set({ userClearedFields: '["seriesPosition"]' }).where(eq(books.id, drifted));
+      mockFetchOnce(dunePayload());
+
+      const bound = await svc().bindHardcoverSeries(initiating, 4242);
+
+      expect(bound!.syncedIds).toContain(drifted);
+      const row = await readBookRow(drifted);
+      expect(row.seriesName).toBe('Dune');
+      expect(row.seriesPosition).toBeNull();
+      // The control that makes the assertion above non-vacuous.
+      expect((await readBookRow(initiating)).seriesPosition).toBe(1);
+    });
+
+    it('a seriesName-tombstoned book is absent from the widened pool under every spelling', async () => {
+      const initiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: 'Dune (Audible)', seriesPosition: 1, authorName: 'Frank Herbert' });
+      const tombstoned = await seedBookWithSeries(db, { title: 'Dune Messiah', seriesName: null, seriesPosition: null, authorName: 'Frank Herbert' });
+      await db.update(books).set({ userClearedFields: '["seriesName"]' }).where(eq(books.id, tombstoned));
+      mockFetchOnce(dunePayload());
+
+      const bound = await svc().bindHardcoverSeries(initiating, 4242);
+
+      expect(bound!.syncedIds).toEqual([initiating]);
+      const row = await readBookRow(tombstoned);
+      expect(row.seriesName).toBeNull();
+      expect(row.userClearedFields).toBe('["seriesName"]');
+    });
+
+    /**
+     * The widened pool is read on the `tx` handle, so it participates in the same
+     * transaction: a rollback yields no `syncedIds` at all and no drifted sibling
+     * keeps a half-applied canonical name.
+     */
+    it('a rolled-back bind rewrites no drifted sibling and reports no ids', async () => {
+      const link = await import('./book-series-link.js');
+
+      // Positive control FIRST — this fixture DOES widen when it commits.
+      const okInitiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: 'Dune (Audible)', seriesPosition: 1, authorName: 'Frank Herbert' });
+      const okDrifted = await seedBookWithSeries(db, { title: 'Dune Messiah', seriesName: 'dune (audible)', seriesPosition: 9, authorName: 'Frank Herbert' });
+      mockFetchOnce(dunePayload());
+      expect((await svc().bindHardcoverSeries(okInitiating, 4242))!.syncedIds).toEqual([okInitiating, okDrifted]);
+
+      const initiating = await seedBookWithSeries(db, { title: 'Dune', seriesName: 'Chronicles (Audible)', seriesPosition: 1, authorName: 'Frank Herbert' });
+      const drifted = await seedBookWithSeries(db, { title: 'Dune Messiah', seriesName: 'chronicles (audible)', seriesPosition: 9, authorName: 'Frank Herbert' });
+      mockFetchOnce(dunePayload());
+      vi.spyOn(link, 'relinkBookToBoundSeries').mockRejectedValueOnce(new Error('relink boom'));
+
+      await expect(svc().bindHardcoverSeries(initiating, 4242)).rejects.toThrow('relink boom');
+
+      expect((await readBookRow(drifted)).seriesName).toBe('chronicles (audible)');
+      expect((await readBookRow(drifted)).seriesPosition).toBe(9);
+      expect((await readBookRow(initiating)).seriesName).toBe('Chronicles (Audible)');
+    });
+  });
 });

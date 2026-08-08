@@ -50,6 +50,13 @@
  * neither produce a delta nor mask one, in any pool containing it.
  *
  * Read-only: opens the DB, runs SELECTs, writes nothing.
+ *
+ * STALE since #2175: production no longer keys either pool on an exact
+ * `books.series_name` match — it loads every series-carrying book and filters on
+ * `normalizeSeriesName` equality (with a byte-exact fallback for names that
+ * normalize to empty). The pool descriptions below therefore describe the
+ * pre-#2175 shape. This is a one-off pre-merge script for #2096; re-running or
+ * reworking it was explicitly out of scope there.
  */
 
 import { existsSync } from 'fs';
