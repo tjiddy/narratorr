@@ -40,6 +40,60 @@ async function seedBookWithSeries(db: Db, opts: {
   return book!.id;
 }
 
+/**
+ * The library-pool loader's projection, verbatim and WITHOUT an `ORDER BY`
+ * (#2175 AC7a). Used as an explicit precondition: an ordering fixture that
+ * cannot first prove the planner reorders these rows proves nothing about the
+ * loader's `.orderBy(asc(books.id))` ([[sqlite-covering-index-forces-scan-order]]).
+ */
+async function poolProbeIds(db: Db): Promise<number[]> {
+  const rows = await db.all(sql`SELECT id, title, series_position, user_cleared_fields, series_name FROM books WHERE series_name IS NOT NULL`);
+  return (rows as { id: number }[]).map((row) => row.id);
+}
+
+/**
+ * The index that makes the probe above come back non-ascending. NOT in the
+ * production schema (#2175 AC12) — created inside the test body only.
+ *
+ * The pre-#2175 narrow `books (series_name)` index is no longer sufficient:
+ * that worked because the loader was CONSTRAINED by `series_name IN (…)` and the
+ * plan flipped to `SEARCH … USING COVERING INDEX (series_name=?)`. The loader now
+ * scans on `series_name IS NOT NULL`, and measured against this schema a narrow
+ * index leaves the plan at `SCAN books` with ids ascending. An index covering
+ * every non-rowid column the loader projects drives it to
+ * `SEARCH books USING COVERING INDEX (series_name>?)` and the order follows
+ * `series_name` (`id` is the rowid and rides along implicitly).
+ */
+async function forcePoolReorderingIndex(db: Db): Promise<void> {
+  await db.run(sql`CREATE INDEX idx_books_pool_covering_2175 ON books (series_name, title, series_position, user_cleared_fields)`);
+}
+
+/**
+ * Capture every SQL statement the libSQL client executes, with its bound args.
+ *
+ * Two distinct #2175 AC14 observables ride on this: the pool load is ONE
+ * statement, and that statement carries ZERO pool-derived bound parameters. The
+ * second is the load-bearing one — a dynamic `IN (…)` built from the matched
+ * spellings would also be a single statement returning the same rows in the same
+ * order, so a statement COUNT alone cannot see the invariant.
+ */
+function spyStatements(db: Db): { executed: { sql: string; args: unknown }[]; restore: () => void } {
+  const client = db.$client as unknown as { execute: (...a: unknown[]) => unknown };
+  const original = client.execute.bind(client);
+  const executed: { sql: string; args: unknown }[] = [];
+  client.execute = ((stmt: unknown, ...rest: unknown[]) => {
+    const text = typeof stmt === 'string' ? stmt : (stmt as { sql?: string })?.sql ?? '';
+    executed.push({ sql: text, args: typeof stmt === 'string' ? [] : (stmt as { args?: unknown })?.args ?? [] });
+    return original(stmt as never, ...(rest as never[]));
+  }) as typeof client.execute;
+  return { executed, restore: () => { client.execute = original as typeof client.execute; } };
+}
+
+/** The statements that read the candidate pool, isolated from every other read. */
+function poolStatements(executed: { sql: string; args: unknown }[]): { sql: string; args: unknown }[] {
+  return executed.filter((s) => /from "books"/i.test(s.sql) && /"series_position"/.test(s.sql) && /"user_cleared_fields"/.test(s.sql));
+}
+
 describe('SeriesCardService — integration', () => {
   let dir: string;
   let db: Db;
@@ -839,22 +893,25 @@ describe('SeriesCardService — integration', () => {
   describe('#2108 — pinned candidate claim order', () => {
     // Both traps that would make this test green-but-vacuous are closed here:
     //
-    //  - WITHOUT the forced index the planner emits `SCAN books` and rowid order
+    //  - WITHOUT a forced index the planner emits `SCAN books` and rowid order
     //    falls out anyway, so the pool is id-ascending with or without the
-    //    `.orderBy()`. The `CREATE INDEX` drives it onto
-    //    `SEARCH … USING COVERING INDEX (series_name=?)`, which returns rows in
-    //    series_name order instead — hence the deliberately INVERTED seeding
-    //    (lower id → 'Zeta Series', higher id → 'Alpha Series').
+    //    `.orderBy()`. `forcePoolReorderingIndex` drives it onto
+    //    `SEARCH … USING COVERING INDEX`, which returns rows in series_name order
+    //    instead — hence the deliberately INVERTED seeding (lower id →
+    //    'Zeta Series', higher id → 'Alpha Series') — and `poolProbeIds` asserts
+    //    that reordering as an explicit precondition rather than trusting the
+    //    index to bite ([[sqlite-covering-index-forces-scan-order]]).
     //  - With CROSS-TIER candidates the arm ranking would pick the winner
     //    regardless of order, and the `.orderBy()` could be deleted with the test
     //    still green. Both books therefore pair `full-equals-full` with the same
     //    member (both titles normalize to `chapterhouse dune`) — one tier, so
     //    only the SQL order decides.
     //
-    // Counterfactuals, both run and recorded: deleting `.orderBy(asc(books.id))`
-    // flips the claim to the higher id and this test FAILS; deleting the
-    // `CREATE INDEX` below leaves it passing on both branches, which is exactly
-    // what makes the index non-optional here.
+    // Counterfactuals, all run and recorded at #2175: deleting
+    // `.orderBy(asc(books.id))` flips the claim to the higher id and this test
+    // FAILS; dropping to the pre-#2175 NARROW `books (series_name)` index leaves
+    // the plan at `SCAN books`, the precondition assertion FAILS first, and
+    // without that assertion the whole case would silently pass on both branches.
     it('claims the lower-id book when two same-tier candidates compete under an index', async () => {
       const lowerId = await seedBookWithSeries(db, {
         title: 'Chapterhouse Dune',
@@ -870,9 +927,11 @@ describe('SeriesCardService — integration', () => {
       });
       expect(higherId).toBeGreaterThan(lowerId);
 
-      // Not in the production schema (#2108 does not add it) — created here so
-      // the planner reorders the pool, which is the whole point of the fixture.
-      await db.run(sql`CREATE INDEX idx_books_series_name_2108 ON books (series_name)`);
+      await forcePoolReorderingIndex(db);
+      // PRECONDITION: unordered, the loader's own projection now comes back
+      // DESCENDING by id. Without this the fixture cannot tell "the ORDER BY
+      // worked" from "the planner happened to return rowid order anyway".
+      expect(await poolProbeIds(db)).toEqual([higherId, lowerId]);
 
       const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
         data: {
@@ -893,8 +952,8 @@ describe('SeriesCardService — integration', () => {
 
       // Bind from the HIGHER-id book, whose prior series name is 'Alpha Series':
       // `bindHardcoverSeries` passes `resolved.name` plus the initiating book's
-      // prior name to `persistMembers`, so the pool is
-      // `IN ('Zeta Series','Alpha Series')` and spans both books.
+      // prior name to `persistMembers`, so the pool's targets are
+      // {'Zeta Series','Alpha Series'} and it spans both books.
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
       const bound = await svc.bindHardcoverSeries(higherId, 7703);
 
