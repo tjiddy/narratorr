@@ -25,7 +25,6 @@ export function SeriesSection({
 
   return (
     <div>
-      {/* Series header */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <LibraryIcon className="w-4 h-4 text-primary/70" />
@@ -51,7 +50,6 @@ export function SeriesSection({
         )}
       </div>
 
-      {/* Book list */}
       <div className="glass-card rounded-2xl px-4 sm:px-5 divide-y divide-border/50">
         {books.map((book) => (
           <BookRow

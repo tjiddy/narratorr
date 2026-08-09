@@ -40,9 +40,7 @@ export function AuthorPage() {
 
   return (
     <div className="space-y-8">
-      {/* Hero section with blurred backdrop */}
       <div className="relative -mx-4 sm:-mx-6 lg:-mx-8 -mt-4 sm:-mt-6 px-4 sm:px-6 lg:px-8 pt-6 pb-8 overflow-hidden">
-        {/* Blurred backdrop */}
         {author.imageUrl && (
           <div className="absolute inset-0 -z-10">
             <img src={author.imageUrl} alt="" aria-hidden="true" className="w-full h-full object-cover blur-3xl opacity-20 scale-110" />
@@ -50,7 +48,6 @@ export function AuthorPage() {
           </div>
         )}
 
-        {/* Back link */}
         <button
           onClick={goBack}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6 focus-ring rounded-lg px-1 -ml-1 animate-fade-in-up"
@@ -59,9 +56,7 @@ export function AuthorPage() {
           Back
         </button>
 
-        {/* Author profile */}
         <div className="flex flex-col sm:flex-row gap-6 sm:gap-8 items-center sm:items-start">
-          {/* Avatar */}
           <div className="shrink-0 animate-fade-in-up stagger-1">
             <div className="relative w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden shadow-card-hover ring-2 ring-primary/20 group">
               {author.imageUrl ? (
@@ -75,7 +70,6 @@ export function AuthorPage() {
             </div>
           </div>
 
-          {/* Info */}
           <div className="flex-1 min-w-0 text-center sm:text-left">
             <h1 className="font-display text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight animate-fade-in-up stagger-2">
               {author.name}
@@ -97,7 +91,6 @@ export function AuthorPage() {
         </div>
       </div>
 
-      {/* Bio */}
       {author.description && (
         <div className="animate-fade-in-up stagger-4">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">About</h2>
@@ -115,7 +108,6 @@ export function AuthorPage() {
         </div>
       )}
 
-      {/* Catalog */}
       {totalBooks > 0 && (
         <div className="space-y-6 animate-fade-in-up stagger-5">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Catalog</h2>
@@ -145,7 +137,6 @@ export function AuthorPage() {
         </div>
       )}
 
-      {/* Empty catalog */}
       {totalBooks === 0 && !booksLoading && (
         <div className="text-center py-12 animate-fade-in-up stagger-5">
           <BookOpenIcon className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
