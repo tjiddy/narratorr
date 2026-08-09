@@ -24,21 +24,9 @@ import type { CompanionObserveResult, CompanionRevalidateResult } from './compan
 import type { CompanionEbookObservation } from './companion-ebook-observation.js';
 
 /**
- * Driven against a REAL migrated libSQL database rather than Drizzle chain doubles.
- *
- * The learning that motivates the doubles guidance
- * (guarded-transition-needs-returning-in-tx-mocks) is about a guarded read plus a
- * `.returning()` upsert in ONE transaction — precisely this service's write shape. A real
- * transaction satisfies both halves by construction and cannot drift from the SQL the
- * repository actually emits, which a hand-rolled `where`-terminus double repeatedly has. It
- * also makes the AC18 / AC19 races expressible as what they are: a second writer committing
- * between the pre-scan read and the guarded write.
- *
- * What IS doubled is everything outside the DB: the filesystem pass (`observeCompanionEbook`,
- * so a disposition can be dictated per book), `node:fs/promises.stat` (the eligibility guard's
- * only syscall), and the two shared concurrency primitives — wrapped, never replaced, so the
- * real `Semaphore` and the real `withBookAdmissionLock` still do the work while their
- * acquisition ORDER becomes observable (AC22).
+ * Real migrated libSQL pins the guarded read and returning upsert in one transaction and makes
+ * AC18/AC19 races genuine. External I/O is doubled; semaphore/admission lock are wrapped so real
+ * exclusion remains while acquisition order is observable.
  */
 const hoisted = vi.hoisted(() => ({ events: [] as string[] }));
 
@@ -47,27 +35,14 @@ vi.mock('node:fs/promises', async () => {
   return { ...actual, stat: vi.fn(actual.stat) };
 });
 
-/**
- * All THREE runtime exports, not just the one the sweep uses. The factory REPLACES the module
- * rather than spreading it, so a missing entry fails every case in this file at module load
- * with *"No export is defined on the mock"* — and #1976's selector imports `statRegularFile`
- * (step 7) and `revalidateCompanionFile` (step 8) from here. `Fingerprint` and
- * `CompanionRevalidateInput` are types; `verbatimModuleSyntax` erases them, so they need no
- * entry (F19).
- */
+/** Full replacement must declare all three runtime exports; type-only exports are erased (F19). */
 vi.mock('./companion-ebook-observe.js', () => ({
   observeCompanionEbook: vi.fn(),
   statRegularFile: vi.fn(),
   revalidateCompanionFile: vi.fn(),
 }));
 
-/**
- * Discovery and the path resolver are the selector's other two collaborators. Both are
- * DELEGATING spies over the real implementations: the selection cases below run against real
- * temp directories, so `gone`/`undetermined`/`out_of_range` stay drivable by arranging the
- * filesystem, while the `unresolvable` TOCTOU case can swap a file mid-call and still let the
- * REAL resolver produce the outcome.
- */
+/** Delegating spies preserve real filesystem outcomes while allowing selector TOCTOU injection. */
 vi.mock('./companion-ebook-discovery.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./companion-ebook-discovery.js')>();
   return { ...actual, findCompanionEbookCandidates: vi.fn(actual.findCompanionEbookCandidates) };
@@ -108,8 +83,7 @@ vi.mock('./book-admission.js', async (importOriginal) => {
 vi.mock('../utils/semaphore.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/semaphore.js')>();
   class RecordingSemaphore extends actual.Semaphore {
-    // Since #1984 release is a single-use token minted by acquire, so the release
-    // event is recorded by wrapping the token rather than overriding a method.
+    // acquire() returns a single-use release token, so wrap it to record release (#1984).
     override async acquire(): Promise<() => void> {
       hoisted.events.push('semaphore.wait');
       const release = await super.acquire();
@@ -132,21 +106,13 @@ const findCompanionEbookMock = vi.mocked(findCompanionEbook);
 const upsertCompanionEbookMock = vi.mocked(upsertCompanionEbook);
 const withBookAdmissionLockMock = vi.mocked(withBookAdmissionLock);
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (error: unknown) => void;
 }
 
-/**
- * Every gate is registered so `afterEach` can release it. Without that, a failing assertion
- * leaves the sweep books it parked hanging forever and `stop()` — correctly unbounded — turns
- * one real failure into a 30-second hook timeout and a cascade of unrelated ones.
- */
+/** Register every gate so a failed assertion cannot leave stop() hanging on parked work. */
 const openGates: Array<() => void> = [];
 
 function deferred<T = void>(): Deferred<T> {
@@ -157,7 +123,7 @@ function deferred<T = void>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-/** Settle-tracker: lets a test assert a promise is still PENDING without racing on it. */
+/** Lets tests assert a promise is still pending without racing it. */
 function track<T>(promise: Promise<T>): { settled: boolean; rejected: boolean } {
   const state = { settled: false, rejected: false };
   void promise.then(
@@ -172,14 +138,7 @@ async function flush(rounds = 12): Promise<void> {
   for (let i = 0; i < rounds; i++) await new Promise((resolve) => setTimeout(resolve, 1));
 }
 
-/**
- * Poll until the system has reached a named state.
- *
- * Every "arrange" step in this suite drives real async work — libSQL round-trips and real
- * `setTimeout` ticks — so a fixed number of `flush()` rounds is a bet on machine speed that
- * loses under a loaded full-suite run. `waitUntil` is used to REACH a state; `flush()` is kept
- * only for the quiet period that follows, where the assertion is that nothing further happened.
- */
+/** Poll real async work to reach a state; fixed flush counts are reserved for proving later quiet periods. */
 async function waitUntil(predicate: () => boolean, label: string): Promise<void> {
   for (let i = 0; i < 3_000; i++) {
     if (predicate()) return;
@@ -188,7 +147,6 @@ async function waitUntil(predicate: () => boolean, label: string): Promise<void>
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-/** How many per-book passes have entered `observeCompanionEbook` so far. */
 function observedCount(): number {
   return hoisted.events.filter((event) => event.startsWith('observe:')).length;
 }
@@ -215,13 +173,7 @@ function debugRecords(spies: { debug: ReturnType<typeof vi.fn> }): Array<Record<
     .filter((record): record is Record<string, unknown> => record !== null && typeof record === 'object');
 }
 
-/**
- * Assert a logged `error` value is the output of `serializeError`, not the caught `Error`.
- *
- * The own-ENUMERABLE key set is what makes this discriminating: on a real `Error`, `message`
- * and `stack` are non-enumerable, so a `toMatchObject`/`objectContaining({ message })` matcher
- * reads through to them and passes on a raw `Error` too. Mirrors `companion-ebook-open.test.ts`.
- */
+/** Enumerable keys distinguish serializeError output from raw Error; ordinary matchers read non-enumerable message/stack too. */
 function expectSerializedError(logged: unknown, original: Error, expected: { code?: string }): void {
   expect(logged).not.toBe(original);
   expect(logged).not.toBeInstanceOf(Error);
@@ -271,13 +223,12 @@ describe('CompanionEbookReconciler (#1959)', () => {
   });
 
   afterAll(() => {
-    // Tolerant on Windows: the libSQL handle keeps the dir undeletable (EPERM).
+    // libSQL may keep the directory handle open on Windows.
     removeDirTolerant(dir);
   });
 
   beforeEach(async () => {
-    // resetAllMocks, never clearAllMocks: several cases queue `*Once()` responses and
-    // clearAllMocks does not drain those queues (vitest-clearallmocks-once-queue).
+    // clearAllMocks leaves queued *Once responses intact; reset them between cases.
     vi.resetAllMocks();
     hoisted.events.length = 0;
     outcomes = new Map();
@@ -291,8 +242,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
     spies = logger.spies;
 
     settingsGet = vi.fn(async (key: string) => {
-      // Fresh objects per call — a fixture built off a shared default must never be handed
-      // out by reference (mock-settings-deep-clone).
       if (key === 'companionEpub') return { enabled };
       if (key === 'library') return { path: libraryRoot };
       return {};
@@ -327,10 +276,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       return configured ?? OBSERVED;
     });
 
-    // The two new observe-module exports default to the REAL implementations, so a selection
-    // case that does not care about them runs against the real filesystem and the real
-    // validator. `vi.fn()` in the factory carries no implementation, unlike the delegating
-    // spies elsewhere in this file, so they must be installed here every time.
+    // Full-module vi.fn mocks have no implementation; selectors default to real filesystem/validator behavior.
     const actualObserve = await vi.importActual<typeof import('./companion-ebook-observe.js')>(
       './companion-ebook-observe.js',
     );
@@ -341,15 +287,10 @@ describe('CompanionEbookReconciler (#1959)', () => {
   });
 
   afterEach(async () => {
-    // Release anything a failed assertion left parked, THEN drain — the module-level semaphore
-    // is shared by the whole file and must come back empty.
+    // Release parked work before draining the file-global semaphore.
     for (const release of openGates.splice(0)) release();
     await reconciler.stop();
   });
-
-  // -------------------------------------------------------------------------
-  // Fixture helpers
-  // -------------------------------------------------------------------------
 
   let bookSeq = 0;
 
@@ -404,10 +345,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       .map((record) => record.reason as string);
   }
 
-  // =========================================================================
-  // A. The feature gate and the eligibility gate
-  // =========================================================================
-
   describe('the feature gate (AC16)', () => {
     it('issues no prefilter, no per-book read, no observe, no write, and no summary when disabled (case 21)', async () => {
       enabled = false;
@@ -418,15 +355,12 @@ describe('CompanionEbookReconciler (#1959)', () => {
       await reconciler.reconcileAll();
       await reconciler.reconcileBook(bookId);
 
-      // The books prefilter, the per-book snapshot, and the prior read are all `db.select`
-      // calls; the settings reads go through the settings double, so this separates them
-      // cleanly (F17).
+      // Every database read uses db.select; settings use a separate double (F17).
       expect(selectSpy).not.toHaveBeenCalled();
       expect(findCompanionEbookMock).not.toHaveBeenCalled();
       expect(observeMock).not.toHaveBeenCalled();
       expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
-      // A disabled reconcileAll never reaches the sweep-start instant, so it is not a sweep
-      // and emits no summary (F18).
+      // Disabled reconcileAll never reaches the sweep-start instant (F18).
       expect(summaries(spies)).toEqual([]);
       selectSpy.mockRestore();
     });
@@ -455,14 +389,10 @@ describe('CompanionEbookReconciler (#1959)', () => {
     });
   });
 
-  // =========================================================================
-  // B. The lock boundary (AC18)
-  // =========================================================================
-
   describe('per-book serialization (AC18)', () => {
     it('acquires the lock exactly once and does every read and the write inside it (case 23)', async () => {
       const bookId = await insertBook();
-      // Order the DB reads into the event log by wrapping the two read seams.
+      // Wrap both repository seams to place reads/writes in the lock event log.
       findCompanionEbookMock.mockImplementation(async (x, id) => {
         hoisted.events.push(`prior:${id}`);
         const actual = await vi.importActual<typeof import('./companion-ebook.repository.js')>('./companion-ebook.repository.js');
@@ -496,7 +426,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       findCompanionEbookMock.mockImplementation(async (x, id) => {
         const actual = await vi.importActual<typeof import('./companion-ebook.repository.js')>('./companion-ebook.repository.js');
         const row = await actual.findCompanionEbook(x, id);
-        // Only record the pre-scan read (the one taken outside a transaction).
+        // Record only the pre-scan read outside a transaction.
         if (x === db) priors.push(row);
         return row;
       });
@@ -515,8 +445,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       gate.resolve();
       await Promise.all([a, b]);
 
-      // A read hoisted out of the lock would have handed B the same `null` A saw; inside the
-      // lock B sees A's committed row and therefore does NOT abort on a stale precondition.
+      // If hoisted outside the lock, B would see A's stale null instead of its committed row.
       expect(priors).toHaveLength(2);
       expect(priors[0]).toBeNull();
       expect(priors[1]).toMatchObject({ bookId, status: 'available' });
@@ -530,19 +459,17 @@ describe('CompanionEbookReconciler (#1959)', () => {
         const bookId = await insertBook();
         outcomes.set(bookId, async () => { await gate.promise; return OBSERVED; });
       }
-      // Queued behind the four saturated slots, so its locked snapshot read has not run yet.
+      // This row queues behind saturated slots before its locked snapshot read.
       const target = await insertBook();
 
       const sweep = reconciler.reconcileAll();
       await waitUntil(() => observedCount() === RECONCILE_CONCURRENCY, 'the sweep to saturate its slots');
-      // The AC21 prefilter has already returned this id; the authoritative row moves afterwards.
+      // Mutate after AC21 prefilter but before the authoritative locked read.
       await db.update(books).set({ status: 'wanted' }).where(eq(books.id, target));
       gate.resolve();
       await sweep;
 
-      // The per-book pass re-read `status` under the lock, found it no longer `imported`, and
-      // skipped — an implementation that carried the prefilter's stale row down would have
-      // observed and written instead.
+      // A stale prefilter row would observe and write this now-ineligible book.
       expect(observeMock.mock.calls.map((call) => call[0].bookId)).not.toContain(target);
       expect(upsertCompanionEbookMock.mock.calls.map((call) => call[1])).not.toContain(target);
       expect(summaries(spies)[0]).toMatchObject({
@@ -552,10 +479,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       });
     });
   });
-
-  // =========================================================================
-  // C. The conditional write (AC19)
-  // =========================================================================
 
   describe('the conditional write (AC19)', () => {
     it('commits through the transaction handle, never the db (case 32)', async () => {
@@ -584,7 +507,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
 
       expect(transactionSpy).not.toHaveBeenCalled();
       expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
-      // Not even an `updated_at` touch.
       expect(await readRow(unchangedId)).toEqual(before);
       transactionSpy.mockRestore();
     });
@@ -650,11 +572,8 @@ describe('CompanionEbookReconciler (#1959)', () => {
     });
 
     /**
-     * One row per material column of the AC19 observation guard, so deleting ANY single
-     * comparison in `sameObservationRow` fails a named case (cases 27/31, F7). Every patch is a
-     * legal single-column move under the eight CHECK constraints: `candidateCount` is bumped
-     * from an already-selected multi-candidate seed (`ck_companion_ebooks_multi_candidate_selection`),
-     * and `validationCode` moves within an `invalid` seed (`ck_companion_ebooks_validation_code`).
+     * Cover every material AC19 guard column with schema-valid single-column moves; candidateCount
+     * starts selected and validationCode starts invalid to satisfy their CHECK constraints (F7).
      */
     it.each([
       { column: 'status', seedValues: {}, patch: { status: 'drm_protected' as const } },
@@ -686,7 +605,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
 
       expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
       expect(abortReasons()).toEqual(['observation-changed']);
-      // The concurrent writer's value survived intact — the pass wrote nothing over it.
       const afterRow = await readRow(bookId);
       expect(afterRow).not.toEqual(beforeRow);
       expect(afterRow).toMatchObject(patch);
@@ -697,9 +615,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       const gate = deferred();
       const events: string[] = [];
 
-      // A plain `db.transaction` — the shape every other service in the codebase uses, and one
-      // that knows nothing about the reconciler or about any serialization helper. That is the
-      // point: the exclusion must hold for callers that never opted in.
+      // Connection serialization must exclude ordinary db.transaction callers that never opt in.
       const otherService = db.transaction(async () => {
         events.push('other:start');
         await gate.promise;
@@ -713,8 +629,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
 
       const reconcile = reconciler.reconcileBook(bookId);
       await flush();
-      // Without connection-level serialization the companion transaction opens right here,
-      // overlapping the other one, and loses to SQLITE_BUSY.
+      // An overlapping companion transaction would lose to SQLITE_BUSY here.
       expect(events).toEqual(['other:start']);
 
       gate.resolve();
@@ -723,10 +638,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(await readRow(bookId)).toMatchObject({ status: 'available' });
     });
   });
-
-  // =========================================================================
-  // D. The sweep (AC21/AC22/AC24)
-  // =========================================================================
 
   describe('the sweep', () => {
     it('selects its own eligible rows and never visits the rest (case 39)', async () => {
@@ -743,22 +654,11 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(summaries(spies)[0]).toMatchObject({ books: 1, observed: 1 });
     });
 
-    // Slot count, and *only* slot count. This suite replaces the whole observe
-    // module, so the callbacks below never reach `validateEpub` and no reader
-    // spy exists here — what a per-book pass costs is not observable from this
-    // file. That half is proved independently and deterministically by the
-    // `src/core/epub/` suites, which pin that an archive over
-    // `MAX_ARCHIVE_ENTRIES` or `MAX_CENTRAL_DIRECTORY_BYTES` is rejected
-    // *before* `Open.custom()` is called, so a hostile book costs a slot and a
-    // preflight rather than a materialised central directory (#2025). (Named
-    // loosely on purpose — the archive adapter's own suite asserts that no file
-    // outside `src/core/epub/` so much as mentions its module name.)
-    //
-    // Deliberately no heap assertion, here or there: a Vitest worker cannot
-    // lower its own V8 ceiling, most of the retention is `external` rather than
-    // heap so `--max-old-space-size` would not bound it anyway, and RSS sampling
-    // without process isolation is nondeterministic. The retention measurements
-    // behind the span cap are PR evidence, not a test.
+    /**
+     * This suite pins slot count only. core/epub separately rejects oversized archives before
+     * Open.custom; heap/RSS assertions would be nondeterministic because retention is external
+     * and the Vitest worker is not isolated (#2025).
+     */
     it(`never runs more than ${RECONCILE_CONCURRENCY} per-book passes at once (case 37)`, async () => {
       const gate = deferred();
       let inFlight = 0;
@@ -776,7 +676,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
 
       const sweep = reconciler.reconcileAll();
       await waitUntil(() => inFlight === RECONCILE_CONCURRENCY, 'the sweep to saturate its slots');
-      // Then a quiet period: a fifth pass would push `peak` past the bound.
+      // Quiet period proves no fifth pass starts while all slots are held.
       await flush();
       expect(peak).toBe(RECONCILE_CONCURRENCY);
 
@@ -808,10 +708,8 @@ describe('CompanionEbookReconciler (#1959)', () => {
       await waitUntil(() => observedCount() === RECONCILE_CONCURRENCY, 'the sweep to saturate its slots');
       expect(hoisted.events.filter((e) => e === 'semaphore.acquired')).toHaveLength(RECONCILE_CONCURRENCY);
 
-      // Inserted AFTER the prefilter returned, so this book belongs to no sweep and the slot
-      // accounting below is only ever about the direct call.
+      // Insert after prefilter so this book belongs only to the direct call.
       const direct = await insertBook();
-      // Every slot is held by a parked sweep book; the direct call must not queue behind them.
       const directRun = reconciler.reconcileBook(direct);
       await waitUntil(() => hoisted.events.includes(`lock.held:${direct}`), 'the direct call to reach its lock');
       expect(hoisted.events).toContain(`lock.held:${direct}`);
@@ -837,10 +735,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(summaries(spies)[0]).toMatchObject({ books: 3, observed: 2, failed: 1 });
     });
   });
-
-  // =========================================================================
-  // E. Single-flight, coalescing, and the chain (AC23)
-  // =========================================================================
 
   describe('single-flight and coalescing (AC23)', () => {
     it('turns two concurrent calls into exactly two runs (case 34)', async () => {
@@ -890,8 +784,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       firstGate.resolve();
       await waitUntil(() => summaries(spies).length === 1, "the first sweep's summary");
       await flush();
-      // The first sweep has finished and emitted its summary; the joined caller must still be
-      // waiting on the follow-up it queued — counting sweeps alone would not catch this.
+      // Joined caller must remain pending after the first summary until its follow-up settles.
       expect(summaries(spies)).toHaveLength(1);
       expect(joinedState.settled).toBe(false);
 
@@ -924,7 +817,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       const followUpGate = deferred();
       let observeCall = 0;
       observeMock.mockImplementation(async () => {
-        // One book per sweep, so call 2 is the coalesced follow-up's only pass.
         if (++observeCall > 1) await followUpGate.promise;
         return OBSERVED;
       });
@@ -951,16 +843,13 @@ describe('CompanionEbookReconciler (#1959)', () => {
       const joinedStates = joined.map(track);
       await flush(3);
 
-      // No book run has started yet, so every `db.select` issued so far IS a prefilter: exactly
-      // one setup ran, and the three later calls joined instead of issuing their own query.
-      // That is what makes two simultaneous sweeps unreachable.
+      // Before book work starts, one db.select proves later calls joined the first setup.
       expect(selectSpy).toHaveBeenCalledTimes(1);
 
       prefilterGate.resolve();
       await waitUntil(() => summaries(spies).length === 1, "the first sweep's summary");
       await flush();
-      // The first sweep has finished; the joined callers are still on the ONE follow-up their
-      // three calls coalesced into.
+      // Three joined callers remain on their single coalesced follow-up.
       expect(summaries(spies)).toHaveLength(1);
       expect(joinedStates.some((state) => state.settled)).toBe(false);
 
@@ -988,8 +877,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       const joined = [1, 2, 3].map(() => reconciler.reconcileAll());
       await flush(3);
 
-      // Counting prefilters here would prove nothing — it is trivially zero while the settings
-      // read is pending. The settings read itself is the assertion that pins "setup once".
+      // While settings is pending, that read—not a zero prefilter count—pins setup once.
       expect(settingsGet.mock.calls.filter((call) => call[0] === 'library')).toHaveLength(1);
 
       gate.resolve();
@@ -997,10 +885,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(summaries(spies)).toHaveLength(2);
     });
   });
-
-  // =========================================================================
-  // F. Setup failures (AC15)
-  // =========================================================================
 
   describe('setup failures (AC15)', () => {
     it.each([
@@ -1032,22 +916,15 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(spies.warn.mock.calls[0]![0]).toMatchObject({
         error: expect.objectContaining({ message: error.message, type: 'Error' }),
       });
-      // In particular NO `books: 0` summary — that would fabricate a denominator AC25's
-      // sweep-start definition says cannot exist.
+      // No books:0 summary: setup failed before AC25's sweep-start denominator existed.
       expect(summaries(spies)).toEqual([]);
       expect(observeMock).not.toHaveBeenCalled();
       selectSpy?.mockRestore();
     });
 
     /**
-     * `reconcileBook()`'s setup catch is a SEPARATE catch from the sweep's, and the table above
-     * arms both settings sites only for `reconcileAll()` (F11). Deleting the direct catch makes
-     * the fire-and-forget entry point reject during either settings read — an unhandled
-     * rejection behind an already-returned response — while every other case here stays green.
-     *
-     * Both sites are armed here, and the assertions cover the whole AC15 contract for the direct
-     * path: the promise resolves, exactly one `warn` carries `bookId` plus `serializeError`, and
-     * the failure happens early enough that no lock, no DB read, and no filesystem pass occurs.
+     * Direct reconcile has a separate setup catch; without it, fire-and-forget settings failures
+     * reject after the response. Both sites must resolve, warn once, and run no later work (F11).
      */
     it.each([
       { site: "settings.get('companionEpub')", failing: 'companionEpub' },
@@ -1069,24 +946,17 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(record).toMatchObject({ bookId });
       expectSerializedError(record.error, error, { code: 'SQLITE_IOERR' });
 
-      // Setup precedes every other step, so none of them may have run.
+      // Setup precedes every other step, so none may have run.
       expect(withBookAdmissionLockMock).not.toHaveBeenCalled();
       expect(selectSpy).not.toHaveBeenCalled();
       expect(findCompanionEbookMock).not.toHaveBeenCalled();
       expect(observeMock).not.toHaveBeenCalled();
       expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
-      // A direct call is not a sweep and never emits one.
       expect(summaries(spies)).toEqual([]);
       selectSpy.mockRestore();
     });
 
-    /**
-     * The three per-book rejection sites, each asserted on the RECORD the failure leaves behind
-     * and not merely on the promise resolving (F1). The `debug` level, the `bookId`, the
-     * exactly-once count, and the `serializeError` shape are the whole diagnostic contract for a
-     * per-book failure — it is the only trace of it besides the summary's `failed` counter, so
-     * losing, duplicating, or raw-logging it has to fail here.
-     */
+    /** Per-book failures must leave exactly one debug record with bookId and serialized error; summary count is the only other trace (F1). */
     it.each([
       {
         site: 'the pre-scan prior read',
@@ -1111,7 +981,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(failureRecords).toHaveLength(1);
       expect(failureRecords[0]).toMatchObject({ bookId });
       expectSerializedError(failureRecords[0]!.error, error, { code: 'EIO' });
-      // `debug`, never `warn`: a per-book failure is already info-visible through the summary.
       expect(spies.warn).not.toHaveBeenCalled();
     });
 
@@ -1132,33 +1001,24 @@ describe('CompanionEbookReconciler (#1959)', () => {
     it('never rejects from either public method, whatever fails (F7)', async () => {
       const bookId = await insertBook();
 
-      // (a) before the lock — the prior read.
       findCompanionEbookMock.mockRejectedValueOnce(new Error('prior read failed'));
       await expect(reconciler.reconcileBook(bookId)).resolves.toBeUndefined();
 
-      // (b) inside the per-book pass — observe itself.
       outcomes.set(bookId, async () => { throw new Error('observe failed'); });
       await expect(reconciler.reconcileBook(bookId)).resolves.toBeUndefined();
       await expect(reconciler.reconcileAll()).resolves.toBeUndefined();
 
-      // (c) inside the transaction — the guarded upsert.
       outcomes.delete(bookId);
       upsertCompanionEbookMock.mockRejectedValueOnce(new Error('upsert failed'));
       await expect(reconciler.reconcileBook(bookId)).resolves.toBeUndefined();
 
-      // (d) the sweep query itself.
       const selectSpy = vi.spyOn(db, 'select').mockImplementationOnce((() => { throw new Error('query failed'); }) as never);
       await expect(reconciler.reconcileAll()).resolves.toBeUndefined();
       selectSpy.mockRestore();
 
-      // Per-book failures stay at `debug`; they are already info-visible through the summary.
       expect(summaries(spies).some((summary) => summary.failed === 1)).toBe(true);
     });
   });
-
-  // =========================================================================
-  // G. The summary (AC25)
-  // =========================================================================
 
   describe('the sweep summary (AC25)', () => {
     const FIELDS = [
@@ -1176,15 +1036,8 @@ describe('CompanionEbookReconciler (#1959)', () => {
     });
 
     /**
-     * `durationMs` must be the SWEEP PHASE's elapsed wall time, and a `typeof === 'number'`
-     * assertion proves none of that (F2). The clock below is driven by hand and advanced by two
-     * different amounts on the two sides of the sweep-start instant, so exactly one value is
-     * correct and each way of getting it wrong produces a different, named wrong answer:
-     *
-     * - hard-coded `0`  → 0, not 7_000
-     * - setup included  → 100_000 + 7_000
-     * - reversed delta  → -7_000
-     * - measured across the whole run rather than the sweep → 107_000
+     * Drive setup and sweep time independently so durationMs cannot pass as a number, hard-coded
+     * zero, reversed delta, or whole-run duration; only sweep-phase 7_000 is valid (F2).
      */
     it('reports the sweep-phase elapsed time, excluding setup (case 41/F2)', async () => {
       const SETUP_MS = 100_000;
@@ -1193,7 +1046,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
 
       const bookId = await insertBook();
-      // Setup burns wall-clock time BEFORE the sweep-start instant.
+      // Advance setup time before the sweep-start instant.
       settingsGet.mockImplementation(async (key: string) => {
         if (key === 'companionEpub') return { enabled: true };
         now += SETUP_MS;
@@ -1241,8 +1094,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
     });
 
     it('counts an eligibility refusal as skipped (case 41/F16)', async () => {
-      // Passes the AC21 prefilter (imported, non-blank path) but its folder does not exist, so
-      // `isCompanionEbookEligible` refuses on the directory probe.
+      // Passes AC21 prefilter but fails the later directory eligibility probe.
       await insertBook({ createDir: false });
 
       await reconciler.reconcileAll();
@@ -1259,7 +1111,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
         const bookId = await insertBook();
         outcomes.set(bookId, async () => { await gate.promise; return OBSERVED; });
       }
-      // Queued behind the four saturated slots, so its locked snapshot read has not run yet.
+      // Queue deletion target behind saturated slots before its locked snapshot read.
       const vanishing = await insertBook();
 
       const sweep = reconciler.reconcileAll();
@@ -1310,10 +1162,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(sum).toBe(record.books);
     }
   });
-
-  // =========================================================================
-  // H. The drain (AC26)
-  // =========================================================================
 
   describe('stop() (AC26)', () => {
     it('starts no further sweep books once stopping (case 40a)', async () => {
@@ -1368,16 +1216,14 @@ describe('CompanionEbookReconciler (#1959)', () => {
       const a = reconciler.stop();
       const b = reconciler.stop();
 
-      // Asserted BEFORE awaiting either: an `async stop()` allocates a fresh outer promise per
-      // call and fails only this assertion while passing every other one in this suite.
+      // Assert before awaiting: async stop() would allocate distinct outer promises.
       expect(a).toBe(b);
     });
 
     it('returns `stopped` from a book run that reaches the lock after stopping (case 40f)', async () => {
       const late = await insertBook();
 
-      // Hold the book's lock from OUTSIDE the reconciler so its run is parked in the lock queue
-      // — accepted at check 1, but not yet at check 3 — when the drain begins.
+      // External lock parks the accepted run before its post-lock stopping check.
       const lockGate = deferred();
       const actual = await vi.importActual<typeof import('./book-admission.js')>('./book-admission.js');
       const holding = actual.withBookAdmissionLock(late, async () => { await lockGate.promise; });
@@ -1389,7 +1235,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       lockGate.resolve();
       await Promise.all([holding, direct, stopping]);
 
-      // Zero filesystem and zero DB work after the lock was finally granted.
+      // Post-lock stop check must prevent filesystem and database work.
       expect(hoisted.events).toContain(`lock.held:${late}`);
       expect(observeMock).not.toHaveBeenCalled();
       expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
@@ -1411,8 +1257,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       gate.resolve();
       await Promise.all([first, joined, stopping]);
 
-      // B never ran: no second prefilter, one summary (A's), and the joined caller RESOLVED
-      // rather than hanging on a follow-up that will never exist.
+      // Discarded follow-up issues no prefilter/summary and still resolves its joiner.
       expect(selectSpy.mock.calls.length).toBe(prefiltersAfterFirst);
       expect(summaries(spies)).toHaveLength(1);
       expect(joinedState.settled).toBe(true);
@@ -1428,7 +1273,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
         return { path: libraryRoot };
       });
 
-      // Same synchronous turn, no yield in between.
       const direct = reconciler.reconcileBook(bookId);
       const stopping = reconciler.stop();
       const stopState = track(stopping);
@@ -1485,7 +1329,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       await flush();
       expect(stopState.settled).toBe(false);
 
-      // The query RETURNS rows after stop() — the run must still refuse to accept them.
+      // Rows return after stop(); the run must still refuse them.
       gate.resolve();
       await Promise.all([run, stopping]);
 
@@ -1523,12 +1367,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
     });
   });
 
-  // =========================================================================
-  // G2. Forced revalidation (#2034)
-  // =========================================================================
-
   describe('forced revalidation (#2034)', () => {
-    /** Every `force` value `observeCompanionEbook` was called with, in call order. */
     function forceFlags(): boolean[] {
       return observeMock.mock.calls.map((call) => call[0].force);
     }
@@ -1542,11 +1381,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(observeMock.mock.calls[0]![0]).toMatchObject({ bookId, force: true });
     });
 
-    /**
-     * The default matters as much as the explicit value: AC1 requires every one of the seven
-     * untouched trigger sites to keep today's behaviour WITHOUT being edited, and they all call
-     * `reconcileBook(id)` with one argument.
-     */
+    /** Omitted force must remain false for untouched one-argument trigger sites. */
     it.each([
       { label: 'omitted entirely — the seven untouched call sites', call: (id: number) => reconciler.reconcileBook(id) },
       { label: 'passed explicitly as false', call: (id: number) => reconciler.reconcileBook(id, false) },
@@ -1568,22 +1403,13 @@ describe('CompanionEbookReconciler (#1959)', () => {
 
       expect(observeMock).toHaveBeenCalledTimes(ids.length);
       expect(forceFlags()).toEqual([false, false, false]);
-      // The sweep's short-circuit is intact, so its summary still reports `unchanged`.
       expect(summaries(spies)[0]).toMatchObject({ books: 3, unchanged: 3, observed: 0 });
     });
 
     /**
-     * AC4, and the reason this issue may not stash force on the instance.
-     *
-     * `observeCompanionEbook` is doubled as a FINGERPRINT SIMULATOR here — force decides the
-     * outcome, exactly as it does in the real observer for a matching row. So a concurrent sweep
-     * that could see the direct call's force would not merely read a wrong flag, it would write
-     * where it must write nothing, and that is what the assertions watch.
-     *
-     * Mutate `CompanionEbookReconciler` to hold force in a field (`this.force = force` in
-     * `reconcileBook`, read in `reconcileLocked`) and this goes red: the two sweep-only books
-     * observe with force set while the direct run is still parked, so `forceFlags()` carries
-     * three `true`s instead of one and both seeded rows get overwritten.
+     * Force must be call-scoped. The observer simulates matching fingerprints: only forced calls
+     * write. Parking one forced pass while a sweep runs exposes leaked instance state as extra
+     * true flags and overwritten sweep rows (AC4).
      */
     it('never lets a concurrent sweep observe a direct call’s force (AC4)', async () => {
       const forcedId = await insertBook();
@@ -1596,9 +1422,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       const gate = deferred();
       observeMock.mockImplementation(async (input) => {
         hoisted.events.push(`observe:${input.bookId}`);
-        // Park ONLY the forced direct pass, so the sweep runs entirely inside its window.
         if (input.force) await gate.promise;
-        // The fingerprint matches on every book: only a forced pass may revalidate.
         return input.force ? OBSERVED : { outcome: 'unchanged' };
       });
 
@@ -1614,12 +1438,10 @@ describe('CompanionEbookReconciler (#1959)', () => {
       gate.resolve();
       await Promise.all([direct, sweep]);
 
-      // Exactly ONE forced observation across every pass in this run — the direct one.
       expect(forceFlags().filter(Boolean)).toHaveLength(1);
       expect(observeMock.mock.calls.find((call) => call[0].force)![0].bookId).toBe(forcedId);
-      // The sweep-only books wrote nothing at all: not a verdict, not an `updated_at` touch.
       for (const id of sweepOnly) expect(await readRow(id)).toEqual(before.get(id));
-      // The forced book DID revalidate — the control that keeps the above from passing vacuously.
+      // Forced-book write keeps sweep-only byte identity from passing vacuously.
       expect(await readRow(forcedId)).toMatchObject({ status: 'available', filename: 'book.epub' });
     });
 
@@ -1641,20 +1463,12 @@ describe('CompanionEbookReconciler (#1959)', () => {
       gate.resolve();
       await Promise.all([direct, sweep]);
 
-      // Two passes over one book — the direct forced one, then the sweep's, serialized behind the
-      // admission lock and still short-circuiting.
       expect(forceFlags()).toEqual([true, false]);
     });
 
     /**
-     * AC6 — force weakens no guard.
-     *
-     * Following `vacuous-assertion-observation-points` §4, the run is parked on its PRE-LOCK
-     * setup. A gate on a collaborator inside the lock would be vacuous: `reconcileLocked`
-     * re-checks `this.stopping` as its first statement, so the gate would never fire, `stop()`
-     * would resolve promptly, and the test would fail against correct code. Parking on
-     * `settings.get('companionEpub')` leaves the run observable only through its synchronous
-     * `activeBookRuns` registration — precisely the property under test.
+     * Park on pre-lock settings so same-turn stop() observes synchronous active-run registration.
+     * An inside-lock gate is vacuous because the stopping recheck prevents reaching it (AC6).
      */
     it('registers a forced run synchronously, so a same-turn stop() still drains it (AC6)', async () => {
       const bookId = await insertBook();
@@ -1664,7 +1478,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
         return { path: libraryRoot };
       });
 
-      // Same synchronous turn, no yield in between.
       const direct = reconciler.reconcileBook(bookId, true);
       const stopping = reconciler.stop();
       const stopState = track(stopping);
@@ -1701,7 +1514,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       lockGate.resolve();
       await Promise.all([holding, direct, stopping]);
 
-      // The post-lock re-check still fires: zero filesystem and zero DB work after it.
       expect(hoisted.events).toContain(`lock.held:${bookId}`);
       expect(observeMock).not.toHaveBeenCalled();
       expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
@@ -1740,7 +1552,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
 
       expect(hoisted.events.filter((event) => event === `lock.acquire:${bookId}`)).toHaveLength(1);
       expect(hoisted.events.filter((event) => event === `lock.held:${bookId}`)).toHaveLength(1);
-      // A forced refresh is user-triggered and must not queue behind a background sweep.
+      // User-triggered forced refresh must not queue behind the sweep semaphore.
       expect(hoisted.events).not.toContain('semaphore.wait');
     });
 
@@ -1762,12 +1574,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
     });
   });
 
-  // =========================================================================
-  // H. selectCompanionEbook — the owner's `ambiguous` pick (#1976 AC24-AC30)
-  // =========================================================================
-
   describe('selectCompanionEbook (#1976)', () => {
-    /** A book with a real directory, plus the candidate files it should enumerate. */
     async function seedCandidates(
       names: string[],
       overrides: Parameters<typeof insertBook>[0] = {},
@@ -1779,7 +1586,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       return { bookId, bookPath };
     }
 
-    /** The canonical `observed` revalidation for `filename`, as the owner's recorded pick. */
     function selectedObservation(
       filename: string,
       candidateCount: number,
@@ -1799,12 +1605,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       };
     }
 
-    /**
-     * Make revalidation succeed for whatever file step 8 hands it, so the ladder can be driven
-     * without planting a real EPUB. It echoes back the `filename`, `candidateCount`, and
-     * `selected` it was given — a selector that passed the wrong ones would still "succeed"
-     * here, and the assertions on the persisted row are what catch that.
-     */
+    /** Echo revalidation inputs so ladder tests need no real EPUB; persisted-row assertions catch wrong arguments. */
     function stubRevalidation(): void {
       revalidateCompanionFileMock.mockImplementation(async ({ filename, selected, candidateCount }) =>
         selectedObservation(filename, candidateCount, selected),
@@ -1819,10 +1620,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       return hoisted.events.filter((event) => event.startsWith('semaphore.'));
     }
 
-    // -----------------------------------------------------------------------
-    // The happy path and the row-bearing commit (AC29/AC30)
-    // -----------------------------------------------------------------------
-
     it('persists the chosen candidate as selected and returns the row the commit wrote', async () => {
       const { bookId } = await seedCandidates(['a.epub', 'b.epub']);
       await seedRow(bookId, { status: 'ambiguous', filename: null, sizeBytes: null, mtimeMs: null, ctimeMs: null, candidateCount: 2 });
@@ -1832,8 +1629,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
 
       expect(result.outcome).toBe('selected');
       if (result.outcome !== 'selected') return;
-      // `upsertCompanionEbook` derives `selected_filename = filename` structurally, so this
-      // is the pair `ck_companion_ebooks_selection` polices (AC30).
+      // selected_filename derives from filename and must satisfy their paired CHECK (AC30).
       expect(result.row).toMatchObject({
         status: 'available',
         filename: 'b.epub',
@@ -1851,11 +1647,9 @@ describe('CompanionEbookReconciler (#1959)', () => {
 
       expect(result.outcome).toBe('selected');
       if (result.outcome !== 'selected') return;
-      // Identity, not equality: a post-commit `findCompanionEbook` would produce an equal-looking
-      // row read OUTSIDE the transaction, which is exactly what AC29 forbids.
+      // Identity catches an equal-looking post-commit reread outside the transaction (AC29).
       expect(result.row).toBe(await upsertCompanionEbookMock.mock.results[0]!.value);
-      // Exactly two reads: step 2's prior, and the in-transaction precondition re-read. A third
-      // would be the post-commit re-read.
+      // Third read would be a forbidden post-commit reread.
       expect(findCompanionEbookMock).toHaveBeenCalledTimes(2);
     });
 
@@ -1877,8 +1671,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(passedPath).toBe(join(bookPath, 'c.epub').split('\\').join('/'));
     });
 
-    // AC26/AC27 — the selector runs its OWN pass. `observeCompanionEbook` is never called, so
-    // its `unchanged` short-circuit is structurally unreachable from here.
+    // Selector owns the pass; observeCompanionEbook's unchanged short-circuit is unreachable (AC26/AC27).
     it('never calls observeCompanionEbook, and re-runs the whole pass on a repeated identical pick', async () => {
       const { bookId } = await seedCandidates(['a.epub', 'b.epub']);
       stubRevalidation();
@@ -1889,21 +1682,12 @@ describe('CompanionEbookReconciler (#1959)', () => {
       expect(first.outcome).toBe('selected');
       expect(second.outcome).toBe('selected');
       expect(observeMock).not.toHaveBeenCalled();
-      // The work ran twice — the observable invariant, not a moved timestamp (AC27).
       expect(findCompanionEbookCandidatesMock).toHaveBeenCalledTimes(2);
       expect(revalidateCompanionFileMock).toHaveBeenCalledTimes(2);
       expect(upsertCompanionEbookMock).toHaveBeenCalledTimes(2);
     });
 
-    // -----------------------------------------------------------------------
-    // The info-level mutation audit record (PR #2010 F1)
-    // -----------------------------------------------------------------------
-
-    /**
-     * Every `info` record this selection emitted. The sweep summary is excluded by shape — it
-     * is the only other `info` record this service produces and it carries a `books`
-     * denominator, which a per-selection record never does.
-     */
+    /** Selection info records exclude sweep summaries by their books denominator. */
     function selectionInfoRecords(): Array<Record<string, unknown>> {
       return spies.info.mock.calls
         .map((call) => call[0] as Record<string, unknown>)
@@ -1911,9 +1695,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
     }
 
     describe('the persisted-selection audit record', () => {
-      // CONTRIBUTING.md: every create/update/delete logs at `info`. A single owner-triggered
-      // selection produces no sweep summary, so without this record the default-level log
-      // cannot establish that the row changed at all.
+      // Owner-triggered mutations need their own default-level audit record; no sweep summary exists.
       it('emits exactly one info record with the safe fields on a successful persist', async () => {
         const { bookId } = await seedCandidates(['a.epub', 'b.epub', 'c.epub']);
         stubRevalidation();
@@ -1922,8 +1704,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
 
         const records = selectionInfoRecords();
         expect(records).toHaveLength(1);
-        // The EXACT key set — a widened record that started carrying the resolved path or the
-        // library root fails here rather than in a leak review.
+        // Exact keys prevent future path/library-root leakage.
         expect(Object.keys(records[0]!).sort()).toEqual(['bookId', 'candidateCount', 'filename', 'status']);
         expect(records[0]).toEqual({
           bookId,
@@ -1957,8 +1738,8 @@ describe('CompanionEbookReconciler (#1959)', () => {
         expect(selectionInfoRecords()[0]).toEqual({
           bookId,
           filename: 'a.epub',
-          status: 'invalid',   // the persisted verdict, not the stored `ambiguous`
-          candidateCount: 2,   // the LIVE count, not the stored 7
+          status: 'invalid',
+          candidateCount: 2,
         });
       });
 
@@ -1973,7 +1754,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
         expect(leaves).not.toContain(libraryRoot);
       });
 
-      // A mutation record is only meaningful if it is absent when nothing was written.
       it.each<[string, () => Promise<number>]>([
         ['out_of_range', async () => (await seedCandidates(['a.epub'])).bookId],
         ['gone', async () => {
@@ -2008,10 +1788,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
         expect(selectionInfoRecords()).toEqual([]);
       });
     });
-
-    // -----------------------------------------------------------------------
-    // Settings setup, above the lock (AC24 steps -2/-1)
-    // -----------------------------------------------------------------------
 
     describe('settings setup', () => {
       it('returns disabled without acquiring the lock or reading books', async () => {
@@ -2049,10 +1825,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       );
     });
 
-    // -----------------------------------------------------------------------
-    // The locked ladder, step by step (AC24)
-    // -----------------------------------------------------------------------
-
     describe('book_missing (step 1)', () => {
       it('returns book_missing with no discovery, no resolver, and no write', async () => {
         const { bookId } = await seedCandidates(['a.epub']);
@@ -2065,9 +1837,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
         expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
       });
 
-      // The GENUINE race: deleted between the route's `getById` and the locked snapshot. The
-      // suite already wraps the lock in a delegating spy, so the deletion lands after
-      // acquisition and before the callback — no new seam needed (F6).
+      // Delete after real lock acquisition but before the callback to reproduce the route/snapshot race (F6).
       it('returns book_missing when the row is deleted after lock acquisition, before the callback', async () => {
         const { bookId } = await seedCandidates(['a.epub']);
         stubRevalidation();
@@ -2110,11 +1880,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       });
     });
 
-    /**
-     * AC24 step 5 — the range check is against the LIVE list, never the stored
-     * `candidate_count`. Both directions are pinned: a selector that read the stored column
-     * would accept the first case and reject the second (F8).
-     */
+    /** Pin both directions: range checks use the live list, never stored candidate_count (F8). */
     describe('out_of_range (step 5)', () => {
       it('rejects an index the live list cannot address even though the stored count admits it', async () => {
         const { bookId } = await seedCandidates(['a.epub', 'b.epub']);
@@ -2127,7 +1893,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
 
         expect(resolveCompanionEbookPathMock).not.toHaveBeenCalled();
         expect(upsertCompanionEbookMock).not.toHaveBeenCalled();
-        // Byte-for-byte, `updated_at` included.
+        // Equality includes updated_at.
         expect(await readRow(bookId)).toEqual(before);
       });
 
@@ -2174,10 +1940,8 @@ describe('CompanionEbookReconciler (#1959)', () => {
       });
 
       /**
-       * The arm is a genuine TOCTOU window, not dead code. A symlink planted BEFORE the call
-       * is never a candidate — `findCompanionEbookCandidates` already requires `stats.isFile()`
-       * — so the swap has to happen between discovery and the resolver, and the outcome has to
-       * be produced by the REAL resolver rather than by a stub.
+       * Symlinks planted before discovery are excluded by isFile(), so swap a regular file after
+       * discovery and let the real resolver expose the TOCTOU escape.
        */
       it.skipIf(!CAN_SYMLINK)('is reachable: discovery saw a regular file, the real resolver sees a symlink out of the root', async () => {
         const outside = mkdtempSync(join(tmpdir(), 'companion-select-outside-'));
@@ -2221,8 +1985,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
         await seedRow(bookId, {
           status: 'ambiguous', filename: null, sizeBytes: null, mtimeMs: null, ctimeMs: null, candidateCount: 2,
         });
-        // The mutation lands BETWEEN step 8 and step 9, which is the window the precondition
-        // exists to close.
+        // The mutation lands between step 8 and step 9, the guarded-commit window.
         revalidateCompanionFileMock.mockImplementationOnce(async ({ filename, candidateCount }) => {
           await db.update(companionEbooks)
             .set({ status: 'invalid', filename: 'winner.epub', sizeBytes: 1, mtimeMs: 1, ctimeMs: 1, validationCode: 'not_a_zip', candidateCount: 1 })
@@ -2251,10 +2014,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
       });
     });
 
-    /**
-     * F7 — the never-rejects contract, proven at the SERVICE level. A route-level stub of the
-     * `failed` arm cannot show that a throw out of the locked callback is absorbed here.
-     */
+    /** Service-level throw proves the locked callback is absorbed; a route stub cannot (F7). */
     describe('failed (the never-rejects contract)', () => {
       it('resolves to failed when the commit transaction throws, and logs the serialized record at debug', async () => {
         const { bookId } = await seedCandidates(['a.epub']);
@@ -2270,7 +2030,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
         expect(Object.keys(records[0]!).sort()).toEqual(['bookId', 'error']);
         expect(records[0]!.bookId).toBe(bookId);
         expectSerializedError(records[0]!.error, boom, {});
-        // A setup rejection warns; a locked-callback throw does not (AC25).
+        // Setup rejections warn; locked-callback failures stay at debug (AC25).
         expect(spies.warn).not.toHaveBeenCalled();
       });
 
@@ -2283,10 +2043,6 @@ describe('CompanionEbookReconciler (#1959)', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // Lifecycle: one lock, no semaphore slot, and drain membership (AC24)
-    // -----------------------------------------------------------------------
-
     describe('lock and semaphore discipline', () => {
       it('acquires the admission lock exactly once and takes no sweep semaphore slot', async () => {
         const { bookId } = await seedCandidates(['a.epub']);
@@ -2295,8 +2051,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
         await reconciler.selectCompanionEbook(bookId, 0);
 
         expect(lockAcquisitions(bookId)).toHaveLength(1);
-        // User-triggered work must not queue behind a background sweep — the same reason
-        // `reconcileBook` takes no slot.
+        // User-triggered selection must not queue behind the sweep semaphore.
         expect(semaphoreEvents()).toEqual([]);
       });
 
@@ -2309,8 +2064,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
           reconciler.selectCompanionEbook(bookId, 1),
         ]);
 
-        // Neither deadlocks, and the second observes the first's row as its prior — so both
-        // reach a terminal outcome rather than one aborting on a stale precondition.
+        // Both selected outcomes prove the queued call reread the first commit instead of using stale prior state.
         expect([first.outcome, second.outcome].sort()).toEqual(['selected', 'selected']);
         expect(lockAcquisitions(bookId)).toHaveLength(2);
       });
@@ -2331,17 +2085,8 @@ describe('CompanionEbookReconciler (#1959)', () => {
       });
 
       /**
-       * Same-turn registration. `stop()` is called in the SAME tick, with no `await` between.
-       *
-       * The gate is on the SETTINGS read, not on revalidation, and that is the whole point: a
-       * same-turn `stop()` latches `stopping` before the locked callback runs, so step 0
-       * correctly short-circuits and revalidation is never reached — a gate placed there never
-       * fires, and the case would pass without proving anything.
-       *
-       * Parked on its first `await` inside setup, the selection is observable only through the
-       * `activeBookRuns` registration. A run registered AFTER that first `await` would already
-       * have been missed by the drain's snapshot and `stop()` would resolve immediately, so
-       * this is exactly the discriminator for synchronous registration.
+       * Gate the first settings await: same-turn stop latches before the lock, making a revalidation
+       * gate unreachable. Only synchronous activeBookRuns registration can keep the drain pending.
        */
       it('keeps stop() pending until a selection accepted in the same turn resolves', async () => {
         const { bookId } = await seedCandidates(['a.epub']);
@@ -2359,7 +2104,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
         expect(stopState.settled).toBe(false);
 
         gate.resolve({ enabled: true });
-        // `stopped`, from step 0 — the drain latched before this selection began its work.
+        // Step 0 sees the drain latched before locked work begins.
         await expect(selection).resolves.toEqual({ outcome: 'stopped' });
         await stopping;
         expect(stopState.settled).toBe(true);
@@ -2384,8 +2129,7 @@ describe('CompanionEbookReconciler (#1959)', () => {
         await stopping;
 
         expect(stopState.settled).toBe(true);
-        // `shutdown.ts` runs `stop()` immediately before `app.close()`, so the write must be
-        // done — not merely started — by the time the drain resolves.
+        // shutdown calls stop() before app.close(), so the write must finish before drain resolution.
         expect(await readRow(bookId)).toMatchObject({ filename: 'a.epub', selectedFilename: 'a.epub' });
       });
     });
