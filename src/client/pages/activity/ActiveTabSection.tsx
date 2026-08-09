@@ -62,7 +62,7 @@ export function ActiveTabSection(props: ActiveTabSectionProps) {
   );
   const hasAnyActivity = hasVisibleActivity(queue, searchCards, mergeCards, activeImportJobs, queuedImportJobs);
 
-  // Refresh "now" every 10s for batch banner cooldown without impure Date.now() in render
+  // Refresh cooldown time outside render to keep rendering pure.
   const [bannerNow, setBannerNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setBannerNow(Date.now()), 10_000);
@@ -71,7 +71,6 @@ export function ActiveTabSection(props: ActiveTabSectionProps) {
 
   return (
     <section className="space-y-5 animate-fade-in-up stagger-2">
-      {/* Import batch banner */}
       {importJobs.length > 0 && (
         <ImportBatchBanner jobs={importJobs} now={bannerNow} />
       )}
@@ -106,7 +105,6 @@ export function ActiveTabSection(props: ActiveTabSectionProps) {
         </div>
       )}
 
-      {/* Import jobs — between searches and downloads */}
       {activeImportJobs.length > 0 && (
         <div className="space-y-4">
           {activeImportJobs.map((job) => (
@@ -144,7 +142,6 @@ export function ActiveTabSection(props: ActiveTabSectionProps) {
       ) : null}
       <Pagination page={queuePagination.page} totalPages={queuePagination.totalPages(queueTotal)} total={queueTotal} limit={queuePagination.limit} onPageChange={queuePagination.setPage} />
 
-      {/* Queued imports subsection */}
       {queuedImportJobs.length > 0 && (
         <div className="space-y-2">
           <h3 className="text-sm font-medium text-muted-foreground">

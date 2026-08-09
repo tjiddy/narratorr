@@ -156,18 +156,13 @@ describe('ActiveTabSection', () => {
         cancelMutation: mockMutation({ isPending: true, variables: 1 }),
       })} />);
 
-      // First row should show cancelling state
       const cancellingTexts = screen.getAllByText('Cancelling...');
       expect(cancellingTexts).toHaveLength(1);
 
-      // Second row should show normal "Cancel & Blacklist" button
       expect(screen.getByText('Cancel & Blacklist')).toBeInTheDocument();
     });
   });
 
-  // ===========================================================================
-  // #637 — Import jobs integration
-  // ===========================================================================
 
   describe('#637 import jobs integration', () => {
     it('renders ImportActivityCard for processing import jobs', () => {
@@ -211,7 +206,6 @@ describe('ActiveTabSection', () => {
 
     it('sorts processing imports by updatedAt descending and queued by createdAt ascending', () => {
       const importJobs: ImportJobWithBook[] = [
-        // Intentionally out of order: older update first
         { id: 1, bookId: 41, type: 'manual', status: 'processing', phase: 'copying',
           phaseHistory: [{ phase: 'copying', startedAt: 1000 }],
           createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T01:00:00Z',
@@ -222,7 +216,6 @@ describe('ActiveTabSection', () => {
           createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T02:00:00Z',
           startedAt: '2025-01-01T00:00:00Z', completedAt: null,
           book: { title: 'Newer Processing', coverUrl: null, primaryAuthorName: null } },
-        // Queued: newer created first (should render second)
         { id: 3, bookId: 43, type: 'manual', status: 'pending', phase: 'queued',
           phaseHistory: [],
           createdAt: '2025-01-01T02:00:00Z', updatedAt: '2025-01-01T02:00:00Z',
@@ -238,7 +231,6 @@ describe('ActiveTabSection', () => {
       renderWithProviders(<ActiveTabSection {...defaultProps({ importJobs })} />);
 
       const titles = screen.getAllByRole('heading', { level: 3 }).map(h => h.textContent);
-      // Processing: Newer first (updatedAt desc), then queued section: Older first (createdAt asc)
       const newerIdx = titles.indexOf('Newer Processing');
       const olderIdx = titles.indexOf('Older Processing');
       expect(newerIdx).toBeLessThan(olderIdx);
