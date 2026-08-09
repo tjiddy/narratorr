@@ -1,17 +1,7 @@
 import { Link } from 'react-router';
 import type { StagedItemResultDto } from '@/lib/api';
 
-/**
- * Shared detail projection for the import report (#1894). Centralizes, for BOTH
- * the last-import panel and the Activity import-history cards:
- *  - disposition filtering (ATTENTION rows only — held/failed/skipped; accepted is
- *    count-only and rendered by the parent; `pending` is never shown),
- *  - group order held → failed → skipped,
- *  - per-disposition field access (`held.reason`, `failed.message`, `skipped.reason`
- *    + optional collision fields), and
- *  - the reason-specific skipped rendering enumerating every optional-field combo
- *    (F65) — so `reason`/`message` and optional-link handling cannot drift.
- */
+/** Shared held/failed/skipped projection for last-import and Activity views. */
 
 type Held = Extract<StagedItemResultDto, { disposition: 'held' }>;
 type Failed = Extract<StagedItemResultDto, { disposition: 'failed' }>;
@@ -25,22 +15,21 @@ function bookLink(existingBookId: number, label: string) {
   );
 }
 
-/** Reason-specific skipped rendering — all optional-field combinations (F65). */
 function SkippedTarget({ row }: { row: Skipped }) {
   if (row.reason === 'already-importing') {
     return <span className="text-muted-foreground">already importing</span>;
   }
-  // already-in-library — existingBookId and existingTitle are INDEPENDENTLY optional.
+  // ID and title are independently optional after the referenced book is deleted.
   if (row.existingBookId != null && row.existingTitle != null) {
-    return bookLink(row.existingBookId, row.existingTitle); // both → title as a link
+    return bookLink(row.existingBookId, row.existingTitle);
   }
   if (row.existingBookId == null && row.existingTitle != null) {
-    return <span>{row.existingTitle}</span>; // title-only → plain text, no link
+    return <span>{row.existingTitle}</span>;
   }
   if (row.existingBookId != null) {
-    return bookLink(row.existingBookId, 'existing book'); // id-only → link, fallback label
+    return bookLink(row.existingBookId, 'existing book');
   }
-  return <span className="text-muted-foreground">already in library</span>; // neither → generic
+  return <span className="text-muted-foreground">already in library</span>;
 }
 
 function AttentionRow({ label, title, children }: { label: string; title: string; children: React.ReactNode }) {
