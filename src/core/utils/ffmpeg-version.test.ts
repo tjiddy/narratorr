@@ -3,7 +3,6 @@ import { extractFfmpegMajor, ffmpegMajorAtLeast } from './ffmpeg-version.js';
 
 describe('extractFfmpegMajor', () => {
   it('parses the canonical X.Y.Z shape (probeFfmpeg regex hit)', () => {
-    // probeFfmpeg returns the `(\S+)` token after "ffmpeg version ", e.g. `8.0.1`
     expect(extractFfmpegMajor('8.0.1')).toBe(8);
   });
 
@@ -25,8 +24,6 @@ describe('extractFfmpegMajor', () => {
   });
 
   it('returns null for a custom build whose first line has no parseable major', () => {
-    // The probeFfmpeg fallback returns the trimmed first line verbatim for a
-    // custom build (no "ffmpeg version X" match); a major can't be derived.
     expect(extractFfmpegMajor('ffmpeg version N-109060-gabcdef custom build')).toBeNull();
   });
 
