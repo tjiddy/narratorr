@@ -12,18 +12,9 @@ import type { ZipArchiveResult, ZipSourceSession } from './zip-source.js';
 import { withZipSource, ZipSourceProtocolError } from './zip-source.js';
 
 /**
- * Both boundaries are mocked at the OS / library edge — `node:fs/promises` and
- * `unzipper` — never by stubbing this module's own exports: `zip-source.ts`
- * calls its own helpers through local bindings, so a `vi.mock` factory
- * overriding those exports would not intercept the internal calls, and adding
- * `__internal` indirection to production code to make it mockable is exactly the
- * shape to avoid.
- *
- * Both mocks **delegate to the real implementation by default**, so the great
- * majority of rows below are genuine end-to-end runs against real files and the
- * pinned reader. The spies exist to answer questions no black-box assertion can
- * — was `Open.custom()` reached at all, which reads happened before it, which
- * `stream()` calls were served from the replay queue.
+ * OS and unzipper boundary mocks delegate to real implementations. Module-local
+ * bindings cannot be intercepted through exported helpers; the spies only observe
+ * reader entry, handle reads, and replayed stream calls.
  */
 
 type ReadArgs = [buffer: Buffer, offset: number, length: number, position: number];
@@ -36,7 +27,7 @@ const h = vi.hoisted(() => ({
     fsOpen: (typeof import('node:fs/promises'))['open'];
     Open: (typeof import('unzipper'))['Open'];
   },
-  /** Fires after the preflight, immediately before the pinned reader runs. */
+  /** Runs after preflight, immediately before the pinned reader. */
   beforeOpen: undefined as (() => void | Promise<void>) | undefined,
   onRead: undefined as ((raw: FileHandle, args: ReadArgs) => Promise<ReadResult>) | undefined,
   onStat: undefined as (() => Promise<Stats>) | undefined,
@@ -58,7 +49,7 @@ vi.mock('unzipper', async (importOriginal) => {
   return { ...actual, default: { ...real, Open: { ...real.Open, custom: h.openCustom } } };
 });
 
-/** Only the three members production uses are forwarded; everything else is absent by design. */
+/** Forwards only the three FileHandle methods production uses. */
 function wrapHandle(raw: FileHandle, record: { closes: number; raw: FileHandle }): FileHandle {
   return {
     async read(...args: ReadArgs): Promise<ReadResult> {
@@ -81,10 +72,7 @@ function wrapHandle(raw: FileHandle, record: { closes: number; raw: FileHandle }
   } as unknown as FileHandle;
 }
 
-/**
- * Replace the session's `stream` with a recording wrapper. This is the same
- * object the module hands `Open.custom`, so every reader call is observed.
- */
+/** Records every reader call on the source passed to Open.custom. */
 function traceStreams(session: ZipSourceSession): Array<{ offset: number; length?: number }> {
   const calls: Array<{ offset: number; length?: number }> = [];
   const original = session.source.stream.bind(session.source);
@@ -105,7 +93,7 @@ function drain(stream: Readable): Promise<Buffer[]> {
   });
 }
 
-/** A readable that emits `value` on its `error` event, the shape `File.stream()` really has. */
+/** Emits an error event, matching File.stream's failure shape. */
 function erroringStream(value: unknown): Readable {
   const stream = new Readable({ read() {} });
   queueMicrotask(() => stream.emit('error', value));
@@ -130,7 +118,6 @@ async function openArchive(filePath: string): Promise<ZipArchiveResult> {
   return withZipSource(filePath, (session) => session.preflightAndOpen());
 }
 
-/** Names as this module reports them, or the rejection/failure verbatim. */
 async function namesOf(filePath: string): Promise<string[] | ZipArchiveResult> {
   const result = await openArchive(filePath);
   return result.kind === 'archive' ? result.entries.map((entry) => entry.name) : result;
@@ -138,9 +125,7 @@ async function namesOf(filePath: string): Promise<string[] | ZipArchiveResult> {
 
 beforeAll(async () => {
   dir = await F.createArchiveDir();
-  // The only heavyweight fixtures in this suite: built once and shared. A
-  // patched-down declaration cannot substitute — the reader would pull 10,000
-  // records from a shorter stream and fail with FILE_ENDED.
+  // Build the only heavyweight fixtures once; patched counts cannot replace real records.
   const entries = (count: number) =>
     Array.from({ length: count }, (_, index) => ({ name: `e${index}.txt`, content: 'x' }));
   manyAtCeiling = await F.writeBuiltArchive(dir, 'ceiling.zip', {
@@ -178,8 +163,6 @@ beforeEach(() => {
     return (h.real.Open.custom as (s: unknown, o: unknown) => Promise<unknown>)(source, options);
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('the archive primitive', () => {
   it('reads three entries from one handle, with the fd alive throughout', async () => {
@@ -226,13 +209,11 @@ describe('the archive primitive', () => {
     const second = await withZipSource(filePath, async (session) => {
       const result = await session.preflightAndOpen();
       if (result.kind !== 'archive') throw new Error(`unexpected ${result.kind}`);
-      // A 1-byte cap aborts the counting transform mid-entry, which destroys the
-      // entry stream — the exact `req.destroy()` shape at `Open/unzip.js:100-108`.
+      // A one-byte cap aborts and destroys the first entry stream mid-read.
       expect(await result.entries[0]?.read(1)).toEqual({
         kind: 'failed',
         label: 'cap-exceeded',
-        // Chunked by the positional source, so the exact crossing chunk is a
-        // stream-plumbing detail; the dedicated row below pins the value.
+        // A dedicated test below pins the crossing-chunk count.
         inflatedBytes: expect.any(Number),
       });
       return result.entries[1]?.read(1024);
@@ -281,23 +262,18 @@ describe('the archive primitive', () => {
   });
 
   it('destroys an already-created live stream at teardown, before closing the handle', async () => {
-    // A stream created inside the callback and left un-drained is the case the
-    // post-close `stream()` guard cannot reach: the object already exists, so
-    // only session teardown can stop it. Without that, a pending positional read
-    // wakes up on a closed descriptor after the session is gone.
+    // An already-created, undrained stream bypasses the post-close source guard;
+    // teardown must destroy it before its descriptor closes.
     const body = Buffer.alloc(512 * 1024, 5);
     const filePath = await place(body);
 
     const escaped = await withZipSource(filePath, (session) =>
-      // Deliberately not consumed: `_read` has not run, so nothing is in flight
-      // and nothing but teardown will ever end it.
+      // Leave _read dormant so only teardown can end the stream.
       Promise.resolve(session.source.stream(0)),
     );
 
     expect(escaped.destroyed).toBe(true);
 
-    // And it stays inert: resuming it after teardown yields no bytes, no error,
-    // and no read against the closed handle.
     const readsAtTeardown = h.reads.length;
     const chunks: Buffer[] = [];
     const errors: unknown[] = [];
@@ -314,10 +290,8 @@ describe('the archive primitive', () => {
   });
 
   it('pins Decision 3 — a createReadStream-backed source kills the shared handle', async () => {
-    // This is why the positional form exists. `unzipper` destroys every bounded
-    // range stream it creates (`Open/unzip.js:100-108` calls `req.destroy()` on
-    // every entry `finish`), and a `FileHandle`-backed `createReadStream` closes
-    // its handle on destroy — leaving `fh.fd = -1` and every later read dead.
+    // unzipper destroys every bounded range; FileHandle.createReadStream then closes
+    // the shared handle and kills later reads.
     const filePath = await place(Buffer.from('0123456789abcdefghij'));
     const raw = await h.real.fsOpen(filePath, 'r');
     const stream = raw.createReadStream({ start: 0, end: 3 });
@@ -328,7 +302,6 @@ describe('the archive primitive', () => {
     expect(raw.fd).toBe(-1);
     await expect(raw.read(Buffer.alloc(4), 0, 4, 0)).rejects.toThrow(/closed/);
 
-    // The positional form, on the same shape of operation, does not.
     await withZipSource(filePath, async (session) => {
       const first = session.source.stream(0, 4);
       await drain(first);
@@ -338,10 +311,8 @@ describe('the archive primitive', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('the stream() contract', () => {
-  const body = Buffer.from('0123456789abcdefghij'); // 20 bytes
+  const body = Buffer.from('0123456789abcdefghij');
 
   it('serves stream(offset) with no length to end of file', async () => {
     const filePath = await place(body);
@@ -353,7 +324,7 @@ describe('the stream() contract', () => {
   it('clamps an overrunning stream(offset, length) instead of throwing', async () => {
     const filePath = await place(body);
     await withZipSource(filePath, async (session) => {
-      // The last-entry overrun shape from `directory.js:222-228`.
+      // Matches unzipper's padded last-entry overrun.
       expect(Buffer.concat(await drain(session.source.stream(16, 5_000)))).toEqual(
         Buffer.from('ghij'),
       );
@@ -399,7 +370,6 @@ describe('the stream() contract', () => {
       await grower.close();
       expect(await session.source.size()).toBe(20);
       expect(session.stat.size).toBe(20);
-      // The frozen size also clamps the reads derived from it.
       expect(Buffer.concat(await drain(session.source.stream(0))).length).toBe(20);
     });
   });
@@ -413,16 +383,13 @@ describe('the stream() contract', () => {
       await session.source.size();
       await session.source.size();
     });
-    // The hook is installed after the one legitimate stat, so any *further*
-    // stat would land on the spy.
+    // Installed after the legitimate stat, this catches any later stat.
     expect(statSpy).not.toHaveBeenCalled();
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('validated structural replay', () => {
-  /** Rewrite bytes in place through a *second* descriptor, as a live attacker would. */
+  /** Rewrites in place through a second descriptor, preserving the pinned inode. */
   async function rewrite(filePath: string, patches: readonly F.ArchivePatch[]): Promise<void> {
     const handle = await h.real.fsOpen(filePath, 'r+');
     for (const patch of patches) {
@@ -436,10 +403,7 @@ describe('validated structural replay', () => {
   }
 
   it('hands the reader the validated count when the EOCD is rewritten mid-flight', async () => {
-    // A *small* forged delta on purpose: this row runs against the real reader,
-    // and it fails safe — an unprotected implementation reads 2, runs off the
-    // end of the central directory, and fails with FILE_ENDED rather than
-    // allocating. The 500,000,000 forgery is never handed to the real reader.
+    // A small forgery keeps an unprotected real-reader path fail-safe instead of allocating.
     const bytes = await F.buildArchive({ store: true, entries: [{ name: 'a.txt', content: 'hi' }] });
     const eocd = F.eocdOffset(bytes);
     const filePath = await place(bytes);
@@ -453,10 +417,7 @@ describe('validated structural replay', () => {
     expect(await namesOf(filePath)).toEqual(['a.txt']);
   });
 
-  // Small forged deltas again, for the same reason: these rows run against the
-  // real reader, so an unprotected implementation must fail *safe* — a bogus
-  // record offset and a count of 2 both end in FILE_ENDED, where a huge count
-  // would allocate and take the test process down instead.
+  // Small deltas keep an unprotected real-reader path fail-safe.
   it.each([
     ['locator', (b: Buffer) => F.zip64LocatorOffset(b) + 8, 4 as const, 0xdeadbeef],
     ['record', (b: Buffer) => F.zip64RecordOffset(b) + 32, 8 as const, 2],
@@ -492,16 +453,14 @@ describe('validated structural replay', () => {
     });
 
     const postOpen = h.reads.filter((read) => !read.preOpen);
-    // Every queue-served call performs no fh.read at all; the first live call is
-    // the central directory, immediately after the queue empties.
+    // Queue-served calls avoid fh.read; the first live call follows queue exhaustion.
     expect(postOpen.filter((read) => read.streamCall < queued)).toEqual([]);
     expect(postOpen.some((read) => read.streamCall === queued)).toBe(true);
     expect(calls.length).toBeGreaterThan(queued);
   });
 
   it('serves the empty archive twice at offset 0 — once queued, once live', async () => {
-    // The degenerate layout: EOCD at 0 and offsetToStartOfCentralDirectory at 0,
-    // so consumption and not offset identity has to control replay.
+    // EOCD and directory both start at zero, so replay must follow consumption, not offset.
     const filePath = await place(await F.buildArchive({ entries: [] }));
 
     const calls = await withZipSource(filePath, async (session) => {
@@ -529,7 +488,6 @@ describe('validated structural replay', () => {
         } catch (error: unknown) {
           thrown = error;
         }
-        // A hard failure, never a silent live read.
         expect(h.reads).toHaveLength(before);
       };
       const result = await session.preflightAndOpen();
@@ -538,12 +496,10 @@ describe('validated structural replay', () => {
 
     expect(outcome.thrown).toBeInstanceOf(ZipSourceProtocolError);
     expect(outcome.thrown).toBeInstanceOf(TypeError);
-    // The head was not consumed, so the reader still got its validated tail.
+    // Protocol failure did not consume the validated queue head.
     expect(outcome.result.kind).toBe('archive');
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('replay scope — the central directory and payloads stay live', () => {
   async function rewriteBytes(filePath: string, offset: number, replacement: Buffer): Promise<void> {
@@ -554,8 +510,7 @@ describe('replay scope — the central directory and payloads stay live', () => 
 
   it('observes a same-length central-directory rename applied after the preflight', async () => {
     const bytes = await F.buildArchive({ store: true, entries: [{ name: 'a.xhtml', content: 'hi' }] });
-    // Deliberately sub-65,557 bytes: the whole file is inside the acquisition
-    // window, so an offset-covered replay rule would silently swallow this.
+    // Whole-file acquisition makes this catch replay keyed by covered offsets.
     expect(bytes.length).toBeLessThan(65_557);
     const nameOffset = F.listCentralDirectory(bytes)[0]!.nameOffset;
     const filePath = await place(bytes);
@@ -588,7 +543,7 @@ describe('replay scope — the central directory and payloads stay live', () => 
       const handle = await h.real.fsOpen(filePath, 'r+');
       const buffer = Buffer.alloc(2);
       buffer.writeUInt16LE(60_000);
-      // fileNameLength at +28 — the reader pulls that many bytes and runs out.
+      // Inflate fileNameLength so the reader exhausts the rewritten framing.
       await handle.write(buffer, 0, 2, headerOffset + 28);
       await handle.close();
     };
@@ -597,14 +552,10 @@ describe('replay scope — the central directory and payloads stay live', () => 
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('replay boundary — structures straddling the acquisition window', () => {
   /**
-   * `T = size - 65557` is where the acquisition window starts. A 65,525-byte
-   * comment puts the 20-byte locator across `[T - 10, T + 10)`; a 65,480-byte
-   * comment puts the 56-byte record across `[T - 21, T + 35)`. Both are
-   * conformant containers.
+   * With T at the acquisition-window start, valid comments can straddle the locator
+   * across T - 10 or the record across T - 21.
    */
   it.each([
     [65_525, 'locator', -10],
@@ -619,7 +570,7 @@ describe('replay boundary — structures straddling the acquisition window', () 
     const windowStart = bytes.length - 65_557;
     const structureOffset =
       which === 'locator' ? F.zip64LocatorOffset(bytes) : F.zip64RecordOffset(bytes);
-    // Precondition: the fixture really has the straddling geometry the row claims.
+    // Pin the intended straddling geometry.
     expect(structureOffset - windowStart).toBe(delta);
 
     const validated = Buffer.from(
@@ -627,7 +578,6 @@ describe('replay boundary — structures straddling the acquisition window', () 
     );
     const filePath = await place(bytes);
 
-    // Mutate the straddling structure after the preflight; it must not be observed.
     h.beforeOpen = async () => {
       const handle = await h.real.fsOpen(filePath, 'r+');
       await handle.write(Buffer.alloc(4, 0xee), 0, 4, structureOffset);
@@ -648,14 +598,12 @@ describe('replay boundary — structures straddling the acquisition window', () 
       return recorded;
     });
 
-    // The replayed bytes are byte-for-byte the ones the preflight validated.
     expect(Buffer.concat(calls)).toEqual(validated);
   });
 
   it('reads each preflight byte at most once, as pairwise-disjoint intervals', async () => {
-    // The oracle is intervals, not start offsets: on the locator straddle a
-    // scratch read from T covers [T, size) while a wrong full locator read from
-    // T - 10 covers [T - 10, T + 10) — different starts, overlapping bytes.
+    // Compare intervals, not starts: a tail-window read and a locator read can overlap
+    // despite different offsets.
     const filePath = await place(
       await F.buildArchive({
         store: true,
@@ -711,26 +659,21 @@ describe('replay boundary — structures straddling the acquisition window', () 
       return captured;
     });
 
-    // Byte-for-byte what the preflight accepted, for all three queue entries.
     for (const [offset, expected] of validated) {
       expect(Buffer.concat(served.get(offset) ?? [])).toEqual(expected);
     }
-    // And not one of those three reached the handle: the first live read belongs
-    // to the central directory, stream call 3.
+    // The first live handle read is the central directory after all three replay entries.
     expect(h.reads.filter((read) => !read.preOpen && read.streamCall < 3)).toEqual([]);
     expect(h.reads.some((read) => !read.preOpen && read.streamCall === 3)).toBe(true);
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('EOCD candidate selection', () => {
   it.each([
     ['no comment', ''],
     ['a 100-byte comment', 'c'.repeat(100)],
     ['a 60,000-byte comment', 'c'.repeat(60_000)],
-    // The exact legal maximum behind the 65,557-byte tail constant, so an
-    // off-by-one tail cannot pass every positive.
+    // Exact legal maximum catches an off-by-one tail window.
     ['a 65,535-byte comment', 'c'.repeat(65_535)],
     ['a comment containing a planted PK\\x05\\x06', `${'c'.repeat(40)}\x50\x4b\x05\x06${'c'.repeat(56)}`],
   ])('opens an archive with %s', async (label, comment) => {
@@ -738,8 +681,7 @@ describe('EOCD candidate selection', () => {
     const eocd = F.eocdOffset(bytes);
     expect(bytes.readUInt16LE(eocd + 20)).toBe(comment.length);
     if (label.includes('planted')) {
-      // Precondition: the decoy really is in the file, *after* the real EOCD, so
-      // a backward scan meets it first and has to reject it on the length rule.
+      // The later decoy is encountered first and must fail the length rule.
       expect(bytes.lastIndexOf(F.EOCD_SIGNATURE)).toBe(eocd + 62);
     }
     const filePath = await place(bytes);
@@ -747,8 +689,7 @@ describe('EOCD candidate selection', () => {
     expect(await namesOf(filePath)).toEqual(['a.txt']);
 
     if (comment.length > 0) {
-      // Pin the regression rather than assume it: the reader's previous 80-byte
-      // tail default (`directory.js:83`) would have failed this very fixture.
+      // Pinned unzipper's default tail window cannot open a commented archive.
       await expect(h.real.Open.file(filePath)).rejects.toThrow();
     }
   });
@@ -777,13 +718,10 @@ describe('EOCD candidate selection', () => {
     const base = await F.buildArchive({ entries: [{ name: 'a.txt', content: 'hi' }] });
     const filePath = await place(make(base));
 
-    // Explicitly the frozen structural result, and explicitly not a RangeError.
     expect(await openArchive(filePath)).toEqual({ kind: 'rejected', code: 'truncated' });
     expect(h.openCustom).not.toHaveBeenCalled();
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('the declared-entry-count preflight', () => {
   /** A tiny, entirely valid ZIP32 archive turned into a ZIP64 forgery. */
@@ -796,13 +734,8 @@ describe('the declared-entry-count preflight', () => {
   }
 
   it('rejects the 213-byte forgery pre-open, without calling the reader', async () => {
-    // This exact fixture OOM-kills the process when passed to a bare
-    // `Open.file()` — a 213-byte file, ~31 s, a 1 GiB heap cap, dead. Never
-    // "simplify" this row into calling the reader directly.
-    //
-    // Which is also why the half-billion count only ever appears behind a stub:
-    // if the pre-open ceiling regresses, this row must fail with a clean
-    // assertion, not by taking the worker down with it.
+    // Bare Open.file on this 213-byte, half-billion-record forgery exhausts the heap.
+    // Keep the real reader stubbed so a preflight regression fails safely.
     h.openCustom.mockResolvedValue({ files: [] });
     const forged = await forge({ declaredRecords: 500_000_000n });
     expect(forged).toHaveLength(213);
@@ -817,15 +750,8 @@ describe('the declared-entry-count preflight', () => {
     ['numberOfRecords', ['centralDirectoryOffset']],
     ['centralDirectoryOffset', ['numberOfRecords']],
   ])('takes the ZIP64 branch on the %s sentinel alone', async (trigger, restore) => {
-    // One trigger at a time — the contract is an OR across three independent
-    // fields, and an erroneous AND or a missing arm still passes a fixture that
-    // sets all three (which is exactly what the pinned writer emits).
-    //
-    // Each row carries a *valid* ZIP64 locator and record, so taking the branch
-    // opens the archive. Not taking it cannot: on the ZIP32 branch a lone
-    // `diskNumber = 0xffff` is a split declaration, a lone
-    // `numberOfRecords = 0xffff` disagrees with the on-disk count, and a lone
-    // `0xffffffff` central-directory offset seeks past EOF.
+    // Each independent sentinel must trigger ZIP64; setting all three would miss an AND bug.
+    // Valid locator and record data make only the ZIP64 interpretation open successfully.
     const base = await F.buildArchive({
       store: true,
       entries: [{ name: 'chapter-one.xhtml', content: 'hello' }],
@@ -846,7 +772,6 @@ describe('the declared-entry-count preflight', () => {
     }
     const bytes = F.patchArchive(forged, patches);
 
-    // Precondition: exactly one of the three triggers is set.
     const set = [
       bytes.readUInt16LE(eocd + 4) === 0xffff,
       bytes.readUInt16LE(eocd + 10) === 0xffff,
@@ -861,9 +786,7 @@ describe('the declared-entry-count preflight', () => {
       return recorded;
     });
 
-    // The locator at eocdOffset - 20 was requested, and served from the
-    // validated replay queue rather than live — so our preflight took the branch
-    // too, not just the reader.
+    // Queued locator replay proves preflight, not only unzipper, took the ZIP64 branch.
     expect(calls[1]).toEqual({ offset: eocd - 20 });
     expect(h.reads.filter((read) => !read.preOpen && read.streamCall < 3)).toEqual([]);
   });
@@ -881,11 +804,7 @@ describe('the declared-entry-count preflight', () => {
     [
       'offsetToStartOfCentralDirectory',
       [{ at: 16, size: 4 as const, value: 0xfffffffe }],
-      // Read as a legacy offset, 0xfffffffe is far past the EOCD, so the span
-      // check (#2025) answers `truncated` structurally. Before that check it
-      // reached the reader, which seeked past EOF and reported
-      // `decoder-failure`; same verdict for the book, one phase earlier and
-      // without opening the archive.
+      // As a legacy offset, 0xfffffffe creates a structurally negative span.
       { kind: 'rejected', code: 'truncated' },
     ],
   ])('does not take the ZIP64 branch on a near-sentinel %s', async (_field, patches, expected) => {
@@ -927,8 +846,7 @@ describe('the declared-entry-count preflight', () => {
     ['a locator diskNumber other than 0', { locatorDiskNumber: 1 }],
     ['a locator numberOfDisks other than 1', { locatorNumberOfDisks: 2 }],
     ['a locator record offset past its legal ceiling', { locatorRecordOffset: 4_000_000n }],
-    // Distinct from the row above: the safe-integer rule has to fire BEFORE any
-    // `Number(...)` conversion, which a range check alone would not prove.
+    // This isolates rejection before Number conversion; the prior range row cannot.
     ['a locator record offset above 2^53 - 1', { locatorRecordOffset: (1n << 53n) + 1n }],
     ['a bad record signature', { recordSignature: 0x01020304 }],
     ['a record diskNumber other than 0', { recordDiskNumber: 1 }],
@@ -948,8 +866,7 @@ describe('the declared-entry-count preflight', () => {
   });
 
   it('rejects sentinels set on an archive too small to hold a ZIP64 tail', async () => {
-    // 76 bytes of locator plus record cannot precede an EOCD at offset 0, and
-    // the rejection happens before any out-of-range read is attempted.
+    // No ZIP64 tail can precede EOCD at zero; rejection must avoid a negative read.
     const empty = await F.buildArchive({ entries: [] });
     expect(F.eocdOffset(empty)).toBe(0);
     const filePath = await place(
@@ -992,7 +909,6 @@ describe('the declared-entry-count preflight', () => {
         { name: 'OEBPS/a.xhtml', content: 'hi' },
       ],
     });
-    // Precondition: the fixture really carries a ZIP64 locator and record.
     expect(bytes.readUInt32LE(F.zip64LocatorOffset(bytes))).toBe(F.ZIP64_LOCATOR_SIGNATURE);
     expect(bytes.readUInt32LE(F.zip64RecordOffset(bytes))).toBe(F.ZIP64_RECORD_SIGNATURE);
     const filePath = await place(bytes);
@@ -1001,12 +917,9 @@ describe('the declared-entry-count preflight', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('the entry-count ceiling', () => {
   it(`opens an archive declaring and holding exactly ${MAX_ARCHIVE_ENTRIES} members`, async () => {
     const result = await openArchive(manyAtCeiling);
-    // The ceiling is `>`, not `>=`.
     expect(result.kind).toBe('archive');
     if (result.kind === 'archive') expect(result.entries).toHaveLength(MAX_ARCHIVE_ENTRIES);
   });
@@ -1017,9 +930,7 @@ describe('the entry-count ceiling', () => {
   });
 
   it('pins that files.length follows the declaration, not the archive', async () => {
-    // Why the post-open check is a defensive equality assertion and nothing more:
-    // `vars.files` is `Array(vars.numberOfRecords)` by construction
-    // (`directory.js:185`), so a patched-down declaration yields exactly that many.
+    // vars.files is Array(numberOfRecords), so a patched-down declaration yields that many.
     const bytes = await F.buildArchive({
       store: true,
       entries: [
@@ -1043,11 +954,7 @@ describe('the entry-count ceiling', () => {
     ['fewer', 0],
     ['more', 2],
   ])('throws when the reader returns %s members than the validated count', async (_label, count) => {
-    // The guard's whole purpose is a reader-version change, and the pinned
-    // reader cannot express the disagreement — `vars.files` is
-    // `Array(vars.numberOfRecords)` by construction. So the only way to give the
-    // failure arm a regression signal is to stub the reader with a cardinality
-    // the preflight did not validate.
+    // Pinned unzipper cannot disagree with its declaration; a stub exercises future protocol drift.
     const filePath = await place(
       await F.buildArchive({ store: true, entries: [{ name: 'a.txt', content: 'hi' }] }),
     );
@@ -1065,34 +972,25 @@ describe('the entry-count ceiling', () => {
     expect(thrown).toBeInstanceOf(ZipSourceProtocolError);
     expect((thrown as Error).message).toContain(`returned ${count} members`);
     expect((thrown as Error).message).toContain('validated declared count of 1');
-    // The identity is load-bearing, not free choice: a plain uncoded Error here
-    // would be labelled `decoder-failure` and persisted as "this book is
-    // corrupt" instead of surfacing the dependency drift.
+    // A plain Error would misclassify dependency drift as book corruption.
     expect(classifyEpubReadError(thrown, { archiveRead: true })).toBe('throw');
     expect(h.handles).toHaveLength(1);
     expect(h.handles[0]?.closes).toBe(1);
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('the central-directory span ceiling', () => {
   /** Long names, few entries: the span is tripped in isolation, far under the entry ceiling. */
   const SPAN_FIXTURE_ENTRIES = 150;
   const CAP = MAX_CENTRAL_DIRECTORY_BYTES;
 
-  /** span === CAP exactly. */
   let atCap: string;
-  /** span === CAP + 1, built genuinely — one more byte of filename, not a patched offset. */
   let overCap: string;
-  /** The `atCap` central directory under a forged ZIP64 tail: span === CAP + 76. */
   let zip64OverCap: string;
 
   beforeAll(async () => {
-    // The only heavyweight fixtures in this section, built once and shared: an
-    // 8 MiB span is a ~17 MB temp file and cannot be smaller. `span ≤ eocdOffset
-    // ≤ fileSize`, so unlike a declared *count* an over-cap span has no 213-byte
-    // analogue — the bytes have to exist.
+    // Build these ~17 MB fixtures once; unlike a forged count, an over-cap span
+    // requires the bytes to exist.
     const atCapBytes = await F.buildArchiveWithCentralDirectorySpan({
       span: CAP,
       filler: SPAN_FIXTURE_ENTRIES,
@@ -1102,8 +1000,7 @@ describe('the central-directory span ceiling', () => {
       filler: SPAN_FIXTURE_ENTRIES,
     });
     const forged = F.forgeZip64Tail(atCapBytes, { declaredRecords: BigInt(SPAN_FIXTURE_ENTRIES) });
-    // Precondition for the parity row: the forged tail splices exactly the
-    // 56-byte record and 20-byte locator into the capped pre-EOCD envelope.
+    // The forged ZIP64 envelope adds exactly its 56-byte record and 20-byte locator.
     expect(F.centralDirectorySpan(forged)).toBe(CAP + 76);
 
     atCap = await place(atCapBytes);
@@ -1112,24 +1009,13 @@ describe('the central-directory span ceiling', () => {
   });
 
   it('rejects a central directory one byte over the cap, without calling the reader', async () => {
-    // The motivating case, and the upper half of the boundary: this file differs
-    // from the accepted one below by a single byte of filename.
-    //
-    // Measured through the production path — `withZipSource` →
-    // `preflightAndOpen()` → `normalizeEntries`, holding the returned entries
-    // live, `heapUsed + external` after a forced GC, one fresh process per point
-    // — retention tracks this span linearly at **2.06–2.39×** (4.3 MiB span →
-    // 9.2 MiB; 17.2 MiB span → 35.4 MiB). Uncapped, a ~112–128 MiB span fits
-    // inside the 256 MiB file ceiling, which is ~230–305 MiB per reader and
-    // ~0.9–1.2 GiB across the four concurrent reconciler slots. The four-slot
-    // process death is an extrapolation along that measured slope, not a crash
-    // that was watched; the proportionality is what was measured.
+    // Production-path measurements retain 2.06–2.39× the directory span. Without
+    // this cap, four readers can retain roughly 0.9–1.2 GiB within the file-size limit.
     expect(await openArchive(overCap)).toEqual({ kind: 'rejected', code: 'limit_exceeded' });
     expect(h.openCustom).not.toHaveBeenCalled();
   });
 
   it('opens an archive whose central directory sits exactly at the cap', async () => {
-    // The ceiling is `>`, not `>=`.
     const result = await openArchive(atCap);
 
     expect(result.kind).toBe('archive');
@@ -1137,9 +1023,6 @@ describe('the central-directory span ceiling', () => {
   });
 
   it('accepts a span of exactly zero', async () => {
-    // The `< 0` versus `<= 0` regression guard. The empty archive is the
-    // degenerate layout — EOCD at 0 and central directory at 0 — and it reached
-    // the reader before this ceiling existed, so it still must.
     const bytes = await F.buildArchive({ entries: [] });
     expect(F.eocdOffset(bytes)).toBe(0);
     expect(F.centralDirectorySpan(bytes)).toBe(0);
@@ -1163,14 +1046,8 @@ describe('the central-directory span ceiling', () => {
   });
 
   it('reports a negative span as truncated even when the declared count is over the ceiling', async () => {
-    // Precedence: structure is validated before either resource ceiling, so a
-    // strictly negative span is `truncated` regardless of the count.
-    //
-    // Both count fields are patched to the *same* over-ceiling value on purpose.
-    // `preflight` requires `recordsOnDisk === numberOfRecords` before it reaches
-    // any ceiling, so patching +10 alone would return `truncated` for a
-    // structural count mismatch and would pass just as happily against a
-    // count-first implementation — proving nothing about the ordering.
+    // Keep both count fields coherently over-cap; otherwise their mismatch would
+    // return truncated without proving structure precedes resource ceilings.
     const bytes = await F.buildArchive({ store: true, entries: [{ name: 'a.txt', content: 'hi' }] });
     const eocd = F.eocdOffset(bytes);
     const filePath = await place(
@@ -1186,52 +1063,37 @@ describe('the central-directory span ceiling', () => {
   });
 
   it('caps the ZIP64 branch on the same span, pre-EOCD envelope included', async () => {
-    // The row that fails if only the legacy path is capped. These are the very
-    // bytes accepted at the cap above; the forged tail pushes the envelope 76
-    // bytes over, and the ZIP64 branch has to read its own central-directory
-    // offset out of the record to see it — the legacy field is the 0xffffffff
-    // sentinel here, which would compute a wildly negative span and answer
-    // `truncated` instead.
+    // ZIP64 must use its record offset; the legacy sentinel would produce a negative span.
     expect(await openArchive(zip64OverCap)).toEqual({ kind: 'rejected', code: 'limit_exceeded' });
     expect(h.openCustom).not.toHaveBeenCalled();
   });
 
   it('leaves a conformant archive at the entry ceiling far under the cap', async () => {
-    // Why the cap cannot go much lower: `MAX_ARCHIVE_ENTRIES` already allows
-    // 10,000 members, and a conformant book at that ceiling with 100-char names
-    // spans 1.57 MiB — so a 1 MiB cap would reject a legitimate archive. That
-    // this fixture still opens is pinned by the entry-ceiling section above.
+    // A 10,000-member conformant archive spans 1.57 MiB, ruling out a 1 MiB cap.
     const { readFile } = await import('node:fs/promises');
 
     expect(F.centralDirectorySpan(await readFile(manyAtCeiling))).toBeLessThan(CAP);
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('entry-name handling', () => {
   it('rejects an invalid UTF-8 central-directory name as unsafe_entry_path', async () => {
     const bytes = await F.buildArchive({ store: true, entries: [{ name: 'abcd', content: 'hi' }] });
     const hostile = Buffer.from([0x61, 0xff, 0xfe, 0x62]);
     const patched = F.patchEntryName(bytes, 0, hostile);
-    // Precondition on the raw bytes, before invoking anything.
     expect(F.listCentralDirectory(patched)[0]?.rawName).toEqual(hostile);
     const filePath = await place(patched);
 
     expect(await openArchive(filePath)).toEqual({ kind: 'rejected', code: 'unsafe_entry_path' });
 
-    // And this is the decoder we are refusing to trust: unzipper's own
-    // non-fatal `File.path` substitutes U+FFFD rather than rejecting.
+    // unzipper's non-fatal File.path decoder substitutes U+FFFD.
     const directory = await h.real.Open.file(filePath);
     expect(directory.files[0]?.path).toContain('�');
   });
 
   it('rejects a byte-patched leading-traversal name', async () => {
-    // `archiver@8.0.0`'s `sanitizePath` (`lib/utils.js:58`) rewrites
-    // `../../etc/passwd` to `etc/passwd` on the way in, so this name only exists
-    // in the archive by byte patching. That rewrite is itself pinned by the
-    // `archiver 8 fixture-construction contract` suite below — if it ever stops
-    // happening, this test's precondition goes vacuous rather than red.
+    // archiver sanitizes leading traversal, so byte patching creates the hostile name;
+    // the fixture-contract suite below pins that dependency behavior.
     const bytes = await F.buildArchive({
       store: true,
       entries: [{ name: 'aaaaaaaaaaaaaaaa', content: 'hi' }],
@@ -1267,38 +1129,15 @@ describe('entry-name handling', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 /**
- * The fixture builder's own preconditions (#2057), asserted on **raw archive
- * bytes** rather than on whether the suites above stay green.
- *
- * Those suites are built against specific archiver behaviours — which hostile
- * names survive `append` verbatim, and what a central-directory record costs. A
- * dependency bump that quietly started sanitising `a/../../b.txt` would leave
- * every one of them passing while they attacked the reader with a *harmless*
- * name, and `patchEntryName`'s precondition assertions would become vacuous
- * rather than failing. So the coupling is pinned here, in the consumers, where
- * a drift reports which specific mode moved.
- *
- * It lives here and not in the fixture because `epub-zip.fixture.ts` is a
- * `.fixture.ts` with no suite, and it sits outside `src/core/epub/` because
- * `layer-guard.test.ts` scans every non-test file in this folder as production.
+ * Pins raw archiver behavior relied on by hostile-name and span fixtures; dependency
+ * drift could otherwise make their attacks or arithmetic vacuous. This test file owns
+ * the assertions because fixture files have no suite and the layer guard treats non-tests as production.
  */
 describe('archiver 8 fixture-construction contract', () => {
   /**
-   * `sanitizePath` (`archiver@8.0.0/lib/utils.js:58`, called from
-   * `lib/core.js:276` for every named append) rewrites leading traversal,
-   * absolute, drive-letter, and backslash names, and leaves everything else —
-   * including mid-path traversal and mid-path `.` — verbatim.
-   *
-   * Both halves are load-bearing. The *preserved* rows are how the hostile-name
-   * fixtures are hostile at all; the *rewritten* rows are why
-   * {@link F.patchEntryName} has to exist.
-   *
-   * Platform-independent by construction: these are strings handed to `append`,
-   * never paths touched on disk, so the `C:` and backslash rows carry no
-   * Windows hazard. Keep them that way.
+   * Pins which names sanitizePath rewrites and preserves; hostile fixtures rely on
+   * both halves. Inputs are append strings, never filesystem paths, so cases remain portable.
    */
   it.each([
     { name: 'a/../../b.txt', raw: 'a/../../b.txt', mode: 'mid-path traversal preserved' },
@@ -1314,9 +1153,7 @@ describe('archiver 8 fixture-construction contract', () => {
   });
 
   it('costs exactly 46 + nameLength per central-directory record', async () => {
-    // `buildArchiveWithCentralDirectorySpan` computes its filler names from this
-    // arithmetic; if the writer ever emits an extra field or a per-entry
-    // comment, that builder's span `throw` fires with no indication why.
+    // The span fixture derives filler names from this record-size contract.
     const names = ['a.txt', 'OEBPS/content.opf', 'x'.repeat(200), 'META-INF/container.xml'];
     const bytes = await F.buildArchive({
       store: true,
@@ -1329,12 +1166,9 @@ describe('archiver 8 fixture-construction contract', () => {
       expect(entry.extraLength).toBe(0);
       expect(entry.commentLength).toBe(0);
       expect(entry.nameLength).toBe(Buffer.byteLength(names[index]!));
-      // The cursor advance the walk performs, stated independently: consecutive
-      // records sit exactly `46 + nameLength` apart.
       const next = entries[index + 1];
       if (next) expect(next.headerOffset - entry.headerOffset).toBe(46 + entry.nameLength);
     }
-    // And the last record ends where the directory does.
     const last = entries.at(-1)!;
     expect(F.eocdOffset(bytes) - last.headerOffset).toBe(46 + last.nameLength);
   });
@@ -1361,20 +1195,14 @@ describe('archiver 8 fixture-construction contract', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('bounded reads', () => {
   it('enforces the cap on the inflated stream, not on the declared size', async () => {
-    // Highly compressible filler so the fixture stays small while genuinely
-    // inflating past the cap.
+    // Compressible filler keeps the archive small while genuinely inflating past the cap.
     const bytes = await F.buildArchive({ entries: [{ name: 'a.txt', content: 'a'.repeat(200_000) }] });
     const central = F.listCentralDirectory(bytes)[0]!;
     const local = F.localFileHeader(bytes, 0);
-    // uncompressedSize at central +24 and local +22, understated in both. The
-    // reader bounds the *compressed* pull by the honest `compressedSize` and
-    // lets central-directory vars override the local header
-    // (`Open/unzip.js:44`, `:87`), so this changes nothing the reader does —
-    // the streamed counter is the only thing that fires.
+    // Understate both declared sizes; compressed pull remains honest, leaving the
+    // streamed counter as the only enforcement point.
     const filePath = await place(
       F.patchArchive(bytes, [
         { offset: central.headerOffset + 24, size: 4, value: 500, why: 'central uncompressedSize lie' },
@@ -1397,7 +1225,7 @@ describe('bounded reads', () => {
   });
 
   it('reports the bytes the counting transform observed when a read aborts on its cap', async () => {
-    // STORE, so the whole member arrives in one chunk and the count is exact.
+    // STORE delivers one chunk, making the crossing count exact.
     const filePath = await place(
       await F.buildArchive({ store: true, entries: [{ name: 'a.txt', content: 'abcdefghij' }] }),
     );
@@ -1408,10 +1236,7 @@ describe('bounded reads', () => {
       return result.entries[0]!.read(4);
     });
 
-    // The 10-byte chunk crossed the 4-byte cap and every byte of it is reported,
-    // not discarded. 1.1e charges exactly this against its shared inspection
-    // budget and never rolls it back, so a `failed` arm reporting nothing would
-    // silently forgive the inflation that already happened.
+    // The cap-crossing chunk remains fully charged rather than rolled back.
     expect(read).toEqual({ kind: 'failed', label: 'cap-exceeded', inflatedBytes: 10 });
   });
 
@@ -1444,8 +1269,7 @@ describe('bounded reads', () => {
   });
 
   it('never calls File.buffer() anywhere in src/core/epub/', async () => {
-    // Comments are stripped: this very module documents *why* `File.buffer()`
-    // is never called, and the prose must not trip the scan.
+    // Strip comments so the ban applies to calls, not this module's rationale.
     const sources = await scanProductionSources(import.meta.dirname, { stripComments: true });
 
     expect(sources.filter(({ code }) => /\.buffer\s*\(/.test(code)).map(({ file }) => file)).toEqual(
@@ -1453,8 +1277,6 @@ describe('bounded reads', () => {
     );
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('error classification', () => {
   const THROWN: Array<[string, unknown]> = [
@@ -1473,7 +1295,7 @@ describe('error classification', () => {
     ['Z_DATA_ERROR', errno('Z_DATA_ERROR')],
     ['ERR_ZLIB_BINDING_CLOSED', errno('ERR_ZLIB_BINDING_CLOSED')],
     ['an uncoded parse error', new Error('unparseable')],
-    // unzipper's own uncoded errors reach us as plain archive-read `Error`s.
+    // unzipper surfaces these as uncoded archive-read Errors.
     ['unzippers FILE_ENDED', new Error('FILE_ENDED')],
     ['unzippers MISSING_PASSWORD', new Error('MISSING_PASSWORD')],
   ];
@@ -1484,7 +1306,6 @@ describe('error classification', () => {
 
   it.each(THROWN)('propagates %s from Open.custom()', async (_label, value) => {
     const filePath = await archive();
-    // `Open.custom()` returns a promise, so a rejection is the right shape here.
     h.openCustom.mockRejectedValueOnce(value);
     await expect(openArchive(filePath)).rejects.toBe(value);
   });
@@ -1496,11 +1317,8 @@ describe('error classification', () => {
   });
 
   /**
-   * `File.stream()` returns a `Readable`, not a promise
-   * (`@types/unzipper@0.10.11/index.d.ts:111`), so `mockRejectedValueOnce` would
-   * hand production code a promise and produce a `TypeError` on the missing
-   * `.pipe()` instead of exercising stream-error classification. These rows
-   * return a readable that *emits*.
+   * File.stream returns a Readable, so failures must emit; a rejected mock promise
+   * would only exercise a missing-pipe TypeError.
    */
   function withErroringEntry(value: unknown): void {
     h.openCustom.mockResolvedValueOnce({
@@ -1532,7 +1350,6 @@ describe('error classification', () => {
   it.each(REPORTED)('reports %s from File.stream() as a decoder failure', async (_label, value) => {
     const filePath = await archive();
     withErroringEntry(value);
-    // The stream fails before a byte is inflated, so nothing is charged.
     expect(await readFirst(filePath)).toEqual({
       kind: 'failed',
       label: 'decoder-failure',
@@ -1540,8 +1357,6 @@ describe('error classification', () => {
     });
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('adapter-owned OS failures', () => {
   it('propagates an fs.open() rejection without running the callback or closing', async () => {
@@ -1551,7 +1366,6 @@ describe('adapter-owned OS failures', () => {
 
     await expect(withZipSource('/nowhere.epub', callback)).rejects.toBe(failure);
     expect(callback).not.toHaveBeenCalled();
-    // Nothing was acquired, so nothing is closed.
     expect(h.handles).toEqual([]);
   });
 
@@ -1588,9 +1402,7 @@ describe('adapter-owned OS failures', () => {
   });
 
   it('reconstructs complete bytes across repeated partial successful reads', async () => {
-    // `FileHandle.read()` reports `bytesRead` and never promises to fill the
-    // buffer. A one-read-per-chunk implementation silently truncates the EOCD
-    // window or a retained locator.
+    // FileHandle.read may return a successful partial buffer; all pieces must be reassembled.
     const bytes = await F.buildArchive({
       store: true,
       forceZip64: true,
@@ -1602,7 +1414,6 @@ describe('adapter-owned OS failures', () => {
     });
     const filePath = await place(bytes);
     h.onRead = async (raw, [buffer, offset, length, position]) =>
-      // Several smaller nonzero pieces, then zero only at true EOF.
       raw.read(buffer, offset, Math.min(length, 7), position);
 
     const read = await withZipSource(filePath, async (session) => {
@@ -1615,16 +1426,11 @@ describe('adapter-owned OS failures', () => {
 
     expect(read).toEqual({ kind: 'bytes', bytes: Buffer.from('abcdefghijklmnopqrstuvwxyz') });
     expect(h.reads.every((record) => record.bytesRead <= 7)).toBe(true);
-    // The companion arm — an actual zero-byte result — is covered by the two
-    // early-EOF rows below; clamping to the frozen size means this fixture's
-    // ranges always end exactly on data.
   });
 
   /**
-   * Shrink the file underneath the frozen size through a second descriptor, so
-   * a range the source still believes in now runs past true EOF and `fh.read`
-   * genuinely returns `bytesRead === 0`. Nothing here is mocked: the divergence
-   * is real, which is the only way to prove the termination branches fire.
+   * Shrinks through a second descriptor so the frozen size exceeds real EOF and
+   * fh.read genuinely returns zero.
    */
   async function truncateUnderneath(filePath: string, to: number): Promise<void> {
     const shrinker = await h.real.fsOpen(filePath, 'r+');
@@ -1633,9 +1439,7 @@ describe('adapter-owned OS failures', () => {
   }
 
   /**
-   * Turns a missing `bytesRead === 0` break into a fast, clean assertion failure
-   * instead of a suite-timeout hang — a loop that never terminates is exactly
-   * the regression these rows exist to catch.
+   * Converts a missing zero-byte termination into a fast failure instead of a hung suite.
    */
   function guardAgainstLooping(limit: number): void {
     let reads = 0;
@@ -1657,9 +1461,7 @@ describe('adapter-owned OS failures', () => {
       return Buffer.concat(await drain(session.source.stream(0)));
     });
 
-    // Exactly the surviving bytes — never the uninitialised tail of the scratch
-    // buffer, which a `push(chunk)` instead of `push(chunk.subarray(0, n))`
-    // would leak, and never a hang on the zero-byte result.
+    // Return only surviving bytes, never the uninitialized buffer tail.
     expect(observed).toEqual(body.subarray(0, 40));
     expect(h.reads.filter((read) => read.bytesRead === 0)).toHaveLength(1);
     expect(h.reads).toHaveLength(2);
@@ -1672,32 +1474,22 @@ describe('adapter-owned OS failures', () => {
     const result = await withZipSource(filePath, async (session) => {
       expect(session.stat.size).toBe(bytes.length);
       guardAgainstLooping(50);
-      // Well short of the EOCD, so the acquisition window can never be filled.
+      // Truncate before EOCD so acquisition cannot fill its frozen window.
       await truncateUnderneath(filePath, 20);
       return session.preflightAndOpen();
     });
 
-    // `readRange` returns the 20 bytes it actually got rather than a full-length
-    // buffer, so no candidate can satisfy the frozen size and the outcome is the
-    // frozen structural code — reached, not hung.
     expect(result).toEqual({ kind: 'rejected', code: 'truncated' });
     expect(h.reads.filter((read) => read.bytesRead === 0)).toHaveLength(1);
     expect(h.openCustom).not.toHaveBeenCalled();
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('the internal-only surface', () => {
-  // This is a raw full-text scan, not an import parser, and it does not strip comments — so a
-  // prose mention of this module's name in any file outside src/core/epub/ fails it, and only a
-  // full-suite run reveals which one. When documenting a relationship to this module from
-  // outside the folder, name the folder ("the `src/core/epub/` suites"), not the module.
+  // This raw scan includes comments; outside documentation must name the folder, not this module.
   it('is imported by no module outside src/core/epub/', async () => {
     const root = path.resolve(import.meta.dirname, '../..');
-    // The whole of `src/` — test files included, comments included, this folder
-    // pruned. The exclusion is segment-aware, so a future `src/core/epubx/`
-    // sibling would be scanned rather than silently skipped (#2000).
+    // Scan all src tests and comments; prune only the segment-exact epub directory.
     const sources = await scanSources({
       root,
       extensions: ['.ts', '.tsx'],
