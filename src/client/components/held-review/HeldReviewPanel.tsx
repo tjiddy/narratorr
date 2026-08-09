@@ -7,11 +7,7 @@ interface HeldReviewPanelProps {
   isPending: boolean;
 }
 
-/**
- * Held for recording review (#1711) — items the server could not confirm as the
- * same vs a different recording of a book you own. Not imported; re-confirm to
- * keep both recordings. Shared by Manual Import and Library Import (#1732).
- */
+/** Items the server could not confirm as the same or a different recording; re-confirm to import. */
 export function HeldReviewPanel({ heldReview, onReconfirm, isPending }: HeldReviewPanelProps) {
   if (heldReview.length === 0) return null;
 

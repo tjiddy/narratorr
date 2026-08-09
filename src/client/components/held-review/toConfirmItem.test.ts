@@ -27,9 +27,6 @@ function row(overrides: Partial<ImportRow> = {}): ImportRow {
 }
 
 describe('toConfirmItem forceImport derivation', () => {
-  // #1925: a former within-scan row is a NORMAL candidate (isDuplicate: false). With
-  // force=false it must submit WITHOUT forceImport so `classifyConfirmItem` runs the
-  // confirm-time recording ladder instead of the row bypassing it.
   it('isDuplicate=false + force=false → no forceImport (former within-scan row flows through the ladder)', () => {
     const item = toConfirmItem(row({ book: book({ isDuplicate: false, reviewReason: 'Possible duplicate folder in this scan' }) }), false);
     expect(item).not.toHaveProperty('forceImport');
@@ -46,9 +43,6 @@ describe('toConfirmItem forceImport derivation', () => {
   });
 });
 
-// #1927 AC5 — two-state, pair-locked series mapping. A non-empty edited series emits
-// seriesName (original, untrimmed) + its paired seriesPosition; empty/whitespace omits
-// BOTH (defer). An untouched seeded row carries the provider primary (item-first no-op).
 describe('toConfirmItem series mapping', () => {
   it('user-set series → payload carries seriesName + paired seriesPosition', () => {
     const item = toConfirmItem(row({ edited: { title: 'Book', author: 'Author', series: 'The Dresden Files', seriesPosition: 10 } }), false);
@@ -75,7 +69,6 @@ describe('toConfirmItem series mapping', () => {
   });
 
   it('untouched seeded row (edited.series = provider primary) → seriesName carries that value verbatim (AC4 item-first no-op)', () => {
-    // The padded value proves trim classifies but does NOT rewrite — the original string ships.
     const item = toConfirmItem(row({ edited: { title: 'Book', author: 'Author', series: ' Provider Saga ', seriesPosition: 2 } }), false);
     expect(item.seriesName).toBe(' Provider Saga ');
     expect(item.seriesPosition).toBe(2);

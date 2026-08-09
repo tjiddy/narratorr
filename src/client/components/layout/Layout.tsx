@@ -148,7 +148,6 @@ export function Layout() {
   return (
     <div className="min-h-screen flex flex-col gradient-bg noise-overlay">
       <SSEProvider />
-      {/* Welcome Modal — first-run onboarding */}
       <WelcomeModal
         isOpen={settings?.general?.welcomeSeen === false}
         isPending={dismissWelcomeMutation.isPending}
@@ -157,11 +156,9 @@ export function Layout() {
       {mode === 'none' && !bannerDismissed && <NoAuthBanner onDismiss={dismissBanner} />}
       {mode === 'basic' && !basicAuthBannerDismissed && <BasicAuthCsrfBanner onDismiss={dismissBasicAuthBanner} />}
 
-      {/* Header */}
       <header className="sticky top-0 z-10 backdrop-blur-xl bg-background/80 border-b border-border/50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16 sm:h-20">
-            {/* Logo */}
             <NavLink
               to="/"
               className="flex items-center gap-3 group"
@@ -177,7 +174,6 @@ export function Layout() {
               </span>
             </NavLink>
 
-            {/* Navigation */}
             <nav className="flex items-center gap-1 sm:gap-2">
               {navItems.map((item) => {
                 const isActive = location.pathname.startsWith(item.to);
@@ -218,7 +214,6 @@ export function Layout() {
                 );
               })}
 
-              {/* Health Indicator */}
               <HealthIndicator />
 
             </nav>
@@ -226,7 +221,6 @@ export function Layout() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
         <Outlet />
       </main>
