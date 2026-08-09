@@ -103,7 +103,6 @@ describe('useReplaceGrab (#1857)', () => {
 
     act(() => result.current.grab(payload));
 
-    // AC10/F2 — the toast NAMES the book and carries no transport vocabulary.
     await waitFor(() => expect(toastError).toHaveBeenCalledWith(expect.stringContaining('being imported')));
     const msg = toastError.mock.calls.at(-1)![0] as string;
     expect(msg).toContain(BOOK_TITLE);
@@ -147,22 +146,20 @@ describe('useReplaceGrab (#1857)', () => {
     expect(result.current.confirm).toBeNull();
   });
 
-  // #1857 F17 — a response that resolves AFTER reset() (modal close / book change)
-  // must NOT act on the (now-stale) lifecycle. reset() is the shared teardown seam.
   it('ignores a stale ACTIVE_DOWNLOAD_EXISTS that resolves after reset — no confirm repopulated', async () => {
     let rejectGrab!: (e: unknown) => void;
     searchGrab.mockImplementationOnce(() => new Promise((_res, rej) => { rejectGrab = rej; }));
     const { result } = renderHook(() => useReplaceGrab(vi.fn(), BOOK_TITLE), { wrapper });
 
-    await act(async () => { result.current.grab(payload); await new Promise((r) => setTimeout(r, 0)); }); // in-flight
+    await act(async () => { result.current.grab(payload); await new Promise((r) => setTimeout(r, 0)); });
     expect(rejectGrab).toBeDefined();
-    act(() => result.current.reset());             // close / book change
-    await act(async () => {                          // stale 409 arrives afterwards
+    act(() => result.current.reset());
+    await act(async () => {
       rejectGrab(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Old' }, count: 1 }));
       await new Promise((r) => setTimeout(r, 0));
     });
 
-    expect(result.current.confirm).toBeNull();     // did not repopulate the confirm
+    expect(result.current.confirm).toBeNull();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -170,7 +167,6 @@ describe('useReplaceGrab (#1857)', () => {
     let resolveGrab!: (v: unknown) => void;
     searchGrab.mockImplementationOnce(() => new Promise((res) => { resolveGrab = res; }));
     const onSuccess = vi.fn();
-    // Spy on the actual client so we can assert cache invalidation regardless of lifecycle.
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
     const localWrapper = ({ children }: { children: ReactNode }) => (
@@ -180,16 +176,14 @@ describe('useReplaceGrab (#1857)', () => {
 
     await act(async () => { result.current.grab(payload); await new Promise((r) => setTimeout(r, 0)); });
     expect(resolveGrab).toBeDefined();
-    act(() => result.current.reset()); // modal closed / book changed mid-flight
+    act(() => result.current.reset());
     await act(async () => {
-      resolveGrab({ id: 1 });          // the grab succeeded server-side, but arrives stale
+      resolveGrab({ id: 1 });
       await new Promise((r) => setTimeout(r, 0));
     });
 
-    // Lifecycle-local effects are suppressed for the stale generation...
     expect(onSuccess).not.toHaveBeenCalled();
     expect(toastSuccess).not.toHaveBeenCalled();
-    // ...but the two server-state caches are STILL reconciled (the grab did happen).
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
   });
