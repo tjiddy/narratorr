@@ -62,8 +62,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
     if (meta.authors?.[0]?.name) {
       setAuthor(meta.authors[0].name);
     }
-    // Prefer the canonical primary-series ref over `series[0]` (#1088 / #1097) —
-    // `series[0]` on Audible can be a broader universe entry rather than the real series.
+    // Audible series[0] can be a broader universe; prefer the canonical primary series.
     const primary = pickPrimarySeries(meta);
     setSeries(primary?.name ?? '');
     setNarrators(meta.narrators?.join(', ') ?? '');
@@ -83,8 +82,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
 
     const trimmedSeries = series.trim();
     const numericPosition = seriesPosition.trim() ? Number(seriesPosition.trim()) : undefined;
-    // Number.isFinite (not !Number.isNaN) — rejects Infinity too, since `Number('1e999') === Infinity`
-    // would JSON-serialize to `null` and be rejected by the route's `z.number()` schema.
+    // Number.isFinite rejects Infinity, which JSON would turn into schema-invalid null.
     const parsedPosition = (trimmedSeries && numericPosition !== undefined && Number.isFinite(numericPosition))
       ? numericPosition
       : undefined;
@@ -103,7 +101,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
 
   return (
     <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[85vh]">
-      {/* Participates in the Modal's height-capped flex column — see BookMetadataModal. */}
+      {/* Must join Modal's height-capped flex column so the body, not the card, scrolls. */}
       <div
         role="dialog"
         aria-modal="true"
@@ -111,7 +109,6 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
         tabIndex={-1}
         className="flex flex-col min-h-0 flex-1"
       >
-        {/* Header */}
         <div className="px-6 pt-5 pb-4 flex items-center justify-between shrink-0">
           <div className="min-w-0">
             <h2 id="book-edit-modal-title" className="font-display text-lg font-semibold tracking-tight">Edit Book</h2>
@@ -129,9 +126,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
 
         <div className="border-t border-white/5" />
 
-        {/* Content */}
         <div className="p-6 space-y-5 overflow-y-auto flex-1 min-h-0">
-          {/* Metadata preview */}
           <div className="flex gap-4">
             <div className="w-[80px] h-[80px] shrink-0 rounded-lg overflow-hidden bg-muted/50 relative">
               {selectedMetadata?.coverUrl ? (
@@ -173,7 +168,6 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
             </div>
           </div>
 
-          {/* Editable fields */}
           <div className="space-y-3">
             <div>
               <label htmlFor="edit-title" className="block text-xs font-medium text-muted-foreground mb-1.5">Title</label>
@@ -205,9 +199,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
                   onChange={(e) => {
                     const next = e.target.value;
                     setSeries(next);
-                    // Position without a series is meaningless (#1927 Defect 2): emptying
-                    // the series CLEARS the position value in the UI rather than leaving a
-                    // stale grayed-out number trapped in the disabled field.
+                    // A position without a series is invalid; clear the stale disabled value.
                     if (!next.trim()) setSeriesPosition('');
                   }}
                   className="w-full px-3 py-2 glass-card rounded-xl text-sm focus-ring"
@@ -239,7 +231,6 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
             </div>
           </div>
 
-          {/* File info + search */}
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground/50">
               {book.fileCount} file{book.fileCount !== 1 ? 's' : ''} &middot; {formatBytes(book.totalSize)}
@@ -263,7 +254,6 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
             </button>
           </div>
 
-          {/* Alternative search results */}
           {searchResults.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground/70">
@@ -283,7 +273,6 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
             </div>
           )}
 
-          {/* No results message */}
           {hasSearched && searchResults.length === 0 && (
             <p className="text-xs text-muted-foreground/50 text-center py-2">
               No results found. Try a different title or author.
@@ -291,7 +280,6 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
           )}
         </div>
 
-        {/* Footer */}
         <div className="px-6 py-4 border-t border-white/5 flex justify-end gap-3 shrink-0">
           <button
             type="button"

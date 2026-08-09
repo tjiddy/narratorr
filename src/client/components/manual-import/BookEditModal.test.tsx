@@ -5,14 +5,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BookEditModal, type BookEditState } from './BookEditModal';
 import type { DiscoveredBook, BookMetadata } from '@/lib/api';
 
-// Mock the useLibrary hook — default to empty, tests can override via mockIdentifiers
 let mockIdentifiers: { asin: string | null; title: string; authorName: string | null }[] = [];
 vi.mock('@/hooks/useLibrary', () => ({
   useBookIdentifiers: () => ({ data: mockIdentifiers }),
 }));
 
 
-// Mock the API
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual('@/lib/api');
   return {
@@ -92,7 +90,6 @@ describe('BookEditModal', () => {
     it('shows metadata preview when initial has metadata', () => {
       const meta = makeMetadata();
       renderModal({ initial: makeEditState({ metadata: meta }) });
-      // Title appears in both the preview header and the alternatives list
       expect(screen.getAllByText('Matched Title').length).toBeGreaterThanOrEqual(1);
     });
 
@@ -185,9 +182,6 @@ describe('BookEditModal', () => {
     });
   });
 
-  // #1927 Defect 2 — the Series Position field must not trap a stale value. Emptying
-  // the Series input CLEARS the position value in the UI (not merely disables it), and
-  // handleSave keeps series/position paired (position omitted when series is empty).
   describe('series position field (#1927 Defect 2)', () => {
     it('clearing the Series input clears the Series Position value (not just disables it)', async () => {
       renderModal({ initial: makeEditState({ series: 'Series Name', seriesPosition: 15 }) });
@@ -330,10 +324,8 @@ describe('BookEditModal', () => {
       renderModal({ initial: makeEditState({ title: 'Test', author: 'Author' }) });
       await userEvent.click(screen.getByText('Search Providers'));
 
-      // Wait for results to render
       await screen.findByText('Search Result 1');
 
-      // Title field should still have original value, NOT the search result
       await waitFor(() => {
         expect(screen.getByDisplayValue('Test')).toBeInTheDocument();
       });
@@ -385,7 +377,6 @@ describe('BookEditModal', () => {
 
       await userEvent.click(screen.getByText('Alt Book'));
 
-      // Fields should update to the alternative's values
       await waitFor(() => {
         expect(screen.getByDisplayValue('Alt Book')).toBeInTheDocument();
         expect(screen.getByDisplayValue('Alt Author')).toBeInTheDocument();
@@ -404,8 +395,6 @@ describe('BookEditModal', () => {
       expect(screen.getByText('11h 32m')).toBeInTheDocument();
     });
 
-    // T1 — same-titled series candidates must show their series #position so the
-    // user can pick the right entry (Fablehaven). showSeries is passed to the list.
     it('shows series #position on candidates so same-titled entries are distinguishable', () => {
       const alt1 = makeMetadata({ title: 'Fablehaven', providerId: 'alt1', seriesPrimary: { name: 'Fablehaven', position: 1 } });
       const alt2 = makeMetadata({ title: 'Fablehaven', providerId: 'alt2', seriesPrimary: { name: 'Fablehaven', position: 2 } });
@@ -585,7 +574,7 @@ describe('ARIA attributes (#185)', () => {
 describe('search pending state (#185)', () => {
   it('search button shows spinner and disables while provider search isPending', async () => {
     const { api: mockApi } = await import('@/lib/api');
-    // Make search hang (never resolve) to keep isPending=true
+    // Never resolve so isPending remains true.
     vi.mocked(mockApi.searchMetadata).mockReturnValue(new Promise(() => {}));
 
     renderModal({ initial: makeEditState({ title: 'Test', author: 'Author' }) });
@@ -633,13 +622,10 @@ describe('applyMetadata (#185)', () => {
       alternatives: [alt],
     });
 
-    // Series field initially has value
     expect(screen.getByDisplayValue('Original Series')).toBeInTheDocument();
 
-    // Click the no-series alternative
     await userEvent.click(screen.getByText('No Series Book'));
 
-    // Series field should be cleared
     await waitFor(() => {
       const seriesInput = screen.getByLabelText('Series') as HTMLInputElement;
       expect(seriesInput.value).toBe('');
@@ -666,7 +652,6 @@ describe('applyMetadata (#185)', () => {
     });
   });
 
-  // #1097 — applyMetadata prefers seriesPrimary over series[0]
   it('metadata with seriesPrimary populates series field from primary (not series[0]) (#1097)', async () => {
     const alt = makeMetadata({
       title: 'Stormlight Book',
@@ -689,7 +674,6 @@ describe('applyMetadata (#185)', () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue('The Stormlight Archive')).toBeInTheDocument();
     });
-    // Series position input reflects primary's position, not series[0]'s
     const seriesPosInput = screen.getByLabelText('Series Position') as HTMLInputElement;
     expect(seriesPosInput.value).toBe('2');
   });
@@ -699,15 +683,11 @@ describe('initialResults fallback (#185)', () => {
   it('alternatives=undefined seeds searchResults with initial.metadata (results section renders)', () => {
     const meta = makeMetadata({ title: 'Only Match', providerId: 'only' });
 
-    // Render without alternatives prop (undefined)
     renderModal({
       initial: makeEditState({ metadata: meta }),
-      // alternatives intentionally omitted → undefined
     });
 
-    // "Other matches" heading only renders when searchResults is seeded (searchResults.length > 0)
     expect(screen.getByText('Other matches')).toBeInTheDocument();
-    // Title appears in both the preview and the results list (2 occurrences proves seeding)
     expect(screen.getAllByText('Only Match').length).toBeGreaterThanOrEqual(2);
   });
 
@@ -719,9 +699,7 @@ describe('initialResults fallback (#185)', () => {
       alternatives: [],
     });
 
-    // "Other matches" heading only renders when searchResults is seeded
     expect(screen.getByText('Other matches')).toBeInTheDocument();
-    // Title appears in both preview and results list
     expect(screen.getAllByText('Solo Match').length).toBeGreaterThanOrEqual(2);
   });
 });
@@ -730,7 +708,6 @@ describe('save behavior (#185)', () => {
   it('save with selectedMetadata=null preserves manual edits only', async () => {
     const onSave = vi.fn();
 
-    // Render with no metadata (selectedMetadata will be null)
     renderModal({
       onSave,
       initial: makeEditState({ title: 'Manual Title', author: 'Manual Author', series: 'Manual Series' }),
@@ -967,8 +944,6 @@ describe('narrators and series position (#1028)', () => {
     });
   });
 });
-// ─── modal card overflow (drive-by): the dialog wrapper must join the Modal's
-// height-capped flex column, or the footer renders past the card on short viewports ───
 describe('height-capped card layout', () => {
   it('constrains the dialog wrapper and lets the body scroll within the card', async () => {
     renderModal();
