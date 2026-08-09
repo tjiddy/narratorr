@@ -396,8 +396,6 @@ describe('Prowlarr-compatible API v1 routes', () => {
         upserted: false,
       });
 
-      // baseUrl is not a valid URL — triggers URL constructor catch at line 77
-      // Falls back to using raw string as pathname, regex finds /42/
       await app.inject({
         method: 'POST',
         url: '/api/v1/indexer',
@@ -475,7 +473,6 @@ describe('Prowlarr-compatible API v1 routes', () => {
         payload: validTorznabBody,
       });
 
-      // POST always returns 201 per Readarr API contract
       expect(res.statusCode).toBe(201);
     });
 
@@ -508,14 +505,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(payload[1].implementation).toBe('Newznab');
     });
 
-    // #958 — Prowlarr's "Sync App Indexers" diffs the GET response against its
-    // managed set and DELETEs anything it doesn't recognize. Manual indexers
-    // (source: null) must be opaque on this surface so they aren't classified
-    // as stale and wiped. The route now calls getAllProwlarrManaged, which
-    // filters at the data layer; the manual row never reaches the response.
     it('excludes manual (source: null) indexers from the Prowlarr-compat list (#958)', async () => {
-      // The filtered helper only returns prowlarr-managed rows. The manual
-      // row is filtered out at the service layer before the route sees it.
       (services.indexer.getAllProwlarrManaged as Mock).mockResolvedValue([mockTorznabIndexer]);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer' });
@@ -549,12 +539,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(JSON.parse(res.payload).message).toBeDefined();
     });
 
-    // #958 — direct probes by ID must also be opaque to non-Prowlarr rows.
-    // The filtered helper returns null for manual rows; the route surfaces 404
-    // so a Prowlarr-compat caller can never confirm a manual row's existence.
     it('returns 404 for a manual (source: null) row even though the id exists (#958)', async () => {
-      // getByIdProwlarrManaged returns null when the row's source !== 'prowlarr',
-      // which is indistinguishable to the route from a missing row.
       (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/42' });
@@ -588,7 +573,6 @@ describe('Prowlarr-compatible API v1 routes', () => {
         const apiKeyField = row.fields.find((f: { name: string }) => f.name === 'apiKey');
         expect(apiKeyField.value).toBe('********');
       }
-      // Sanity: the response body must not contain either plaintext key anywhere.
       expect(res.payload).not.toContain('abc123');
       expect(res.payload).not.toContain('xyz789');
     });
@@ -604,7 +588,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('GET /api/v1/indexer/:id masks baseUrl when apiUrl is set (#742)', async () => {
-      // apiUrl is a secret field — it may embed user:pass credentials.
+      // Mask the entire URL because it may contain embedded credentials.
       (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
@@ -612,7 +596,6 @@ describe('Prowlarr-compatible API v1 routes', () => {
       const payload = JSON.parse(res.payload);
       const baseUrlField = payload.fields.find((f: { name: string }) => f.name === 'baseUrl');
       expect(baseUrlField.value).toBe('********');
-      // The plaintext URL must never appear anywhere in the response.
       expect(res.payload).not.toContain('http://prowlarr:9696/1/');
     });
 
@@ -652,8 +635,6 @@ describe('Prowlarr-compatible API v1 routes', () => {
           settings: expect.objectContaining({ apiKey: '********' }),
         }),
       );
-      // IndexerService.update is responsible for resolveSentinelFields against the
-      // existing encrypted DB row before persisting (see indexer.service.ts lines 61-68).
     });
   });
 
@@ -674,7 +655,6 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('returns 404 for non-existent id', async () => {
-      // After #958 the source guard returns 404 before update is reached.
       (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
 
       const res = await app.inject({
@@ -717,7 +697,6 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('preserves existing sourceIndexerId when baseUrl is the masked sentinel (#742 F1)', async () => {
-      // Existing prowlarr-sourced row with sourceIndexerId=1
       (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
       (services.indexer.update as Mock).mockResolvedValue(mockTorznabIndexer);
 
@@ -727,9 +706,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
         payload: {
           ...validTorznabBody,
           fields: [
-            // Client re-submits the masked baseUrl unchanged. The derived
-            // sourceIndexerId would be null (no numeric segment in the
-            // sentinel), but the route must preserve the stored 1.
+            // The sentinel has no numeric segment; preserve the stored source indexer id.
             { name: 'baseUrl', value: '********', type: 'textbox' },
             { name: 'apiKey', value: '********', type: 'textbox' },
           ],
@@ -748,9 +725,6 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('still derives sourceIndexerId from a fresh baseUrl when the client sends a real URL', async () => {
-      // After #958 the source guard runs unconditionally, so getByIdProwlarrManaged
-      // is always called. The semantically meaningful assertion is that update()
-      // receives the freshly-derived sourceIndexerId (42), not the stored one.
       (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
       (services.indexer.update as Mock).mockResolvedValue(mockTorznabIndexer);
 
@@ -773,10 +747,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
       );
     });
 
-    // #958 — manual rows must be opaque to PUT-by-id so the unconditional
-    // `source: 'prowlarr'` write in the update payload can't flip them.
     it('returns 404 for a manual (source: null) row and does not call update (#958)', async () => {
-      // The filtered helper returns null for non-Prowlarr rows.
       (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
 
       const res = await app.inject({
@@ -801,7 +772,6 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('returns 404 for non-existent id', async () => {
-      // After #958 the source guard returns 404 before delete is reached.
       (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/v1/indexer/999' });
@@ -810,8 +780,6 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(services.indexer.delete).not.toHaveBeenCalled();
     });
 
-    // #958 — defensive guard: even if the GET filter regresses, manual rows
-    // must not be deletable through the Prowlarr-compat surface.
     it('returns 404 for a manual (source: null) row and does not call delete (#958)', async () => {
       (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
 
@@ -822,16 +790,10 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
   });
 
-  // AC6: full repro of the original "Sync All deletes manual indexers" bug.
-  // Walks through Prowlarr's actual sync flow and asserts each id-keyed
-  // operation is opaque to the manually-added row.
+  // Prowlarr deletes managed entries absent from its list; manual rows must be opaque across every sync operation.
   describe('Prowlarr Sync All — manual indexer protection (#958)', () => {
     it('manual rows are filtered from GET; direct DELETE/PUT by their id return 404', async () => {
-      // Filtered list never includes the manual row (id=42).
       (services.indexer.getAllProwlarrManaged as Mock).mockResolvedValue([mockTorznabIndexer]);
-      // Both id-keyed lookups return null for the manual id, regardless of
-      // whether the underlying row exists — the filter happens at the data
-      // layer, so non-Prowlarr rows are indistinguishable from missing rows.
       (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
 
       const list = await app.inject({ method: 'GET', url: '/api/v1/indexer' });
@@ -849,7 +811,6 @@ describe('Prowlarr-compatible API v1 routes', () => {
       });
       expect(put.statusCode).toBe(404);
 
-      // The unfiltered mutators must never be reached for the manual row.
       expect(services.indexer.delete).not.toHaveBeenCalled();
       expect(services.indexer.update).not.toHaveBeenCalled();
     });
@@ -898,10 +859,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('fails closed on a missing apiKey: forwards sanitized settings to testConfig → 400 (#1198)', async () => {
-      // /test does NOT call validateReadarrDomain — it relies on the strict
-      // adapter-settings schema (proven directly in indexer.test.ts) to reject
-      // missing/empty creds. Here we assert the route-level contract: it forwards
-      // the translated settings and returns 400 when testConfig reports failure.
+      // This route delegates credential validation to the adapter settings schema.
       (services.indexer.testConfig as Mock).mockResolvedValue({ success: false, message: 'apiKey is required' });
 
       const res = await app.inject({
@@ -992,8 +950,6 @@ describe('Prowlarr-compatible API v1 routes', () => {
 
       const payload = JSON.parse(res.payload);
       const baseUrlField = payload.fields.find((f: { name: string }) => f.name === 'baseUrl');
-      // apiUrl is now a secret field — the Readarr-compat baseUrl response is masked
-      // so embedded credentials (user:pass@host) never echo back unmasked.
       expect(baseUrlField.value).toBe('********');
     });
 
@@ -1004,21 +960,17 @@ describe('Prowlarr-compatible API v1 routes', () => {
       });
       (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
 
-      // Create
       await app.inject({
         method: 'POST',
         url: '/api/v1/indexer',
         payload: validTorznabBody,
       });
 
-      // Read back
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
       const payload = JSON.parse(res.payload);
 
       const baseUrl = payload.fields.find((f: { name: string }) => f.name === 'baseUrl');
       const apiKey = payload.fields.find((f: { name: string }) => f.name === 'apiKey');
-      // Both are intentionally masked on GET responses; plaintext never leaves the server.
-      // Sentinel passthrough on PUT/POST preserves the stored value.
       expect(baseUrl.value).toBe('********');
       expect(apiKey.value).toBe('********');
     });
@@ -1058,9 +1010,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
       });
 
       const callArgs = (services.indexer.createOrUpsertProwlarr as Mock).mock.calls[0]![0];
-      // apiPath should not appear in the settings object
       expect(callArgs.settings).not.toHaveProperty('apiPath');
-      // But the other fields should be present
       expect(callArgs.settings.apiUrl).toBe('http://prowlarr:9696/1/');
       expect(callArgs.settings.apiKey).toBe('abc123');
     });
@@ -1151,10 +1101,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('POST: extra unknown top-level key (randomKey) → accepted and silently stripped (Zod .strip())', async () => {
-      // #1198: the compat surface must be liberal in what it accepts. An unknown
-      // top-level key is dropped by Zod's default .strip(), NOT rejected — and it
-      // must not be passed through into the forwarded settings (a .passthrough()
-      // mis-implementation would satisfy the status check but fail the args check).
+      // Compat uses Zod strip: accepting is insufficient; unknown keys must not reach settings.
       (services.indexer.createOrUpsertProwlarr as Mock).mockResolvedValue({
         row: mockTorznabIndexer,
         upserted: false,
@@ -1281,8 +1228,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
   });
 
   describe('#1198 Prowlarr echo-only field tolerance (layers 1 + 2)', () => {
-    // The exact key set Prowlarr sends (captured from the bug report), present
-    // BOTH as top-level keys and inside fields[].
+    // Prowlarr echoes these keys both at the top level and inside `fields`.
     const ECHO_ONLY_KEYS = ['categories', 'minimumSeeders', 'seedCriteria.seedRatio', 'seedCriteria.seedTime'];
 
     const prowlarrPayload = {
@@ -1292,7 +1238,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
       enableAutomaticSearch: true,
       enableInteractiveSearch: true,
       priority: 50,
-      // Layer 1: top-level echo-only keys that .strict() used to 400 on.
+      // Top-level echo-only keys.
       categories: [3030],
       minimumSeeders: 0,
       'seedCriteria.seedRatio': null,
@@ -1300,7 +1246,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
       fields: [
         { name: 'baseUrl', value: 'http://prowlarr:9696/1/', type: 'textbox' },
         { name: 'apiKey', value: 'abc123', type: 'textbox' },
-        // Layer 2: same echo-only keys echoed back inside fields[].
+        // The same keys echoed inside fields.
         { name: 'categories', value: [3030], type: 'tag' },
         { name: 'minimumSeeders', value: 0, type: 'number' },
         { name: 'seedCriteria.seedRatio', value: null, type: 'number' },
@@ -1308,16 +1254,12 @@ describe('Prowlarr-compatible API v1 routes', () => {
       ],
     };
 
-    /** Adapter-accepted keys for a Torznab/Newznab indexer. */
     function assertAdapterAcceptedSettings(settings: Record<string, unknown>) {
-      // Required adapter keys survive.
       expect(settings.apiUrl).toBe('http://prowlarr:9696/1/');
       expect(settings.apiKey).toBe('abc123');
-      // Echo-only keys are absent from the service-facing settings (layer 2).
       for (const key of ECHO_ONLY_KEYS) {
         expect(settings).not.toHaveProperty(key);
       }
-      // Only adapter-accepted keys remain (apiUrl/apiKey + optional proxy fields).
       const allowed = new Set(['apiUrl', 'apiKey', 'flareSolverrUrl', 'useProxy']);
       for (const key of Object.keys(settings)) {
         expect(allowed.has(key)).toBe(true);
@@ -1454,7 +1396,6 @@ describe('Prowlarr API v1 auth (AC6)', () => {
     await authApp.register(cookie);
     await authApp.register(authPlugin, { authService });
 
-    // Register representative v1 routes for auth testing
     authApp.get('/api/v1/system/status', async () => ({ ok: true }));
     authApp.get('/api/v1/indexer', async () => []);
     authApp.post('/api/v1/indexer', async () => ({ ok: true }));

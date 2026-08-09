@@ -31,40 +31,23 @@ export type { DiscoveredBook };
 
 export type ImportMode = 'copy' | 'move';
 
-/**
- * Interim scan-time hint (#1711 F6) for a title+author folder that matches an
- * existing library book but carries no decisive ASIN. Display-only; the match job
- * later replaces it with the authoritative recording verdict once narrators exist.
- */
+// Display-only until narrator-aware matching supplies the authoritative recording verdict.
 export const SCAN_RECORDING_REVIEW_HINT = 'Possible match to an existing book — checking recording';
 
-/**
- * Display-only within-scan hint (#1925): the second-and-later folder of a
- * title+author collision *inside one scan* carries this so the user still notices
- * two folders of the same title during triage. Distinct from
- * `SCAN_RECORDING_REVIEW_HINT` (an *existing-library* collision) — a within-scan
- * collision is a different situation and never a decision. Never affects selection,
- * counts, or submission; the recording ladder decides identity at confirm time.
- */
+// Within-scan collisions are only hints; confirmation owns recording identity.
 export const SCAN_WITHIN_SCAN_REVIEW_HINT = 'Possible duplicate folder in this scan';
 
-/** An existing-library row in a pairwise dedup bucket (#1891), ordered by `id` asc. */
+/** Bucket order is ascending book id; the first pairwise match wins. */
 interface ExistingTitleEntry {
   id: number;
   shape: TitleShape;
 }
 
-/**
- * A prior scanned row in a within-scan dedup bucket (#1891), in scan order. Only the
- * title `shape` is retained — the second-and-later row needs nothing but a shape to
- * pairwise-match against for the display hint (#1925); the row's own path is no longer
- * carried, since the first-path field it used to feed was removed (#1925 F6).
- */
+/** Bucket order is scan order; later rows need only the prior title shape. */
 interface WithinScanEntry {
   shape: TitleShape;
 }
 
-/** In-memory maps/buckets shared across one scan's folder classification (#1891). */
 interface ScanClassificationMaps {
   existingPathMap: Map<string, number>;
   existingAsinMap: Map<string, number>;
@@ -120,9 +103,6 @@ export class LibraryScanService {
     return { db: this.db, log: this.log, bookService: this.bookService, bookImportService: this.bookImportService, settingsService: this.settingsService, eventHistory: this.eventHistory, enrichmentDeps: this.enrichmentDeps, broadcaster: this.eventBroadcaster, connectorService: this.connectorService };
   }
 
-  /**
-   * Rescan library — verify each book's path exists on disk, mark missing/restored.
-   */
   async rescanLibrary(): Promise<RescanResult> {
     if (this.scanning) {
       throw new ScanInProgressError();
@@ -137,7 +117,6 @@ export class LibraryScanService {
         throw new LibraryPathError('Library path is not configured');
       }
 
-      // Verify the library root is accessible
       try {
         await access(libraryRoot);
       } catch {
@@ -153,9 +132,7 @@ export class LibraryScanService {
       let scanned = 0;
       let missing = 0;
       let restored = 0;
-      // Rows whose on-disk presence could not be determined (#1955). Tallied for
-      // the diagnostics below but deliberately NOT part of the public
-      // `RescanResult` — the route and client contract stay three fields.
+      // Tallied for diagnostics but deliberately excluded from the public three-field `RescanResult`.
       let unreachable = 0;
       const unreachableCodes = new Set<string>();
       const restoredItems: ConnectorImportItem[] = [];
@@ -168,13 +145,12 @@ export class LibraryScanService {
         else if (outcome === 'unreachable') unreachable++;
         else if (outcome === 'restored') {
           restored++;
-          // row.path is non-null here: a 'restored' outcome requires an existing path.
+          // A restored outcome guarantees a non-null path.
           restoredItems.push({ bookId: row.id, title: row.title, libraryPath: row.path! });
         }
       }
 
-      // Fire-and-forget: connector refresh for rows that flipped missing→imported.
-      // Never enqueued when there were zero restorations.
+      // Connector refresh is best-effort and only for actual restorations.
       if (this.connectorService && restoredItems.length > 0) {
         fireAndForget(
           this.connectorService.notifyRefresh('restored', restoredItems),
@@ -183,9 +159,7 @@ export class LibraryScanService {
         );
       }
 
-      // One aggregate warn per degraded sweep, never one per row: a downed mount
-      // would otherwise emit a warn per book, and retention is the safe outcome —
-      // it is the aggregate (a whole share gone quiet) that warrants attention.
+      // Aggregate unreachable rows to avoid one warning per book on a down mount.
       if (unreachable > 0) {
         this.log.warn(
           { unreachable, codes: [...unreachableCodes].sort() },
@@ -200,15 +174,7 @@ export class LibraryScanService {
     }
   }
 
-  /**
-   * Classify a failed `access()` probe. Only a definitive-absence errno
-   * (`ENOENT`/`ENOTDIR`) proves the book is gone; anything else — `EACCES` from a
-   * parent directory that lost search permission on a re-mounting share, `EIO`,
-   * `ESTALE`, fd exhaustion, or a throw with no `code` at all — means the probe
-   * could not tell, and an undetermined row must keep its persisted status
-   * (#1955). Records the attempt at `debug` and collects the errno for the
-   * sweep's aggregate warn.
-   */
+  /** Only ENOENT/ENOTDIR prove absence; every other probe failure retains persisted status. */
   private classifyProbeFailure(
     row: { id: number; path: string },
     error: unknown,
@@ -225,16 +191,7 @@ export class LibraryScanService {
     return 'unreachable';
   }
 
-  /**
-   * Reconcile a single book row's on-disk presence against its persisted status.
-   * Returns `'skipped'` for rows outside the library root or with no path (not
-   * counted as scanned), `'missing'`/`'restored'` when a guarded transition
-   * lands, `'unreachable'` when the path could not be probed (scanned, but no
-   * write of any kind), or `null` when scanned but unchanged. The `expected`
-   * guard ensures a concurrent in-flight import (`importing`) is never clobbered
-   * by the scan's reconciliation, which read the row status before the import
-   * landed.
-   */
+  /** Expected-status transitions prevent a stale scan from clobbering a concurrent import. */
   private async reconcileBookPath(
     row: { id: number; path: string | null; status: string; title: string },
     resolvedRoot: string,
@@ -242,7 +199,6 @@ export class LibraryScanService {
   ): Promise<'skipped' | 'missing' | 'restored' | 'unreachable' | null> {
     if (!row.path) return 'skipped';
 
-    // Path ancestry check — skip books outside library root
     const rel = relative(resolvedRoot, resolve(row.path));
     if (rel.startsWith('..') || isAbsolute(rel)) return 'skipped';
 
@@ -270,18 +226,12 @@ export class LibraryScanService {
     return null;
   }
 
-  /**
-   * Scan a directory tree for audiobook folders.
-   * Uses core discoverBooks() for filesystem walk, then enriches each folder
-   * with parsed folder structure + audio tag data.
-   */
   async scanDirectory(rootPath: string): Promise<ScanResult> {
     this.log.info({ rootPath }, 'Starting directory scan');
 
     const folders = await discoverBooks(rootPath, { log: this.log });
     this.log.info({ count: folders.length }, 'Found audio folders');
 
-    // Pre-fetch all existing book paths with IDs for O(1) duplicate check
     const existingPathRows = await this.db
       .select({ id: books.id, path: books.path })
       .from(books);
@@ -289,20 +239,14 @@ export class LibraryScanService {
       existingPathRows.filter((r) => r.path != null).map((r) => [r.path!, r.id] as const),
     );
 
-    // Pre-fetch all title + author slug pairs (and ASINs) with IDs for O(1) checks.
-    // Ordered by books.id so the pairwise bucket below yields the LOWEST matching id
-    // first (deterministic existing-library representative, #1891).
+    // Ascending id makes the first pairwise incumbent deterministic.
     const titleAuthorRows = await this.db
       .select({ id: books.id, title: books.title, slug: authors.slug, asin: books.asin })
       .from(books)
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
       .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
       .orderBy(books.id);
-    // Bucket existing rows by author slug + `colonBase` (#1891). The predicate is
-    // non-transitive so it cannot be a single map key — a bucket + pairwise filter is
-    // required. `colonBase` is a COMPLETE retrieval index (equal `fullNormalized` ⟹
-    // equal `colonBase`), so both predicate arms are captured, including a
-    // `fullNormalized`-only match like `"Dune (Edition: Deluxe)"` ~ `"Dune"`.
+    // Matching is non-transitive: bucket by the complete `colonBase` retrieval key, then pairwise-filter.
     const existingTitleAuthorBucket = new Map<string, ExistingTitleEntry[]>();
     for (const r of titleAuthorRows) {
       if (!r.title || !r.slug) continue;
@@ -312,9 +256,7 @@ export class LibraryScanService {
       arr.push({ id: r.id, shape });
       existingTitleAuthorBucket.set(key, arr);
     }
-    // Decisive-ASIN map (#1711 F6): a parsed-folder ASIN equal to an incumbent's
-    // non-null ASIN is `same-recording` deterministically — flag owned at scan and
-    // exclude from match. Case-insensitive (ASINs are not globally normalized).
+    // ASIN equality is decisive here; normalize case because stored ASINs are not globally canonical.
     const existingAsinMap = new Map<string, number>(
       titleAuthorRows
         .filter((r) => r.asin != null)
@@ -326,9 +268,6 @@ export class LibraryScanService {
 
     for (const folder of folders) {
       const parsed = parseFolderStructure(folder.folderParts);
-      // Precompute the title shape / bucket key once for an authored row (both title
-      // AND author present). Used by classification (existing/within-scan lookups)
-      // and by the registration step below.
       const authored = Boolean(parsed.title && parsed.author);
       const shape = authored ? buildTitleShape(parsed.title!) : undefined;
       const bucketKey = shape ? `${shape.colonBase}|${slugify(parsed.author!)}` : undefined;
@@ -340,11 +279,7 @@ export class LibraryScanService {
         withinScanBucket,
       }));
 
-      // Register EVERY authored parsed row into the within-scan bucket (#1891),
-      // regardless of which branch emitted it (path / decisive-ASIN / existing-title /
-      // within-scan / normal), AFTER the within-scan lookup above so a row never
-      // matches itself. Load-bearing under the non-transitive predicate: a later row
-      // can pairwise-match a row that was itself emitted as a within-scan duplicate.
+      // Register after classification; non-transitive matching requires later rows to see every prior authored row.
       if (shape && bucketKey) {
         const arr = withinScanBucket.get(bucketKey) ?? [];
         arr.push({ shape });
@@ -364,17 +299,7 @@ export class LibraryScanService {
     };
   }
 
-  /**
-   * Classify a single scanned folder into a `DiscoveredBook` (#1891). Ordered
-   * precedence: (1) path match, (2) decisive-ASIN match, (3) existing-library
-   * title+author review hint, (4) within-scan title+author collision (#1925 — a
-   * NORMAL candidate carrying a display-only hint, NOT a hard flag; recording
-   * identity is deferred to the confirm ladder), (5) normal. The title+author branches now bucket by
-   * author+`colonBase` and pairwise-filter (the predicate is non-transitive), picking
-   * the lowest existing `books.id` (bucket is id-ordered) and the first prior scan row
-   * (bucket is scan-ordered). Registration into the within-scan bucket is the caller's
-   * job (runs for every authored row, all five branches).
-   */
+  /** Precedence: path, decisive ASIN, existing-library hint, within-scan hint, then normal. */
   private classifyScannedFolder(
     folder: DiscoveredFolder,
     parsed: ReturnType<typeof parseFolderStructure>,
@@ -385,43 +310,25 @@ export class LibraryScanService {
     const reviewReason = folder.reviewReason;
     const base = [folder.path, parsed, folder.audioFileCount, folder.totalSize] as const;
 
-    // (1) Duplicate by path (in-memory Map lookup).
     if (maps.existingPathMap.has(folder.path)) {
       this.log.debug({ path: folder.path }, 'Duplicate detected (path match)');
       return buildDiscoveredBook(...base, { isDuplicate: true, existingBookId: maps.existingPathMap.get(folder.path), duplicateReason: 'path', reviewReason });
     }
 
-    // (2) Decisive ASIN at scan time (#1711 F6): a parsed-folder ASIN equal to an
-    // incumbent's non-null ASIN is the same recording deterministically → flag owned
-    // now and exclude from the match job, exactly as before.
     if (parsed.asin && maps.existingAsinMap.has(parsed.asin.toLowerCase())) {
       this.log.debug({ path: folder.path, asin: parsed.asin }, 'Duplicate detected (decisive ASIN match)');
       return buildDiscoveredBook(...base, { isDuplicate: true, existingBookId: maps.existingAsinMap.get(parsed.asin.toLowerCase()), duplicateReason: 'slug', reviewReason });
     }
 
     if (shape && bucketKey) {
-      // (3) Existing-library title+author collision, NO decisive ASIN (#1711 F6): NOT
-      // a hard duplicate. Library Import has no narrators at scan time, so the
-      // same-vs-different-recording verdict cannot be decided here — emit a normal
-      // candidate carrying a display-only review hint so it FLOWS THROUGH the match
-      // job, where `applyLibraryDuplicate` computes the real 3-way verdict. Owned-book
-      // protection is preserved by the post-match and confirm-time `findDuplicate`,
-      // both of which run once narrators exist. Lowest matching `books.id` wins
-      // (bucket is id-ordered).
+      // Without a decisive ASIN or narrators, existing-library title matches remain hints.
       const existingMatch = (maps.existingTitleAuthorBucket.get(bucketKey) ?? []).find((e) => titlesMatchForDedup(e.shape, shape));
       if (existingMatch) {
         this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Possible title+author match — deferring recording verdict to match job');
         return buildDiscoveredBook(...base, { isDuplicate: false, existingBookId: existingMatch.id, reviewReason: reviewReason ?? SCAN_RECORDING_REVIEW_HINT });
       }
 
-      // (4) Within-scan title+author collision (#1925): a prior scan row pairwise-matches.
-      // NOT a hard duplicate — scan time has no narrators, so "same recording?" cannot be
-      // answered here; deciding it a second time (in disagreement with the confirm-time
-      // recording ladder) is exactly the bug. Emit a NORMAL candidate so both folders flow
-      // through the match job and the sequential confirm runner decides identity where
-      // narrators exist (same-recording → skip, different-recording → edition, unsure →
-      // held). Carry a display-only within-scan hint on the second-and-later folder so the
-      // user still notices the collision during triage; preserve any upstream reviewReason.
+      // Keep both within-scan folders normal; confirmation has narrators and owns the verdict.
       const withinMatch = (maps.withinScanBucket.get(bucketKey) ?? []).find((e) => titlesMatchForDedup(e.shape, shape));
       if (withinMatch) {
         this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Within-scan title+author match — deferring recording verdict to confirm ladder');
@@ -429,7 +336,6 @@ export class LibraryScanService {
       }
     }
 
-    // (5) Normal candidate.
     this.log.debug(
       {
         path: folder.path,
@@ -443,10 +349,7 @@ export class LibraryScanService {
 
 }
 
-// Re-export parsing utilities from shared module (extracted for reuse by scan-debug endpoint)
 export { parseFolderStructure, cleanName, extractYear } from '../utils/folder-parsing.js';
-
-// ─── Typed Error Classes ──────────────────────────────────────────────
 
 export class ScanInProgressError extends Error {
   readonly code = 'SCAN_IN_PROGRESS' as const;

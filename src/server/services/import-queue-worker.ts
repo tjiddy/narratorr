@@ -39,24 +39,9 @@ export class ImportQueueWorker {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private drainInProgress = false;
   private drainRequested = false;
-  // The in-flight `runDrain()` promise (F72) — `stop()` awaits it.
   private runDrainPromise: Promise<void> | null = null;
 
-  /**
-   * `getLibraryRoot` resolves the configured library root for the boot-time stranded-marker
-   * sweep (#1338). Injected (rather than holding a `SettingsService`) to keep the worker's
-   * dependency surface minimal; omitted in unit tests that don't exercise the sweep.
-   *
-   * `eventHistory` is used only by the forced-import-refused terminal disposition (#1736) to
-   * record the enriched `import_failed` event when the copy-time fence refuses a forced import.
-   * Optional (omitted in unit tests that don't exercise that branch); when absent the refusal
-   * still finalizes the job, deletes the placeholder, and emits the enriched SSE — only the
-   * durable event row is skipped (best-effort, matching the broadcaster contract).
-   *
-   * `companionEbook` refreshes the companion-ebook observation for a book an import just
-   * finished (#1960 AC4). OPTIONAL (AC8) so the many `new ImportQueueWorker(db, log)` unit
-   * constructions keep compiling; when absent the seam is simply a no-op.
-   */
+  /** Optional seams make marker recovery, refusal history, and companion reconciliation no-ops when absent. */
   constructor(
     db: Db,
     log: FastifyBaseLogger,
@@ -73,28 +58,23 @@ export class ImportQueueWorker {
     this.companionEbook = companionEbook ?? null;
   }
 
-  /** Nudge the worker to check for new pending jobs. */
   nudge(): void {
     if (!this.stopping) {
       this.emitter.emit('nudge');
     }
   }
 
-  /** Start the worker: run boot recovery, sweep stranded markers, then enter the drain loop. */
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
     this.stopping = false;
 
     await this.bootRecovery();
-    // Converge stranded commit-pending markers BEFORE the drain loop starts (#1338). Both
-    // steps are awaited here, so the sweep is the single recovery actor per marker — no
-    // draining import can `rename()` from the same `.import-bak` concurrently.
+    // Finish marker recovery before draining so no import races the same `.import-bak`.
     await this.sweepStrandedMarkers();
     this.drainLoop();
   }
 
-  /** Graceful stop: stop accepting nudges, wait for current job to finish. */
   async stop(): Promise<void> {
     this.stopping = true;
     this.running = false;
@@ -107,25 +87,11 @@ export class ImportQueueWorker {
       this.log.info('Waiting for current import job to complete before shutdown…');
       await this.currentJobPromise;
     }
-    // Await the launched drain (F72): a barrier-aborted drain leaves its row
-    // `pending`; one that already claimed finishes its single job here.
+    // Await pre-claim drains too; an aborted claim leaves its row pending for the next boot.
     await this.runDrainPromise;
   }
 
-  /**
-   * Boot recovery: resolve any import jobs left in `processing` by a previous crash (#1663).
-   *
-   * The linked book's status — read within the recovery transaction — decides each orphan's
-   * outcome. Boot recovery writes ONLY the `import_jobs` row: it never writes the book and never
-   * infers completion from book status.
-   *   - book still `importing` → the genuine interrupted case (no success/failure transition has
-   *     run yet). Re-queue the job (`pending`/`queued`, clear `lastError`) so the next drain
-   *     retries it; the book stays `importing`.
-   *   - any other status (`imported`, a failure-path revert to `failed`/`missing`/`wanted`, …) or
-   *     a null `bookId` → terminal-fail the job (`ProcessRestart`), leaving the book untouched.
-   * A requeued job whose real work cannot proceed is terminal-failed later by the NORMAL drain-time
-   * failure path with its real error (#1663 AC4) — never pre-emptively here.
-   */
+  /** Requeue an orphan only when its book is still importing; otherwise fail only the job row. */
   private async bootRecovery(): Promise<void> {
     const orphans = await this.db
       .select({ id: importJobs.id, bookId: importJobs.bookId })
@@ -163,13 +129,7 @@ export class ImportQueueWorker {
     this.log.info({ count: orphans.length, requeued, settled, failed }, 'Boot recovery complete');
   }
 
-  /**
-   * Resolve a single orphaned `processing` job in one transaction. Reads the linked book's status
-   * (race-free: boot recovery is single-threaded and fully completes before `drainLoop()` starts,
-   * so no concurrent worker can move the book between the read and the job write), then writes ONLY
-   * the `import_jobs` row — never the book. Returns `true` when the job was re-queued (book still
-   * `importing`), `false` when it was terminal-failed.
-   */
+  /** Runs before draining, so the book read and job-only write are race-free in one transaction. */
   private async recoverOrphanedJob(orphan: { id: number; bookId: number | null }, now: Date): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       let bookStatus: string | null = null;
@@ -205,14 +165,7 @@ export class ImportQueueWorker {
     });
   }
 
-  /**
-   * Boot-time sweep of stranded `.import-commit-pending` markers (#1338). Walks the library
-   * root and converges each marker through the existing `prepareImportSiblings` recovery
-   * semantics, decoupling recovery from the same-target retry trigger so failed-download,
-   * manual-job, and recomputed-target orphans also converge. Best-effort: a missing library
-   * root (unconfigured / not yet set) is a no-op, and any sweep-level throw is caught so a
-   * traversal hiccup never prevents the worker from starting and draining.
-   */
+  /** Marker recovery is best-effort; missing configuration or traversal failures cannot block draining. */
   private async sweepStrandedMarkers(): Promise<void> {
     if (!this.getLibraryRoot) return;
     let libraryRoot: string | null | undefined;
@@ -233,11 +186,7 @@ export class ImportQueueWorker {
     }
   }
 
-  /**
-   * Wire nudges and the safety poll. Drain is gated through `requestDrain()`
-   * so overlapping triggers coalesce into one active drain runner — the worker
-   * processes one import at a time per process.
-   */
+  /** Nudges and polling coalesce into one single-process drain. */
   private drainLoop(): void {
     this.emitter.on('nudge', () => this.requestDrain());
 
@@ -246,11 +195,6 @@ export class ImportQueueWorker {
     this.requestDrain();
   }
 
-  /**
-   * Re-entrancy guard. If a drain is already running, set the "needs another
-   * pass" flag so the active runner repeats after reaching idle. Otherwise,
-   * spin up a single drain runner.
-   */
   private requestDrain(): void {
     if (!this.running || this.stopping) return;
     if (this.drainInProgress) {
@@ -258,7 +202,7 @@ export class ImportQueueWorker {
       return;
     }
     this.drainInProgress = true;
-    this.runDrainPromise = this.runDrain(); // tracked so stop() can await it (F72)
+    this.runDrainPromise = this.runDrain(); // tracked so stop() can await it
   }
 
   private async runDrain(): Promise<void> {
@@ -277,12 +221,7 @@ export class ImportQueueWorker {
     }
   }
 
-  /**
-   * Try to claim and process one pending job.
-   * Returns true if a job was processed (success or failure), false if none available.
-   */
   private async drainOne(): Promise<boolean> {
-    // Select oldest pending row
     const candidates = await this.db
       .select({ id: importJobs.id })
       .from(importJobs)
@@ -294,12 +233,9 @@ export class ImportQueueWorker {
 
     const candidateId = candidates[0]!.id;
 
-    // Pre-claim stop barrier (F72): a drain resuming from the candidate SELECT
-    // after `stop()` set `stopping` aborts BEFORE claiming, leaving the durable
-    // `import_jobs` row `pending` for `bootRecovery()` + the next start's drain.
+    // Recheck after SELECT so stop cannot claim a durable row.
     if (this.stopping || !this.running) return false;
 
-    // Atomically claim via conditional update
     const now = new Date();
     const result = await this.db
       .update(importJobs)
@@ -308,11 +244,10 @@ export class ImportQueueWorker {
 
     const rowsAffected = getRowsAffected(result);
     if (rowsAffected !== 1) {
-      // Another process claimed it — retry with next row
+      // Another process won the claim; retry.
       return true;
     }
 
-    // Fetch full job row
     const [job] = await this.db
       .select()
       .from(importJobs)
@@ -321,7 +256,6 @@ export class ImportQueueWorker {
 
     if (!job) return true;
 
-    // Look up adapter
     const adapter = getImportAdapter(job.type);
     if (!adapter) {
       this.log.error({ jobId: job.id, type: job.type }, 'No import adapter registered for job type');
@@ -329,11 +263,9 @@ export class ImportQueueWorker {
       return true;
     }
 
-    // Build phase history from persisted state
     const phaseHistory: PhaseHistoryEntry[] = parsePhaseHistory(job.phaseHistory, this.log, job.id);
     let currentPhase = job.phase ?? 'queued';
 
-    // Build adapter context with enhanced setPhase
     const ctx: ImportAdapterContext = {
       db: this.db,
       log: this.log.child({ jobId: job.id, type: job.type }),
@@ -341,7 +273,6 @@ export class ImportQueueWorker {
         const nowMs = Date.now();
         const previousPhase = currentPhase;
 
-        // Close previous phase entry
         if (phaseHistory.length > 0) {
           const last = phaseHistory[phaseHistory.length - 1]!;
           if (last.completedAt === undefined) {
@@ -349,7 +280,6 @@ export class ImportQueueWorker {
           }
         }
 
-        // Append new phase entry
         phaseHistory.push({ phase, startedAt: nowMs });
         currentPhase = phase;
 
@@ -359,7 +289,6 @@ export class ImportQueueWorker {
           updatedAt: new Date(),
         }).where(eq(importJobs.id, job.id));
 
-        // Emit SSE event
         safeEmit(this.broadcaster, 'import_phase_change', {
           job_id: job.id,
           book_id: job.bookId,
@@ -376,9 +305,7 @@ export class ImportQueueWorker {
     try {
       await this.currentJobPromise;
     } finally {
-      // Null on EVERY outcome — success and rejection. A rejected processJob
-      // (e.g. markJobFailed's transaction aborts) must not leave a parked
-      // rejected promise that stop() would later re-await and re-reject.
+      // Clear on rejection too, or stop() can re-await a parked rejected promise.
       this.currentJobPromise = null;
     }
 
@@ -403,14 +330,10 @@ export class ImportQueueWorker {
         { jobId, bookId, bookTitle, phaseHistory, startTime },
       );
 
-      // #1960 AC4 — the companion sweep for this book, AFTER the completion UPDATE has
-      // persisted and never before it. `triggerCompanionReconcile` absorbs both a rejection
-      // and a SYNCHRONOUS throw, so this seam cannot convert a completed import into a
-      // failed job even though it sits inside the `try` (AC7).
+      // Completion is already durable; companion reconciliation is fire-and-forget.
       this.triggerCompanionReconcile(bookId);
     } catch (error: unknown) {
       this.log.error({ error: serializeError(error), jobId }, 'Import job failed');
-      // Close the active phase entry before persisting
       if (phaseHistory.length > 0) {
         const last = phaseHistory[phaseHistory.length - 1]!;
         if (last.completedAt === undefined) {
@@ -418,15 +341,7 @@ export class ImportQueueWorker {
         }
       }
       const currentPhase = phaseHistory.length > 0 ? phaseHistory[phaseHistory.length - 1]!.phase : 'queued';
-      // Forced-import refusal (#1736): a forced import that confirm-time honored but the copy-time
-      // collision fence refused (never-overwrite) surfaces a DISTINCT terminal disposition instead
-      // of the opaque generic failure path — branch BEFORE markJobFailed. The placeholder book row
-      // is deleted (not left in `importing`/`failed` limbo) and the failure carries a structured
-      // `forced-import-refused` reason so the user can see force was refused and why.
-      //
-      // Gated to FORCED imports (F1): the copy-time fence is force-independent, so a non-forced
-      // import can also throw `OwnedRecordingError`. That was never user-forced, so it is an ordinary
-      // generic failure (markJobFailed below) — labeling it `forced-import-refused` would be wrong.
+      // Only forced jobs get the distinct refusal terminal; non-forced collisions remain generic failures.
       if (error instanceof OwnedRecordingError && this.isForcedImport(job)) {
         await finalizeForcedImportRefusal(
           { db: this.db, broadcaster: this.broadcaster, eventHistory: this.eventHistory, log: this.log },
@@ -440,11 +355,7 @@ export class ImportQueueWorker {
 
   private async markJobFailed(jobId: number, bookId: number | null, currentPhase: string, bookTitle: string, lastError: string, phaseHistory?: PhaseHistoryEntry[]): Promise<void> {
     const now = new Date();
-    // Wrap the import_jobs + books failed-state writes in a single transaction so an
-    // observer joining the two rows never sees the job `status='failed'` while the book
-    // is still `status='importing'`. Mirrors the bootRecovery pattern (see above): both
-    // writes commit together or neither commits. The SSE emit stays outside — a
-    // broadcaster failure must not roll back the durable failure write.
+    // Commit job failure and the guarded book transition together; emit SSE only afterward.
     await this.db.transaction(async (tx) => {
       await tx.update(importJobs).set({
         status: 'failed',
@@ -456,17 +367,11 @@ export class ImportQueueWorker {
       }).where(eq(importJobs.id, jobId));
 
       if (bookId != null) {
-        // Guarded book write in the SAME transaction as the job write (#1448):
-        // both rows commit together or neither does. The `importing` guard (#1470)
-        // prevents this failure write from clobbering an earlier `bookStatusAtGrab`
-        // revert: `handleImportFailure`'s revert commits the book off `importing`
-        // before this catch-path runs, so the guard misses (no-op) and the reverted
-        // status survives. When no revert ran (book still `importing`) it settles to `failed`.
+        // The expected status preserves any earlier failure-path revert.
         await transitionBookStatus(tx, bookId, { status: 'failed', expected: { status: 'importing' } });
       }
     });
 
-    // Parse error message for SSE
     let errorMessage: string;
     try {
       const parsed = JSON.parse(lastError);
@@ -485,22 +390,12 @@ export class ImportQueueWorker {
     }, this.log);
   }
 
-  /**
-   * The companion-ebook seam for a completed import (#1960 AC4–AC7). No trigger when the job
-   * carries no book (AC6). The shared helper is what makes a SYNCHRONOUS reconciler throw
-   * unable to reach `processJob`'s `catch` and convert a completed import into a failed job.
-   */
   private triggerCompanionReconcile(bookId: number | null): void {
     if (bookId === null) return;
     triggerCompanionReconcile(this.companionEbook, bookId, this.log, 'Companion ebook reconcile failed after import');
   }
 
-  /**
-   * Extract book title from job metadata JSON.
-   * Auto jobs have no title field — always returns 'Unknown'. Manual jobs are
-   * validated against `manualImportJobPayloadSchema` so a non-string `title`
-   * cannot leak into SSE payloads. Never throws.
-   */
+  /** Validate manual metadata before surfacing a title in SSE; auto or malformed jobs use `Unknown`. */
   private extractTitle(metadata: string, type: ImportJobType): string {
     if (type !== 'manual') return 'Unknown';
 
@@ -515,13 +410,7 @@ export class ImportQueueWorker {
     return result.success ? result.data.title : 'Unknown';
   }
 
-  /**
-   * True only for a `manual` job whose payload set `forceImport: true`. The forced-import-refused
-   * terminal disposition (#1736) is scoped to forced imports — a NON-forced copy-time
-   * `OwnedRecordingError` (the on-disk collision fence is force-independent and reachable without
-   * force) is an ordinary generic failure, not a "force refused" event, so it must NOT be mislabeled
-   * (F1). Non-manual jobs and unparseable/non-forced payloads return false. Never throws.
-   */
+  /** The copy fence is force-independent; only a validated manual force flag qualifies as forced-refused. */
   private isForcedImport(job: ImportJobRow): boolean {
     if (job.type !== 'manual') return false;
     let parsed: unknown;
@@ -534,7 +423,6 @@ export class ImportQueueWorker {
     return result.success && result.data.forceImport === true;
   }
 
-  /** Create a throttled progress emitter for a specific job. */
   private createThrottledProgressEmitter(
     jobId: number,
     bookId: number | null,
