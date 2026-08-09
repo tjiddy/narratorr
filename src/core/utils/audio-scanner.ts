@@ -29,7 +29,7 @@ export interface AudioScanResult {
   coverMimeType?: string;
   hasCoverArt: boolean;
 
-  // Technical (from first audio file)
+  // Technical fields come from the first audio file.
   codec: string;
   bitrate: number;
   sampleRate: number;

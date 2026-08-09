@@ -44,7 +44,6 @@ export interface BookWithAuthor {
   enrichmentStatus?: EnrichmentStatus | null;
   /** Parsed clear tombstones; detail/write responses only, never list or activity rows. */
   userClearedFields?: ClearableBookField[];
-  // Audio technical info
   audioCodec?: string | null;
   audioBitrate?: number | null;
   audioSampleRate?: number | null;

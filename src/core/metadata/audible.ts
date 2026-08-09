@@ -329,7 +329,6 @@ function parseSeriesPosition(sequence?: string | null): number | undefined {
   return match ? parseFloat(match[1]!) : undefined;
 }
 
-/** Extracts the largest cover URL from product_images. */
 function extractCoverUrl(images?: Record<string, string> | null): string | undefined {
   if (!images) return undefined;
   const sizes = Object.keys(images)

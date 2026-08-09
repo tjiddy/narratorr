@@ -11,10 +11,7 @@ export interface CollectAudioFileOptions {
   skipHidden?: boolean;
 }
 
-/**
- * Collect audio file paths from a directory, filtered by extension.
- * Returns an **unsorted** array — callers are responsible for their own sort semantics.
- */
+/** Returns matching audio paths unsorted; callers own ordering. */
 export async function collectAudioFilePaths(
   dir: string,
   options?: CollectAudioFileOptions,

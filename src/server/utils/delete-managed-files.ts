@@ -59,7 +59,6 @@ async function deleteOneManaged(filePath: string, result: DeleteManagedFilesResu
   }
 }
 
-/** Remove `dir` only when empty. */
 async function rmdirIfEmpty(dir: string, log: FastifyBaseLogger): Promise<void> {
   try {
     await rmdir(dir);

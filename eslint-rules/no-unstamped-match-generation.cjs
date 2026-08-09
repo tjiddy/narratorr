@@ -1,54 +1,10 @@
 /**
- * ESLint rule: no-unstamped-match-generation
- *
- * Every write that installs, replaces or clears `ImportRow.matchResult` must route through
- * `stampRow`, so the row carries a fresh `matchGeneration` (#2055 B7 / #2060). Under-stamping
- * promotes a row whose match evidence was rebuilt underneath an in-flight chapter-corroboration
- * request; the generation token is the only thing that can tell the two apart.
- *
- * `readonly` on the two fields (#2060) blocks direct MUTATION of an existing row. This rule
- * closes the other half — the CONSTRUCTION bypass, where a fresh row literal (or a
- * `mergeMatchIntoRow` result) carrying a match is handed onward without ever passing through
- * `stampRow`.
- *
- * What it reports — a producer of a row value carrying an installed/replaced/cleared match,
- * unless that producer reaches `arguments[0]` of a trusted `stampRow` call:
- *
- *   P1  an `ObjectExpression` with an own `matchResult` key, in any spelling: plain,
- *       shorthand, string-literal, or computed-constant. The property's VALUE is never
- *       inspected, so `matchResult: undefined` is a producer exactly like an install.
- *   P2  a `CallExpression` on the trusted `mergeMatchIntoRow` binding — both of its return
- *       paths install `matchResult`, so its result is always a freshly-installed match.
- *
- * Anchoring is on that PROPERTY, never on `setRows` and never on an enumeration of container
- * shapes. Both proxies were escaped during #2060's review: the live scan site builds its rows
- * in a `map` well outside any `setRows` call, and each round of container-syntax enumeration
- * turned up another shape it had missed.
- *
- * Trust is resolved to a canonical BINDING through the scope chain, never to a spelling — an
- * alias is trusted, a local shadow and a same-named import from another module are not. (The
- * scope-walking precedent in this repo is `no-raw-error-logging.cjs`.)
- *
- * Deliberately OUT of scope:
- *
- *   - **Mutation-based writes.** The rule sees construction sites only. A structurally-
- *     compatible mutable alias has no `matchResult` key at its own construction site — and
- *     TypeScript ignores `readonly` in assignability — so no syntactic rule can see it, nor
- *     can it see `Object.defineProperty` / `Reflect.set`. Those forms remain open and unowned.
- *   - **Full B11 locality.** `stampRow`'s generation must be allocated OUTSIDE the React
- *     updater, because StrictMode double-invokes updaters. That condition is narrowed here to
- *     a syntactic argument-shape check: arg-1 must be a plain `Identifier`. Every syntactic
- *     proxy for the actual locality condition was escaped during #2060's review (a predeclared
- *     updater function, a second setter alias), so the full condition stays documented in
- *     `stampRow`'s JSDoc and pinned at runtime by the over-stamp regression in both hook
- *     suites ("keeps a held response live across an unrelated selection toggle").
- *   - **The converse** (an unrelated write must not stamp) is undecidable syntactically — the
- *     two scan sites legitimately stamp while never mentioning `matchResult`.
- *
- * The rule deliberately errs toward REPORTING: a false positive costs one suppression, a false
- * negative costs a silently-dropped corroboration. For a legitimate shape the rule cannot see,
- * the sanctioned remedy is `// eslint-disable-next-line narratorr/no-unstamped-match-generation`
- * plus a comment justifying why that row is stamped (or need not be).
+ * Requires row constructions that install, replace, or clear `matchResult` to reach trusted
+ * `stampRow` argument zero, preventing stale generations from promoting rebuilt evidence.
+ * Producers are object literals with an own `matchResult` key and trusted `mergeMatchIntoRow`
+ * calls; trust follows import bindings through result-preserving wrappers and one object spread.
+ * Mutations are invisible, argument one only proves identifier shape rather than React locality,
+ * and unrelated stamps cannot be rejected. Err toward reporting; justify any rule suppression.
  */
 
 const TRACKED_KEY = 'matchResult';

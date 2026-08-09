@@ -41,7 +41,6 @@ export interface SystemDeps {
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
 // Three identical network states suppress short blips (observed Hardcover ~7s); card and API detection stay immediate.
-// This is fixed policy until a real tuning need exists.
 const NETWORK_CHECK_CONFIRMATION_PASSES = 3;
 
 // Only live external checks use hysteresis; local failures notify on their first pass.

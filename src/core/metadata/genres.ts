@@ -1,5 +1,3 @@
-/** Normalizes noisy provider genres into canonical tags. */
-
 /** Canonical synonyms: key (lowercase) → normalized form */
 const SYNONYM_MAP = new Map<string, string>([
   ['sci-fi', 'Science Fiction'],
@@ -134,7 +132,6 @@ function removeGenericParents(genres: string[]): string[] {
   return genres.filter((genre) => !GENERIC_PARENTS.has(genre.toLowerCase()));
 }
 
-/** Split paths, map synonyms, gate Historical, drop noise, dedupe, then remove compounds and parents. */
 export function normalizeGenres(genres: string[] | undefined | null): string[] | undefined {
   if (!genres || genres.length === 0) return undefined;
 
@@ -173,11 +170,7 @@ export function normalizeGenres(genres: string[] | undefined | null): string[] |
   return result.length > 0 ? result : undefined;
 }
 
-/**
- * Identify genres that passed through normalization without being
- * transformed by any rule. These are candidates for adding to the
- * synonym map.
- */
+/** Returns normalized genres no rule handled, for synonym-map telemetry. */
 export function findUnmatchedGenres(
   normalized: string[] | undefined | null,
 ): string[] {
