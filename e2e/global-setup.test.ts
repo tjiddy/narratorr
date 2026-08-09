@@ -9,14 +9,7 @@ import { _resetRegisteredFakesForTests, getRegisteredFakes } from './fixtures/ru
 import { authors, books, downloadClients, indexers } from '../src/db/schema.js';
 import globalSetup, { getE2ESourcePath, cleanupRunPathsFile } from './global-setup.js';
 
-/**
- * globalSetup runs real Fastify servers on fixed ports 4100/4200. These tests
- * start and stop the full orchestration to verify the wiring — they are slower
- * than pure-unit tests but still under 1s each.
- */
-// Allocate a unique port pair per test so vitest ordering + kernel TIME_WAIT
-// don't collide on 4100/4200. Production runs still use the fixed defaults
-// because env vars aren't set.
+// These tests start real fakes; unique ports prevent Vitest and kernel TIME_WAIT collisions.
 let nextPortBase = 15100;
 function allocatePortPair(): { mam: number; qbit: number; audible: number } {
   const mam = nextPortBase++;
@@ -54,9 +47,6 @@ describe('globalSetup', () => {
   });
 
   it('throws a clear error if createRunTempDirs has not been called', async () => {
-    // playwright.config.ts is supposed to call createRunTempDirs at module load
-    // so webServer.env can reference paths — globalSetup should fail loud if that
-    // didn't happen.
     await expect(globalSetup()).rejects.toThrow(/temp-dir state not initialized/);
   });
 
@@ -107,8 +97,6 @@ describe('globalSetup', () => {
 
     await globalSetup();
 
-    // The subpath server's isolated DB gets the same seed (indexer/client/
-    // author/book) so its library renders without sharing the root DB.
     const client = createClient({ url: `file:${subpath.dbPath}` });
     const db = drizzle(client);
     try {
@@ -144,7 +132,6 @@ describe('globalSetup', () => {
     const names = getRegisteredFakes().map((f) => f.name);
     expect(names).toContain('audible');
 
-    // The fake should respond to Audible API catalog requests with empty products.
     const audibleRes = await fetch(`${process.env.E2E_AUDIBLE_URL}/1.0/catalog/products?title=test`);
     expect(audibleRes.status).toBe(200);
     const body = await audibleRes.json() as { products: unknown[]; total_results: number };
@@ -161,12 +148,10 @@ describe('globalSetup', () => {
     const { existsSync, readdirSync } = await import('node:fs');
     const { join } = await import('node:path');
 
-    // Should have exactly one subfolder matching the expected name.
     const entries = readdirSync(run.sourcePath);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toBe('E2E Manual Author - E2E Manual Import Book');
 
-    // The subfolder should contain the silent.m4b fixture.
     const bookDir = join(run.sourcePath, entries[0]!);
     const files = readdirSync(bookDir);
     expect(files).toContain('silent.m4b');
@@ -184,7 +169,6 @@ describe('globalSetup', () => {
     expect(process.env.E2E_DOWNLOADS_PATH).toBe(run.downloadsPath);
     expect(process.env.E2E_LIBRARY_PATH).toBe(run.libraryPath);
 
-    // Sanity — getCurrentRun is still populated and consistent with env.
     expect(getCurrentRun()?.downloadsPath).toBe(run.downloadsPath);
   });
 
@@ -208,13 +192,10 @@ describe('globalSetup', () => {
     const run = createRunTempDirs();
     orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
-    // Set E2E_RUN_STATE_DIR so the helper can find the per-run state file.
     process.env.E2E_RUN_STATE_DIR = run.configPath;
 
     await globalSetup();
 
-    // Clear E2E_SOURCE_PATH to simulate a worker process that doesn't
-    // have same-process env mutations from globalSetup.
     const saved = process.env.E2E_SOURCE_PATH;
     delete process.env.E2E_SOURCE_PATH;
     try {
@@ -230,7 +211,6 @@ describe('globalSetup', () => {
     const run = createRunTempDirs();
     orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
-    // Set E2E_RUN_STATE_DIR so cleanup can find the per-run state file.
     process.env.E2E_RUN_STATE_DIR = run.configPath;
 
     await globalSetup();
