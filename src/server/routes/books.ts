@@ -1,16 +1,13 @@
 import type { FastifyInstance } from 'fastify';
-import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService, IndexerService, ConnectorService } from '../services/index.js';
 import { RenameError, didRenameChangeAnything, type RenameResult } from '../services/rename.service.js';
 import { triggerCompanionReconcile, type CompanionBookReconcileTrigger } from '../services/companion-ebook-trigger.js';
-import { OwnedRecordingError } from '../services/book.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
 import type { BookRejectionService } from '../services/book-rejection.service.js';
 import type { BookDeletionService } from '../services/book-deletion.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
-import { serializeError } from '../utils/serialize-error.js';
 export interface BookRouteDeps {
   bookService: BookService;
   bookListService: BookListService;
@@ -35,6 +32,7 @@ export interface BookRouteDeps {
 import { searchAndGrabForBook, buildNarratorPriority, buildSearchFilterOptions } from '../services/search-pipeline.js';
 import { z } from 'zod';
 import { triggerImmediateSearch } from '../services/trigger-immediate-search.js';
+import { addBookThroughLadder } from '../services/book-add-ladder.js';
 import {
   idParamSchema,
   bookListQuerySchema,
@@ -105,40 +103,11 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
     { schema: { body: createBookBodySchema } },
     async (request, reply) => {
       const body = request.body;
-      // Block owned or uncertain recordings; a confirmed different recording is a valid keep-both.
-      const resolution = await deps.bookService.findDuplicate({
-        title: body.title,
-        authors: body.authors,
-        ...(body.asin !== undefined && { asin: body.asin }),
-        ...(body.narrators !== undefined && { narrators: body.narrators }),
-        ...(body.duration !== undefined && { duration: body.duration }),
-      });
-      if (resolution.verdict !== 'different-recording' && resolution.book) {
-        request.log.info({ title: body.title, existingId: resolution.book.id, verdict: resolution.verdict }, 'Duplicate book detected');
-        return reply.status(409).send(resolution.book);
+      const result = await addBookThroughLadder(deps, body, request.log);
+      if (result.outcome !== 'created') {
+        return reply.status(409).send(result.book);
       }
-
-      let book;
-      try {
-        book = await deps.bookService.create(body);
-      } catch (error: unknown) {
-        // A same-ASIN create race means another request already owns the recording.
-        if (error instanceof OwnedRecordingError) {
-          request.log.info({ title: body.title, existingId: error.existingBookId }, 'Duplicate book detected (ASIN race)');
-          const owner = await deps.bookService.getById(error.existingBookId);
-          return reply.status(409).send(owner);
-        }
-        throw error;
-      }
-
-      deps.eventHistory.create({
-        bookId: book.id,
-        ...snapshotBookForEvent(book),
-        eventType: 'book_added',
-        source: 'manual',
-      }).catch((err: unknown) => request.log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
-
-      request.log.info({ title: body.title }, 'Book added');
+      const book = result.book;
 
       if (body.searchImmediately && book.status === 'wanted') {
         const { downloadOrchestrator, settingsService, blacklistService, eventBroadcaster, indexerSearchService, indexerService, eventHistory } = deps;
