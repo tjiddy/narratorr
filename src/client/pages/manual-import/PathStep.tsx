@@ -51,7 +51,6 @@ export function PathStep({
 
   return (
     <div className="max-w-xl space-y-4 animate-fade-in-up stagger-1">
-      {/* Path input */}
       <PathInput
         value={scanPath}
         onChange={(path) => { setScanPath(path); setScanError(null); }}
@@ -95,7 +94,6 @@ export function PathStep({
         </button>
       </div>
 
-      {/* Favorite Folders */}
       <div className="space-y-1.5">
         <p className="text-xs font-medium text-muted-foreground/70 uppercase tracking-wide">Favorite Folders</p>
         {favorites.length === 0 ? (
@@ -140,7 +138,6 @@ export function PathStep({
         )}
       </div>
 
-      {/* Recent Folders */}
       <div className="space-y-1.5">
         <p className="text-xs font-medium text-muted-foreground/70 uppercase tracking-wide">Recent Folders</p>
         {recents.length === 0 ? (
