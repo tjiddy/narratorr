@@ -11,7 +11,6 @@ import { randomBytes } from 'node:crypto';
 import { mockDbChain, createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
 import type { ImmediateSearchDeps } from './trigger-immediate-search.js';
 
-// Mock the adapter factories
 vi.mock('@core/import-lists/index.js', () => ({
   IMPORT_LIST_ADAPTER_FACTORIES: {
     nyt: vi.fn(),
@@ -19,7 +18,7 @@ vi.mock('@core/import-lists/index.js', () => ({
   },
 }));
 
-// Stub the trigger so search-pipeline isn't actually invoked from these unit tests
+// Prevent unit tests from invoking the real search pipeline.
 vi.mock('./trigger-immediate-search.js', () => ({
   triggerImmediateSearch: vi.fn(),
 }));
@@ -31,11 +30,6 @@ const mockTriggerImmediateSearch = triggerImmediateSearch as unknown as ReturnTy
 
 const mockLog = createMockLogger() as unknown as FastifyBaseLogger;
 
-/**
- * Build a stub BookService whose `findDuplicate` and `create` are vi.fn()s.
- * Default: no duplicates, create returns a BookWithAuthor-like row with the
- * supplied id/title.
- */
 function makeBookService(overrides: {
   findDuplicate?: ReturnType<typeof vi.fn>;
   create?: ReturnType<typeof vi.fn>;
@@ -189,7 +183,6 @@ describe('ImportListService', () => {
     });
   });
 
-  // #732 — Saved-row validation + Hardcover shelfId numeric tightening
   describe('Hardcover shelfId saved-row parsing (#732)', () => {
     function makeHardcoverList(settings: Record<string, unknown>) {
       return {
@@ -321,12 +314,9 @@ describe('ImportListService', () => {
       expect(db.select).toHaveBeenCalled();
     });
 
-    // #1404 — decryptRow threads the injected service logger into decryptFields so a
-    // corrupt/wrong-key secret surfaces a diagnostic. Uses a freshly-captured logger
-    // (not the shared module-scope mockLog) and asserts the warn reaches THIS caller's
-    // injected logger (would fail if `this.log` were dropped from the call).
+    // A fresh logger exposes any accidental fallback to the shared module mock.
     it('getById threads this.log: corrupt apiKey warns with entity/failedFields, passthrough preserved', async () => {
-      const CORRUPT = '$ENC$not-valid-base64!!'; // $ENC$-prefixed, fails decrypt → passthrough
+      const CORRUPT = '$ENC$not-valid-base64!!';
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([
         { id: 1, name: 'Test', type: 'nyt', enabled: true, settings: { apiKey: CORRUPT, list: 'audio-fiction' } },
@@ -392,7 +382,6 @@ describe('ImportListService', () => {
       );
     });
 
-    // #844 — entity-aware allowlist on resolveSentinelFields
     it('update rejects sentinel on a non-secret field rather than silently substituting it', async () => {
       const db = createMockDb();
       const existingRow = {
@@ -430,10 +419,6 @@ describe('ImportListService', () => {
       ...overrides,
     });
 
-    /**
-     * Build a `BookWithAuthor`-shaped row that the bookService.create stub returns.
-     * Tests assert against this shape's id/title — other fields just satisfy types.
-     */
     const createdBook = (id: number, title: string): BookWithAuthor => ({
       id, publicId: `bk_test`, title,
       subtitle: null, description: null, publisher: null, coverUrl: null,
@@ -570,7 +555,6 @@ describe('ImportListService', () => {
       expect(setCall.nextRunAt).toBeInstanceOf(Date);
     });
 
-    // F1 — dedup pre-flight + no audit row + no immediate search on duplicate
     describe('dedup', () => {
       it('skips create when findDuplicate returns a match — no event, no immediate search, debug log', async () => {
         const mockProvider = {
@@ -599,7 +583,6 @@ describe('ImportListService', () => {
 
         expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Already Have', authors: [{ name: 'Someone' }], asin: 'B_DUP' }));
         expect(create).not.toHaveBeenCalled();
-        // No event row written
         expect(eventInsertChain.values).not.toHaveBeenCalledWith(
           expect.objectContaining({ source: 'import_list' }),
         );
@@ -633,10 +616,6 @@ describe('ImportListService', () => {
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Anonymous Book', authors: [] }));
       });
 
-      // #1723 F8 — create-time ASIN race: the pre-create guard says
-      // different-recording, but create() fail-closes with OwnedRecordingError.
-      // createImportListBook maps that to an owned skip (returns null) → no event
-      // row, no immediate search.
       it('owned ASIN race (create throws OwnedRecordingError): skips, no event, no immediate search (#1723 F8)', async () => {
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Race Book', author: 'Someone', asin: 'B_RACE' }]),
@@ -668,13 +647,7 @@ describe('ImportListService', () => {
         expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
       });
 
-      // #1735 — a `review` verdict (uncertain identity) is still skipped on
-      // automated lists (no held-review UI), but it is now OBSERVABLE: it emits a
-      // `recording_review_skipped` event so the held candidate is queryable via the
-      // existing event-history surface instead of being lost to a server log line.
-      // No create, no immediate search. The mock returns a realistic review
-      // resolution carrying the incumbent (NOT `book: null`, which diverges from the
-      // real `resolveDuplicate` contract — see DV2).
+      // Real review resolutions carry the incumbent; `book: null` cannot exercise this contract.
       it('review verdict: skips create but emits an observable recording_review_skipped event (#1735)', async () => {
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Maybe Owned', author: 'Someone', asin: 'B_REVIEW' }]),
@@ -702,8 +675,6 @@ describe('ImportListService', () => {
         await service.syncDueLists();
 
         expect(create).not.toHaveBeenCalled();
-        // The disposition is now observable outside logs: a recording_review_skipped
-        // row on the incumbent's history, carrying the list name + incumbent id.
         expect(eventInsertChain.values).toHaveBeenCalledWith(
           expect.objectContaining({
             bookId: 999,
@@ -714,19 +685,13 @@ describe('ImportListService', () => {
             reason: expect.objectContaining({ importListName: 'Review List', existingBookId: 999 }),
           }),
         );
-        // A held item is wanted-but-uncertain, not grabbed: no immediate search.
         expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
-        // #1735 — branch-specific info log distinguishes the review skip from the
-        // same-recording skip (which logs at `debug` with a different message).
         expect(mockLog.info).toHaveBeenCalledWith(
           expect.objectContaining({ title: 'Maybe Owned', asin: 'B_REVIEW', existingBookId: 999 }),
           expect.stringContaining('needs recording review'),
         );
       });
 
-      // #1735 — the run distinguishes "synced N vs. held/skipped-for-review M": the
-      // sync-complete log carries a createdCount and heldReviewCount so a held item
-      // is no longer indistinguishable from a clean run.
       it('sync-complete log surfaces createdCount vs heldReviewCount for a mixed run (#1735)', async () => {
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([
@@ -757,8 +722,6 @@ describe('ImportListService', () => {
       });
     });
 
-    // F4 — author failure semantics: rollback inside BookService.create propagates;
-    // catch in syncList logs warn; no event row, no immediate search.
     describe('author failure semantics (F4)', () => {
       it('BookService.create throws — no event row, no immediate search, warn logged, sync continues', async () => {
         const mockProvider = {
@@ -786,7 +749,6 @@ describe('ImportListService', () => {
 
         await service.syncDueLists();
 
-        // Bad Item: no event row insert and no immediate search
         const eventValuesCalls = eventInsertChain.values.mock.calls as unknown[][];
         const badItemEvent = eventValuesCalls.find((call) => {
           const v = call[0] as { bookTitle?: string };
@@ -794,7 +756,6 @@ describe('ImportListService', () => {
         });
         expect(badItemEvent).toBeUndefined();
 
-        // Good Item went through
         expect(create).toHaveBeenCalledTimes(2);
         const goodEvent = eventValuesCalls.find((call) => {
           const v = call[0] as { bookTitle?: string };
@@ -802,7 +763,6 @@ describe('ImportListService', () => {
         });
         expect(goodEvent).toBeDefined();
 
-        // Bad Item's failure was warn-logged via syncList's per-item try/catch
         const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
         const failWarn = warnCalls.find((call) => {
           const ctx = call[0] as { title?: string };
@@ -811,14 +771,12 @@ describe('ImportListService', () => {
         });
         expect(failWarn).toBeDefined();
 
-        // Immediate search fires only for Good Item
         await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
         const [bookArg] = mockTriggerImmediateSearch.mock.calls[0]!;
         expect(bookArg).toEqual(expect.objectContaining({ id: 20, title: 'Good Item' }));
       });
     });
 
-    // F12 + §3/§4 — enrichItem behavior: ASIN-identity vs search-candidate paths
     describe('enrichItem paths', () => {
       it('no metadata service — book inserted with item-supplied fields, no search/enrichBook calls', async () => {
         const mockProvider = {
@@ -842,8 +800,6 @@ describe('ImportListService', () => {
         }));
       });
 
-      // #1119 — ASIN-bearing items now get rich metadata from enrichBook, and the
-      // metadata's title/author win over the raw provider fields (ASIN is identity).
       it('item has ASIN → resolveBook called with item identity; metadata identity + side fields flow to BookService.create', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -875,9 +831,6 @@ describe('ImportListService', () => {
           expect.objectContaining({ asin: 'B002', title: 'Item Title', author: 'Item Author' }),
         );
 
-        // Metadata identity wins for title + authors; cover/description still
-        // accept the raw item value as a hint (item.* ?? match.*); rich
-        // match-only fields flow through. seriesPrimary wins over series[0].
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
           title: 'Different Title From Audnexus',
           authors: [{ name: 'Audnexus Author' }],
@@ -893,8 +846,6 @@ describe('ImportListService', () => {
         }));
       });
 
-      // #1731 — production_type is populated from the matched record's formatType
-      // on the import-list create path (previously dropped → always 'unknown').
       it('matched item with a mixed-case formatType flows normalized productionType to create (#1731)', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -963,10 +914,6 @@ describe('ImportListService', () => {
         expect(create.mock.calls[0]![0].productionType).toBeUndefined();
       });
 
-      // #1728 F1/F4 — the normalized production form is forwarded to findDuplicate
-      // (F1), and when the resolver holds the item for a production-type mismatch
-      // the machine reason rides the recording_review_skipped event JSON (F4), so
-      // the held downgrade is diagnosable instead of silent.
       it('matched item forwards productionType to findDuplicate and surfaces recordingReviewReason in the held event (#1728 F1/F4)', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -996,9 +943,7 @@ describe('ImportListService', () => {
         service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }), mockMetadata);
         await service.syncDueLists();
 
-        // F1 — normalized production form reaches the resolver.
         expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'unabridged' }));
-        // F4 — held, not created; the event carries the machine reason.
         expect(create).not.toHaveBeenCalled();
         expect(eventInsertChain.values).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -1029,9 +974,6 @@ describe('ImportListService', () => {
         expect(findDuplicate.mock.calls[0]![0]).not.toHaveProperty('productionType');
       });
 
-      // #1119 AC test #1 — ASIN-identity: metadata author + title win at the
-      // create payload (replaces the prior `ASIN-identity path skips §4 fuzzy
-      // validation` test that blessed the chimera behavior).
       it('ASIN-identity: metadata author + title win at create + findDuplicate', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -1069,7 +1011,6 @@ describe('ImportListService', () => {
         }));
       });
 
-      // #1119 AC test #2 — ASIN-identity: metadata title wins when item title differs
       it('ASIN-identity: metadata title wins when item title differs', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -1101,9 +1042,6 @@ describe('ImportListService', () => {
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Golden Son' }));
       });
 
-      // #1622 — unresolvable item: raw item fields used end-to-end AND the book
-      // is created with enrichmentStatus 'failed' (still created so the import
-      // isn't dropped; re-enters the background job's retry-after-1h search).
       it('unresolvable item (resolver null): raw item fields at create + enrichmentStatus failed, no metadata side fields', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue(null),
@@ -1125,8 +1063,6 @@ describe('ImportListService', () => {
         service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
         await service.syncDueLists();
 
-        // The resolver receives the transient item identity (asin NOT mutated on
-        // the import-list row — the adapter item is just passed through).
         expect(mockMetadata.resolveBook).toHaveBeenCalledWith(
           expect.objectContaining({ asin: 'B_NOTFOUND', title: 'Mystery Book', author: 'Some Author' }),
         );
@@ -1142,8 +1078,6 @@ describe('ImportListService', () => {
         expect(callArgs.seriesName).toBeUndefined();
       });
 
-      // #1622 — bad provider ASIN rescued via search: the resolved AUDIOBOOK ASIN
-      // (not the original print/Kindle ASIN) is what's persisted for the book.
       it('search-rescued ASIN: resolved audiobook ASIN wins over the raw provider ASIN at create', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -1152,7 +1086,7 @@ describe('ImportListService', () => {
           }),
         } as unknown as MetadataService;
         const mockProvider = {
-          // Print ASIN (ISBN-10 shaped) from a Hardcover-style provider row.
+          // ISBN-10-shaped print ASIN from a Hardcover-style provider.
           fetchItems: vi.fn().mockResolvedValue([
             { title: 'Catching Fire', author: 'Suzanne Collins', asin: '1338589016' },
           ]),
@@ -1175,13 +1109,10 @@ describe('ImportListService', () => {
           narrators: ['Carolyn McCormick'],
           duration: 700,
         }));
-        // The book record gets the audiobook ASIN — NOT the print ASIN.
         const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
         expect(callArgs.asin).not.toBe('1338589016');
       });
 
-      // #1622 — a provider RateLimitError is transient, NOT a no-match: the book
-      // is still created but left resolvable later (no 'failed' status); logged.
       it('rate limit during resolution: book left pending (not failed), warn logged', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockRejectedValue(new RateLimitError(30000, 'Audible.com')),
@@ -1209,9 +1140,6 @@ describe('ImportListService', () => {
         );
       });
 
-      // #1628 — a transient provider failure during the fallback search is NOT a
-      // no-match: the book is still created but left pending (no 'failed' status),
-      // so the background job retries it. Mirrors the rate-limit case above.
       it('transient error during resolution: book left pending (not failed), warn logged', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockRejectedValue(new TransientError('Audible.com', 'HTTP 503')),
@@ -1239,8 +1167,6 @@ describe('ImportListService', () => {
         );
       });
 
-      // #1628 — a generic (non-typed) error during resolution is also treated as
-      // transient: book created but left pending, not failed.
       it('generic error during resolution: book left pending (not failed)', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockRejectedValue(new Error('Network error')),
@@ -1261,10 +1187,9 @@ describe('ImportListService', () => {
         await service.syncDueLists();
 
         const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
-        expect(callArgs.enrichmentStatus).toBeUndefined(); // default 'pending', NOT 'failed'
+        expect(callArgs.enrichmentStatus).toBeUndefined(); // Database default: pending.
       });
 
-      // #1119 AC test #4 — Search-candidate validation success: metadata identity wins at create payload
       it('search-candidate path: metadata identity wins at create payload when item differs', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -1273,8 +1198,7 @@ describe('ImportListService', () => {
           }),
         } as unknown as MetadataService;
         const mockProvider = {
-          // Lowercased title + author match the metadata case-insensitively, so
-          // validation passes; assert the metadata casing reaches the create payload.
+          // Case-only differences pass validation while preserving metadata casing.
           fetchItems: vi.fn().mockResolvedValue([{ title: 'GAME ON', author: 'navessa allen' }]),
           test: vi.fn(),
         };
@@ -1301,7 +1225,6 @@ describe('ImportListService', () => {
         }));
       });
 
-      // #1119 AC test #7 — Mismatch logging on ASIN identity
       it('ASIN-identity: emits warn log when raw and metadata fields disagree', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -1335,7 +1258,6 @@ describe('ImportListService', () => {
         );
       });
 
-      // #1119 AC test #7 (negative) — no mismatch log when raw and metadata agree
       it('ASIN-identity: no mismatch log when raw and metadata agree', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -1367,7 +1289,6 @@ describe('ImportListService', () => {
         expect(mismatchWarn).toBeUndefined();
       });
 
-      // #1626 — case-only title divergence does NOT warn (author agrees)
       it('case-only title divergence does not emit mismatch warn when author agrees', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -1399,7 +1320,6 @@ describe('ImportListService', () => {
         expect(mismatchWarn).toBeUndefined();
       });
 
-      // #1626 — case-only title divergence does NOT warn (author absent)
       it('case-only title divergence does not emit mismatch warn when author is absent', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -1431,7 +1351,6 @@ describe('ImportListService', () => {
         expect(mismatchWarn).toBeUndefined();
       });
 
-      // #1626 — case-only author divergence does NOT warn (title agrees)
       it('case-only author divergence does not emit mismatch warn when title agrees', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -1463,7 +1382,6 @@ describe('ImportListService', () => {
         expect(mismatchWarn).toBeUndefined();
       });
 
-      // #1119 AC test #8 — Item with no author + metadata has authors
       it('ASIN-identity: item without author still adopts metadata author', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -1491,8 +1409,6 @@ describe('ImportListService', () => {
         }));
       });
 
-      // §4 — resolver rejects the candidate (validation lives in resolveBook now)
-      // → null → raw provider fields fall through, no enriched data.
       it('resolver returns null (validation rejected) → falls back to provider raw fields, no enriched data', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue(null),
@@ -1512,7 +1428,6 @@ describe('ImportListService', () => {
         service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
         await service.syncDueLists();
 
-        // Author mismatch → match dropped → provider's coverUrl wins, no narrators, no asin
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
           title: 'GAME ON',
           authors: [{ name: 'Navessa Allen' }],
@@ -1610,7 +1525,6 @@ describe('ImportListService', () => {
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Resilient Book' }));
       });
 
-      // Cover precedence at insert: provider wins over match
       it('cover precedence: item.coverUrl wins over match.coverUrl', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -1636,7 +1550,6 @@ describe('ImportListService', () => {
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ coverUrl: 'http://item-cover.jpg' }));
       });
 
-      // seriesPrimary preferred over series[0] (#1088 prior art)
       it('series identity: match.seriesPrimary wins over match.series[0]', async () => {
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue({
@@ -1686,7 +1599,6 @@ describe('ImportListService', () => {
       service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }));
       await service.syncDueLists();
 
-      // syncList swallows per-item failures via per-item try/catch
       const setCall = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
       expect(setCall.lastSyncError).toBeNull();
       expect(setCall.lastRunAt).toBeInstanceOf(Date);
@@ -1725,7 +1637,6 @@ describe('ImportListService', () => {
       );
     });
 
-    // F9 — searchDeps wiring: honor quality.searchImmediately + new audit-vs-search ordering
     describe('searchDeps wired (#967, F9)', () => {
       it('triggers immediate search when searchImmediately=true and a new book is created', async () => {
         const mockProvider = {
