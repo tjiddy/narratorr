@@ -1,24 +1,17 @@
 import { createHash } from 'node:crypto';
 
-/**
- * Build a minimal valid bencoded single-file torrent. The fake MAM server returns
- * these bytes; Narratorr's `extractInfoHashFromTorrent` parses them to compute the
- * info_hash; the fake qBit server re-parses the uploaded multipart bytes to key
- * torrents by the same info_hash. No real peer-to-peer semantics — just enough
- * bencode structure for `4:info` extraction and sha1 hashing to round-trip.
- */
+/** Minimal torrent shared by fake MAM and qBit so `info_hash` survives the download/upload round trip. */
 export interface BuildTorrentArgs {
-  /** Filename that lives inside the torrent (also used for the top-level name). */
   fileName: string;
-  /** File length in bytes. Narratorr does not verify this matches the fixture, but keep it honest. */
+  /** Bytes. */
   fileLength: number;
 }
 
 export function buildTorrentBytes({ fileName, fileLength }: BuildTorrentArgs): Buffer {
-  // 20-byte piece hash — placeholder, not verified by either side.
+  // Neither fake verifies piece content; a 20-byte placeholder satisfies the wire format.
   const pieceHash = Buffer.alloc(20, 0);
 
-  // Info dict (bencoded): order keys alphabetically per BEP-3.
+  // BEP-3 requires dictionary keys in lexical order.
   const info = Buffer.concat([
     Buffer.from('d'),
     Buffer.from(`6:length`),
@@ -30,7 +23,6 @@ export function buildTorrentBytes({ fileName, fileLength }: BuildTorrentArgs): B
     Buffer.from('e'),
   ]);
 
-  // Outer dict wraps the info dict under the `info` key.
   return Buffer.concat([
     Buffer.from('d4:info'),
     info,
@@ -38,11 +30,7 @@ export function buildTorrentBytes({ fileName, fileLength }: BuildTorrentArgs): B
   ]);
 }
 
-/**
- * Compute info_hash the same way Narratorr's `extractInfoHashFromTorrent` does:
- * sha1 of the bencoded `info` dict bytes. The fake qBit uses this to match
- * uploaded torrents against the id Narratorr tracks.
- */
+/** Computes SHA-1 over the bencoded `info` dictionary, matching Narratorr's extractor. */
 export function computeInfoHash(torrentBytes: Buffer): string | null {
   const marker = Buffer.from('4:info');
   const idx = torrentBytes.indexOf(marker);
@@ -51,7 +39,7 @@ export function computeInfoHash(torrentBytes: Buffer): string | null {
   const infoStart = idx + marker.length;
   if (torrentBytes[infoStart] !== 0x64) return null; // must start with 'd'
 
-  // Walk the bencode dict to find its end.
+  // Walk the nested bencode value to isolate the exact info-dictionary bytes.
   let depth = 0;
   let pos = infoStart;
   while (pos < torrentBytes.length) {
