@@ -41,15 +41,10 @@ interface BookHeroProps {
   onWrongReleaseClick?: (() => void) | undefined;
   isWrongReleasing?: boolean | undefined;
   importListName?: string | null | undefined;
-  /** Preview object URL from file picker or paste. Null when no preview active. */
   previewUrl?: string | null | undefined;
-  /** Called when user selects a file via the file picker. */
   onCoverFileSelect?: ((file: File) => void) | undefined;
-  /** Called when user confirms the preview (checkmark). */
   onCoverConfirm?: (() => void) | undefined;
-  /** Called when user cancels the preview (X). */
   onCoverCancel?: (() => void) | undefined;
-  /** Whether a cover upload is in progress. */
   isUploadingCover?: boolean | undefined;
   onRetryImportClick?: (() => void) | undefined;
   isRetryingImport?: boolean | undefined;
@@ -137,7 +132,6 @@ export function BookHero({
             )}
             <div className="absolute inset-0 ring-1 ring-inset ring-white/[0.08] rounded-2xl" />
 
-            {/* Cover upload overlay — confirm/cancel when preview active, upload button on hover otherwise */}
             {previewUrl && onCoverConfirm && onCoverCancel ? (
               <div className="absolute inset-0 flex flex-col items-center justify-end bg-gradient-to-t from-black/70 via-black/20 to-transparent animate-fade-in">
                 {isUploadingCover && (
@@ -180,7 +174,6 @@ export function BookHero({
             )}
           </div>
 
-          {/* Hidden file input for cover upload */}
           {hasPath && onCoverFileSelect && (
             <input
               ref={fileInputRef}
@@ -190,7 +183,7 @@ export function BookHero({
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) onCoverFileSelect(file);
-                // Reset so re-selecting the same file triggers change
+                // Allow re-selecting the same file to trigger change.
                 e.target.value = '';
               }}
             />
