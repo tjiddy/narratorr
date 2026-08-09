@@ -21,7 +21,6 @@ const FILTER_OPTIONS: { value: ReasonFilter; label: string }[] = [
   ...SUGGESTION_REASONS.map((r) => ({ value: r as ReasonFilter, label: SUGGESTION_REASON_REGISTRY[r].label })),
 ];
 
-/** Build a CreateBookPayload from a suggestion row (inline, not via mapBookMetadataToPayload). */
 function suggestionToPayload(
   s: SuggestionRow,
   overrides: { searchImmediately: boolean },
@@ -53,7 +52,7 @@ function useDiscoverMutations(setAddedMap: React.Dispatch<React.SetStateAction<M
     });
     queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
-    // Fire-and-forget: mark suggestion as added in backend
+    // Backend bookkeeping is best-effort; optimistic added state must survive failure.
     api.markDiscoverSuggestionAdded(suggestionId).catch(() => {});
   };
 
@@ -66,7 +65,7 @@ function useDiscoverMutations(setAddedMap: React.Dispatch<React.SetStateAction<M
     },
     onError: (error: Error, { suggestion }) => {
       if (error instanceof ApiError && error.status === 409) {
-        // 409 body is the existing book row (see src/server/routes/books.ts:141)
+        // A 409 body carries the existing book row.
         const existingId = error.body !== null && typeof error.body === 'object' && 'id' in error.body && typeof (error.body as { id: unknown }).id === 'number'
           ? (error.body as { id: number }).id
           : null;
@@ -127,7 +126,6 @@ export function DiscoverPage() {
     ? Object.values(stats.counts).reduce((sum, n) => sum + n, 0)
     : undefined;
 
-  // Client-side language and reject-word filtering
   const configuredLanguages = useMemo(() => settings?.metadata?.languages ?? [], [settings]);
   const rejectWords = useMemo(() => parseWordList(settings?.quality?.rejectWords ?? ''), [settings]);
 
@@ -263,7 +261,6 @@ function DiscoverHeader({
         )}
       </div>
 
-      {/* Filter Chips */}
       <div className="flex flex-wrap gap-2">
         {FILTER_OPTIONS.map((opt) => (
           <button
