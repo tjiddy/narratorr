@@ -17,12 +17,7 @@ import {
   ClockIcon,
 } from '@/components/icons';
 
-// Derived ownership read-out (#1907), extracted so the card component stays under
-// the complexity cap. `inLibraryBookId` is the linked-"In Library" id: a completed
-// add/409 (`justAddedBookId`) always wins; otherwise only an exact-ASIN match
-// contributes a pre-existing id (derived-state-over-copied). A title-identity match
-// links to nothing until an add/409 completes, so it keeps its Add control and shows
-// the related-edition badge instead of ever linking to the incumbent edition (AC5).
+// A completed add/409 wins; exact-ASIN matches link, while title-only matches keep Add and show the related-edition badge.
 function deriveOwnership(
   libraryMatch: LibraryMatch<LibraryEntry> | null,
   justAddedBookId: number | null,
@@ -42,16 +37,12 @@ export function SearchBookCard({
 }: {
   book: BookMetadata;
   index: number;
-  // Canonical ownership-entry type (#1916): the search page supplies the
-  // unpaginated `BookIdentifier[]`; both branches carry the `id` the badge
-  // links at.
   libraryBooks?: LibraryEntry[] | undefined;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [justAddedBookId, setJustAddedBookId] = useState<number | null>(null);
   const authorNames = book.authors.map((a) => a.name).join(', ');
-  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
-  // on Audible can be a broader universe entry rather than the real book series.
+  // Audible series[0] may be a broader universe; use canonical seriesPrimary.
   const seriesInfo = pickPrimarySeries(book);
   const libraryMatch = findLibraryMatch(book, libraryBooks);
   const { inLibraryBookId, showRelatedEditionBadge } = deriveOwnership(libraryMatch, justAddedBookId);
@@ -66,7 +57,7 @@ export function SearchBookCard({
     },
     onError: (error: Error) => {
       if (error instanceof ApiError && error.status === 409) {
-        // 409 body is the existing book row (see src/server/routes/books.ts:141)
+        // A 409 body carries the existing book row.
         const existingId = typeof error.body === 'object' && error.body !== null && 'id' in error.body && typeof (error.body as { id: unknown }).id === 'number'
           ? (error.body as { id: number }).id
           : null;
@@ -85,7 +76,6 @@ export function SearchBookCard({
       style={{ animationDelay: `${index * 50}ms` }}
     >
       <div className="flex gap-4 sm:gap-5">
-        {/* Cover Image */}
         <div className="shrink-0">
           <CoverImage
             src={book.coverUrl}
@@ -95,7 +85,6 @@ export function SearchBookCard({
           />
         </div>
 
-        {/* Content */}
         <div className="flex-1 min-w-0 flex flex-col">
           <h3 className="font-display text-lg sm:text-xl font-semibold line-clamp-2 group-hover:text-primary transition-colors">
             {book.title}
@@ -107,12 +96,7 @@ export function SearchBookCard({
             </p>
           )}
 
-          {/* Related-edition indicator (#1907). Lives in the content column — not
-              the action column — so it wraps with the title/metadata on narrow
-              screens instead of competing with the Add control for the fixed
-              `shrink-0` action width. Shown only in the related-edition state
-              (title-identity match, no completed add/409 yet); an exact-ASIN
-              match or a completed add flips to the linked InLibraryBadge instead. */}
+          {/* Keep this badge in the flexible content column so it cannot crowd the Add control. */}
           {showRelatedEditionBadge && (
             <div className="mt-1.5">
               <Badge variant="muted">Edition in library</Badge>
@@ -126,7 +110,6 @@ export function SearchBookCard({
             </p>
           )}
 
-          {/* Metadata */}
           <div className="flex flex-wrap items-center gap-3 mt-auto pt-3">
             {seriesInfo && (
               <span className="text-sm text-muted-foreground">
@@ -148,12 +131,6 @@ export function SearchBookCard({
           </div>
         </div>
 
-        {/* Add Button */}
-        {/* Ownership read-out (#1907): an exact-ASIN match (or a completed
-            add/409) links to the owned book with no Add control; otherwise Add
-            stays available. The related-edition (title-identity) case keeps Add
-            here AND surfaces the "Edition in library" badge in the content column
-            above — the server's recording-verdict decides create-vs-409. */}
         <div className="shrink-0 flex items-center">
           {inLibraryBookId !== null ? (
             <InLibraryBadge bookId={inLibraryBookId} />

@@ -33,8 +33,6 @@ import { api, ApiError, type BookIdentifier, type LibraryEntry } from '@/lib/api
 import { toast } from 'sonner';
 import { queryKeys } from '@/lib/queryKeys';
 
-// `libraryBooks` accepts the canonical `LibraryEntry` ownership type (#1916) —
-// the search page now feeds it the unpaginated identifiers list.
 function renderCard(bookOverrides = {}, libraryBooks?: LibraryEntry[]) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries');
@@ -51,7 +49,6 @@ function renderCard(bookOverrides = {}, libraryBooks?: LibraryEntry[]) {
   };
 }
 
-/** Narrow identifiers-shaped library entry, as `/api/books/identifiers` returns it. */
 function identifier(overrides: Partial<BookIdentifier> = {}): BookIdentifier {
   return {
     id: 1,
@@ -107,7 +104,6 @@ describe('SearchBookCard', () => {
     expect(screen.queryByText(/\d+[hm]/)).not.toBeInTheDocument();
   });
 
-  // #1097 — series display prefers seriesPrimary over series[0]
   it('renders seriesPrimary instead of series[0] when both are present (#1097)', () => {
     renderCard({
       seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
@@ -148,25 +144,20 @@ describe('SearchBookCard', () => {
     expect(link).toHaveAttribute('href', '/books/42');
   });
 
-  // #1907 — a title-identity match against a different-ASIN edition must KEEP Add.
   it('shows the related-edition badge AND a working Add on a title-identity match', async () => {
     vi.mocked(api.addBook).mockResolvedValue({ id: 1, title: 'The Way of Kings' } as never);
-    // Same title+author as the searched book, but a DIFFERENT ASIN → title-identity.
+    // Same title and author but a different ASIN forces title identity.
     const libraryBooks = [createMockBook({ id: 1, asin: 'B00DIFFEDN' })];
     const user = userEvent.setup();
     renderCard({}, libraryBooks);
 
     expect(screen.getByText('Edition in library')).toBeInTheDocument();
-    // No linked "In Library" state — the related edition is not linked.
     expect(screen.queryByRole('link', { name: /view this book in your library/i })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /add book/i }));
     const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
     await user.click(addToLibrary);
-    // AC4 — Add must submit the SEARCHED edition's payload, not the owned
-    // incumbent. Assert the exact mapped payload: the searched ASIN (B003P2WO5E,
-    // NOT the incumbent's B00DIFFEDN), the searched authors, and the resolved
-    // searchImmediately (false, from the mocked quality defaults).
+    // Add must submit the searched edition, never the title-matched incumbent.
     await waitFor(() => {
       expect(api.addBook).toHaveBeenCalledWith(
         mapBookMetadataToPayload(createMockBookMetadata(), { searchImmediately: false }),
@@ -176,13 +167,11 @@ describe('SearchBookCard', () => {
     expect(vi.mocked(api.addBook).mock.calls[0]![0]!.asin).toBe('B003P2WO5E');
   });
 
-  // AC1a — array order must not re-enable Add for an exact-ASIN-owned recording.
   it('links to the exact-ASIN incumbent (no Add) even when a title-identity entry is listed first', () => {
     const book = createMockBookMetadata();
     const libraryBooks = [
-      // title-identity (different ASIN) placed FIRST — the failing order under naive Array.find
+      // Title-identity first catches naive Array.find ownership.
       createMockBook({ id: 1, asin: 'B00OTHERED' }),
-      // exact-ASIN incumbent
       createMockBook({ id: 42, ...(book.asin !== undefined ? { asin: book.asin } : {}) }),
     ];
     renderCard({}, libraryBooks);
@@ -192,7 +181,6 @@ describe('SearchBookCard', () => {
     expect(screen.queryByRole('button', { name: /add book/i })).not.toBeInTheDocument();
   });
 
-  // Live specimen from the issue: plain vs Booktrack edition of "The Lovely Bones".
   it('shows the Booktrack edition in the related-edition state with a working Add (specimen)', () => {
     const libraryBooks = [
       createMockBook({
@@ -224,7 +212,7 @@ describe('SearchBookCard', () => {
     await waitFor(() => {
       expect(screen.getByText('In Library')).toBeInTheDocument();
     });
-    // justAddedBookId wins over the original title-identity match (AC5).
+    // The completed add replaces the original title-identity match.
     expect(screen.getByRole('link', { name: /view this book in your library/i }))
       .toHaveAttribute('href', '/books/99');
     expect(screen.queryByText('Edition in library')).not.toBeInTheDocument();
@@ -260,9 +248,7 @@ describe('SearchBookCard', () => {
     const user = userEvent.setup();
     renderCard();
 
-    // Open popover
     await user.click(screen.getByRole('button'));
-    // Click Add to Library
     const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
     await user.click(addToLibrary);
 
@@ -305,15 +291,10 @@ describe('SearchBookCard', () => {
       .toHaveAttribute('href', '/books/7');
   });
 
-  // #1916 — the search page now feeds this card the unpaginated identifiers
-  // list, so every ownership branch has to work off the narrow BookIdentifier
-  // shape and stay correct past the old 120-row window.
   describe('#1916 identifiers-backed ownership', () => {
     it('links the In Library badge at the exact-ASIN incumbent even when it sits past row 120', () => {
       const book = createMockBookMetadata();
-      // A title-identity entry first (the naive-first-match trap), 120 unrelated
-      // rows after it, and the exact-ASIN incumbent last — the exact arrangement
-      // the capped `/api/books` page used to hide.
+      // Exact ASIN last catches both capped results and naive first-match selection.
       const libraryBooks: BookIdentifier[] = [
         identifier({ id: 1, asin: 'B00OTHERED' }),
         ...Array.from({ length: 120 }, (_, i) =>
@@ -342,9 +323,7 @@ describe('SearchBookCard', () => {
       expect(screen.queryByRole('link', { name: /view this book in your library/i })).not.toBeInTheDocument();
     });
 
-    // AC7 — `queryKeys.bookIdentifiers()` is a child of the `['books']` prefix,
-    // so the existing invalidation already refreshes the search page's ownership
-    // data. Asserted, not assumed.
+    // bookIdentifiers is nested under the books query-key prefix.
     it('invalidates the books prefix (which covers the identifiers cache) after a successful add', async () => {
       vi.mocked(api.addBook).mockResolvedValue({ id: 99, title: 'The Way of Kings' } as never);
       const user = userEvent.setup();
