@@ -1,11 +1,4 @@
-/**
- * Minimal, dependency-free SHA-256 over raw bytes (#1902, F20). Used as the
- * client digest fallback on non-secure origins (plain-HTTP LAN self-hosting) where
- * `crypto.subtle` is `undefined`, and when a `crypto.subtle.digest` call rejects. It
- * hashes the SAME canonical UTF-8 bytes the secure path hashes, so the resulting
- * lowercase hex digest is byte-for-byte identical to the Web Crypto / node:crypto
- * result and can never disagree with the server's finalize digest.
- */
+// Dependency-free SHA-256 fallback over the same canonical bytes as Web Crypto and the server.
 
 const K = new Uint32Array([
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,

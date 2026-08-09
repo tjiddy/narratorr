@@ -32,7 +32,7 @@ afterEach(() => {
 describe('outbox — round-trip and lifecycle', () => {
   it('persists and reads back a record', () => {
     putOutbox(record());
-    __resetOutboxCache(); // force a fresh storage read
+    __resetOutboxCache();
     expect(readOutbox('library')).toEqual(record());
   });
 
@@ -58,11 +58,9 @@ describe('outbox — supersession guard by clientSubmissionId (F1)', () => {
   const NEWER = '99999999-8888-4777-8666-555555555555';
 
   it('evictOutbox with a stale clientId does NOT delete a newer submission’s hint', () => {
-    // A new submit has already replaced the single slot with NEWER; a late callback from the
-    // old run must not evict it.
     putOutbox(record({ clientSubmissionId: NEWER }));
-    evictOutbox('library', UUID); // stale id from the superseded run
-    expect(readOutbox('library')).toEqual(record({ clientSubmissionId: NEWER })); // untouched
+    evictOutbox('library', UUID);
+    expect(readOutbox('library')).toEqual(record({ clientSubmissionId: NEWER }));
   });
 
   it('evictOutbox with the matching clientId evicts', () => {
@@ -73,14 +71,14 @@ describe('outbox — supersession guard by clientSubmissionId (F1)', () => {
 
   it('an unguarded evictOutbox always clears the slot (mount receiving/never-landed arm)', () => {
     putOutbox(record({ clientSubmissionId: NEWER }));
-    evictOutbox('library'); // no expected id → owns whatever it read
+    evictOutbox('library');
     expect(readOutbox('library')).toBeNull();
   });
 
   it('markOutboxFinalized with a stale clientId does NOT rewrite a newer hint', () => {
     putOutbox(record({ clientSubmissionId: NEWER }));
-    markOutboxFinalized('library', 42, UUID); // stale id
-    expect(readOutbox('library')).toEqual(record({ clientSubmissionId: NEWER })); // still 'submitting', not stamped
+    markOutboxFinalized('library', 42, UUID);
+    expect(readOutbox('library')).toEqual(record({ clientSubmissionId: NEWER }));
   });
 
   it('markOutboxFinalized with the matching clientId advances the hint', () => {
@@ -104,7 +102,7 @@ describe('outbox — corrupt / invalid reads are ignored + evicted (F69)', () =>
     expect(() => readOutbox('library')).not.toThrow();
     expect(readOutbox('library')).toBeNull();
     __resetOutboxCache();
-    expect(localStorage.getItem('narratorr:import-outbox:library')).toBeNull(); // evicted
+    expect(localStorage.getItem('narratorr:import-outbox:library')).toBeNull();
   });
 
   it('ignores and evicts an unknown version', () => {
@@ -134,13 +132,13 @@ describe('outbox — throwing storage access is non-fatal (F12)', () => {
   it('a throwing setItem does not block the in-memory snapshot from updating', () => {
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('QuotaExceeded'); });
     expect(() => putOutbox(record())).not.toThrow();
-    expect(readOutbox('library')).toEqual(record()); // snapshot coherent despite failed write
+    expect(readOutbox('library')).toEqual(record());
   });
 
   it('a throwing removeItem still nulls the snapshot — a failed evict does not resurrect the record', () => {
     putOutbox(record());
     vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('SecurityError'); });
     expect(() => evictOutbox('library')).not.toThrow();
-    expect(readOutbox('library')).toBeNull(); // stays evicted in-session
+    expect(readOutbox('library')).toBeNull();
   });
 });

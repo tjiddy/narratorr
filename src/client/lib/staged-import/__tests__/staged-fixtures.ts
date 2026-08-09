@@ -1,15 +1,7 @@
 import type { Mock } from 'vitest';
 import type { SubmissionResponse, SubmissionAggregates, StagedItemResultDto } from '@/lib/api';
 
-/**
- * Shared fixtures/mocks for the staged submit + poll flow (#1902). The hook/page tests
- * mock `@/lib/api` and drive the pipeline through `createImportSubmission` →
- * `putImportSubmissionItems` → `finalizeImportSubmission` → `getImportSubmission`
- * (summary + one-time detail). Because the poll
- * controller fires its FIRST tick immediately (not after the interval), a summary that
- * already reads `complete` resolves the whole terminal chain via microtasks — no fake
- * timers needed for terminal-outcome tests.
- */
+// Polling starts immediately, so complete summaries drive terminal fixtures without fake timers.
 
 export const zeroAgg: SubmissionAggregates = { accepted: 0, held: 0, skipped: 0, failed: 0 };
 
@@ -51,7 +43,6 @@ export function detailResponse(items: StagedItemResultDto[], over: HeaderOverrid
   return { ...HEADER_BASE, ...over, itemsIncluded: true, items } as SubmissionResponse;
 }
 
-// ── Disposition-row builders ─────────────────────────────────────────────────
 export const acceptedRow = (ordinal: number, path: string, title = 'T'): StagedItemResultDto =>
   ({ disposition: 'accepted', ordinal, path, title, bookId: ordinal + 1 });
 export const heldRow = (ordinal: number, path: string, title = 'T'): StagedItemResultDto =>
@@ -90,10 +81,6 @@ export interface WireCompleteOpts {
   expectedCount?: number;
 }
 
-/**
- * Wire a full happy submit that polls straight to `complete` and returns the given
- * terminal detail on the one-time `includeItems=true` fetch.
- */
 export function wireStagedComplete(m: StagedMockFns, opts: WireCompleteOpts = {}): void {
   const id = opts.id ?? 5;
   const items = opts.items ?? [];

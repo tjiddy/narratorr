@@ -9,7 +9,6 @@ const valid = (path: string, title = 'T'): ImportConfirmItem => ({
   metadata: { title, authors: [{ name: 'Author' }] } as unknown as NonNullable<ImportConfirmItem['metadata']>,
 });
 
-/** Attach an out-of-bound metadata field to a valid row to force a specific parse failure. */
 const withMeta = (path: string, meta: Record<string, unknown>): ImportConfirmItem => ({
   path,
   title: 'T',
@@ -86,9 +85,9 @@ describe('classifySubmission — survivors, compaction, normalization', () => {
   it('drops excluded rows BEFORE ordinal compaction — survivors keep no gap and map to source indexes', () => {
     const rows = [
       valid('/keep1'),
-      withMeta('/bad', { coverUrl: 'nope' }), // invalid
+      withMeta('/bad', { coverUrl: 'nope' }),
       valid('/keep2'),
-      withMeta('/big', { authors: [{ name: 'a'.repeat(513) }] }), // oversize
+      withMeta('/big', { authors: [{ name: 'a'.repeat(513) }] }),
       valid('/keep3'),
     ];
     const r = classifySubmission(rows);

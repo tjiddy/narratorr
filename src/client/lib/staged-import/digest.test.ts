@@ -4,7 +4,7 @@ import { serializeSubmissionForDigest, type StagedImportItem, type SubmissionDig
 import { sha256Hex } from './sha256.js';
 import { computeSubmissionDigest } from './digest.js';
 
-/** The server oracle: node:crypto SHA-256 hex over the same canonical string. */
+// Server oracle over the shared canonical serialization.
 function serverDigest(input: SubmissionDigestInput): string {
   return createHash('sha256').update(serializeSubmissionForDigest(input)).digest('hex');
 }
@@ -13,12 +13,7 @@ const enc = new TextEncoder();
 
 const item = (path: string, title: string): StagedImportItem => ({ path, title, metadata: { title, authors: [{ name: 'A' }] } });
 
-/**
- * A deterministic secure-context `SubtleCrypto` stub (#1902 F16). Crypto capability is
- * the behavior under test and varies by runtime/secure context, so the secure-path tests
- * inject THIS fake (a real SHA-256 via node:crypto) instead of relying on the ambient
- * global `crypto.subtle`, which could be undefined on CI and silently select the fallback.
- */
+// Use real node SHA-256 so secure-path tests cannot silently select the ambient fallback.
 function makeSecureSubtle() {
   const digest = vi.fn(async (_alg: string, data: BufferSource): Promise<ArrayBuffer> => {
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data as ArrayBuffer);
@@ -57,13 +52,11 @@ describe('computeSubmissionDigest — agreement with the server oracle', () => {
     ['manual move', manualMove],
     ['multibyte data', multibyte],
   ])('secure path agrees with the server vector — %s', async (_label, input) => {
-    // Inject the deterministic secure stub so the secure `crypto.subtle.digest` branch is
-    // provably the one exercised, not left to the ambient runtime (F16).
     const secure = makeSecureSubtle();
     const digest = await computeSubmissionDigest(input, secure);
     expect(secure.digest).toHaveBeenCalledOnce();
     expect(digest).toBe(serverDigest(input));
-    expect(digest).toMatch(/^[0-9a-f]{64}$/); // lowercase hex
+    expect(digest).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('is independent of key insertion order (same digest)', async () => {
@@ -96,7 +89,7 @@ describe('computeSubmissionDigest — agreement with the server oracle', () => {
     const secureStub = makeSecureSubtle();
     const secure = await computeSubmissionDigest(manualCopy, secureStub);
     const fallback = await computeSubmissionDigest(manualCopy, undefined);
-    expect(secureStub.digest).toHaveBeenCalledOnce(); // the secure branch really ran
+    expect(secureStub.digest).toHaveBeenCalledOnce();
     expect(secure).toBe(fallback);
   });
 });
