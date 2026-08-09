@@ -14,19 +14,13 @@ interface ImportSummaryBarBaseProps {
   mode: ImportMode;
   onImport: () => void;
   importing: boolean;
-  /** Override the default "Import N books" CTA label (also used in pending state instead of "Importing...") */
+  /** Overrides the default CTA label in both idle and pending states. */
   registerLabel?: string;
-  /** When true, disable the action button regardless of other state */
   disabled?: boolean;
-  /**
-   * When true (paused match run, #1895), the pending segment reads `{n} paused` with no
-   * spinner instead of the spinning `{n} matching`. Defaults to false so the non-paused
-   * path — and Manual Import — stay byte-identical.
-   */
+  /** Renders pending rows as paused without a spinner. */
   paused?: boolean;
 }
 
-/** Pending count segment: spinning "{n} matching", or static "{n} paused" while the run is halted (#1895). */
 function PendingSegment({ pendingCount, paused }: { pendingCount: number; paused?: boolean | undefined }) {
   return (
     <span className="flex items-center gap-1.5 text-muted-foreground/50">
@@ -54,8 +48,6 @@ function pluralizePaused(n: number): string {
   return `${n} selected book${n !== 1 ? 's are' : ' is'} paused`;
 }
 
-// Paused-aware (#1895 follow-up): while the match run is halted, pending rows read
-// "paused" — matching the PendingSegment beside this tooltip — not "still matching".
 function buildDisabledTooltip(selectedUnmatchedCount: number, selectedPendingCount: number, paused?: boolean): string | undefined {
   if (selectedUnmatchedCount > 0 && selectedPendingCount > 0) {
     return `${pluralizeNeedsMatch(selectedUnmatchedCount)}, ${selectedPendingCount} ${paused ? 'paused' : 'still matching'}`;
@@ -65,10 +57,6 @@ function buildDisabledTooltip(selectedUnmatchedCount: number, selectedPendingCou
   return undefined;
 }
 
-/**
- * When hideMode is true, the mode dropdown is hidden — onModeChange is not needed.
- * When hideMode is false or absent, the mode dropdown is visible — onModeChange is required.
- */
 type ImportSummaryBarProps = ImportSummaryBarBaseProps & (
   | { hideMode: true; onModeChange?: never }
   | { hideMode?: false; onModeChange: (mode: ImportMode) => void }
@@ -95,7 +83,6 @@ export function ImportSummaryBar({
   const tooltip = buildDisabledTooltip(selectedUnmatchedCount, selectedPendingCount, paused);
   return (
     <div className="sticky bottom-0 z-10 glass-card border-t border-white/10 rounded-b-xl px-4 py-3 flex items-center justify-between gap-4">
-      {/* Counts */}
       <div className="flex items-center gap-3 text-xs">
         {readyCount > 0 && (
           <span className="flex items-center gap-1.5">
@@ -123,9 +110,7 @@ export function ImportSummaryBar({
         )}
       </div>
 
-      {/* Controls */}
       <div className="flex items-center gap-3">
-        {/* Mode dropdown — hidden for in-place registration flows */}
         {!hideMode && (
           <SelectWithChevron id="import-mode" variant="compact" className="py-2 text-sm"
             value={mode} onChange={(e) => onModeChange?.(e.target.value as ImportMode)} aria-label="Import mode">

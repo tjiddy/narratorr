@@ -48,13 +48,11 @@ describe('ImportSummaryBar', () => {
       expect(screen.getByText('4 matching')).toBeInTheDocument();
     });
 
-    // #1895 — the pending segment reads "{n} paused" with no spinner when paused=true.
     it('paused=true: pending segment reads "{n} paused" with NO spinner', () => {
       renderBar({ pendingCount: 4, paused: true });
       const segment = screen.getByText('4 paused');
       expect(segment).toBeInTheDocument();
       expect(screen.queryByText('4 matching')).not.toBeInTheDocument();
-      // The spinner svg is removed from the pending segment while paused.
       expect(segment.querySelector('svg')).not.toBeInTheDocument();
     });
 
@@ -99,7 +97,6 @@ describe('ImportSummaryBar', () => {
     });
 
     it('enabled when other rows are still matching but none of them are selected (#1102)', () => {
-      // pendingCount > 0 globally, but the user's selection is fully matched.
       renderBar({ selectedCount: 1, selectedPendingCount: 0, pendingCount: 4 });
       expect(screen.getByRole('button', { name: /Import 1 book$/ })).toBeEnabled();
     });
@@ -163,8 +160,6 @@ describe('ImportSummaryBar', () => {
       expect(btn).toHaveAttribute('title', '2 selected books need a match, 1 still matching');
     });
 
-    // Paused-aware tooltip (#1895 follow-up): while the run is halted the tooltip agrees
-    // with the "N paused" PendingSegment beside it instead of claiming "still matching".
     it('paused: tooltip reads "paused" for pending selected rows', () => {
       renderBar({ selectedCount: 2, selectedPendingCount: 2, paused: true });
       const btn = screen.getByRole('button', { name: /Import/ });
@@ -225,9 +220,6 @@ describe('ImportSummaryBar', () => {
     });
   });
 
-  // ===========================================================================
-  // #114 — duplicateCount pill replaces skippedDuplicates
-  // ===========================================================================
   describe('duplicate count pill', () => {
     it('existing ready / review / no match / matching pills still show alongside duplicateCount', () => {
       renderBar({ readyCount: 5, reviewCount: 2, noMatchCount: 1, duplicateCount: 3 });
