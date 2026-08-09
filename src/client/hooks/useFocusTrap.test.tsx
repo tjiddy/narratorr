@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { useFocusTrap } from './useFocusTrap.js';
 
-/** Renders a container with N buttons and wires useFocusTrap */
 function Trap({ isOpen, count = 2 }: { isOpen: boolean; count?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   useFocusTrap(isOpen, ref);
@@ -17,7 +16,6 @@ function Trap({ isOpen, count = 2 }: { isOpen: boolean; count?: number }) {
   );
 }
 
-/** Renders a container with one disabled button (zero tabbable elements) */
 function TrapEmpty({ isOpen }: { isOpen: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useFocusTrap(isOpen, ref);
@@ -73,7 +71,6 @@ describe('useFocusTrap', () => {
 
   it('does nothing when isOpen is false', () => {
     render(<Trap isOpen={false} />);
-    // focus should not have moved to Button 1
     expect(document.activeElement).not.toBe(screen.getByText('Button 1'));
   });
 
@@ -81,7 +78,6 @@ describe('useFocusTrap', () => {
     const user = userEvent.setup();
     const { unmount } = render(<Trap isOpen />);
     unmount();
-    // After unmount, Tab should not be intercepted — no errors thrown
     await user.keyboard('{Tab}');
   });
 });

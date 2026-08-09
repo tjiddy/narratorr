@@ -95,7 +95,6 @@ describe('useAuth', () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.isAuthenticated).toBe(false);
     expect(api.getAuthAdminStatus).not.toHaveBeenCalled();
-    // Admin-only fields default to safe values when not yet authenticated.
     expect(result.current.hasUser).toBe(false);
     expect(result.current.localBypass).toBe(false);
     expect(result.current.bypassActive).toBe(false);

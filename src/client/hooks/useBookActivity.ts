@@ -8,7 +8,7 @@ import type { MergeDisplayPhase } from '@shared/schemas/sse-events.js';
 
 export interface BookActivity {
   state: 'working' | 'queued';
-  /** Display unit (0..100) — converted here from the store's 0..1 wire fraction. */
+  /** Display percentage converted from the store's 0..1 wire fraction. */
   percentage?: number;
   label: string;
 }
@@ -21,13 +21,8 @@ const MERGE_WORKING_LABELS: Partial<Record<MergeDisplayPhase, string>> = {
   committing: 'Finishing…',
 };
 
-/**
- * Live "is anything happening to this book" signal for library surfaces.
- * Merges come from the SSE-fed per-book store; import jobs share the Activity
- * page's query key, so however many cards subscribe there is one fetch. A
- * terminal merge (outcome set) reports null — the grid shows nothing during
- * the Activity card's dismiss window.
- */
+// Merge state comes from SSE; import jobs share the Activity query. Terminal merges
+// report no activity during the Activity card's dismissal window.
 export function useBookActivity(bookId: number): BookActivity | null {
   const sseConnected = useSSEConnected();
   const merge = useMergeProgress(bookId);

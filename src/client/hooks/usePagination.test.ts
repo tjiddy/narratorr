@@ -44,11 +44,9 @@ describe('usePagination', () => {
 
   it('clampToTotal snaps back to last valid page when total shrinks', () => {
     const { result } = renderHook(() => usePagination(50));
-    // Go to page 5 (items 201-250)
     act(() => result.current.setPage(5));
     expect(result.current.page).toBe(5);
 
-    // Total shrinks to 150 (3 pages max) — should clamp to page 3
     act(() => result.current.clampToTotal(150));
     expect(result.current.page).toBe(3);
   });
@@ -57,7 +55,6 @@ describe('usePagination', () => {
     const { result } = renderHook(() => usePagination(50));
     act(() => result.current.setPage(2));
 
-    // Total is still big enough for page 2
     act(() => result.current.clampToTotal(150));
     expect(result.current.page).toBe(2);
   });

@@ -456,14 +456,11 @@ describe('useEventHistory', () => {
     expect(result.current.events[0]!.bookTitle).toBe('Page 1 Event');
     expect(result.current.total).toBe(50);
 
-    // Rerender with new params — triggers page 2 fetch (which is pending)
     rerender({ limit: 50, offset: 50 });
 
-    // placeholderData keeps page 1 events visible synchronously
     expect(result.current.events[0]!.bookTitle).toBe('Page 1 Event');
     expect(result.current.total).toBe(50);
 
-    // Resolve page 2
     act(() => {
       resolveP2({ data: [], total: 0 });
     });

@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useTheme } from '@/hooks/useTheme';
 
-// Local mock so individual tests can override matchMedia behavior
 const mockMatchMedia = vi.fn().mockImplementation((query: string) => ({
   matches: false,
   media: query,

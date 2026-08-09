@@ -23,7 +23,7 @@ const searchProgressMap = new Map<number, SearchCardState>();
 const dismissTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const listeners = new Set<() => void>();
 
-// Cached snapshot — invalidated on every notify()
+// Cached snapshot stays stable until notify() invalidates it for useSyncExternalStore.
 let cachedSnapshot: SearchCardState[] = [];
 
 function notify() {
@@ -37,7 +37,6 @@ function subscribe(callback: () => void): () => void {
 }
 
 function scheduleDismiss(bookId: number): void {
-  // Clear any existing timer
   const existing = dismissTimers.get(bookId);
   if (existing) clearTimeout(existing);
 
@@ -106,7 +105,6 @@ const handlers: Record<string, (data: never) => void> = {
   search_complete: handleComplete as (data: never) => void,
 };
 
-/** Called by useEventSource to update search progress state. */
 export function handleSearchEvent<T extends SearchEventType>(
   type: T,
   data: SSEEventPayloads[T],
@@ -114,7 +112,6 @@ export function handleSearchEvent<T extends SearchEventType>(
   handlers[type]?.(data as never);
 }
 
-/** Reactive hook — returns all active search progress entries. */
 export function useSearchProgress(): SearchCardState[] {
   return useSyncExternalStore(
     subscribe,
@@ -123,7 +120,6 @@ export function useSearchProgress(): SearchCardState[] {
   );
 }
 
-/** Reset store state for testing. */
 export function _resetForTesting(): void {
   searchProgressMap.clear();
   for (const timer of dismissTimers.values()) clearTimeout(timer);

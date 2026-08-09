@@ -88,7 +88,6 @@ describe('useActivityCounts', () => {
 
       const callCountAfterLoad = vi.mocked(api.getActivityCounts).mock.calls.length;
 
-      // Advance well past the 30s interval — SSE gate should suppress polling
       await vi.advanceTimersByTimeAsync(60_000);
 
       expect(vi.mocked(api.getActivityCounts).mock.calls.length).toBe(callCountAfterLoad);
@@ -113,11 +112,9 @@ describe('useActivityCounts', () => {
 
       const callCountAfterLoad = vi.mocked(api.getActivityCounts).mock.calls.length;
 
-      // Confirm polling is suppressed while SSE is connected
       await vi.advanceTimersByTimeAsync(60_000);
       expect(vi.mocked(api.getActivityCounts).mock.calls.length).toBe(callCountAfterLoad);
 
-      // SSE disconnects — interval should switch to 30_000
       vi.mocked(useSSEConnected).mockReturnValue(false);
       rerender();
 

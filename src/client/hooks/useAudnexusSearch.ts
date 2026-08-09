@@ -4,7 +4,6 @@ import { api } from '@/lib/api';
 import type { BookMetadata } from '@/lib/api';
 
 export interface UseAudnexusSearchOptions {
-  /** Pre-populated results to show before the first search (e.g. from metadata matching) */
   initialResults?: BookMetadata[];
 }
 
@@ -16,11 +15,6 @@ export interface UseAudnexusSearchResult {
   search: (query: string) => void;
 }
 
-/**
- * Shared mutation hook for searching Audnexus metadata.
- * Used by BookEditModal and BookMetadataModal to avoid duplicating the
- * useMutation + state pattern.
- */
 export function useAudnexusSearch(options?: UseAudnexusSearchOptions): UseAudnexusSearchResult {
   const [searchResults, setSearchResults] = useState<BookMetadata[]>(options?.initialResults ?? []);
   const [hasSearched, setHasSearched] = useState(false);

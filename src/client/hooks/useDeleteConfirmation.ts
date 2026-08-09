@@ -1,10 +1,5 @@
 import { useState, useCallback } from 'react';
 
-/**
- * Manages the confirm-before-delete pattern used with ConfirmModal.
- * Tracks which item is targeted for deletion and provides handlers
- * for triggering and cancelling the confirmation.
- */
 export function useDeleteConfirmation<T>() {
   const [target, setTarget] = useState<T | null>(null);
 

@@ -1,7 +1,6 @@
 import { useEffect, useCallback } from 'react';
 import { MAX_COVER_SIZE } from '@shared/constants.js';
 
-/** Check if the active element is an editable control (input, textarea, contenteditable). */
 function isEditableActive(): boolean {
   const el = document.activeElement;
   if (!el) return false;
@@ -12,19 +11,12 @@ function isEditableActive(): boolean {
 }
 
 interface UseCoverPasteOptions {
-  /** Whether the paste listener is active. Disable when book has no path. */
   enabled: boolean;
-  /** Called with the pasted image File when valid. */
   onPaste: (file: File) => void;
-  /** Called when the pasted image exceeds the size limit. */
   onError?: (message: string) => void;
 }
 
-/**
- * Document-level paste listener for cover image uploads.
- * Handles image/* clipboard items, skips editable controls,
- * and validates file size client-side.
- */
+/** Handles document-level image pastes without stealing paste from editable controls. */
 export function useCoverPaste({ enabled, onPaste, onError }: UseCoverPasteOptions) {
   const handlePaste = useCallback((e: ClipboardEvent) => {
     if (isEditableActive()) return;
