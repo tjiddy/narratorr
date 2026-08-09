@@ -8,7 +8,7 @@ import { SettingsSection } from './SettingsSection';
 
 type SystemFormData = z.infer<typeof systemFormSchema>;
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+// Guard label and section title must stay identical.
 const CARD_LABEL = 'Backup Schedule';
 
 export function BackupScheduleForm() {

@@ -9,7 +9,7 @@ vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual('@/lib/api');
   return {
     ...actual,
-    // Override formatBytes with a KB-only formatter that existing assertions depend on.
+    // Override formatBytes with a deterministic KB-only formatter.
     formatBytes: (bytes: number) => `${(bytes / 1024).toFixed(1)} KB`,
   };
 });
@@ -125,11 +125,9 @@ describe('BackupTable', () => {
 
     const restoreButtons = screen.getAllByTitle('Restore backup');
 
-    // Click first backup's restore
     await user.click(restoreButtons[0]!);
     expect(onRestore).toHaveBeenCalledWith(mockBackups[0]);
 
-    // Click second backup's restore — buttons are still enabled
     await user.click(restoreButtons[1]!);
     expect(onRestore).toHaveBeenCalledWith(mockBackups[1]);
     expect(onRestore).toHaveBeenCalledTimes(2);
