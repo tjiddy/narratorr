@@ -310,7 +310,6 @@ describe('CrudSettingsPage', () => {
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
       render(<CrudSettingsPage {...modalProps} />);
 
-      // Modal portals to body — look for the modal backdrop
       expect(screen.getByTestId('modal-backdrop')).toBeDefined();
       expect(screen.getByTestId('add-form')).toBeDefined();
     });
@@ -319,7 +318,6 @@ describe('CrudSettingsPage', () => {
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
       const { container } = render(<CrudSettingsPage {...modalProps} />);
 
-      // Form should NOT be inside the main container (it's in a portal)
       const mainDiv = container.firstElementChild!;
       expect(mainDiv.querySelector('[data-testid="add-form"]')).toBeNull();
     });
@@ -440,8 +438,7 @@ describe('CrudSettingsPage', () => {
       });
       render(<CrudSettingsPage {...modalProps} renderCard={renderCard} />);
 
-      // In modal mode, cards in the list should always be 'view' — edit renders in the modal
-      // renderCard is called 3 times: 2 for list (view) + 1 for modal edit
+      // The third call renders the modal edit; the first two are list cards.
       const listModes = capturedModes.slice(0, 2);
       expect(listModes).toEqual(['view', 'view']);
     });
@@ -470,13 +467,11 @@ describe('CrudSettingsPage', () => {
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
       render(<CrudSettingsPage {...modalProps} />);
 
-      // The Modal's scrollable prop adds max-h-[85vh] to the panel
       const backdrop = screen.getByTestId('modal-backdrop');
       const modalRoot = backdrop.closest('.fixed.inset-0')!;
       const panel = modalRoot.querySelector('.glass-card') as HTMLElement;
       expect(panel.className).toContain('max-h-[85vh]');
 
-      // The inner content wrapper has overflow-y-auto for scrolling
       const innerWrapper = panel.querySelector('[tabindex="-1"]') as HTMLElement;
       expect(innerWrapper.className).toContain('overflow-y-auto');
     });
@@ -495,7 +490,6 @@ describe('CrudSettingsPage', () => {
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
       const { container } = render(<CrudSettingsPage {...baseProps} />);
 
-      // Form should be inside the main container (inline, not portaled)
       const mainDiv = container.firstElementChild!;
       expect(mainDiv.querySelector('[data-testid="add-form"]')).not.toBeNull();
     });

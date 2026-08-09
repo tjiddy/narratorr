@@ -4,20 +4,17 @@ import { expect } from 'vitest';
 import type { Mock } from 'vitest';
 import { toast } from 'sonner';
 
-/** Wait for the CRUD list to finish loading by checking for an item name. */
 export async function waitForListLoad(itemName: string) {
   await waitFor(() => {
     expect(screen.getByText(itemName)).toBeInTheDocument();
   });
 }
 
-/** Find the "Delete" confirm button inside a dialog. */
 export function getDeleteConfirmButton(): HTMLElement {
   const dialog = screen.getByRole('dialog');
   return within(dialog).getByRole('button', { name: 'Delete' });
 }
 
-/** Full delete confirmation flow: click delete → verify modal → confirm → assert API call + success toast. */
 export async function assertDeleteFlow(
   user: UserEvent,
   itemName: string,
@@ -41,7 +38,6 @@ export async function assertDeleteFlow(
   await assertSuccessToast(`${entityName} removed successfully`);
 }
 
-/** Click delete, cancel, verify modal dismissed and no API call. */
 export async function assertCancelDelete(
   user: UserEvent,
   itemName: string,
@@ -54,7 +50,7 @@ export async function assertCancelDelete(
   expect(deleteApi).not.toHaveBeenCalled();
 }
 
-/** Click delete, confirm, and assert error toast. Caller must set up mock rejection before calling. */
+/** Requires the delete API mock to reject first. */
 export async function assertDeleteError(
   user: UserEvent,
   itemName: string,
@@ -65,7 +61,6 @@ export async function assertDeleteError(
   await assertErrorToast(`Failed to delete ${entityName.toLowerCase()}`);
 }
 
-/** Toggle add form: click add → assert form shows → click cancel → assert form hides. */
 export async function assertToggleAddForm(
   user: UserEvent,
   addButtonText: string,
@@ -78,14 +73,12 @@ export async function assertToggleAddForm(
   expect(screen.queryByText(formTitle)).not.toBeInTheDocument();
 }
 
-/** Assert a success toast was shown. */
 export async function assertSuccessToast(message: string) {
   await waitFor(() => {
     expect(toast.success).toHaveBeenCalledWith(message);
   });
 }
 
-/** Assert an error toast was shown. */
 export async function assertErrorToast(message: string) {
   await waitFor(() => {
     expect(toast.error).toHaveBeenCalledWith(message);

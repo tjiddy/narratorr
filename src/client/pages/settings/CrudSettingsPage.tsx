@@ -1,5 +1,4 @@
-// Does not use useSettingsForm: manages entity CRUD lifecycles (create/edit/delete/test),
-// not single-category settings patches.
+// Entity CRUD has create/edit/delete/test lifecycles, unlike category settings patches.
 import { useCallback, type ReactNode } from 'react';
 import type { TestResult } from '@/lib/api';
 import { Modal } from '@/components/Modal';
@@ -109,7 +108,6 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
         </div>
       </div>
 
-      {/* Add Form — inline mode */}
       {!modal && showForm && renderForm({
         onSubmit: (data) => createMutation.mutate(data),
         onFormTest: handleFormTest,
@@ -120,7 +118,6 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
         inModal: false,
       })}
 
-      {/* List */}
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
           <LoadingSpinner className="w-8 h-8 text-primary" />
@@ -161,7 +158,6 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
         onCancel={() => setDeleteTarget(null)}
       />
 
-      {/* Modal mode — create/edit form in modal */}
       {isModalOpen && (() => {
         const editingItem = editingId !== null ? items.find((i) => i.id === editingId) : null;
         return (
