@@ -17,8 +17,7 @@ const mockApi = api as unknown as {
   getFfmpegStatus: ReturnType<typeof vi.fn>;
 };
 
-// keepOriginalBitrate:false so Target bitrate starts enabled; automation + tagging fields are set
-// so the save-subset test can prove they are NOT sent from this page.
+// Keep original off enables Target bitrate; seeded automation/tagging fields prove the subset omits them.
 const settings = createMockSettings({
   processing: {
     outputFormat: 'm4b',
@@ -39,10 +38,7 @@ describe('AudioToolsSettings', () => {
     mockApi.getFfmpegStatus.mockResolvedValue({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' });
   });
 
-  // #2068 — these two strings are the only place a run-time guarantee is paraphrased for
-  // humans, and loose restatements have twice shipped inaccurate copy ("caps at 320 kbps",
-  // then "nearest legal rate"). Exact-match, not substring, so the wording is a reviewed
-  // artifact rather than prose that drifts.
+  // Exact matches pin reviewed runtime guarantees that have previously drifted.
   const KEEP_ORIGINAL_DESCRIPTION =
     'Copies the audio when the parts are compatible. Otherwise re-encodes using the source '
     + 'bitrate where it is known, or a conservative default where it is not, adjusted to a '
@@ -59,8 +55,7 @@ describe('AudioToolsSettings', () => {
     expect(screen.getByText(KEEP_ORIGINAL_DESCRIPTION)).toBeInTheDocument();
     expect(screen.getByText(TARGET_BITRATE_DESCRIPTION)).toBeInTheDocument();
 
-    // AC8 snaps DOWN, so no proximity word is true of it: 251 kbps evidence at 44.1 kHz
-    // emits 224 even though 256 is legal and nearer.
+    // AC8 snaps down (251→224 at 44.1 kHz), so proximity wording would be false.
     for (const copy of [KEEP_ORIGINAL_DESCRIPTION, TARGET_BITRATE_DESCRIPTION]) {
       expect(copy).not.toMatch(/close|closest|nearest/i);
     }
@@ -75,10 +70,6 @@ describe('AudioToolsSettings', () => {
     expect(screen.getByLabelText('Max concurrent jobs')).toBeInTheDocument();
   });
 
-  // #2056 — the knob is gone, but the copy describing the format conversion the MERGE path performs
-  // is not: the card is still named for it, and the ffmpeg-missing notice still has to warn that
-  // conversion stops without the binary. Guards both directions of the removal (the row's absence
-  // and the surviving copy) so a blanket rename can't pass as a cleanup.
   it('drops the Merge behavior row while keeping the format-conversion copy', async () => {
     renderWithProviders(<AudioToolsSettings />);
     await waitFor(() => expect(screen.getByText('Merge & Convert')).toBeInTheDocument());
@@ -112,8 +103,6 @@ describe('AudioToolsSettings', () => {
     mockApi.getFfmpegStatus.mockRejectedValue(new Error('network down'));
     renderWithProviders(<AudioToolsSettings />);
     await waitFor(() => expect(screen.getByText(/Unable to check ffmpeg status/)).toBeInTheDocument());
-    // A failed status query is a connection/auth problem, not a missing binary — don't send the
-    // operator chasing an install.
     expect(screen.queryByText(/ffmpeg not found/)).not.toBeInTheDocument();
   });
 
@@ -129,17 +118,13 @@ describe('AudioToolsSettings', () => {
     const user = userEvent.setup();
     renderWithProviders(<AudioToolsSettings />);
     await waitFor(() => expect(screen.getByLabelText('Keep original bitrate')).toBeInTheDocument());
-    await user.click(screen.getByLabelText('Keep original bitrate')); // make the form dirty
+    await user.click(screen.getByLabelText('Keep original bitrate'));
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
 
     await waitFor(() => expect(mockApi.updateSettings).toHaveBeenCalled());
     const payload = mockApi.updateSettings.mock.calls[0]![0] as { processing: Record<string, unknown> };
     expect(payload).not.toHaveProperty('tagging');
-    // EXACT shape, not objectContaining: this is the page's whole outgoing contract, so it has to
-    // fail on any key the form should not be sending. That covers both directions at once — the
-    // automation fields belonging to Post Processing (partial patch), and a retired engine field
-    // sneaking back through audioToolsSchema/toFormData without its visible row (#2056). Per-key
-    // `not.toHaveProperty` negatives would be subsumed by this and could never fail on their own.
+    // Exact shape catches any automation or retired engine field added to this page's payload.
     expect(payload.processing).toEqual({
       outputFormat: 'm4b',
       keepOriginalBitrate: true,

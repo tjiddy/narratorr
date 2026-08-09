@@ -20,10 +20,7 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-// #1774 — spread the REAL barrel so `NamingSettingsSection` (rendered by GeneralSettings) resolves
-// its newly-referenced helpers (`templateHasToken`, `composeEditionSuffixLeaf`,
-// `sanitizeEditionDiscriminator`) to their real implementations instead of `undefined`. Only the two
-// render fakes and the preset seam are overridden. See `vimock-barrel-replace-drops-named-exports`.
+// Spread the real barrel so unmocked naming helpers remain production implementations.
 vi.mock('@core/utils/index.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@core/utils/index.js')>()),
   renderTemplate: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
@@ -52,7 +49,6 @@ beforeEach(() => {
   mockApi.updateSettings.mockResolvedValue(createMockSettings());
 });
 
-// Tests verify section composition after #66 refactoring
 describe('GeneralSettings', () => {
   it('renders File Naming section after Library section', async () => {
     renderWithProviders(<GeneralSettings />);
@@ -72,7 +68,6 @@ describe('GeneralSettings', () => {
     expect(screen.getByText('Discovery')).toBeInTheDocument();
     expect(screen.getByText('Import')).toBeInTheDocument();
     expect(screen.getByText('Network')).toBeInTheDocument();
-    // Sections moved to Search settings page (#389)
     expect(screen.queryByText('Search')).not.toBeInTheDocument();
     expect(screen.queryByText('Quality')).not.toBeInTheDocument();
     expect(screen.queryByText('Metadata')).not.toBeInTheDocument();
@@ -81,8 +76,6 @@ describe('GeneralSettings', () => {
     expect(screen.queryByText('Logging')).not.toBeInTheDocument();
   });
 
-  // #1958 — a positive composition assertion, not a survival claim: updating a mock until
-  // the old suite goes green cannot prove the Ebooks section is mounted, nor where.
   it('mounts the Ebooks section after Discovery in DOM order', async () => {
     renderWithProviders(<GeneralSettings />);
 
@@ -111,7 +104,6 @@ describe('GeneralSettings', () => {
       expect(screen.getByText('Library')).toBeInTheDocument();
     });
 
-    // No save buttons visible when no sections are dirty
     expect(screen.queryAllByRole('button', { name: /save/i })).toHaveLength(0);
   });
 
@@ -133,24 +125,19 @@ describe('GeneralSettings', () => {
     const user = userEvent.setup();
     renderWithProviders(<GeneralSettings />);
 
-    // Wait for sections to load
     await waitFor(() => {
       expect(screen.getByLabelText('Proxy URL')).toBeInTheDocument();
     });
 
-    // Make Network section dirty with a valid proxy URL
     const proxyInput = screen.getByLabelText('Proxy URL');
     await user.type(proxyInput, 'http://proxy:8080');
 
-    // Save button should appear when a section is dirty
     const saveButtons = screen.getAllByRole('button', { name: /^save$/i });
     expect(saveButtons.length).toBeGreaterThanOrEqual(1);
 
-    // Save the Network section
     const networkForm = proxyInput.closest('form')!;
     fireEvent.submit(networkForm);
 
-    // Wait for Network save to complete (updateSettings called)
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalled();
     });

@@ -75,7 +75,6 @@ describe('GeneralSettingsForm', () => {
 
     await user.selectOptions(screen.getByLabelText(/log level/i), 'debug');
 
-    // Only the dirty card surfaces a Save — the Housekeeping card stays clean.
     const saveButtons = screen.getAllByRole('button', { name: /save/i });
     expect(saveButtons).toHaveLength(1);
     expect(saveButtons[0]).not.toBeDisabled();
@@ -149,7 +148,7 @@ describe('GeneralSettingsForm', () => {
       expect(mockToast.success).toHaveBeenCalledWith('General settings saved');
     });
 
-    // Cache invalidation triggers refetch
+    // The refetch proves the settings cache was invalidated.
     await waitFor(() => {
       expect(mockApi.getSettings.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
@@ -163,7 +162,6 @@ describe('GeneralSettingsForm', () => {
       expect(screen.getByLabelText(/event history retention/i)).toHaveValue(60);
     });
 
-    // Enter 0 — below the 1-365 range
     const input = screen.getByLabelText(/event history retention/i);
     await user.clear(input);
     await user.type(input, '0');
@@ -172,7 +170,6 @@ describe('GeneralSettingsForm', () => {
       fireEvent.submit(input.closest('form')!);
     });
 
-    // zodResolver blocks submission and shows inline error
     expect(screen.getByText(/too small/i)).toBeInTheDocument();
     expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
