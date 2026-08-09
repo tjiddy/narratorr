@@ -110,8 +110,6 @@ describe('useMergeProgress (per-book backward compatibility)', () => {
       });
     });
 
-    // Per-book accessor should now return terminal entries with outcome
-    // so BookDetails can show fade-out animation
     expect(result.current).not.toBeNull();
     expect(result.current).toMatchObject({ phase: 'complete', outcome: 'success' });
   });
@@ -382,7 +380,6 @@ describe('useMergeActivityCards (list-returning hook)', () => {
   it('clears stale dismiss timer when same book re-enters non-terminal state', () => {
     const { result } = renderHook(() => useMergeActivityCards());
 
-    // Book 42 completes → dismiss timer starts
     act(() => {
       setMergeProgress(42, {
         bookTitle: 'My Book',
@@ -393,14 +390,12 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     });
     expect(result.current).toHaveLength(1);
 
-    // Same book immediately re-enters merge (new merge started within 3s)
     act(() => {
       setMergeProgress(42, { bookTitle: 'My Book', phase: 'starting' });
     });
     expect(result.current).toHaveLength(1);
     expect(result.current[0]!.phase).toBe('starting');
 
-    // After 3s, the stale timer should NOT have fired — card still exists
     act(() => {
       vi.advanceTimersByTime(3000);
     });
@@ -424,10 +419,6 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     expect(result.current[0]!.enrichmentWarning).toBe('Metadata update failed');
   });
 });
-
-// ============================================================================
-// #2129 — applyMergeStateSnapshot: replace-from-snapshot for non-terminal state
-// ============================================================================
 
 describe('applyMergeStateSnapshot', () => {
   const snapshot = (over: Partial<MergeStateSnapshot> = {}): MergeStateSnapshot => ({
@@ -503,7 +494,6 @@ describe('applyMergeStateSnapshot', () => {
 
     expect(result.current).toMatchObject({ phase: 'complete', outcome: 'success' });
 
-    // The existing 3s timer is untouched — it still fires and removes the card.
     act(() => { vi.advanceTimersByTime(3000); });
     expect(result.current).toBeNull();
   });
@@ -515,8 +505,7 @@ describe('applyMergeStateSnapshot', () => {
       applyMergeStateSnapshot(snapshot({ active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'committing' }] }));
     });
 
-    // The server's order: drop the state, emit the terminal event, broadcast the snapshot that
-    // already excludes the book.
+    // The server emits the terminal event before broadcasting the cleared snapshot.
     act(() => {
       setMergeProgress(42, { bookTitle: 'Dogs of War', phase: 'complete', outcome: 'success', message: 'Merged 3 files' });
       applyMergeStateSnapshot(snapshot());
@@ -526,7 +515,6 @@ describe('applyMergeStateSnapshot', () => {
       bookId: 42, bookTitle: 'Dogs of War', phase: 'complete', outcome: 'success', message: 'Merged 3 files',
     }]);
 
-    // Still there for the whole window, gone the moment it closes.
     act(() => { vi.advanceTimersByTime(2999); });
     expect(result.current).toHaveLength(1);
     act(() => { vi.advanceTimersByTime(1); });
@@ -534,10 +522,7 @@ describe('applyMergeStateSnapshot', () => {
   });
 
   it('is clobbered by the inverse sequence — which is why the server must never send it', () => {
-    // A snapshot that STILL contains the book after its terminal event overwrites the outcome,
-    // cancels the dismiss timer, and lets the next snapshot delete the card outright. The guard
-    // lives on the server (it clears the state before emitting); this pins that the damage is
-    // real rather than theoretical.
+    // A stale active snapshot overwrites the terminal outcome and cancels its dismissal.
     const { result } = renderHook(() => useMergeActivityCards());
 
     act(() => {
@@ -547,7 +532,7 @@ describe('applyMergeStateSnapshot', () => {
 
     expect(result.current[0]).toEqual({ bookId: 42, bookTitle: 'Dogs of War', phase: 'committing' });
 
-    act(() => { vi.advanceTimersByTime(3000); }); // the dismiss timer was cancelled
+    act(() => { vi.advanceTimersByTime(3000); });
     expect(result.current).toHaveLength(1);
 
     act(() => { applyMergeStateSnapshot(snapshot()); });
