@@ -5,27 +5,21 @@ import type { BlacklistListParams } from './api/blacklist.js';
 
 export const queryKeys = {
   books: (params?: BookListParams) => params ? ['books', params] as const : ['books'] as const,
-  // Child of the `books` prefix so existing invalidateQueries({ queryKey: ['books'] })
-  // calls invalidate library-books too (TanStack prefix matching).
+  // Child of `books` so prefix invalidation refreshes library results.
   libraryBooks: (params?: LibraryBookListParams) => params ? ['books', 'library', params] as const : ['books', 'library'] as const,
   bookStats: () => ['books', 'stats'] as const,
   bookIdentifiers: () => ['books', 'identifiers'] as const,
   book: (id: number) => ['books', id] as const,
   bookFiles: (id: number) => ['books', id, 'files'] as const,
-  // Prefix-child of `book(id)` (the `bookFiles` convention), so `invalidateBookQueries()`
-  // in useBookActions cascades to the Ebook panel with no new invalidate call (#1963 AC29).
+  // Child of `book(id)` so shared book invalidation also refreshes the ebook panel.
   companionEbook: (id: number) => ['books', id, 'companion-epub'] as const,
-  // Prefix-child of `companionEbook(id)` (#2022), so the #2034 forced-refresh invalidation,
-  // `invalidateBookQueries()`, and Refresh & Scan all cascade to it with no new invalidate call.
-  // The filename is an INDEX, never evidence: it records which `/state` row the panel expected
-  // when it issued the request, and promises nothing about when a request happens or which file
-  // the stored response actually describes. Only the `filename` inside the response is compared.
+  // Child of `companionEbook(id)` so book and ebook invalidations cascade here.
+  // `filename` indexes expected state only; trust the filename returned in the response.
   companionEbookMetadata: (id: number, filename: string) =>
     ['books', id, 'companion-epub', 'metadata', filename] as const,
-  // Singular `book` namespace (distinct from the plural `books` list namespace above).
+  // The singular namespace is intentionally separate from plural list keys.
   bookSeries: (id: number) => ['book', id, 'series'] as const,
-  // Prefix-extension of bookSeries(id) so invalidating the base key cascades to the
-  // in-flight series search (TanStack prefix matching).
+  // Extends `bookSeries(id)` so base-key invalidation refreshes active searches.
   bookSeriesSearch: (id: number, query: string) => ['book', id, 'series', 'search', query] as const,
   bookRenamePreview: (id: number) => ['books', id, 'rename-preview'] as const,
   bulkRenamePreview: () => ['books', 'bulk', 'rename-preview'] as const,
@@ -42,8 +36,7 @@ export const queryKeys = {
     book: (id: string) => ['metadata', 'book', id] as const,
   },
   settings: () => ['settings'] as const,
-  // Shared by the Audio Tools status row, the ffmpeg-gated Post Processing toggles,
-  // and BookDetails merge/retag gating — one cache entry so they never disagree.
+  // All ffmpeg-gated surfaces share one cache entry.
   ffmpegStatus: () => ['ffmpeg-status'] as const,
   indexers: () => ['indexers'] as const,
   downloadClients: () => ['downloadClients'] as const,
@@ -83,11 +76,7 @@ export const queryKeys = {
     suggestions: () => ['discover', 'suggestions'] as const,
     stats: () => ['discover', 'stats'] as const,
   },
-  // Durable import report (#1894). `list` backs the Activity import-history pages
-  // (patched by id when a self-polled detail advances — F86/F89); `latest` backs
-  // the last-import panel; `attention` backs the banner; `detail` backs both
-  // expansion surfaces. All share the `['importSubmissions']` root prefix so the
-  // cache patch can scan every cached page.
+  // All report feeds share a root so cache patches can scan every cached list page.
   importSubmissions: {
     root: () => ['importSubmissions'] as const,
     list: (params: { source?: string; limit?: number; offset?: number }) => ['importSubmissions', 'list', params] as const,
