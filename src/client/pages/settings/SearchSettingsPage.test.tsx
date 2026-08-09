@@ -141,38 +141,30 @@ describe('SearchSettingsPage', () => {
     const user = userEvent.setup();
     renderWithProviders(<SearchSettingsPage />);
 
-    // Wait for all cards to load
     await waitFor(() => {
       expect(screen.getByLabelText('Grab minimum')).toHaveValue(50);
     });
 
-    // Dirty the Quality card by changing grabFloor
     const grabFloorInput = screen.getByLabelText('Grab minimum');
     await user.tripleClick(grabFloorInput);
     await user.keyboard('100');
 
-    // The Quality card's Save button should be visible
     const qualityForm = grabFloorInput.closest('form')!;
     expect(qualityForm.querySelector('button[type="submit"]')).toBeInTheDocument();
 
-    // Now dirty the Filtering card by changing reject words
     const rejectInput = screen.getByLabelText('Reject words');
     await user.tripleClick(rejectInput);
     await user.keyboard('Abridged');
 
-    // Save the Filtering card (not the Quality card)
     const filteringForm = rejectInput.closest('form')!;
     fireEvent.submit(filteringForm);
 
-    // Wait for Filtering save to complete (triggers queryClient.invalidateQueries)
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalled();
     });
 
-    // Quality card should still have the dirty edited value (not reset to server value)
     expect(grabFloorInput).toHaveValue(100);
 
-    // Quality card's Save button should still be visible (still dirty)
     expect(qualityForm.querySelector('button[type="submit"]')).toBeInTheDocument();
   });
 });
