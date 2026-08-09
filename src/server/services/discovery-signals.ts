@@ -18,10 +18,6 @@ interface NarratorRow {
   narratorName: string;
 }
 
-/**
- * Extract library signals from imported book rows and narrator junction rows.
- * Pure function — no DB access, no side effects.
- */
 export function extractSignals(importedBooks: BookRow[], narratorRows: NarratorRow[]): LibrarySignals {
   const authorAffinity = new Map<string, { count: number; strength: number; name: string }>();
   const genreDistribution = new Map<string, number>();
@@ -47,11 +43,9 @@ function accumulateBookSignals(
   seriesMap: Map<string, { authorName: string; positions: number[] }>,
 ) {
   const { book } = row;
-  // Intentionally tracks position-0 author only — multi-author books are rare in audiobooks,
-  // and affinity is based on the primary author. This is a conscious design choice, not a gap.
+  // Affinity intentionally uses only the primary author.
   const authorName = row.authorName ?? 'Unknown';
 
-  // Author affinity
   const existing = authorAffinity.get(authorName);
   if (existing) {
     existing.count += 1;
@@ -64,19 +58,16 @@ function accumulateBookSignals(
     });
   }
 
-  // Genre distribution
   if (book.genres && Array.isArray(book.genres)) {
     for (const genre of book.genres) {
       genreDistribution.set(genre, (genreDistribution.get(genre) ?? 0) + 1);
     }
   }
 
-  // Duration
   if (book.duration != null) {
     durations.push(book.duration);
   }
 
-  // Series tracking
   if (book.seriesName && book.seriesPosition != null) {
     const entry = seriesMap.get(book.seriesName);
     if (entry) {
@@ -87,15 +78,11 @@ function accumulateBookSignals(
   }
 }
 
-/**
- * Build narrator affinity counts from junction table rows.
- * Each narrator is counted once per book (deduped by bookId within the filtered set).
- */
+/** Count each narrator once per imported book. */
 function computeNarratorAffinity(importedBookIds: number[], narratorRows: NarratorRow[]): Map<string, number> {
   const importedSet = new Set(importedBookIds);
   const counts = new Map<string, number>();
 
-  // Track (narratorName, bookId) pairs to avoid double-counting if a narrator appears twice for same book
   const seen = new Set<string>();
   for (const row of narratorRows) {
     if (!importedSet.has(row.bookId)) continue;

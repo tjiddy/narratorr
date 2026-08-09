@@ -42,7 +42,6 @@ describe('triggerImmediateSearch', () => {
 
     triggerImmediateSearch(book, deps, mockLog);
 
-    // Wait for the fire-and-forget promise chain to settle
     await vi.waitFor(() => {
       expect(searchAndGrabForBook).toHaveBeenCalledTimes(1);
     });
@@ -51,9 +50,6 @@ describe('triggerImmediateSearch', () => {
     expect(deps.settingsService.get).toHaveBeenCalledWith('metadata');
     expect(deps.settingsService.get).toHaveBeenCalledWith('search');
     expect(buildNarratorPriority).toHaveBeenCalledWith('accuracy', [{ name: 'Narrator' }]);
-    // Pin the broadcaster/eventHistory wiring through the deps bag — dropping
-    // either key from the searchAndGrabForBook call (the other three callers are
-    // already pinned) would otherwise fail no test (#1330).
     expect(searchAndGrabForBook).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -72,7 +68,6 @@ describe('triggerImmediateSearch', () => {
     const book = { id: 99, title: 'Failing Book' };
     const log = { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger;
 
-    // Should not throw — fire-and-forget
     triggerImmediateSearch(book, deps, log);
 
     await vi.waitFor(() => {

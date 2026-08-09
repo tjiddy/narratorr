@@ -15,20 +15,17 @@ function makeBook(id: number, overrides?: Partial<{
 
 describe('discovery-signals — narrator affinity from junction tables (#71)', () => {
   it('book with two narrators contributes each name once to narrator affinity counts', () => {
-    // 3+ narrators needed for threshold — use 3 books each with same narrator to trigger threshold
     const books3 = [makeBook(1), makeBook(2), makeBook(3)];
     const narratorRows = [
       { bookId: 1, narratorName: 'Michael Kramer' },
-      { bookId: 1, narratorName: 'Kate Reading' },  // second narrator on same book
+      { bookId: 1, narratorName: 'Kate Reading' },
       { bookId: 2, narratorName: 'Michael Kramer' },
       { bookId: 3, narratorName: 'Michael Kramer' },
     ];
 
     const result = extractSignals(books3, narratorRows);
 
-    // Michael Kramer appears in 3 books → at threshold, included
     expect(result.narratorAffinity.get('Michael Kramer')).toBe(3);
-    // Kate Reading appears in only 1 book → below threshold, excluded
     expect(result.narratorAffinity.has('Kate Reading')).toBe(false);
   });
 
@@ -42,7 +39,6 @@ describe('discovery-signals — narrator affinity from junction tables (#71)', (
 
     const result = extractSignals(books, narratorRows);
 
-    // Each book contributes 1 count per narrator, not per appearance
     expect(result.narratorAffinity.get('Tim Gerard Reynolds')).toBe(3);
   });
 
@@ -54,9 +50,7 @@ describe('discovery-signals — narrator affinity from junction tables (#71)', (
 
     const result = extractSignals(books, narratorRows);
 
-    // 'Known Narrator' appears in 1 book (below threshold of 3)
     expect(result.narratorAffinity.has('Known Narrator')).toBe(false);
-    // Narrator not in any imported book definitely absent
     expect(result.narratorAffinity.has('Never Seen')).toBe(false);
   });
 });
@@ -155,7 +149,6 @@ describe('computeSeriesGaps — fractional position bug (#196)', () => {
     it('positions with IEEE 754 drift (e.g., [0.1, 0.2, 0.4]) → gap at 0.3 detected', () => {
       const result = extractSignals(makeSeries([0.1, 0.2, 0.4]), []);
       const gap = getGap(result);
-      // 0.1 + 0.1 = 0.2, 0.2 + 0.1 = 0.30000000000000004 — tolerance must handle this
       expect(gap.missingPositions).toHaveLength(1);
       expect(gap.missingPositions[0]).toBeCloseTo(0.3, 9);
       expect(gap.nextPosition).toBeCloseTo(0.5, 9);

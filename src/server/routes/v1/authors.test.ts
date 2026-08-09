@@ -15,13 +15,11 @@ import { v1AuthorsRoutes } from './authors.js';
 import { authorV1Schema } from '@shared/schemas/v1/authors.js';
 import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 
-// Mock config so the auth plugin runs with authBypass off (mirrors books.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
 
 const VALID_KEY = 'valid-key';
 const keyHeaders = { 'x-api-key': VALID_KEY };
 
-/** A leaky reference row as the service returns it (internal id included). */
 function refRow(overrides?: Record<string, unknown>) {
   return { id: 1, publicId: 'au_test000000000000000', name: 'Brandon Sanderson', ...overrides };
 }
@@ -146,10 +144,6 @@ describe('v1 authors routes', () => {
       expect(referenceReadService.getAuthorById as Mock).toHaveBeenCalledWith(5);
     });
 
-    // #1983 F3 — pins the CANONICAL `v1PublicIdParamSchema` (`.trim().min(1)`) as this
-    // route's validator. Reverting this module to a private `z.string().min(1)` copy turns
-    // these back into 404 lookups, which `common.test.ts` (schema in isolation) and the
-    // companion-route suite (a different consumer) both stay green through.
     it.each(['%20', '%20%20', '%09'])(
       'returns a 400 BAD_REQUEST envelope for the whitespace-only publicId %s, without resolving',
       async (encoded) => {
@@ -158,8 +152,6 @@ describe('v1 authors routes', () => {
         expect(res.statusCode).toBe(400);
         expect(res.json()).toEqual({ error: { code: 'BAD_REQUEST', message: expect.any(String) } });
         expectV1Envelope(res.json());
-        // Validation precedes the handler: neither the publicId resolution nor the
-        // service read was reached.
         expect(db.select).not.toHaveBeenCalled();
         expect(referenceReadService.getAuthorById as Mock).not.toHaveBeenCalled();
       },
@@ -189,8 +181,6 @@ describe('v1 authors routes', () => {
   });
 });
 
-// Fastify response-schema fail-closed — a handler returning a leaky object must
-// FAIL serialization (500), not strip and ship the field.
 describe('v1 authors response-schema fail-closed (Fastify serialization)', () => {
   it('rejects a leaked field at serialization instead of stripping it', async () => {
     const leakyApp = Fastify({ logger: false });

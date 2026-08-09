@@ -16,9 +16,7 @@ export async function importPreviewRoute(app: FastifyInstance): Promise<void> {
     '/api/import/preview/:token',
     { schema: { params: paramsSchema } },
     async (request, reply) => {
-      // Auth note: this route inherits normal /api/* auth gating from the auth plugin.
-      // BASE_PUBLIC_ROUTES is NOT extended — by the time this handler runs, the request
-      // is already authenticated. Token serves as an in-session per-row capability scope.
+      // Normal API auth still applies; the token only scopes an authenticated preview.
       const { token } = request.params;
       const payload = verifyPreviewToken(token);
       if (!payload) {
@@ -30,8 +28,7 @@ export async function importPreviewRoute(app: FastifyInstance): Promise<void> {
         return reply.status(404).send({ error: 'Audio file not found' });
       }
 
-      // realpath() both root and final audio file — symlink-aware canonicalization.
-      // Plain resolve() is purely lexical and would let symlinks escape containment.
+      // Canonicalize both paths so symlinks cannot escape containment.
       let realRoot: string;
       let realFile: string;
       try {
@@ -42,8 +39,7 @@ export async function importPreviewRoute(app: FastifyInstance): Promise<void> {
         return reply.status(404).send({ error: 'Path not accessible' });
       }
 
-      // Containment via relative + isAbsolute — handles Windows different-drive escape
-      // (relative() returns absolute path on cross-drive, NOT '..'-prefixed).
+      // isAbsolute also catches Windows cross-drive escapes from relative().
       const rel = relative(realRoot, realFile);
       if (rel.startsWith('..') || isAbsolute(rel)) {
         request.log.warn({ realRoot, realFile, rel }, 'Audio file outside scan root after symlink resolution');

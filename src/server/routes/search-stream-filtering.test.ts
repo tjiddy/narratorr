@@ -1,12 +1,4 @@
-/**
- * Integration tests for reject word filtering on the SSE search-stream endpoint.
- *
- * Unlike search-stream.test.ts (which mocks postProcessSearchResults at module scope),
- * this file does NOT mock the search pipeline — the real postProcessSearchResults runs,
- * proving that reject word filtering works end-to-end through the SSE path.
- *
- * Uses fetchSseEvents() (real HTTP via app.listen(0)) because app.inject() hangs on SSE hijacked responses.
- */
+/** Uses the real search pipeline and HTTP because injection hangs on hijacked SSE responses. */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
@@ -48,10 +40,7 @@ const baseResult: SearchResult = {
   seeders: 42,
 };
 
-// #1453 — this suite exercises reject-word filtering, not auth. Run in `none`
-// mode so the SSE stream is open and no credential travels in the URL (the API
-// key no longer authenticates streams). Auth acceptance via stream token / cookie
-// is covered in search-stream.test.ts and auth.plugin.test.ts.
+// Stream-token and cookie authentication are covered in the auth-focused suites.
 function createMockAuthService() {
   return {
     validateApiKey: vi.fn().mockResolvedValue(false),
@@ -252,7 +241,6 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
 
   describe('error isolation', () => {
     it('emits search-complete with empty results when postProcessSearchResults throws', async () => {
-      // Force settings service to throw, which makes postProcessSearchResults throw
       const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
       app.setValidatorCompiler(validatorCompiler);
       app.setSerializerCompiler(serializerCompiler);

@@ -3,7 +3,6 @@ import type { SearchResult } from '@core/index.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { safeEmit } from '../utils/safe-emit.js';
 
-/** A book as consumed by the search-and-grab pipeline. */
 export type SearchBook = {
   id: number;
   title: string;
@@ -16,14 +15,8 @@ export type SearchBook = {
 };
 
 /**
- * Lifecycle event sink for the search-and-grab core: the streaming path supplies
- * {@link createBroadcasterSink}, the non-streaming path supplies {@link NOOP_SINK}.
- * Routing every emission through the sink keeps the pipeline core identical across
- * both entry points — only the sink and the injected search call differ.
- *
- * Grab-failure *recording* (`recordGrabFailedEvent`) deliberately lives in the
- * pipeline core, not the sink, so the failure is recorded exactly once on both
- * paths (#1157); the sink's `grabError` only handles SSE emission.
+ * Keep streaming and silent pipelines identical. `grabError` emits SSE only; persistent failure
+ * recording stays in the pipeline core so both paths record exactly once.
  */
 export interface SearchEventSink {
   searchStarted(indexers: Array<{ id: number; name: string }>): void;
@@ -34,7 +27,6 @@ export interface SearchEventSink {
   grabError(error: Error, releaseTitle: string): void;
 }
 
-/** No-op sink for the non-streaming path — every lifecycle hook is a no-op. */
 export const NOOP_SINK: SearchEventSink = {
   searchStarted: () => {},
   indexerComplete: () => {},
@@ -44,11 +36,7 @@ export const NOOP_SINK: SearchEventSink = {
   grabError: () => {},
 };
 
-/**
- * Build a stateful sink that emits SSE events through the broadcaster. Tracks
- * `totalResults` (summed across per-indexer completions) and the enabled-indexer
- * list (captured at `searchStarted`, used to resolve the grabbed indexer's name).
- */
+/** Track total results and enabled indexers needed by later SSE events. */
 export function createBroadcasterSink(
   book: SearchBook,
   broadcaster: EventBroadcasterService,

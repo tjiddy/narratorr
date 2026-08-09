@@ -2,19 +2,13 @@ import type { FastifyBaseLogger } from 'fastify';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BulkOpType, BulkJobStatus } from './bulk-operation.service.js';
 
-// `BulkJobFailure` is declared ONCE in `src/shared` (#2063) — the client carried a byte-identical
-// copy until then. Re-exported here so `bulk-operation.service.ts`, `bulk-sidecar-reconcile.ts`
-// and the suites keep importing it from this module.
 import type { BulkJobFailure } from '@shared/bulk-operation-types.js';
 
 export type { BulkJobFailure } from '@shared/bulk-operation-types.js';
 
 /**
- * How many failure rows a job record retains. The FIRST N are kept (not the last): a full-library
- * run that goes systematically wrong produces its most diagnostic rows at the start, and a stable
- * head means the list does not churn while the operator is reading it. The `_failures` COUNT is
- * uncapped, so `failures >= failureDetails.length` always holds — that gap is what the
- * "…and N more" row is derived from.
+ * Retain the first failures so the list stays stable while polled. The uncapped total drives the
+ * omitted-count summary.
  */
 export const MAX_JOB_FAILURE_DETAILS = 50;
 
@@ -23,11 +17,6 @@ export type WorkFn = (
   tick: (isFailure: boolean, detail?: BulkJobFailure) => void,
 ) => Promise<void>;
 
-/**
- * A single in-flight bulk operation. Runs its `work` callback to completion,
- * tracking total/completed/failure counts that callers poll via `getStatus()`.
- * Extracted from `bulk-operation.service.ts` to keep that file under the line cap.
- */
 export class BulkJob {
   private _completed = 0;
   private _failures = 0;
@@ -52,8 +41,7 @@ export class BulkJob {
       completed: this._completed,
       total: this._total,
       failures: this._failures,
-      // Copied, never aliased: a status object handed to a poll response must not keep growing
-      // underneath the caller as later books fail. Always an array — `[]` when clean.
+      // Copy, never alias, so earlier poll responses cannot grow with later failures.
       failureDetails: [...this._failureDetails],
     };
   }
@@ -72,8 +60,7 @@ export class BulkJob {
         (n) => { this._total = n; },
         (isFailure, detail) => {
           this._completed++;
-          // A detail on a success tick is ignored outright — the seam is shared by three ops and
-          // "not a failure" must never be able to put a row on the operator's failure list.
+          // A successful tick can never add failure details.
           if (!isFailure) return;
           this._failures++;
           if (detail && this._failureDetails.length < MAX_JOB_FAILURE_DETAILS) {

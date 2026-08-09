@@ -77,7 +77,6 @@ describe('pickBestSearchCandidate', () => {
   });
 
   it('rejects high name-sim when author overlap is below the author gate', () => {
-    // Same exact name, but author has zero overlap → blocked by the double gate.
     const best = pickBestSearchCandidate('Stormlight Archive', 'Brandon Sanderson', [
       candidate({ id: 1, name: 'Stormlight Archive', authorName: 'Different Person' }),
     ]);
@@ -115,9 +114,6 @@ describe('pickBestSearchCandidate', () => {
   });
 
   it('selection is independent of readersCount popularity order (#1239)', () => {
-    // The adapter now sorts its pool by readersCount desc. Prove the resolver's
-    // pick is driven by author/name match, NOT popularity: the best match has a
-    // LOW readersCount and a poorer match has a HIGH readersCount.
     const best = pickBestSearchCandidate('Stormlight Archive', 'Brandon Sanderson', [
       candidate({ id: 1, name: 'Stormlight Companion', authorName: 'Brandon Sanderson', readersCount: 99999 }),
       candidate({ id: 2, name: 'Stormlight Archive', authorName: 'Brandon Sanderson', readersCount: 1 }),
@@ -143,8 +139,8 @@ describe('resolveSeriesViaHardcover — 3-step chain', () => {
   it('step 2 hit: normalized name matches after step 1 misses', async () => {
     const normalized = stubSeries(2);
     const getSeriesMembers = vi.fn()
-      .mockResolvedValueOnce(null) // step 1 — exact miss
-      .mockResolvedValueOnce(normalized); // step 2 — normalized hit
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(normalized);
     const searchSeries = vi.fn();
     const client = makeClient({ getSeriesMembers, searchSeries });
 
@@ -157,7 +153,7 @@ describe('resolveSeriesViaHardcover — 3-step chain', () => {
 
   it('step 3 hit: search-fallback picks the best candidate and fetches by id', async () => {
     const final = stubSeries(99);
-    const getSeriesMembers = vi.fn().mockResolvedValue(null); // 1+2 miss
+    const getSeriesMembers = vi.fn().mockResolvedValue(null);
     const searchSeries = vi.fn().mockResolvedValueOnce([
       { id: 99, name: 'Stormlight Archive', slug: 's', authorName: 'Brandon Sanderson', booksCount: 5 },
     ]);

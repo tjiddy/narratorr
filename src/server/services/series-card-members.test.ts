@@ -8,15 +8,6 @@ import {
 } from './series-card-members.js';
 import type { LibraryBookSummary } from './series-title-match.js';
 
-/**
- * `buildMembersFromState` is the card's PURE projection rule — the one place the
- * snapshot render, the reconcile transaction and the bind's returned card all
- * derive their entries from. It had no co-located suite before #2152 and was
- * exercised only through `series-card.service.test.ts` /
- * `series-card.integration.test.ts`, which is too far from the rule to pin the
- * `seriesPosition` projection gate directly.
- */
-
 let nextRowId = 1;
 
 function hardcoverRow(overrides: Partial<SeriesMemberRow> & { title: string; position: number | null }): SeriesMemberRow {
@@ -66,23 +57,17 @@ describe('buildMembersFromState — AC9a seriesPosition projection gate', () => 
   });
 
   it('gates on the RESOLVED book, never on the row: an unmatched row keeps its position', () => {
-    // The tombstoned id is in the set but claims no member — the Hardcover row
-    // resolved to nothing, so its canonical numbering is untouched.
     const rows = [hardcoverRow({ title: 'Dune Messiah', position: 2 })];
     const pool = [book(580, 'Hunters of Dune', 7)];
 
     const built = buildMembersFromState(state({ rows, pool, positionClearedIds: new Set([580]) }));
     expect(built.members).toEqual([
       expect.objectContaining({ title: 'Dune Messiah', position: 2, inLibrary: false, libraryBookId: null }),
-      // The owned book renders through `libraryMemberCard`, which is COLUMN-keyed.
       expect.objectContaining({ title: 'Hunters of Dune', position: 7, libraryBookId: 580 }),
     ]);
   });
 
   it('the local/unmatched owned entry stays column-keyed — the tombstone does not gate it', () => {
-    // AC9a's second projection path: `libraryMemberCard` reads `books.series_position`
-    // directly. For an in-app clear that column is already NULL (rule **b**), so it
-    // renders `—` with no tombstone lookup; the decoupled state renders the number.
     const decoupled = buildMembersFromState(state({ pool: [book(580, 'Hunters of Dune', 7)], positionClearedIds: new Set([580]) }));
     expect(decoupled.members).toEqual([expect.objectContaining({ position: 7, libraryBookId: 580 })]);
 
@@ -109,8 +94,7 @@ describe('buildMembersFromState — AC9a seriesPosition projection gate', () => 
   it('leaves the matcher inputs unwidened — pool objects carry no tombstone field', async () => {
     const titleMatch = await import('./series-title-match.js');
     const spy = vi.spyOn(titleMatch, 'findInLibraryMatch');
-    // Re-import through the same module record the subject binds, so the spy is
-    // the function `buildMembersFromState` actually calls.
+    // Re-import through the module record bound by the subject so the spy intercepts it.
     const { buildMembersFromState: subject } = await import('./series-card-members.js');
 
     const pool = [book(580, 'Hunters of Dune', 7)];
@@ -132,7 +116,6 @@ describe('buildMembersFromState — the pre-#2152 contract is unchanged', () => 
     const hardcover = hardcoverRow({ title: 'Hunters of Dune', position: 7 });
     const built = buildMembersFromState(state({ rows: [local, hardcover], pool: [book(580, 'Hunters of Dune', 3)] }));
 
-    // The Hardcover row cannot take the locally-claimed book.
     expect(built.members).toEqual([
       expect.objectContaining({ title: 'Hunters of Dune', position: 3, libraryBookId: 580, hardcoverBookId: null }),
       expect.objectContaining({ title: 'Hunters of Dune', position: 7, inLibrary: false }),

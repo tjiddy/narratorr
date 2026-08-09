@@ -29,7 +29,6 @@ describe('preview-token', () => {
   it('returns null for tampered signature (flipped byte)', () => {
     const token = mintPreviewToken('/p', '/r');
     const [body, sig] = token.split('.');
-    // Flip the last char of the signature to a deterministically different one
     const last = sig!.slice(-1);
     const replacement = last === 'A' ? 'B' : 'A';
     const tampered = `${body}.${sig!.slice(0, -1)}${replacement}`;
@@ -77,7 +76,7 @@ describe('preview-token', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
     const token = mintPreviewToken('/p', '/r');
 
-    vi.setSystemTime(new Date('2026-01-01T05:00:00Z')); // 5 hours later, past the 4-hour TTL
+    vi.setSystemTime(new Date('2026-01-01T05:00:00Z'));
     expect(verifyPreviewToken(token)).toBeNull();
   });
 
@@ -86,13 +85,11 @@ describe('preview-token', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
     const token = mintPreviewToken('/p', '/r');
 
-    // 2 hours later: expired under the old 30-min TTL, still valid under the new 4-hour one.
     vi.setSystemTime(new Date('2026-01-01T02:00:00Z'));
     expect(verifyPreviewToken(token)).not.toBeNull();
   });
 
   it('returns null for wrong purpose', () => {
-    // Manually craft a token with a wrong purpose value
     const payload = {
       purpose: 'something-else',
       path: '/p',
@@ -100,7 +97,6 @@ describe('preview-token', () => {
       exp: Date.now() + 60_000,
     };
     const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-    // Sign with the same derived key the mint function uses
     const signingKey = createHmac('sha256', TEST_KEY).update('audio-preview-token-v1').digest();
     const sig = createHmac('sha256', signingKey).update(body).digest('base64url');
     const token = `${body}.${sig}`;
@@ -117,7 +113,6 @@ describe('preview-token', () => {
   });
 
   it('returns null when JSON body is not parseable', () => {
-    // Body that is valid base64url but garbage JSON
     const garbage = Buffer.from('not-json-at-all').toString('base64url');
     const signingKey = createHmac('sha256', TEST_KEY).update('audio-preview-token-v1').digest();
     const sig = createHmac('sha256', signingKey).update(garbage).digest('base64url');

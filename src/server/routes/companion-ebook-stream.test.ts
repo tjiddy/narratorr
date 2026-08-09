@@ -19,13 +19,7 @@ import type { Services } from './index.js';
 import type { CompanionEbookRow } from '../services/types.js';
 import { openCompanionEbook } from '../services/companion-ebook-open.js';
 
-/**
- * Client abort and the post-headers stream error are driven through a REAL bound server, not
- * `app.inject`: injection does not exercise a client disconnect or socket teardown, and both
- * properties under test here (exactly-once handle close, no `{ "error": … }` body appended to
- * an already-committed `200`) are invisible to it. The repository already supplements
- * injection this way for stream behaviour (`search-stream-filtering.test.ts`).
- */
+/** Real sockets are required to test disconnect teardown and errors after a committed 200. */
 vi.mock('../services/companion-ebook-open.js', async () => {
   const actual = await vi.importActual<typeof import('../services/companion-ebook-open.js')>(
     '../services/companion-ebook-open.js',
@@ -165,15 +159,11 @@ describe('companion ebook download — real socket', () => {
       },
     );
 
-    // The connection is cut and the promised length was never delivered, so the client can
-    // tell the body is incomplete rather than accepting a truncated EPUB as a whole one.
     expect(result.terminated).toBe(true);
     expect(result.contentLength).toBe(String(PAYLOAD.length));
     expect(result.length).toBeLessThan(PAYLOAD.length);
-    // And the shared 500 handler never got to append a JSON envelope under the 200.
     expect(result.body).not.toContain('"error"');
 
-    // The route boundary owns the failure record: `{ bookId, outcome }` and nothing else.
     const boundary = mockLog.spies.warn.mock.calls.map((call) => call[0]);
     expect(boundary).toContainEqual({ bookId: BOOK_ID, outcome: 'stream_error' });
     mockLog.restore();

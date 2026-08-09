@@ -31,7 +31,6 @@ afterEach(() => {
 });
 
 describe('grab-token', () => {
-  // 1. Round-trip stability
   it('round-trips: sign → verify returns the original payload', () => {
     const token = signReleaseId(PAYLOAD);
     expect(verifyReleaseId(token)).toEqual(PAYLOAD);
@@ -48,7 +47,6 @@ describe('grab-token', () => {
     expect(sig).toBeTruthy();
   });
 
-  // 2. Tamper — body mutated, MAC stale
   it('rejects a token whose body was swapped for an attacker URL but kept the old signature', () => {
     const token = signReleaseId(PAYLOAD);
     const sig = token.split('.')[1]!;
@@ -56,13 +54,11 @@ describe('grab-token', () => {
     expect(verifyReleaseId(`${forgedBody}.${sig}`)).toBeNull();
   });
 
-  // 3. Tamper — forged from scratch (the pre-fix unsigned forgery)
   it('rejects an unsigned body with no signature segment (the pre-fix forgery shape)', () => {
     const unsigned = encodeReleaseId({ downloadUrl: 'http://attacker/evil', title: 'T', protocol: 'torrent' });
     expect(verifyReleaseId(unsigned)).toBeNull();
   });
 
-  // 4. Tamper — signature mutated
   it('rejects a token with a flipped character in the signature segment', () => {
     const token = signReleaseId(PAYLOAD);
     const [body, sig] = token.split('.') as [string, string];
@@ -71,7 +67,6 @@ describe('grab-token', () => {
     expect(verifyReleaseId(tampered)).toBeNull();
   });
 
-  // 5. Wrong-domain replay (SSE stream token <-> grab token are non-interchangeable)
   describe('domain separation from the SSE stream token', () => {
     const auth = new AuthService({} as Db, { debug: () => {} } as unknown as FastifyBaseLogger);
     const STREAM_SECRET = 'session-secret';
@@ -95,7 +90,6 @@ describe('grab-token', () => {
     });
   });
 
-  // 6. Timing-safe / malformed shapes — each returns null, never throws
   it.each([
     ['empty string', ''],
     ['no separator', 'aGVsbG8'],
@@ -108,8 +102,6 @@ describe('grab-token', () => {
     expect(verifyReleaseId(token)).toBeNull();
   });
 
-  // 8. No client leak — the signing secret accessor must never be reachable from
-  // the client bundle. Signing lives server-side; src/shared/ stays secret-free.
   describe('no client leak', () => {
     function tsFilesUnder(dir: string): string[] {
       const out: string[] = [];
