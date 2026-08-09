@@ -36,13 +36,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
 vi.mock('@core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn(),
-  // Plain arrow over a hoisted toggle so vi.clearAllMocks() never wipes it; flip false for the
-  // not-detected gate test. Default detected — merge gates on a resolvable ffmpeg path.
+  // Plain arrow preserves the hoisted gate toggle across vi.clearAllMocks().
   resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null),
 }));
 
-// The real guard class, reached past the mock above: the sub-minimum refusal test asserts the
-// operator-visible string, and deriving it from the production error keeps the two from drifting.
+// Use the real guard class so the operator-visible refusal string cannot drift.
 const { InsufficientAudioFilesError } =
   await vi.importActual<typeof import('@core/utils/audio-processor.js')>('@core/utils/audio-processor.js');
 
@@ -54,16 +52,11 @@ vi.mock('./enrichment-utils.js', () => ({
   enrichBookFromAudio: vi.fn(),
 }));
 
-// The marker-gated recovery sequence (#1418) touches real fs and short-circuits to
-// "marker present" under mocked fs (#1391), so it is stubbed here. These unit tests
-// assert it is invoked with bookPath; the real on-disk recovery behavior (including
-// the post-recovery file-set re-read and F9 minimum re-validation) is covered in
-// merge.service.marker.test.ts (real tmpdir).
+// Mocked fs short-circuits marker recovery; merge.service.marker.test.ts covers real disk behavior (#1418).
 vi.mock('../utils/recover-interrupted-commit.js', () => ({
   recoverInterruptedCommit: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Shared with merge-state.test.ts (#2142) — see __tests__/merge-fixtures.ts.
 import {
   BOOK_PATH, STAGING_DIR, mockAuthor, mockBook, processingOverrides, SCAN_RESULT,
   settle, setupHappyPath,
@@ -118,16 +111,12 @@ describe('MergeService', () => {
 
       expect(ack).toEqual({ status: 'started', bookId: 42 });
 
-      // Staging dir created
       expect(mkdir).toHaveBeenCalledWith(STAGING_DIR, { recursive: true });
 
-      // Top-level audio files copied (not cover.jpg)
       expect(cp).toHaveBeenCalledWith(join(BOOK_PATH, '01.mp3'), join(STAGING_DIR, '01.mp3'));
       expect(cp).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'), join(STAGING_DIR, '02.mp3'));
       expect(cp).not.toHaveBeenCalledWith(expect.stringContaining('cover.jpg'), expect.anything());
 
-      // processAudioFiles called on the staging dir, with outputFormat taken from the injected
-      // settings fixture.
       expect(processAudioFiles).toHaveBeenCalledWith(
         STAGING_DIR,
         expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', outputFormat: processingOverrides.processing.outputFormat }),
@@ -136,30 +125,24 @@ describe('MergeService', () => {
         expect.any(AbortSignal),
       );
 
-      // scanAudioDirectory called on staging for verification with derived ffprobe path
       expect(scanAudioDirectory).toHaveBeenCalledWith(STAGING_DIR, {
         ffprobePath: '/usr/bin/ffprobe',
         onWarn: expect.any(Function),
         onDebug: expect.any(Function),
       });
 
-      // M4B moved from staging to book.path
       expect(rename).toHaveBeenCalledWith(
         join(STAGING_DIR, 'The Way of Kings.m4b'),
         join(BOOK_PATH, 'The Way of Kings.m4b'),
       );
 
-      // Originals deleted from book.path
       expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '01.mp3'));
       expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'));
 
-      // Staging dir cleaned
       expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
     });
 
-    // #1720 — the merge context now carries the library fileFormat + book-level naming
-    // tokens (series/seriesPosition/narrator/year/edition), so a merged filename matches
-    // the rest of the library instead of collapsing to `${author} - ${title}`.
+    // Thread library naming tokens so merged files do not fall back to `${author} - ${title}` (#1720).
     it('threads library fileFormat + book-level tokens into the processAudioFiles context', async () => {
       setupHappyPath();
       const { service, bookService } = createService();
@@ -179,7 +162,7 @@ describe('MergeService', () => {
         STAGING_DIR,
         expect.anything(),
         expect.objectContaining({
-          fileFormat: '{author} - {title}', // default library format, threaded (was previously dropped)
+          fileFormat: '{author} - {title}',
           namingOptions: expect.objectContaining({ separator: 'space', case: 'default' }),
           bookTokens: expect.objectContaining({
             series: 'The Stormlight Archive',
@@ -194,7 +177,6 @@ describe('MergeService', () => {
       );
     });
 
-    // #1418 — marker convergence runs on bookPath before any staging work
     it('converges the commit-pending marker on bookPath before staging', async () => {
       setupHappyPath();
       const { service } = createService();
@@ -202,15 +184,13 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // Recovery invoked on the book path before the source files are copied to staging.
       expect(recoverInterruptedCommit).toHaveBeenCalledWith(BOOK_PATH, expect.any(String), expect.anything());
       const recoverOrder = (recoverInterruptedCommit as Mock).mock.invocationCallOrder[0]!;
       const cpOrder = (cp as Mock).mock.invocationCallOrder[0]!;
       expect(recoverOrder).toBeLessThan(cpOrder);
     });
 
-    // #1852 — a born-hidden temp beside the real files is never eligibility evidence, never
-    // copied to staging, and never in originalsToDelete.
+    // Born-hidden temps are neither eligibility evidence nor merge inputs (#1852).
     it('#1852: a dot-led temp beside the originals is not copied or deleted', async () => {
       (readdir as Mock).mockImplementation(async (dir: string) => {
         if (dir.endsWith('.merge-tmp')) return ['The Way of Kings.m4b'];
@@ -232,13 +212,11 @@ describe('MergeService', () => {
 
       expect(cp).not.toHaveBeenCalledWith(expect.stringContaining('.02.tmp.mp3'), expect.anything());
       expect(unlink).not.toHaveBeenCalledWith(join(BOOK_PATH, '.02.tmp.mp3'));
-      // Only the two real originals were staged and deleted.
       expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '01.mp3'));
       expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'));
     });
 
-    // #1852 Change 4 / F25 — the deterministic staging dir is reset to empty before copying,
-    // so crash-residue can't be folded into the merge; a failed reset aborts via merge_failed.
+    // Reset deterministic staging before copy so crash residue cannot enter the merge (#1852).
     it('#1852: resets the staging dir (rm before the first copy)', async () => {
       setupHappyPath();
       const { service } = createService();
@@ -249,12 +227,12 @@ describe('MergeService', () => {
       const firstResetRm = (rm as Mock).mock.invocationCallOrder[0]!;
       const firstCp = (cp as Mock).mock.invocationCallOrder[0]!;
       expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
-      expect(firstResetRm).toBeLessThan(firstCp); // reset happens before any staging copy
+      expect(firstResetRm).toBeLessThan(firstCp);
     });
 
     it('#1852: an un-emptyable staging dir aborts the merge via merge_failed (no copy/merge)', async () => {
       setupHappyPath();
-      (rm as Mock).mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' })); // reset fails
+      (rm as Mock).mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service } = createService({ eventBroadcaster });
 
@@ -266,7 +244,6 @@ describe('MergeService', () => {
       expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_failed', expect.objectContaining({ book_id: 42, reason: 'error' }));
     });
 
-    // #1418 — a recovery failure aborts before any ffmpeg work and emits merge_failed
     it('aborts the merge (no staging, merge_failed) when recovery throws', async () => {
       setupHappyPath();
       (recoverInterruptedCommit as Mock).mockRejectedValueOnce(new Error('recovery failed'));
@@ -276,21 +253,14 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // No ffmpeg/staging work ran, and nothing was committed into bookPath.
       expect(processAudioFiles).not.toHaveBeenCalled();
       expect(rename).not.toHaveBeenCalled();
-      // #2099 D2: the abort is BEFORE runStaging, so this execution never claimed the staging
-      // path — the catch leaves it exactly as found (it may hold a prior crash's orphan that
-      // boot recovery still needs to classify). Asserted on the staging path SPECIFICALLY:
-      // `recoverInterruptedCommit` is mocked here, but in production its convergence work
-      // legitimately `rm`s scratch siblings before throwing, which AC1 places outside the invariant.
+      // Failure precedes runStaging, so catch must preserve any prior crash orphan in STAGING_DIR (#2099).
       expect(rm).not.toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
       expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_failed', expect.objectContaining({ book_id: 42, reason: 'error' }));
     });
 
-    // #1418 (F9) — recovery can shrink the converged folder below the merge minimum, so
-    // executeMerge re-reads bookPath AFTER recovery and re-validates the ≥2 minimum. Here the
-    // first (enqueue-validation) read sees 2 files; the second (post-recovery) read sees 1.
+    // Recovery can shrink the set; execution must re-read and revalidate the two-file minimum (#1418).
     it('F9: a post-recovery audio set below the merge minimum aborts before staging', async () => {
       let bookPathReads = 0;
       (readdir as Mock).mockImplementation(async (dir: string) => {
@@ -306,13 +276,11 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // No staging/ffmpeg work ran — the guard fired on the post-recovery count.
       expect(processAudioFiles).not.toHaveBeenCalled();
       expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_failed', expect.objectContaining({ book_id: 42 }));
     });
 
     it('with outputFormat mp3: passes mp3 to processAudioFiles and discovers/commits the staged .mp3', async () => {
-      // Staging produces a .mp3 instead of a .m4b
       (readdir as Mock).mockImplementation(async (dir: string) => {
         if (dir.endsWith('.merge-tmp')) return ['The Way of Kings.mp3'];
         return ['01.mp3', '02.mp3', 'cover.jpg'];
@@ -332,7 +300,6 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // (a) outputFormat threaded through to the engine
       expect(processAudioFiles).toHaveBeenCalledWith(
         STAGING_DIR,
         expect.objectContaining({ outputFormat: 'mp3' }),
@@ -341,7 +308,6 @@ describe('MergeService', () => {
         expect.any(AbortSignal),
       );
 
-      // (b) the staged .mp3 is discovered (no "Staged output not found" throw) and committed
       expect(rename).toHaveBeenCalledWith(
         join(STAGING_DIR, 'The Way of Kings.mp3'),
         join(BOOK_PATH, 'The Way of Kings.mp3'),
@@ -399,23 +365,19 @@ describe('MergeService', () => {
     });
 
     it('omits sourceBitrateKbps when book.audioBitrate is null', async () => {
-      // mockBook has audioBitrate: null by default
       const { service } = createService();
       setupHappyPath();
 
       await service.enqueueMerge(42);
       await settle();
 
-      // Producer-omit pattern: null audioBitrate results in sourceBitrateKbps
-      // key omission from the ProcessingConfig, not explicit undefined
-      // (eopt invariant per #939 AC4).
+      // Exact optional contract requires absence, not explicit undefined (#939).
       expect(processAudioFiles).toHaveBeenCalled();
       const config = vi.mocked(processAudioFiles).mock.calls[0]![1];
       expect(config).not.toHaveProperty('sourceBitrateKbps');
     });
 
     it('does not delete the output file when an original shares the same basename as the staged M4B', async () => {
-      // Book already has a top-level .m4b alongside other files
       (readdir as Mock).mockImplementation(async (dir: string) => {
         if (dir.endsWith('.merge-tmp')) return ['The Way of Kings.m4b'];
         return ['01.mp3', '02.mp3', 'The Way of Kings.m4b'];
@@ -434,10 +396,8 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // The original mp3s are deleted
       expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '01.mp3'));
       expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'));
-      // The output file (same basename as staged M4B) is NOT deleted
       expect(unlink).not.toHaveBeenCalledWith(join(BOOK_PATH, 'The Way of Kings.m4b'));
     });
 
@@ -469,7 +429,6 @@ describe('MergeService', () => {
       expect(db.update).toHaveBeenCalled();
     });
 
-    // #149 — DB timing fix (DB-1): db.update must come before unlink loop
     it('calls db.update before any unlink() call (DB update is first action after rename)', async () => {
       const callOrder: string[] = [];
       setupHappyPath();
@@ -559,17 +518,14 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // originalsToDelete is topLevelAudioFiles: ['01.mp3', '02.mp3'] (cover.jpg excluded)
-      // First unlink fails but second is still attempted
       expect(unlink).toHaveBeenCalledTimes(2);
       expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '01.mp3'));
       expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'));
-      // Merge still completes: staging dir cleanup runs (success-only path)
       expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
       expect(log.error).not.toHaveBeenCalled();
     });
 
-    // #1707 — connector refresh after the irreversible swap
+    // Refresh belongs after the irreversible swap (#1707).
     describe('connector refresh', () => {
       it("enqueues exactly one 'merge' refresh after the originals-unlink swap", async () => {
         setupHappyPath();
@@ -587,8 +543,7 @@ describe('MergeService', () => {
 
       it('still enqueues the refresh when the staging rm cleanup throws AFTER the swap', async () => {
         setupHappyPath();
-        // The pre-copy staging reset (#1852 Change 4) is the FIRST rm call — let it succeed so the
-        // merge proceeds to the swap; only the LATE post-swap cleanup rm throws (what this asserts).
+        // First rm is staging reset; fail only the post-swap cleanup.
         (rm as Mock).mockResolvedValueOnce(undefined).mockRejectedValue(new Error('rm failed'));
         const notifyRefresh = vi.fn().mockResolvedValue(undefined);
         const { service } = createService({ connector: { notifyRefresh } });
@@ -596,8 +551,6 @@ describe('MergeService', () => {
         await service.enqueueMerge(42);
         await settle();
 
-        // The refresh fires before the rm (which is the only step that can throw after the swap),
-        // so the late rm failure can't suppress it.
         expect(unlink).toHaveBeenCalled();
         expect(notifyRefresh).toHaveBeenCalledWith('merge', [expect.objectContaining({ bookId: 42 })]);
       });
@@ -638,7 +591,6 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // stat() must be called on the destination path (book.path/stagedM4b), not the staging path
       const expectedOutputPath = join(BOOK_PATH, 'The Way of Kings.m4b');
       expect(stat).toHaveBeenCalledWith(expectedOutputPath);
 
@@ -647,8 +599,7 @@ describe('MergeService', () => {
         size: 123_456_789,
         updatedAt: expect.any(Date),
       }));
-      // Sibling of the post-tag write's F12 fix: the DB mutation contract is payload AND
-      // filter, so this pre-existing commit-time write gets its row predicate pinned too.
+      // Pin both payload and row predicate; either half alone permits a widened update.
       const whereMock = setMock.mock.results[0]?.value?.where as Mock;
       expect(whereMock).toHaveBeenCalledWith(eq(books.id, 42));
     });
@@ -670,12 +621,7 @@ describe('MergeService', () => {
     });
 
     describe('#2068 processing notices reach the operator (AC14)', () => {
-      /**
-       * Observation point matters: the stderr deduplicator logs at debug, which the shipped
-       * default log level hides, so asserting there would pass while the operator sees
-       * nothing. These assert the structured `warnings` channel — log.warn and the
-       * merge-complete message.
-       */
+      /** Assert the warnings channel; debug-level stderr dedup is hidden at the shipped log level. */
       function withWarnings(warnings: string[]): void {
         setupHappyPath();
         (processAudioFiles as Mock).mockResolvedValue({
@@ -747,7 +693,6 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // Second call should not throw ALREADY_IN_PROGRESS
       setupHappyPath();
       await expect(service.enqueueMerge(42)).resolves.toBeDefined();
       await settle();
@@ -799,15 +744,11 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // rename (move) should NOT have been called — book.path untouched
       expect(rename).not.toHaveBeenCalled();
       expect(unlink).not.toHaveBeenCalled();
     });
 
-    // #2062 — the processor now refuses a sub-minimum staging set instead of converting or
-    // silently succeeding. That refusal is an ordinary unsuccessful result, so it must reach the
-    // operator through the SAME wrapping and the same `error` classification as an ffmpeg
-    // failure — asserted here at the service boundary, not just inside the processor.
+    // Processor refusal must use the same operator-facing error classification as ffmpeg failure (#2062).
     it('reports a sub-minimum refusal as an ordinary merge_failed with reason error', async () => {
       (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockResolvedValue(undefined);
@@ -830,7 +771,6 @@ describe('MergeService', () => {
       const payload = failed[0]!.payload as { reason: string; error: string };
       expect(payload.reason).toBe('error');
       expect(payload.error).toBe('Audio processing failed: Merge requires at least 2 audio files, found 1');
-      // The refusal happens before any output exists — nothing in book.path is touched.
       expect(rename).not.toHaveBeenCalled();
       expect(unlink).not.toHaveBeenCalled();
     });
@@ -846,7 +786,6 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // Second call should not throw ALREADY_IN_PROGRESS
       await expect(service.enqueueMerge(42)).resolves.toBeDefined();
       await settle();
     });
@@ -921,10 +860,8 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // Warning logged
       expect(log.warn).toHaveBeenCalled();
 
-      // enrichmentWarning surfaces via merge_complete SSE event
       const completeCall = (eventBroadcaster.emit as Mock).mock.calls.find(
         (c: unknown[]) => c[0] === 'merge_complete',
       );
@@ -942,7 +879,6 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // rename (move) was called before enrichment
       expect(rename).toHaveBeenCalledWith(
         join(STAGING_DIR, 'The Way of Kings.m4b'),
         join(BOOK_PATH, 'The Way of Kings.m4b'),
@@ -973,7 +909,7 @@ describe('MergeService', () => {
     });
 
     it('throws MergeError NO_TOP_LEVEL_FILES when fewer than 2 top-level audio files exist', async () => {
-      (readdir as Mock).mockResolvedValue(['Chapter 01.m4b']); // only 1 audio file
+      (readdir as Mock).mockResolvedValue(['Chapter 01.m4b']);
       const { service } = createService();
 
       await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'NO_TOP_LEVEL_FILES' });
@@ -986,11 +922,9 @@ describe('MergeService', () => {
       await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'NO_TOP_LEVEL_FILES' });
     });
 
-    // #1852 F5 — pre-enqueue eligibility must not count a born-hidden temp as the second file.
-    // Load-bearing: one visible + one hidden → still ineligible. Reverting the isHiddenName filter
-    // would count 2 and let this book through.
+    // One visible + one born-hidden temp must remain ineligible (#1852).
     it('#1852 F5: one visible + one hidden top-level file rejects NO_TOP_LEVEL_FILES at pre-enqueue', async () => {
-      (readdir as Mock).mockResolvedValue(['01.mp3', '.02.tmp.mp3']); // 1 real + 1 born-hidden temp
+      (readdir as Mock).mockResolvedValue(['01.mp3', '.02.tmp.mp3']);
       const { service } = createService();
 
       await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'NO_TOP_LEVEL_FILES' });
@@ -1034,7 +968,6 @@ describe('MergeService', () => {
       const { service } = createService();
       await service.enqueueMerge(42);
 
-      // Second call while first is in progress
       await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'ALREADY_IN_PROGRESS' });
     });
   });
@@ -1046,7 +979,6 @@ describe('MergeService', () => {
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockImplementation(async () => {
-        // Check that the lock is held during processing
         lockChecked = true;
         return { success: false, error: 'test' };
       });
@@ -1068,7 +1000,6 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // Lock cleared — second call should not throw ALREADY_IN_PROGRESS
       (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
@@ -1086,7 +1017,6 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      // Second call: reset mocks and try again
       vi.clearAllMocks();
       setupHappyPath();
       await expect(service.enqueueMerge(42)).resolves.toBeDefined();
@@ -1094,10 +1024,6 @@ describe('MergeService', () => {
     });
   });
 });
-
-// ============================================================================
-// #257 — Merge observability: events, progress wiring, stderr dedup
-// ============================================================================
 
 describe('#257 merge observability — merge service', () => {
   describe('merge_started event', () => {
@@ -1107,7 +1033,6 @@ describe('#257 merge observability — merge service', () => {
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockImplementation(async () => {
-        // At this point merge_started should already have been recorded
         startedRecorded = true;
         return { success: false, error: 'test abort' };
       });
@@ -1119,7 +1044,6 @@ describe('#257 merge observability — merge service', () => {
       await settle();
 
       expect(startedRecorded).toBe(true);
-      // merge_started should have been called before processAudioFiles
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         bookId: 42,
         eventType: 'merge_started',
@@ -1227,7 +1151,6 @@ describe('#257 merge observability — merge service', () => {
       expect(phases).toContain('processing');
       expect(phases).toContain('verifying');
       expect(phases).toContain('committing');
-      // The retired incrementals never ride along (#2142).
       const eventNames = (eventBroadcaster.emit as Mock).mock.calls.map((c: unknown[]) => c[0]);
       expect(eventNames).not.toContain('merge_progress');
     });
@@ -1245,16 +1168,11 @@ describe('#257 merge observability — merge service', () => {
       expect(ack.bookId).toBe(42);
       await settle();
 
-      // Merge completed despite SSE failures
       expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ bookId: 42 }), expect.any(String));
     });
 
-    // #2099 AC1 splits what used to be one blanket "history rejection never fails the merge"
-    // test. The two lifecycle writes now own DIFFERENT failure semantics, so each double is
-    // call-specific (keyed on `eventType`) and each test proves exactly one of them.
     it('a rejected merge_started insert aborts the merge before staging (#2099 AC1)', async () => {
-      // This describe has no per-test reset, so the negative assertions below would otherwise
-      // see earlier tests' staging calls. Clear first, then re-establish the happy-path doubles.
+      // This describe has no per-test reset; clear earlier staging calls before negative assertions.
       vi.clearAllMocks();
       setupHappyPath();
       const eventHistory = {
@@ -1285,7 +1203,6 @@ describe('#257 merge observability — merge service', () => {
       expect(ack.bookId).toBe(42);
       await settle();
 
-      // Merge completed despite the terminal event-history failure — those writes stay best-effort.
       expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ bookId: 42 }), expect.any(String));
     });
   });
@@ -1303,18 +1220,15 @@ describe('#257 merge observability — merge service', () => {
 
       await service.enqueueMerge(42);
 
-      // Wait a tick so the fire-and-forget merge_started emit fires
+      // Let the fire-and-forget start event settle.
       await new Promise((r) => process.nextTick(r));
 
       const emitsBefore = (eventBroadcaster.emit as Mock).mock.calls.length;
 
-      // Second call — should throw without emitting any events
       await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'ALREADY_IN_PROGRESS' });
 
-      // No additional SSE events from the rejected second request
       expect((eventBroadcaster.emit as Mock).mock.calls.length).toBe(emitsBefore);
 
-      // Only 1 merge_started SSE from the first (accepted) call
       const startedEmits = (eventBroadcaster.emit as Mock).mock.calls.filter(
         (c: unknown[]) => c[0] === 'merge_started',
       );
@@ -1420,7 +1334,6 @@ describe('#257 merge observability — merge service', () => {
       return book;
     }
 
-    /** Sets up processAudioFiles to block until the returned resolve function is called. */
     function createBlockingMerge() {
       let resolveProcess!: () => void;
       const processPromise = new Promise<void>((resolve) => { resolveProcess = resolve; });
@@ -1495,8 +1408,7 @@ describe('#257 merge observability — merge service', () => {
       const result = await service.enqueueMerge(43);
 
       expect(result).toEqual({ status: 'queued', bookId: 43, position: 1 });
-      // The queued book is announced through the snapshot alone (#2142) — the frame that
-      // followed the enqueue carries it, title included, in FIFO order.
+      // Queue membership appears only in merge_state; the last frame must preserve FIFO title (#2142).
       const stateFrames = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls
         .filter((c: unknown[]) => c[0] === 'merge_state')
         .map((c: unknown[]) => c[1] as { queued: Array<{ book_id: number; book_title: string }> });
@@ -1515,7 +1427,6 @@ describe('#257 merge observability — merge service', () => {
         return null;
       });
 
-      // First merge blocks, second queues
       let resolveFirst!: () => void;
       const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
       (processAudioFiles as Mock).mockImplementationOnce(async () => {
@@ -1526,12 +1437,9 @@ describe('#257 merge observability — merge service', () => {
       await service.enqueueMerge(42);
       await service.enqueueMerge(43);
 
-      // Complete the first merge
       resolveFirst();
-      // Allow microtasks to drain
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // The second merge should have started (merge_started emitted for both)
       const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
       const startedEvents = emitCalls.filter((c: unknown[]) => c[0] === 'merge_started');
       expect(startedEvents.length).toBeGreaterThanOrEqual(2);
@@ -1550,8 +1458,8 @@ describe('#257 merge observability — merge service', () => {
       });
       const { resolve } = createBlockingMerge();
 
-      await service.enqueueMerge(42); // starts
-      await service.enqueueMerge(43); // queues
+      await service.enqueueMerge(42);
+      await service.enqueueMerge(43);
 
       await expect(service.enqueueMerge(43)).rejects.toThrow('Merge already queued for this book');
       resolve();
@@ -1563,7 +1471,7 @@ describe('#257 merge observability — merge service', () => {
       setupMergeForBook(bookService, 42, 'Book A');
       const { resolve } = createBlockingMerge();
 
-      await service.enqueueMerge(42); // starts
+      await service.enqueueMerge(42);
 
       await expect(service.enqueueMerge(42)).rejects.toThrow('Merge already in progress for this book');
       resolve();
@@ -1582,9 +1490,9 @@ describe('#257 merge observability — merge service', () => {
         return { success: true, outputFiles: ['/staging/out.m4b'] };
       }).mockResolvedValue({ success: true, outputFiles: ['/staging/out.m4b'] });
 
-      await service.enqueueMerge(42); // starts
-      await service.enqueueMerge(43); // queues position 1
-      await service.enqueueMerge(44); // queues position 2
+      await service.enqueueMerge(42);
+      await service.enqueueMerge(43);
+      await service.enqueueMerge(44);
 
       resolveFirst();
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1592,8 +1500,6 @@ describe('#257 merge observability — merge service', () => {
       const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
       const startedEvents = emitCalls.filter((c: unknown[]) => c[0] === 'merge_started');
       const startedBookIds = startedEvents.map((c: unknown[]) => (c[1] as { book_id: number }).book_id);
-      // AC4 liveness pin: assert the full global start order after the final release, not just
-      // pairwise — proves no jump-ahead and that the drain path promotes every queued job.
       expect(startedBookIds).toEqual([42, 43, 44]);
     });
   });
@@ -1631,7 +1537,6 @@ describe('#257 merge observability — merge service', () => {
         ...createMockDbBook({ id: 43, title: 'Book B', path: '/lib/B', status: 'imported' }),
         authors: [mockAuthor], narrators: [],
       };
-      // Initial: both exist
       bookService.getById.mockImplementation(async (id: number) => {
         if (id === 42) return book42;
         if (id === 43) return book43;
@@ -1658,13 +1563,12 @@ describe('#257 merge observability — merge service', () => {
         return { success: true, outputFiles: ['/staging/out.m4b'] };
       }).mockResolvedValue({ success: true, outputFiles: ['/staging/out.m4b'] });
 
-      await service.enqueueMerge(42); // starts
-      await service.enqueueMerge(43); // queues
+      await service.enqueueMerge(42);
+      await service.enqueueMerge(43);
 
-      // Delete book 43 before it dequeues
       bookService.getById.mockImplementation(async (id: number) => {
         if (id === 42) return book42;
-        return null; // book 43 deleted
+        return null;
       });
 
       resolveFirst();
@@ -1675,17 +1579,13 @@ describe('#257 merge observability — merge service', () => {
       expect(failedEvents.some((c: unknown[]) => (c[1] as { book_id: number }).book_id === 43)).toBe(true);
     });
 
-    // #1852 F6 — dequeue-time revalidation (validateDequeueTime) is an independent eligibility gate.
-    // A book that qualified at enqueue (2 visible) but is one-visible-plus-one-hidden by the time it
-    // is promoted must fail there. Reverting the isHiddenName filter would count the hidden temp as a
-    // second file, so book 43 would proceed (merge_started, no merge_failed) — this pins that it does not.
+    // Dequeue validation is independent: one visible + one hidden temp must now fail (#1852).
     it('#1852 F6: a queued book that becomes one-visible-plus-one-hidden fails dequeue-time revalidation', async () => {
       const { service, bookService, eventBroadcaster } = createServiceWithBroadcaster();
       const book42 = { ...createMockDbBook({ id: 42, title: 'Book A', path: '/lib/A', status: 'imported' }), authors: [mockAuthor], narrators: [] };
       const book43 = { ...createMockDbBook({ id: 43, title: 'Book B', path: '/lib/B', status: 'imported' }), authors: [mockAuthor], narrators: [] };
       bookService.getById.mockImplementation(async (id: number) => (id === 42 ? book42 : id === 43 ? book43 : null));
 
-      // At enqueue, /lib/B has two real files (43 queues legitimately).
       (readdir as Mock).mockImplementation(async (dir: string) => {
         if (dir.endsWith('.merge-tmp')) return ['out.m4b'];
         return ['01.mp3', '02.mp3'];
@@ -1704,10 +1604,9 @@ describe('#257 merge observability — merge service', () => {
       (processAudioFiles as Mock).mockImplementationOnce(async () => { await firstPromise; return { success: true, outputFiles: ['/staging/out.m4b'] }; })
         .mockResolvedValue({ success: true, outputFiles: ['/staging/out.m4b'] });
 
-      await service.enqueueMerge(42); // starts
-      await service.enqueueMerge(43); // queues (2 visible at enqueue)
+      await service.enqueueMerge(42);
+      await service.enqueueMerge(43);
 
-      // Before 43 dequeues, /lib/B loses a real file and gains a born-hidden temp → 1 visible left.
       (readdir as Mock).mockImplementation(async (dir: string) => {
         if (dir.endsWith('.merge-tmp')) return ['out.m4b'];
         if (dir === '/lib/B') return ['02.mp3', '.03.tmp.mp3'];
@@ -1720,8 +1619,8 @@ describe('#257 merge observability — merge service', () => {
       const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
       const startedFor = (id: number) => emitCalls.some((c: unknown[]) => c[0] === 'merge_started' && (c[1] as { book_id: number }).book_id === id);
       const failedFor = (id: number) => emitCalls.some((c: unknown[]) => c[0] === 'merge_failed' && (c[1] as { book_id: number }).book_id === id);
-      expect(failedFor(43)).toBe(true);   // dequeue-time gate rejected it
-      expect(startedFor(43)).toBe(false); // it never proceeded to actual merge work
+      expect(failedFor(43)).toBe(true);
+      expect(startedFor(43)).toBe(false);
     });
   });
 
@@ -1757,8 +1656,8 @@ describe('#257 merge observability — merge service', () => {
         inject<FastifyBaseLogger>(log), undefined, eventBroadcaster,
       );
 
-      await service.enqueueMerge(42); // starts (takes slot)
-      await service.enqueueMerge(43); // queues
+      await service.enqueueMerge(42);
+      await service.enqueueMerge(43);
 
       expect(service.getMergeStateSnapshot().queued).toEqual([{ book_id: 43, book_title: 'Book B' }]);
       const eventNames = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls.map((c: unknown[]) => c[0]);
@@ -1803,16 +1702,15 @@ describe('#257 merge observability — merge service', () => {
         inject<FastifyBaseLogger>(log), undefined, eventBroadcaster,
       );
 
-      await service.enqueueMerge(42); // starts
-      await service.enqueueMerge(43); // queues position 1
-      await service.enqueueMerge(44); // queues position 2
+      await service.enqueueMerge(42);
+      await service.enqueueMerge(43);
+      await service.enqueueMerge(44);
 
       resolveFirst();
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
-      // After book 43 dequeues, some snapshot frame shows book 44 alone at the queue's head —
-      // its position (index + 1 = 1) is the FIFO order itself, with no positional event (#2142).
+      // Queue index is the position; no positional event exists (#2142).
       const stateFrames = emitCalls
         .filter((c: unknown[]) => c[0] === 'merge_state')
         .map((c: unknown[]) => c[1] as { queued: Array<{ book_id: number }> });
@@ -1873,7 +1771,6 @@ describe('#257 merge observability — merge service', () => {
       (stat as Mock).mockResolvedValue({ size: 100 });
       (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
 
-      // First merge fails, second succeeds
       (processAudioFiles as Mock)
         .mockRejectedValueOnce(new Error('FFmpeg crashed'))
         .mockResolvedValue({ success: true, outputFiles: ['/staging/out.m4b'] });
@@ -1883,17 +1780,14 @@ describe('#257 merge observability — merge service', () => {
         inject<FastifyBaseLogger>(log), undefined, eventBroadcaster,
       );
 
-      await service.enqueueMerge(42); // starts — will fail
-      await service.enqueueMerge(43); // queues
+      await service.enqueueMerge(42);
+      await service.enqueueMerge(43);
 
-      // Wait for both to process
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
-      // Book 42 should have merge_failed
       const failedEvents = emitCalls.filter((c: unknown[]) => c[0] === 'merge_failed');
       expect(failedEvents.some((c: unknown[]) => (c[1] as { book_id: number }).book_id === 42)).toBe(true);
-      // Book 43 should have merge_started (queue drained)
       const startedEvents = emitCalls.filter((c: unknown[]) => c[0] === 'merge_started');
       expect(startedEvents.some((c: unknown[]) => (c[1] as { book_id: number }).book_id === 43)).toBe(true);
     });
@@ -2017,14 +1911,13 @@ describe('#257 merge observability — merge service', () => {
         inject<FastifyBaseLogger>(log), undefined, eventBroadcaster,
       );
 
-      await service.enqueueMerge(42); // starts — takes the semaphore slot
-      await service.enqueueMerge(43); // queues
+      await service.enqueueMerge(42);
+      await service.enqueueMerge(43);
 
-      // Complete first merge — release + drainQueue promotes book 43 into the freed slot
+      // Book 43 now holds the slot, so the new request must queue.
       resolveFirst();
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Book 43 is now the active merge (holding the slot). A new request should queue, not start.
       const result = await service.enqueueMerge(44);
       expect(result.status).toBe('queued');
 
@@ -2034,7 +1927,6 @@ describe('#257 merge observability — merge service', () => {
   });
 
   describe('#1302 maxConcurrentProcessing — semaphore sizing + FIFO under resize', () => {
-    // Gated processAudioFiles: each invocation blocks until released, tracking peak concurrency.
     function gatedProcessing() {
       let active = 0;
       let peak = 0;
@@ -2118,9 +2010,8 @@ describe('#257 merge observability — merge service', () => {
       expect(r1.status).toBe('started');
       expect(r2.status).toBe('queued');
       expect(gate.peak()).toBe(1);
-      expect(startedIds()).toEqual([42]); // only the first has started
+      expect(startedIds()).toEqual([42]);
 
-      // Releasing the first promotes the queued second
       gate.releaseAll();
       await settle();
       gate.releaseAll();
@@ -2132,7 +2023,6 @@ describe('#257 merge observability — merge service', () => {
       const { bookService } = setupMultiBook([42, 43, 44]);
       const gate = gatedProcessing();
 
-      // Mutable concurrency so the test can raise capacity between enqueues.
       const processing = { ...processingOverrides.processing, maxConcurrentProcessing: 1 };
       const settingsService = inject<SettingsService>({
         get: vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? processing : cat === 'library' ? { path: '/library' } : undefined)),
@@ -2140,22 +2030,19 @@ describe('#257 merge observability — merge service', () => {
       });
       const { service, startedIds } = buildService(bookService, settingsService);
 
-      // Capacity 1: A (42) active, B (43) queued.
       await service.enqueueMerge(42);
       const bAck = await service.enqueueMerge(43);
       await settle();
       expect(bAck.status).toBe('queued');
       expect(startedIds()).toEqual([42]);
 
-      // Raise capacity, then enqueue a NEWER book C (44).
       processing.maxConcurrentProcessing = 2;
       const cAck = await service.enqueueMerge(44);
       await settle();
 
-      // The older queued B is promoted into the freed slot; the newer C stays queued.
       expect(cAck.status).toBe('queued');
-      expect(startedIds()).toContain(43); // B started
-      expect(startedIds()).not.toContain(44); // C did NOT jump ahead
+      expect(startedIds()).toContain(43);
+      expect(startedIds()).not.toContain(44);
 
       gate.releaseAll();
       await settle();
@@ -2173,7 +2060,6 @@ describe('#257 merge observability — merge service', () => {
       const r2 = await service.enqueueMerge(43);
       await settle();
 
-      // Clamped to 1 — first runs, second queues (not a deadlock where neither runs).
       expect(r1.status).toBe('started');
       expect(r2.status).toBe('queued');
       expect(gate.peak()).toBe(1);
@@ -2189,7 +2075,6 @@ describe('#257 merge observability — merge service', () => {
       const { bookService } = setupMultiBook([42, 43, 44]);
       const gate = gatedProcessing();
 
-      // Mutable concurrency so the test can lower capacity between enqueues.
       const processing = { ...processingOverrides.processing, maxConcurrentProcessing: 2 };
       const settingsService = inject<SettingsService>({
         get: vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? processing : cat === 'library' ? { path: '/library' } : undefined)),
@@ -2197,26 +2082,22 @@ describe('#257 merge observability — merge service', () => {
       });
       const { service, startedIds } = buildService(bookService, settingsService);
 
-      // Capacity 2: A (42) + B (43) active.
       await service.enqueueMerge(42);
       await service.enqueueMerge(43);
       await settle();
       expect(startedIds()).toEqual([42, 43]);
       expect(gate.peak()).toBe(2);
 
-      // Operator lowers capacity to 1; the next enqueue applies setMax(1). C (44) queues.
       processing.maxConcurrentProcessing = 1;
       const cAck = await service.enqueueMerge(44);
       await settle();
       expect(cAck.status).toBe('queued');
 
-      // First active merge finishes — but capacity is now 1 and B is still in-flight, so the
-      // queued C must NOT start (the old slot-pass would have started it regardless of max).
+      // One release still leaves active === max; the old slot-pass incorrectly started C here.
       gate.releaseOne();
       await settle();
-      expect(startedIds()).toEqual([42, 43]); // C still waiting
+      expect(startedIds()).toEqual([42, 43]);
 
-      // Second active merge finishes — now a slot is genuinely free under max=1, so C starts.
       gate.releaseOne();
       await settle();
       expect(startedIds()).toEqual([42, 43, 44]);
@@ -2234,10 +2115,8 @@ describe('#257 merge observability — merge service', () => {
       const settingsService = inject<SettingsService>({ get, getAll: vi.fn(), set: vi.fn(), patch: vi.fn(), update: vi.fn() });
       const { service } = buildService(bookService, settingsService);
 
-      // First attempt: the (only) processing read rejects — must propagate AND leave inProgress clean.
       await expect(service.enqueueMerge(42)).rejects.toThrow('settings cache DB error');
 
-      // Retry for the same book must NOT 409 with ALREADY_IN_PROGRESS (the book was not stranded).
       const ack = await service.enqueueMerge(42);
       expect(ack.status).toBe('started');
     });
@@ -2249,16 +2128,12 @@ describe('#257 merge observability — merge service', () => {
       const settingsService = inject<SettingsService>({ get, getAll: vi.fn(), set: vi.fn(), patch: vi.fn(), update: vi.fn() });
       const { service } = buildService(bookService, settingsService);
 
-      // A (42) starts and holds the only slot (max=1), gated in processAudioFiles.
       await service.enqueueMerge(42);
       await settle();
 
-      // Isolate the next enqueue's reads — exclude A's validate read and executeMerge's
-      // legitimate execution-time read (the F2 distinction: only the enqueue sizing path counts).
+      // Exclude A's validation and execution reads; only B's enqueue sizing path counts.
       get.mockClear();
 
-      // B (43) queues (no slot, so no executeMerge). Its validate read must be reused for setMax —
-      // exactly one processing read across the whole start-vs-queue decision.
       const bAck = await service.enqueueMerge(43);
       expect(bAck.status).toBe('queued');
       const processingReads = get.mock.calls.filter((c: unknown[]) => c[0] === 'processing');
@@ -2279,20 +2154,17 @@ describe('#257 merge observability — merge service', () => {
       });
       const { service, startedIds } = buildService(bookService, settingsService);
 
-      // Capacity 1: A (42) active, B (43) queued.
       await service.enqueueMerge(42);
       await service.enqueueMerge(43);
       await settle();
       expect(startedIds()).toEqual([42]);
 
-      // Raise capacity to 3, then enqueue C (44). drainQueue promotes BOTH B (front) and C, so
-      // C's acknowledgement must reflect post-drain reality: started, not a stale 'queued' position.
+      // Raising to 3 lets drainQueue promote B and C; C's ack must reflect post-drain state.
       processing.maxConcurrentProcessing = 3;
       const cAck = await service.enqueueMerge(44);
       await settle();
 
       expect(cAck).toEqual({ status: 'started', bookId: 44 });
-      // FIFO preserved: B started before C.
       const ids = startedIds();
       expect(ids.indexOf(43)).toBeLessThan(ids.indexOf(44));
 
@@ -2360,21 +2232,18 @@ describe('#257 merge observability — merge service', () => {
         const { service, emitted } = createServiceWithBroadcasterForCancel();
         const blocking = createBlockingMergeForCancel();
 
-        // Start merge for book 42 (takes slot)
         await service.enqueueMerge(42);
         await new Promise((r) => setTimeout(r, 50));
 
-        // Queue book 43
         const bookService43 = createService().bookService;
         (bookService43.getById as Mock).mockResolvedValue({ ...mockBook, id: 43, title: 'Book 43' });
-        // Directly manipulate — push 43 to queue
+        // Push directly to the queue to isolate cancellation.
         (service as unknown as { queue: number[] }).queue.push(43);
 
         const result = await service.cancelMerge(43);
         expect(result.status).toBe('cancelled');
         expect((service as unknown as { queue: number[] }).queue).not.toContain(43);
 
-        // Check merge_failed emitted with reason cancelled
         const failedEvents = emitted.filter(e => e.event === 'merge_failed');
         expect(failedEvents.length).toBeGreaterThanOrEqual(1);
         const lastFailed = failedEvents[failedEvents.length - 1]!.payload as { reason: string };
@@ -2396,9 +2265,8 @@ describe('#257 merge observability — merge service', () => {
         setupFsMocksForCancel();
         const { service, emitted } = createServiceWithBroadcasterForCancel();
 
-        // Block at processAudioFiles so we can cancel during processing
+        // Block processing so cancellation can abort it.
         (processAudioFiles as Mock).mockImplementation(async (_dir: string, _config: unknown, _ctx: unknown, _cb: unknown, signal?: AbortSignal) => {
-          // Wait for abort or resolution
           await new Promise<void>((resolve) => {
             if (signal) {
               signal.addEventListener('abort', () => resolve(), { once: true });
@@ -2410,28 +2278,20 @@ describe('#257 merge observability — merge service', () => {
           return { success: true, outputFiles: ['/staging/out.m4b'] };
         });
 
-        // Start merge
         await service.enqueueMerge(42);
         await new Promise((r) => setTimeout(r, 50));
 
-        // Cancel
         const result = await service.cancelMerge(42);
         expect(result.status).toBe('cancelled');
 
-        // Let the catch/finally handlers run
         await new Promise((r) => setTimeout(r, 100));
 
-        // Check that merge_failed was emitted with reason 'cancelled'
         const failedEvents = emitted.filter(e => e.event === 'merge_failed');
         expect(failedEvents.length).toBeGreaterThanOrEqual(1);
         const payload = failedEvents[failedEvents.length - 1]!.payload as { reason: string; error: string };
         expect(payload.reason).toBe('cancelled');
       });
 
-      // #2080 — a cancel landing in the cover extract/reattach phase produces a DIFFERENT
-      // unsuccessful result than the main encode does (`ffmpeg exited with code null`, with no
-      // cover warning attached). It must still classify as cancelled, and must not be reported
-      // to the operator as a cover-art degradation.
       it('classifies a cover-phase abort as cancelled, not as a cover-art failure', async () => {
         setupFsMocksForCancel();
         const { service, emitted } = createServiceWithBroadcasterForCancel();
@@ -2442,8 +2302,7 @@ describe('#257 merge observability — merge service', () => {
           await new Promise<void>((resolve) => {
             if (signal) signal.addEventListener('abort', () => resolve(), { once: true });
           });
-          // Exactly what an aborted cover phase now yields: the abort rethrown out of
-          // withCoverArtPipeline, caught by processAudioFiles, with no cover warning.
+          // An aborted cover phase yields this error without a cover warning (#2080).
           return { success: false, error: 'ffmpeg exited with code null' };
         });
 
@@ -2464,7 +2323,7 @@ describe('#257 merge observability — merge service', () => {
     describe('cancel rejected (committing phase)', () => {
       it('returns committing status when phase is committing', async () => {
         const { service } = createServiceWithBroadcasterForCancel();
-        // Directly set state to simulate committing phase
+        // White-box the otherwise timing-sensitive committing phase.
         (service as unknown as { currentPhase: Map<number, string> }).currentPhase.set(42, 'committing');
         (service as unknown as { abortControllers: Map<number, AbortController> }).abortControllers.set(42, new AbortController());
 
@@ -2504,7 +2363,6 @@ describe('#257 merge observability — merge service', () => {
       expect(snapshotPhases).toContain('committing');
       expect(snapshotPhases).not.toContain('finalizing');
 
-      // committing must be the last in-flight phase broadcast (before merge_complete)
       expect(snapshotPhases.at(-1)).toBe('committing');
     });
 
@@ -2550,19 +2408,13 @@ describe('#257 merge observability — merge service', () => {
   });
 });
 
-// ============================================================================
-// #1838 — merge event provenance: auto-merge events record source 'auto', not 'manual'
-// ============================================================================
-
 describe('#1838 merge origin — event provenance', () => {
-  /** eventHistory.create calls for a given bookId + eventType. */
   function historyFor(create: Mock, bookId: number, eventType: string) {
     return create.mock.calls
       .map((c) => c[0] as { bookId: number; eventType: string; source: string })
       .filter((e) => e.bookId === bookId && e.eventType === eventType);
   }
 
-  /** Build a service with a captured eventHistory mock and a bookService keyed by the given books. */
   function createServiceWithHistory(books: Array<{ id: number; title: string; path: string }>, maxConcurrentProcessing = 1) {
     const db = createMockDb();
     const byId = new Map(books.map((b) => [b.id, {
@@ -2614,7 +2466,6 @@ describe('#1838 merge origin — event provenance', () => {
 
   it('auto queued path carries source auto while a concurrent manual book stays manual', async () => {
     setupHappyPath();
-    // Book 42 (manual) blocks the single worker; book 43 (auto) queues behind it.
     let resolveFirst!: () => void;
     const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
     (processAudioFiles as Mock)
@@ -2631,7 +2482,6 @@ describe('#1838 merge origin — event provenance', () => {
     resolveFirst();
     await settle();
 
-    // Per-bookId origin isolation across concurrent entries.
     expect(historyFor(create, 42, 'merge_started')[0]?.source).toBe('manual');
     expect(historyFor(create, 42, 'merged')[0]?.source).toBe('manual');
     expect(historyFor(create, 43, 'merge_started')[0]?.source).toBe('auto');
@@ -2640,7 +2490,6 @@ describe('#1838 merge origin — event provenance', () => {
 
   it('cancel of a queued auto merge emits merge_failed(cancelled) with source auto', async () => {
     setupHappyPath();
-    // Book 42 (manual) never resolves so book 43 (auto) stays queued and cancellable.
     (processAudioFiles as Mock).mockImplementation(async () => new Promise(() => {}));
     const { service, create } = createServiceWithHistory(
       [{ id: 42, title: 'Book A', path: '/lib/A' }, { id: 43, title: 'Book B', path: '/lib/B' }],
@@ -2658,7 +2507,6 @@ describe('#1838 merge origin — event provenance', () => {
   });
 
   it('rejected auto enqueue leaves no stale origin — a later manual merge records source manual (F1)', async () => {
-    // Pre-flight NO_TOP_LEVEL_FILES: only one top-level audio file rejects validateBookForMerge.
     (readdir as Mock).mockResolvedValue(['01.mp3']);
     const { service, create } = createServiceWithHistory([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
 
@@ -2666,7 +2514,6 @@ describe('#1838 merge origin — event provenance', () => {
     expect(historyFor(create, 42, 'merge_started')).toHaveLength(0);
     expect(historyFor(create, 42, 'merged')).toHaveLength(0);
 
-    // Fix the condition and enqueue a manual merge of the SAME book — it must not inherit 'auto'.
     setupHappyPath();
     await service.enqueueMerge(42);
     await settle();
@@ -2684,19 +2531,11 @@ describe('#1838 merge origin — event provenance', () => {
     await service.enqueueMerge(42, 'manual');
     await settle();
 
-    // Two sequential merges of the same bookId record their OWN origin, in order.
     expect(historyFor(create, 42, 'merged').map((e) => e.source)).toEqual(['auto', 'manual']);
   });
 });
 
-// ============================================================================
-// #2078 Layer 2 — post-merge re-tag (AC9–AC15)
-//
-// Layer 1 (in `src/core/utils/audio-processor.ts`) only carries the SOURCE parts' tags
-// forward. When Tag Embedding is on, the merged output must additionally be re-tagged from
-// canonical DB state — through the existing `retagBook`, so no second hydrated-book → tag
-// projection is introduced.
-// ============================================================================
+// Source-tag forwarding cannot apply canonical DB tags; post-merge tagging must reuse retagBook (#2078).
 
 const MERGED_OUTPUT = join(BOOK_PATH, 'The Way of Kings.m4b');
 
@@ -2712,7 +2551,6 @@ function retagResult(over: Partial<RetagResult> = {}): RetagResult {
   };
 }
 
-/** A tagger whose `retagBook` resolves to `result`. */
 function tagger(result: RetagResult = retagResult()) {
   return { retagBook: vi.fn().mockResolvedValue(result) };
 }
@@ -2732,9 +2570,7 @@ describe('#2078 post-merge re-tag', () => {
     await service.enqueueMerge(42);
     await settle();
 
-    // The ABSENCE of a second argument is the point: passing a locally-built metadata object
-    // (or mode/embedCover overrides) would fork the canonical projection and let merge-time
-    // tagging drift from the manual Re-tag button.
+    // Omitting overrides keeps merge-time tagging on retagBook's canonical projection.
     expect(tagging.retagBook).toHaveBeenCalledTimes(1);
     expect(tagging.retagBook).toHaveBeenCalledWith(42);
     expect(tagging.retagBook.mock.calls[0]).toHaveLength(1);
@@ -2742,10 +2578,7 @@ describe('#2078 post-merge re-tag', () => {
 
   it('does not start the tag write until the merge commit has landed the output (AC10)', async () => {
     setupHappyPath();
-    // Hold the commit's staging→bookPath rename open. That rename IS the moment the merged file
-    // appears at `book.path`, and `retagBook` resolves its working directory from `book.path`
-    // itself — started any earlier it would tag the soon-to-be-deleted source parts and could
-    // not see the merged output or the folder cover.
+    // Gate the staging rename: retagBook resolves book.path and must see its output and cover.
     let releaseCommit!: () => void;
     const committed = new Promise<void>((res) => { releaseCommit = res; });
     (rename as Mock).mockImplementation(() => committed);
@@ -2757,7 +2590,6 @@ describe('#2078 post-merge re-tag', () => {
     await settle();
 
     expect(rename).toHaveBeenCalledWith(join(STAGING_DIR, 'The Way of Kings.m4b'), MERGED_OUTPUT);
-    // Moving retagMergedOutput above commitMerge makes this the failing line.
     expect(tagging.retagBook).not.toHaveBeenCalled();
 
     releaseCommit();
@@ -2773,8 +2605,6 @@ describe('#2078 post-merge re-tag', () => {
     const { service, settingsService, log } = createService({
       tagging: TAGGING_ON, taggingService: tagging, eventBroadcaster,
     });
-    // Only the tagging read rejects; every other category still resolves, so this isolates the
-    // post-commit lookup rather than failing the merge somewhere upstream.
     const realGet = (settingsService.get as Mock).getMockImplementation()!;
     (settingsService.get as Mock).mockImplementation((category: string) =>
       category === 'tagging'
@@ -2784,8 +2614,7 @@ describe('#2078 post-merge re-tag', () => {
     await service.enqueueMerge(42);
     await settle();
 
-    // By this point commitMerge has deleted the originals — reporting merge_failed here would
-    // tell the operator a completed, irreversible merge did not happen.
+    // commitMerge deleted the originals; merge_failed would falsely deny an irreversible merge.
     expect(log.warn).toHaveBeenCalled();
     expect(vi.mocked(eventBroadcaster.emit)).toHaveBeenCalledWith(
       'merge_complete', expect.objectContaining({ success: true }),
@@ -2806,8 +2635,7 @@ describe('#2078 post-merge re-tag', () => {
     const ack = await service.enqueueMerge(42);
     await settle();
 
-    // retagBook has no `enabled` gate of its own (it is the manual-action entry point), so a
-    // missing gate here would silently re-tag on every merge with the setting off.
+    // retagBook is also the ungated manual entry point, so merge must enforce enabled here.
     expect(tagging.retagBook).not.toHaveBeenCalled();
     expect(ack).toEqual({ status: 'started', bookId: 42 });
     expect(enrichBookFromAudio).toHaveBeenCalled();
@@ -2829,7 +2657,6 @@ describe('#2078 post-merge re-tag', () => {
     expect(vi.mocked(eventBroadcaster.emit)).toHaveBeenCalledWith(
       'merge_complete', expect.objectContaining({ success: true }),
     );
-    // The on-disk merge succeeded; a tagging failure must not convert it into a merge failure.
     expect(log.error).not.toHaveBeenCalled();
     expect(enrichBookFromAudio).toHaveBeenCalled();
   });
@@ -2869,21 +2696,17 @@ describe('#2078 post-merge re-tag', () => {
     expect(enrichBookFromAudio).toHaveBeenCalled();
   });
 
-  /** Count the `stat()` reads taken against the committed merge output. */
   function statsOnOutput(): number {
     return vi.mocked(stat).mock.calls.filter((c) => c[0] === MERGED_OUTPUT).length;
   }
 
   it('takes the size stat only AFTER the tag rewrite resolves (AC11)', async () => {
     setupHappyPath();
-    // tagFile rewrites the file through a temp + atomic rename, so commitMerge's stat is stale
-    // the moment a tag lands.
+    // tagFile's atomic rewrite invalidates commitMerge's earlier stat.
     const sizes = [500_000_000, 500_004_096];
     (stat as Mock).mockImplementation(async () => ({ size: sizes.shift() ?? 500_004_096 }));
 
-    // Gate `retagBook` rather than feeding two values and reading the second: a stat hoisted
-    // above `await retagBook` consumes that same second value and leaves a value-only
-    // assertion green. Holding the tag write open makes the ORDER the observable.
+    // Gating retagBook proves ordering; sequential stat values alone do not.
     let release!: (r: RetagResult) => void;
     const gate = new Promise<RetagResult>((res) => { release = res; });
     const tagging = { retagBook: vi.fn().mockReturnValue(gate) };
@@ -2893,7 +2716,6 @@ describe('#2078 post-merge re-tag', () => {
     await settle();
 
     expect(tagging.retagBook).toHaveBeenCalled();
-    // Only commitMerge's own stat so far — the post-tag one must not have been taken yet.
     expect(statsOnOutput()).toBe(1);
 
     release(retagResult());
@@ -2910,20 +2732,16 @@ describe('#2078 post-merge re-tag', () => {
     setupHappyPath();
     (stat as Mock).mockResolvedValue({ size: 500_004_096 });
 
-    // Gate the post-tag update's `where()` terminus. Inspecting the synchronous `set()` call
-    // cannot see a dropped `await` — the call trace is identical either way (the repo's
-    // issuance-vs-persistence trap). Only a pending terminus can.
+    // Gate where(), not set(): only the terminus exposes a dropped await.
     let releasePersist!: () => void;
     const persisted = new Promise<void>((res) => { releasePersist = res; });
     const gatedWhere = vi.fn().mockImplementation(() => ({
-      // Thenable only: production awaits this terminus directly and never calls `.returning()`.
+      // Production awaits this thenable directly; it never calls returning().
       then: (onOk: unknown, onErr: unknown) =>
         persisted.then(() => undefined).then(onOk as never, onErr as never),
     }));
 
-    // Discriminate the post-tag update from commitMerge's by TAG STATE, not call index: the
-    // post-tag write is by definition the one issued after `retagBook` resolved, so this stays
-    // correct however many updates either step makes.
+    // Identify the post-tag update by tag state, not brittle call order.
     let tagWriteDone = false;
     const tagging = {
       retagBook: vi.fn().mockImplementation(async () => { tagWriteDone = true; return retagResult(); }),
@@ -2936,7 +2754,6 @@ describe('#2078 post-merge re-tag', () => {
     await service.enqueueMerge(42);
     await settle();
 
-    // The write was ISSUED, but the merge must not have proceeded past it.
     expect(gatedWhere).toHaveBeenCalledTimes(1);
     expect(enrichBookFromAudio).not.toHaveBeenCalled();
     expect(vi.mocked(eventBroadcaster.emit).mock.calls.some((c) => c[0] === 'merge_complete')).toBe(false);
@@ -2973,8 +2790,7 @@ describe('#2078 post-merge re-tag', () => {
     await service.enqueueMerge(42);
     await settle();
 
-    // A payload-only assertion passes with the WHERE deleted, widened, or pointed at another
-    // book — which would rewrite the wrong rows' size.
+    // Pin the predicate; payload-only assertions miss widened or misdirected updates.
     expect(capturedWhere).toHaveLength(1);
     expect(capturedWhere[0]).toEqual(eq(books.id, 42));
     expect(capturedWhere[0]).not.toEqual(eq(books.id, 43));
@@ -2988,8 +2804,7 @@ describe('#2078 post-merge re-tag', () => {
     await service.enqueueMerge(42);
     await settle();
 
-    // commitMerge's own 'merge' refresh (the just-deleted originals) stays where it is; this
-    // second 'metadata' refresh points connectors at the finished, tagged file.
+    // Merge refresh covers removed sources; metadata refresh covers the tagged output.
     expect(connector.notifyRefresh).toHaveBeenCalledWith('merge', expect.any(Array));
     expect(connector.notifyRefresh).toHaveBeenCalledWith('metadata', [
       expect.objectContaining({ bookId: 42, libraryPath: BOOK_PATH }),
@@ -3035,8 +2850,7 @@ describe('#2078 post-merge re-tag', () => {
 
   it('finishes the tag write BEFORE enrichment reads the file back', async () => {
     setupHappyPath();
-    // Gate retagBook's resolution rather than comparing call order: a call-order assertion is
-    // satisfied by an un-awaited retagBook, which is exactly the bug this pins.
+    // Gating resolution catches an un-awaited retagBook; call order does not.
     let release!: (r: RetagResult) => void;
     const gate = new Promise<RetagResult>((res) => { release = res; });
     const tagging = { retagBook: vi.fn().mockReturnValue(gate) };
@@ -3056,18 +2870,9 @@ describe('#2078 post-merge re-tag', () => {
 });
 
 /**
- * #2099 AC1 — the durable-start invariant.
- *
- * Boot recovery detects an interrupted merge purely from the event log, so for any
- * MergeService constructed WITH an EventHistoryService (i.e. every production instance),
- * no execution may create, write to or delete `.<book>.merge-tmp` unless its `merge_started`
- * row is committed. Two mechanics enforce it: the awaited start insert, and the
- * `stagingOwned` gate on the catch's cleanup.
- *
- * Assertions here target the STAGING PATH specifically, never a total filesystem-call count:
- * admission has already `readdir`'d `book.path` before `executeMerge` is launched
- * (merge.service.ts validateBookForMerge/validateDequeueTime) and `resolveFfmpegPath()` may
- * probe on the cold path — both sit outside the invariant by design.
+ * Recovery relies on merge_started, so production cannot touch staging before that row commits.
+ * stagingOwned also prevents a failed insert from deleting an older crash orphan. Assertions
+ * target STAGING_DIR because admission and ffmpeg resolution legitimately touch fs first (#2099).
  */
 describe('#2099 durable merge_started before staging (AC1)', () => {
   beforeEach(() => {
@@ -3087,8 +2892,6 @@ describe('#2099 durable merge_started before staging (AC1)', () => {
     await service.enqueueMerge(42);
     await settle();
 
-    // The insert is still pending: nothing has been created in, copied into, or removed from
-    // the staging path — and recovery has not run either (it is downstream of the await).
     expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'merge_started' }));
     expect(recoverInterruptedCommit).not.toHaveBeenCalled();
     expect(mkdir).not.toHaveBeenCalledWith(STAGING_DIR, expect.anything());
@@ -3098,15 +2901,12 @@ describe('#2099 durable merge_started before staging (AC1)', () => {
     releaseInsert();
     await settle();
 
-    // Once it commits, the merge proceeds through staging exactly as before.
     expect(mkdir).toHaveBeenCalledWith(STAGING_DIR, { recursive: true });
     expect(processAudioFiles).toHaveBeenCalled();
   });
 
   it('a rejected insert aborts with merge_failed and leaves a prior crash’s orphan intact', async () => {
-    // Pre-seed the staging path with an orphan from an earlier crash — the exact state boot
-    // recovery exists to classify. An unconditional catch-cleanup would delete it here,
-    // downgrading a `pre-commit` candidate to `no-staging` and forfeiting its re-queue.
+    // Seed an older crash orphan; failed admission must not erase recovery evidence.
     (readdir as Mock).mockImplementation(async (dir: string) => {
       if (dir.endsWith('.merge-tmp')) return ['orphan.m4b'];
       return ['01.mp3', '02.mp3'];
@@ -3130,7 +2930,6 @@ describe('#2099 durable merge_started before staging (AC1)', () => {
     expect(cp).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('.merge-tmp'));
     expect(rename).not.toHaveBeenCalledWith(expect.stringContaining('.merge-tmp'), expect.anything());
     expect(rm).not.toHaveBeenCalledWith(STAGING_DIR, expect.anything());
-    // The orphan survives — nothing in this execution addressed the staging path at all.
     expect(await readdir(STAGING_DIR)).toEqual(['orphan.m4b']);
     expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_failed', expect.objectContaining({ book_id: 42 }));
   });
@@ -3145,8 +2944,7 @@ describe('#2099 durable merge_started before staging (AC1)', () => {
     const eventHistory = {
       create: vi.fn().mockImplementation((input: { eventType: string }) => {
         if (input.eventType !== 'merge_started') return Promise.resolve(undefined);
-        // The SSE emit runs BETWEEN the create() invocation and the await, so by the time this
-        // rejection is observed the emit has already been recorded.
+        // The SSE runs after create() returns but before this promise is awaited.
         insertInvoked = true;
         return Promise.reject(new Error('DB write failed'));
       }),
@@ -3157,9 +2955,7 @@ describe('#2099 durable merge_started before staging (AC1)', () => {
     await settle();
 
     expect(insertInvoked).toBe(true);
-    // The admission of the merge also puts a `merge_state` snapshot frame on the wire (#2129);
-    // this assertion is about the DISCRETE merge events, so filter the snapshots out rather
-    // than pinning an absolute index.
+    // Ignore merge_state snapshots; only discrete event ordering matters (#2129).
     const discrete = emitted.filter((event) => event !== 'merge_state');
     expect(discrete[0]).toBe('merge_started');
     expect(emitted).toContain('merge_failed');
@@ -3167,7 +2963,7 @@ describe('#2099 durable merge_started before staging (AC1)', () => {
 
   it('out of domain: with no eventHistory wired the merge stages, commits and cleans as before', async () => {
     setupHappyPath();
-    const { service } = createService(); // no eventHistory — outside AC1's domain entirely
+    const { service } = createService();
 
     await service.enqueueMerge(42);
     await settle();
