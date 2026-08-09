@@ -3,7 +3,6 @@ import { extname, basename } from 'node:path';
 import { parseFile, type ICommonTagsResult } from 'music-metadata';
 import { AUDIO_EXTENSIONS, isHiddenName } from './audio-constants.js';
 import { collectAudioFilePaths } from './collect-audio-files.js';
-// ffprobe-backed media probing lives in audio-probe (imported by path; Node-only).
 import { resolveFileDuration, fillTechnicalViaFFprobe, getFFprobeStreamDuration } from './audio-probe.js';
 export { getFFprobeDuration, getFFprobeStreamInfo, getFFprobeStreamDuration } from './audio-probe.js';
 
@@ -13,32 +12,21 @@ export interface AudioScanResult {
   tagNarrator?: string;
   tagTitle?: string;
   tagAuthor?: string;
-  /**
-   * Remaining tokens from a comma/semicolon/ampersand-split `albumartist`
-   * after the first segment (which becomes `tagAuthor`). Independent of
-   * `tagNarrator`. Joined with `, ` for caller convenience.
-   */
+  /** Remaining split `albumartist` tokens after `tagAuthor`; independent of `tagNarrator`. */
   tagAdditionalArtists?: string;
   tagSeries?: string;
   tagSeriesPosition?: number;
   tagYear?: string;
   tagPublisher?: string;
   /**
-   * Raw album from native tags. Multi-file: cross-file consensus (all agree,
-   * non-empty, non-disc-pattern). Single-file: `common.album.trim()` when
-   * non-empty and not a disc-pattern. Stored independently of `tagTitle` so
-   * the tag-search planner can use it as a recovery candidate when the
-   * tag title carries annotation noise.
+   * Raw non-disc album: trimmed for one file, consensus across multiple files. Kept separate
+   * from `tagTitle` so tag search can recover when the title contains annotation noise.
    */
   tagAlbum?: string;
-  /**
-   * Audible ASIN extracted from native tags (iTunes :ASIN/cnID atoms, ID3v2
-   * comment frames, or `common.podcastIdentifier`). Uppercase-normalized.
-   */
+  /** Uppercase Audible ASIN from allowlisted native tags, comments, or `podcastIdentifier`. */
   tagAsin?: string;
   coverImage?: Buffer;
   coverMimeType?: string;
-  /** Whether any audio file contains embedded cover art */
   hasCoverArt: boolean;
 
   // Technical (from first audio file)
@@ -49,7 +37,6 @@ export interface AudioScanResult {
   bitrateMode: 'cbr' | 'vbr' | 'unknown';
   fileFormat: string;
 
-  // Aggregated
   totalDuration: number; // seconds
   totalSize: number;     // bytes
   fileCount: number;
@@ -59,19 +46,15 @@ export interface AudioScanResult {
 export interface AudioScanOptions {
   /** When true, detect cover art presence but skip buffer extraction */
   skipCover?: boolean | undefined;
-  /** Path to ffprobe binary — when provided, ffprobe arbitrates/falls back for durations music-metadata reports as missing or implausible (music-metadata is the primary source) */
+  /** Enables ffprobe arbitration for missing or implausible music-metadata durations. */
   ffprobePath?: string | undefined;
-  /** Diagnostic warning callback (e.g. ffprobe/music-metadata duration mismatch, or a fully-rejected duration). Caller maps to its logger. */
+  /** Receives duration mismatches and fully rejected durations. */
   onWarn?: ((msg: string, payload?: Record<string, unknown>) => void) | undefined;
-  /** Diagnostic debug callback (e.g. neither source produced a duration). Caller maps to its logger. */
+  /** Receives cases where neither duration source produced a value. */
   onDebug?: ((msg: string, payload?: Record<string, unknown>) => void) | undefined;
   /**
-   * Called when the scan collected ≥1 audio file but still returns null because
-   * no codec could be determined — music-metadata read nothing and the ffprobe
-   * codec fallback (when available) also found no readable stream. Lets a caller
-   * distinguish a genuinely-empty directory (this is NOT called) from
-   * files-present-but-unreadable (this IS called) to pick an honest hold reason.
-   * Other callers omit it and keep plain `null` semantics.
+   * Called when files parsed but neither parser found a codec. Not called for an empty directory
+   * or when every parse failed, preserving the distinction between unreadable codecs and probe failure.
    */
   onFilesWithoutCodec?: (() => void) | undefined;
 }
@@ -86,13 +69,8 @@ export interface MetadataFormat {
 }
 
 /**
- * Read the trimmed album tag from a single audio file.
- * Used by mixed-content bonus detection (book-discovery) to compare albums
- * across the top-level vs. absorbed-descendant audio groups. Whole-directory
- * helpers (`scanAudioDirectory` / `resolveMultiFileAlbum`) have consensus
- * semantics that don't fit the per-file two-group comparison this requires.
- * Any read failure returns `undefined` so callers can treat it as "no album
- * signal" without try/catch on each call.
+ * Reads one file's album for mixed-content comparison; directory consensus semantics do not apply.
+ * Parse failure is deliberately indistinguishable from a missing album signal.
  */
 export async function readAlbumTag(filePath: string): Promise<string | undefined> {
   try {
@@ -104,7 +82,6 @@ export async function readAlbumTag(filePath: string): Promise<string | undefined
   }
 }
 
-/** Scan a directory of audio files and extract metadata + technical info. */
 export async function scanAudioDirectory(
   dirPath: string,
   options?: AudioScanOptions,
@@ -138,21 +115,12 @@ export async function scanAudioDirectory(
   const codecCandidatePath = await applyCodecFallback(result, loop.parsedCandidates, ffprobePath, onDebug);
 
   if (!result.codec) {
-    // Files were collected (length 0 returned earlier) but none yielded a codec.
-    // Only signal "present but unreadable" when at least one file parsed far enough
-    // to show a missing codec (parsedCandidates non-empty). If every collected file
-    // threw in processOneFile (e.g. EACCES / transient access error) the directory
-    // never parsed anything — leave it a plain null so the caller maps it to a generic
-    // probe failure rather than blaming a codec it never read (#1677).
+    // Only a successful parse can establish an unreadable codec; all parse failures remain a probe failure.
     if (loop.parsedCandidates.length > 0) onFilesWithoutCodec?.();
     return null;
   }
 
-  // (a) The codec came from ffprobe but the in-band `format=duration` probe yielded
-  // nothing usable (totalDuration still 0). Try a stream-level duration probe — a
-  // *different* ffprobe entry than the in-band pass — for the exact candidate whose
-  // codec probe succeeded (#1676). Add it only when > 0; an honest no-duration outcome
-  // stays 0 rather than fabricating a value.
+  // Recover duration from the same file that supplied the fallback codec; an honest miss stays zero.
   if (codecCandidatePath && ffprobePath && result.totalDuration === 0) {
     const streamDuration = await getFFprobeStreamDuration(ffprobePath, codecCandidatePath);
     if (streamDuration && streamDuration > 0) result.totalDuration += streamDuration;
@@ -164,21 +132,11 @@ export async function scanAudioDirectory(
 interface ScanLoopState {
   firstTaggedCommon: ICommonTagsResult | null;
   firstTaggedNative: Record<string, Array<{ id: string; value: unknown }>> | undefined;
-  /**
-   * Every successfully-parsed file whose codec music-metadata could NOT read,
-   * retained as ordered candidates for the ffprobe codec fallback: when no file
-   * yields a codec from music-metadata, ffprobe re-reads these in turn (stopping at
-   * the first one that yields a codec) and any partial technical fields
-   * music-metadata did supply for the winning file are merged in (not clobbered).
-   * Empty when every collected file threw in `processOneFile` (#1677 guard:
-   * recovery must never run on a file that did not parse) — its length is the
-   * "≥1 file parsed but lacked a codec" signal that drives `onFilesWithoutCodec`.
-   */
+  /** Successfully parsed codec misses, in scan order; empty also distinguishes total parse failure. */
   parsedCandidates: Array<{ format: MetadataFormat; filePath: string }>;
   fileAlbums: Array<string | undefined>;
 }
 
-/** Walk every audio file: accumulate totals/cover/chapters into `result`, gather tag + parse state. */
 async function scanFiles(
   audioFiles: string[],
   result: AudioScanResult,
@@ -204,7 +162,7 @@ async function scanFiles(
         technicalExtracted = true;
       }
     } else {
-      // Parsed but no codec — retain as an ordered ffprobe-fallback candidate (#1676).
+      // Retain only parsed codec misses; fallback must never run on a file that did not parse.
       parsedCandidates.push({ format: metadata.format, filePath });
     }
 
@@ -220,18 +178,9 @@ async function scanFiles(
 }
 
 /**
- * Codec fallback (load-bearing for xHE-AAC / USAC): music-metadata's pure-JS
- * parser cannot read these even on ffmpeg 8, so probe the parsed-but-no-codec files
- * with ffprobe before giving up. Iterates the retained candidates in scan order,
- * stopping at the first one ffprobe yields a codec for (each probe bounded by the
- * existing per-file ffprobe timeout), and returns that winning file path so the
- * caller can target its stream-level duration recovery at the *same* file (#1676).
- *
- * No-op (returns null) once a codec is known, when ffprobe is absent, or when no
- * file parsed (candidates empty) — recovery must run only on a file that actually
- * parsed, never on a raw audioFiles[0] every sibling failed to read, which would
- * turn an all-files-failed directory into a tag-less codec-only success and mask the
- * true non-codec failure (#1677).
+ * xHE-AAC/USAC fallback for files music-metadata parsed without a codec. Probe in scan order,
+ * merge partial fields, and return the winning path for same-file duration recovery. Never probe
+ * an unparsed file: that could mask an all-file access failure as a codec-only success.
  */
 async function applyCodecFallback(
   result: AudioScanResult,
@@ -247,7 +196,6 @@ async function applyCodecFallback(
   return null;
 }
 
-/** Per-file scan: parses metadata, accumulates totals, extracts cover+chapters. Returns null on failure. */
 async function processOneFile(
   filePath: string,
   result: AudioScanResult,
@@ -280,11 +228,8 @@ function hasTagSignal(common: ICommonTagsResult): boolean {
 }
 
 /**
- * For multi-file scans, accept the cross-file `tag.album` as the book title
- * only when every file has a non-empty album value, all values match, and the
- * value is not a disc-pattern (e.g. "Disc 1", "CD 02"). Returns undefined
- * otherwise — multi-file scans NEVER fall back to common.title because that is
- * chapter-level by convention for chapter-encoded audiobooks.
+ * A multi-file album is usable only when every file has the same non-disc value. Never fall back
+ * to `common.title`; chapter-encoded books conventionally store chapter names there.
  */
 function resolveMultiFileAlbum(fileAlbums: Array<string | undefined>): string | undefined {
   if (fileAlbums.length === 0) return undefined;
@@ -350,8 +295,7 @@ function assignTagFields(
   const tagPublisher = common.label?.[0];
   if (tagPublisher !== undefined) result.tagPublisher = tagPublisher;
 
-  // Null-check (not truthy) so a genuine track/position `0` is preserved as
-  // tagSeriesPosition: 0 (#1849/#1028) instead of being dropped by a falsy gate.
+  // Position zero is a valid tag value; do not replace this null check with a truthy gate.
   if (common.track?.no != null && common.grouping) {
     result.tagSeriesPosition = common.track.no;
   }
@@ -379,10 +323,8 @@ function pickTagAlbum(
 const ASIN_REGEX = /\bB[A-Z0-9]{9}\b/;
 
 /**
- * Extract an Audible ASIN (B0 + 8 alphanumeric, uppercase-normalized) from
- * native tags. Checks MP4 atoms (`iTunes:ASIN`, `cnID`), ID3v2 comment frames,
- * and `common.podcastIdentifier`. Returns the first match found. Empty/missing
- * → undefined.
+ * Extracts the first uppercase Audible ASIN from allowlisted MP4/ID3 tags, comments, or
+ * `podcastIdentifier`.
  */
 function extractAsin(
   common: ICommonTagsResult,
@@ -401,16 +343,8 @@ function extractAsin(
 }
 
 /**
- * Native tag IDs that carry an ASIN (per AC3): MP4 iTunes:ASIN atom, MP4 cnID
- * atom, and ID3v2 COMM (comment) frames. Other native fields (TIT2, TPE1, ©nam,
- * etc.) MUST NOT be scanned — an unrelated string field that happens to contain
- * a B[A-Z0-9]{9} substring would otherwise produce a false-positive ASIN that
- * runTagSearch promotes to a high-confidence kill-shot.
- *
- * Match shapes (case-insensitive, anchored at end of id):
- *   - iTunes:ASIN     →  `----:com.apple.iTunes:ASIN` or bare `ASIN`
- *   - cnID            →  `cnID`
- *   - ID3 comment     →  `COMM`, `COMM:description`
+ * Only ASIN-bearing MP4 atoms and ID3 comment frames are eligible. Scanning arbitrary native
+ * values can promote an incidental token to a false high-confidence ASIN.
  */
 const ASIN_TAG_ID_REGEX = /(?::|^)(?:asin|cnID)$|^COMM(?::|$)/i;
 
@@ -454,7 +388,6 @@ function scanCommentForAsin(comment: ICommonTagsResult['comment']): string | und
   return undefined;
 }
 
-/** Split an albumartist string on commas/semicolons/ampersands. First non-empty token = primary author. */
 function parseAuthors(rawAuthor: string | undefined): { tagAuthor?: string; tagAdditionalArtists?: string } {
   if (!rawAuthor) return {};
   const parts = rawAuthor.split(/[,;&]/).map(s => s.trim()).filter(s => s.length > 0);
@@ -487,7 +420,6 @@ function extractChapterCount(
   }
 }
 
-/** Recursively collect all audio files in a directory, sorted by name. */
 async function collectAudioFiles(dirPath: string): Promise<string[]> {
   try {
     const pathStat = await stat(dirPath);
@@ -498,18 +430,16 @@ async function collectAudioFiles(dirPath: string): Promise<string[]> {
     const files = await collectAudioFilePaths(dirPath, { recursive: true, skipHidden: true });
     return files.sort();
   } catch {
-    // stat or readdir error — return whatever we have
     return [];
   }
 }
 
-/** Extract narrator from metadata tags with broad fallback chain. */
 // eslint-disable-next-line complexity -- 4-tier fallback chain: native tags → composer → comment regex → artist
 function extractNarrator(
   common: ICommonTagsResult,
   native?: Record<string, Array<{ id: string; value: unknown }>>,
 ): string | undefined {
-  // 1. Check native tags for explicit narrator fields (Audible M4B: ©nrt, NARR)
+  // Audible M4B and common narrator fields.
   if (native) {
     for (const format of Object.values(native)) {
       for (const tag of format) {
@@ -520,12 +450,11 @@ function extractNarrator(
     }
   }
 
-  // 2. Composer (many audiobook taggers use this for narrator)
+  // Many audiobook taggers use composer for narrator.
   if (common.composer && common.composer.length > 0) {
     return common.composer[0];
   }
 
-  // 3. Comment patterns: "narrated by", "read by", "performed by", "voice:"
   const commentEntries = common.comment;
   if (commentEntries && commentEntries.length > 0) {
     const commentText = commentEntries[0]!.text ?? String(commentEntries[0]!);
@@ -533,7 +462,6 @@ function extractNarrator(
     if (match) return match[1]!.trim();
   }
 
-  // 4. Artist fallback — only if different from albumartist (author)
   if (common.artist && common.albumartist && common.artist !== common.albumartist) {
     return common.artist;
   }

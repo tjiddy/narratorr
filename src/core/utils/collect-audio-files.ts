@@ -28,9 +28,7 @@ export async function collectAudioFilePaths(
 
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
-    // Dot-FILES are never book audio, regardless of `skipHidden` (which gates only directory
-    // recursion). Mirrors ABS's `shouldIgnoreFile` dotfile rule so a born-hidden transient
-    // (`.002.tmp.mp3`) is never collected as a real track. `My.Book.mp3` (interior dot) stays.
+    // skipHidden gates directory recursion only; dotfile transients such as `.002.tmp.mp3` are never audio.
     if (entry.isFile() && !isHiddenName(entry.name) && extensions.has(extname(entry.name).toLowerCase())) {
       results.push(fullPath);
     } else if (recursive && entry.isDirectory()) {
@@ -42,16 +40,11 @@ export async function collectAudioFilePaths(
   return results;
 }
 
-/** Trailing duplicate-copy marker — space, `(`, digits, `)` at the very end of the stem. */
 const DUPLICATE_MARKER = /\s\((\d+)\)$/;
 
 /**
- * Parse an audio basename into its sort keys for the duplicate-copy convention.
- *
- * Strips the extension, then peels a trailing ` (\d+)` group off the stem. A bare
- * name (no trailing group) gets `dupIndex = 1`; `Title (N).ext` gets `dupIndex = N`.
- * This models the Windows/download duplicate naming where the un-suffixed `Title.mp3`
- * IS part 1 and each `(N)` is part N — so the bare file must sort *before* its copies.
+ * Parses the Windows duplicate-copy convention: bare `Title.ext` is part 1 and
+ * `Title (N).ext` is part N, so the bare file sorts before its copies.
  */
 const parseAudioName = (name: string): { stem: string; dupIndex: number } => {
   const base = basename(name);
@@ -64,24 +57,9 @@ const parseAudioName = (name: string): { stem: string; dupIndex: number } => {
 };
 
 /**
- * Pure comparator for audio file names — locale-aware numeric ordering on basename,
- * aware of the `file (N).ext` duplicate-copy convention.
- *
- * Use to sort an in-memory `string[]` the same way `collectSortedAudioFiles`'s
- * `locale-numeric` mode sorts a directory read from disk. Numeric-aware, so
- * `Track2 < Track10`, `001 < 010 < 100`, and `(2) < (10) < (100)` — NOT the
- * lexicographic ordering of a bare `Array.sort()` (where `)` 0x29 < `0` 0x30).
- *
- * Compares by an ordered key tuple so the bare `Title.mp3` (part 1) sorts before
- * `Title (2).mp3` … `Title (N).mp3` instead of last:
- *  1. stem (extension + trailing ` (N)` stripped) — locale-numeric, base-sensitive
- *  2. duplicate index — numeric (bare → 1, then `(2) < (10) < (32)`)
- *  3. original full basename — locale-numeric, base-sensitive (breaks ext-only ties)
- *  4. original full basename — raw code-unit compare (guarantees a strict total order
- *     so case/accent-only distinct names never collapse to 0)
- *
- * Shared by `collectSortedAudioFiles` (directory sort) and `planFileRenames`
- * (in-memory array sort) so import-time and rename-time ordering never drift.
+ * Numeric basename ordering with Windows duplicate-copy semantics. Full-basename and raw
+ * code-unit tie-breakers keep case/accent-only names from comparing equal. Collection and
+ * rename planning share this comparator so their play order cannot drift.
  */
 export const compareAudioNames = (a: string, b: string): number => {
   const ka = parseAudioName(a);
@@ -101,18 +79,9 @@ export const compareAudioNames = (a: string, b: string): number => {
 };
 
 /**
- * Disambiguate a list of rendered filename stems given in play order.
- *
- * When the stems do NOT all render distinct (any two collide case-insensitively —
- * the format carries no per-file discriminator, e.g. `{author} - {title}`), a
- * zero-padded sequential ordinal `<stem> (N)` is appended to *every* stem including
- * the first, in the caller's order. The ordinal width is `String(count).length`:
- * 1 digit for 2–9 files, 2 digits for 10–99, 3 digits from 100. A single stem is
- * never numbered, and an already-unique set (a `{trackNumber}`/`{partName}` token is
- * present) passes through untouched.
- *
- * Used by `planFileRenames` (rename path). Assumes `stems` is already in `compareAudioNames`
- * order so the ordinal matches the import-baked play position.
+ * If any rendered stems collide case-insensitively, suffix every stem with a zero-padded,
+ * 1-based ordinal. Single and already-unique sets pass through. Input must already be in
+ * `compareAudioNames` order so rename ordinals preserve play order.
  */
 export function disambiguateStems(stems: string[]): string[] {
   if (stems.length <= 1) return [...stems];
@@ -122,7 +91,6 @@ export function disambiguateStems(stems: string[]): string[] {
   return stems.map((stem, i) => `${stem} (${String(i + 1).padStart(width, '0')})`);
 }
 
-/** Sort mode for collectSortedAudioFiles. */
 export type AudioFileSortMode = 'lexicographic' | 'locale' | 'locale-numeric';
 
 export interface CollectSortedOptions extends CollectAudioFileOptions {
@@ -130,14 +98,7 @@ export interface CollectSortedOptions extends CollectAudioFileOptions {
   sort?: AudioFileSortMode;
 }
 
-/**
- * Collect audio files and return them sorted.
- *
- * Sort modes:
- * - `'lexicographic'` — plain `Array.sort()` on full path (default JS string comparison)
- * - `'locale'` — `localeCompare` on basename (alphabetic, no numeric awareness)
- * - `'locale-numeric'` — `localeCompare` on basename with `{ numeric: true }` (default)
- */
+/** Sorts by full-path code units, locale basename, or default numeric locale basename. */
 export async function collectSortedAudioFiles(
   dir: string,
   options?: CollectSortedOptions,
