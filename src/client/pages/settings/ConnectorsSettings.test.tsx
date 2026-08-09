@@ -27,7 +27,7 @@ vi.mock('sonner', () => ({
 
 import { api } from '@/lib/api';
 
-// An existing Plex connector — token/baseUrl arrive masked from the API (#1492).
+// Edit fixture uses API-masked secrets.
 const plexConnector = createMockConnector({
   id: 7,
   name: 'My Plex',
@@ -61,7 +61,6 @@ describe('ConnectorsSettings — #1492 edit-mode id injection (shared useCrudSet
     await waitFor(() => expect(api.testConnectorConfig).toHaveBeenCalled());
     const payload = (api.testConnectorConfig as Mock).mock.calls[0]![0] as Record<string, unknown>;
     expect(payload).toMatchObject({ id: 7, type: 'plex' });
-    // The injected id is what lets the server resolve the masked token sentinel.
     expect(payload.settings).toMatchObject({ token: '********', sectionId: '1' });
   });
 
@@ -72,7 +71,6 @@ describe('ConnectorsSettings — #1492 edit-mode id injection (shared useCrudSet
     await waitForListLoad('My Plex');
 
     await user.click(screen.getByRole('button', { name: 'Add Connector' }));
-    // Default type is Audiobookshelf — fill its required fields, then Test.
     await user.type(screen.getByPlaceholderText('My Audiobookshelf'), 'Brand New');
     await user.type(screen.getByPlaceholderText('http://audiobookshelf.local:13378'), 'http://abs.local');
     await user.type(screen.getByPlaceholderText('API key is required'), 'k');
