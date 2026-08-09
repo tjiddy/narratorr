@@ -14,11 +14,6 @@ import {
   type EpubXmlResult,
 } from './xml.js';
 
-/**
- * `xml.ts` takes bytes, so every fixture below is a buffer built inline — no
- * archive, no fixture builder, no stream harness (#1987 Decision 6).
- */
-
 const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 const UTF16LE_BOM = Buffer.from([0xff, 0xfe]);
 const UTF16BE_BOM = Buffer.from([0xfe, 0xff]);
@@ -48,7 +43,6 @@ const CONTAINER_DOC = `<?xml version="1.0" encoding="UTF-8"?>
   </rootfiles>
 </container>`;
 
-/** Read the package title through the exported helpers — this also exercises parent-scoped selection. */
 function readTitle(result: EpubXmlResult): string | null {
   if (result.kind !== 'document') return null;
   const metadata = childrenByLocalName(result.$, result.root, 'metadata')[0];
@@ -57,7 +51,6 @@ function readTitle(result: EpubXmlResult): string | null {
   return title ? result.$(title).text() : null;
 }
 
-/** The single element of a one-element document, for the helper-level tests. */
 function soleElement(doc: string) {
   const result = parseEpubXml(utf8(doc), 'package');
   if (result.kind !== 'document') throw new Error(`fixture did not parse: ${result.code}`);
@@ -65,9 +58,7 @@ function soleElement(doc: string) {
 }
 
 describe('parseEpubXml — the encoding ladder', () => {
-  // One case per row of the four-row ladder. All four carry the same document
-  // and must produce the same parse; row 1 is explicit and separate because it
-  // is the row most easily lost to "UTF-8 is the default anyway".
+  // Explicit BOM rows prevent default UTF-8 behavior from hiding lost detection.
   const rows: Array<[label: string, encode: (doc: string) => Buffer]> = [
     ['row 1 — UTF-8 BOM', utf8WithBom],
     ['row 2 — UTF-16LE BOM', utf16le],
@@ -87,8 +78,6 @@ describe('parseEpubXml — the encoding ladder', () => {
   });
 
   it('never lets a BOM survive into the parsed root name', () => {
-    // `TextDecoder` strips the BOM (`ignoreBOM` defaults to false); a surviving
-    // U+FEFF would survive into the root local name and fail this assertion.
     for (const [, encode] of rows) {
       const result = parseEpubXml(encode('<package/>'), 'package');
       if (result.kind !== 'document') throw new Error('expected a document');
@@ -98,10 +87,7 @@ describe('parseEpubXml — the encoding ladder', () => {
 });
 
 describe('parseEpubXml — the declared encoding label is never read', () => {
-  // Decision 5. An earlier revision of this spec scanned the XML declaration and
-  // kept an alias allowlist; doing so marked `invalid` books that decode and
-  // parse perfectly, which is the exact failure mode §4 exists to prevent. The
-  // bytes are the evidence; the label is only what the author claimed.
+  // Byte evidence chooses the decoder; declaration labels are intentionally ignored.
   const misleading: Array<[label: string, declaration: string]> = [
     ["Shift_JIS in single quotes", `<?xml version='1.0' encoding='Shift_JIS'?>`],
     ['ISO-8859-1', `<?xml version="1.0" encoding="ISO-8859-1"?>`],
@@ -116,8 +102,6 @@ describe('parseEpubXml — the declared encoding label is never read', () => {
   });
 
   it('rejects real Latin-1 bytes on the byte evidence, not on the label', () => {
-    // Declares ISO-8859-1 and actually carries 0xE9. Rejected by fatal UTF-8
-    // decoding — the label plays no part in the decision either way.
     const bytes = Buffer.concat([
       utf8(`<?xml version="1.0" encoding="ISO-8859-1"?><package><metadata><dc:title>Caf`),
       Buffer.from([0xe9]),
@@ -132,7 +116,6 @@ describe('parseEpubXml — decoding is fatal', () => {
     ['a UTF-8 document with an invalid byte sequence', Buffer.concat([utf8('<package>'), Buffer.from([0xc3, 0x28]), utf8('</package>')])],
     ['a UTF-16LE-BOM buffer of odd length', Buffer.concat([UTF16LE_BOM, Buffer.from([0x3c, 0x00, 0x61])])],
     ['a UTF-16LE-BOM buffer with an unpaired surrogate', Buffer.concat([UTF16LE_BOM, Buffer.from([0x3c, 0x00, 0x00, 0xd8])])],
-    // Pins that fatal mode bites on the big-endian decoder too, not only utf-8.
     ['a UTF-16BE-BOM buffer with a lone trailing byte', Buffer.concat([UTF16BE_BOM, Buffer.from([0x00, 0x3c, 0x00])])],
   ];
 
@@ -142,25 +125,18 @@ describe('parseEpubXml — decoding is fatal', () => {
 });
 
 describe('parseEpubXml — row 4 needs no companion row', () => {
-  // These three exist to prove the unconditional residual arm handles every
-  // NUL-leading and UTF-32-shaped input without a special case.
   it('rejects a UTF-32BE BOM through fatal UTF-8 decoding', () => {
-    // `00 00 FE FF` takes row 4, and `FE`/`FF` are not legal UTF-8 bytes.
     const bytes = Buffer.concat([Buffer.from([0x00, 0x00, 0xfe, 0xff]), utf8('<package/>')]);
     expect(parseEpubXml(bytes, 'package')).toEqual({ kind: 'rejected', code: 'malformed_xml' });
   });
 
   it('rejects a UTF-32LE BOM through the root check', () => {
-    // `FF FE 00 00` takes row 2 and decodes to leading NUL characters, which
-    // yield zero root element children.
     const bytes = Buffer.from([0xff, 0xfe, 0x00, 0x00]);
     expect(parseEpubXml(bytes, 'package')).toEqual({ kind: 'rejected', code: 'malformed_xml' });
   });
 
   it('rejects BOM-less UTF-16, deliberately', () => {
-    // XML 1.0 Annex F requires a UTF-16 entity to begin with a BOM, so this
-    // document is non-conforming. It takes row 4, decodes as UTF-8 into a
-    // NUL-interleaved string, and its root local name is not `package`.
+    // Conforming UTF-16 requires a BOM; do not add heuristic sniffing.
     const bytes = Buffer.from('<package/>', 'utf16le');
     const nulInterleaved = '\u0000p\u0000a\u0000c\u0000k\u0000a\u0000g\u0000e\u0000';
     const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -171,10 +147,7 @@ describe('parseEpubXml — row 4 needs no companion row', () => {
 });
 
 describe('parseEpubXml — the byte cap', () => {
-  // Defence in depth only. It fires after the bytes exist, so it bounds parsing
-  // rather than inflation and cannot prove the 4 MiB inflated-before-parse
-  // invariant — that belongs to whichever issue closes the slate's read-cap
-  // obligation (#1987 "Unassigned slate obligation").
+  // This bounds parsing only; stream accounting must bound inflation.
   const HEAD = '<package><metadata><dc:title>T</dc:title></metadata>';
   const TAIL = '</package>';
 
@@ -191,7 +164,6 @@ describe('parseEpubXml — the byte cap', () => {
   });
 
   it('rejects one byte over as limit_exceeded, not malformed_xml', () => {
-    // Strictly `>`, matching `counting-stream.ts:77-86` so the two cannot disagree.
     expect(parseEpubXml(documentOfExactly(MAX_XML_BYTES + 1), 'package')).toEqual({
       kind: 'rejected',
       code: 'limit_exceeded',
@@ -217,8 +189,6 @@ describe('parseEpubXml — the root check', () => {
   });
 
   it('counts element children only, so a prolog does not reject a real EPUB file', () => {
-    // An XML declaration, a DOCTYPE, a comment, and leading whitespace are all
-    // non-element nodes. Every real EPUB document carries at least the first.
     const doc = `<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE package>\n<!-- generated -->\n  <package/>`;
     const result = parseEpubXml(utf8(doc), 'package');
     expect(result.kind).toBe('document');
@@ -238,10 +208,7 @@ describe('parseEpubXml — the root check', () => {
   });
 
   it('accepts a repaired unclosed root that still presents its content', () => {
-    // htmlparser2 silently repairs this and cannot report the damage, so a
-    // well-formedness verdict is not available to us (Decision 1). Tag-soup
-    // tolerance is also the product-correct answer — a readable book must not
-    // be marked `invalid`.
+    // htmlparser2 repairs tag soup, so strict well-formedness is not observable here.
     const doc = `<package><metadata><dc:title>Repaired</dc:title></metadata><manifest><item id="c1"/></manifest><spine><itemref idref="c1"/>`;
     const result = parseEpubXml(utf8(doc), 'package');
     expect(result.kind).toBe('document');
@@ -275,9 +242,7 @@ describe('parseEpubXml — never throws', () => {
 });
 
 describe('parseEpubXml — plain Uint8Array input', () => {
-  // `Buffer` extends `Uint8Array` while also exposing Buffer-only methods, so a
-  // Buffer-only suite would pass even if the module accidentally depended on
-  // one. Both arms are exercised with a value that is not a Buffer.
+  // A genuine Uint8Array catches accidental reliance on Buffer-only methods.
   it('parses a plain Uint8Array identically to the Buffer twin', () => {
     const buffer = utf8(PACKAGE_DOC);
     const plain = new Uint8Array(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
@@ -331,8 +296,6 @@ describe('element matching by local name', () => {
   });
 
   it('compares case-sensitively', () => {
-    // `xmlMode` leaves `lowerCaseTags` off, so `OPF:Package` reaches the helper
-    // with its case intact. This test fails loudly if that is ever switched on.
     expect(parseEpubXml(utf8('<OPF:Package/>'), 'package')).toEqual({ kind: 'rejected', code: 'malformed_xml' });
     const { root } = soleElement('<package/>');
     expect(hasLocalName(root, 'package')).toBe(true);
@@ -400,8 +363,6 @@ describe('attribute matching', () => {
   });
 
   it('reads spec-unprefixed attributes by their exact name', () => {
-    // `properties` is spec-defined unprefixed, so `opf:properties` denotes a
-    // different attribute and must not satisfy a `properties` lookup.
     const { $, root } = soleElement('<package><item opf:properties="nav" href="nav.xhtml"/></package>');
     const item = childrenByLocalName($, root, 'item')[0]!;
     expect(attrByExactName(item, 'properties')).toBeUndefined();
@@ -410,10 +371,7 @@ describe('attribute matching', () => {
 });
 
 describe('attribute local-name collisions resolve deterministically', () => {
-  // One element can legally carry `ops:type`, `epub:type`, and bare `type` at
-  // once and the parser retains all three. This group exists so 1.1e's TOC and
-  // role classification depends on a documented policy rather than on
-  // htmlparser2's object key ordering.
+  // Document the collision policy instead of depending on htmlparser2 object key ordering.
   function navAttr(markup: string): string | undefined {
     const { $, root } = soleElement(`<package>${markup}</package>`);
     const nav = childrenByLocalName($, root, 'nav')[0]!;
@@ -431,11 +389,7 @@ describe('attribute local-name collisions resolve deterministically', () => {
 });
 
 describe('XXE regression guards', () => {
-  // These three pass trivially today: cheerio's backend (htmlparser2) performs
-  // no DTD or entity resolution at all. They are kept permanently to fail
-  // loudly if the parser is ever swapped for one that does — that would
-  // reintroduce a file-read primitive into a process whose config directory
-  // holds `secret.key` (design §4).
+  // Permanent guards against a parser swap that re-enables DTD or entity resolution.
   let scratchDir: string | null = null;
 
   afterEach(async () => {
@@ -448,7 +402,7 @@ describe('XXE regression guards', () => {
     const secretPath = path.join(scratchDir, 'secret.key');
     const secret = 'TOP-SECRET-KEY-MATERIAL';
     await writeFile(secretPath, secret, 'utf8');
-    // `pathToFileURL` so a Windows backslash cannot break the fixture.
+    // Use a file URL so Windows separators cannot break the entity fixture.
     const url = pathToFileURL(secretPath).href;
 
     const doc = `<?xml version="1.0"?><!DOCTYPE package [<!ENTITY xxe SYSTEM "${url}">]><package><metadata><dc:title>&xxe;</dc:title></metadata></package>`;
@@ -458,7 +412,6 @@ describe('XXE regression guards', () => {
     expect(readTitle(result)).toBe('&xxe;');
     if (result.kind !== 'document') throw new Error('expected a document');
     expect(result.$.root().text()).not.toContain(secret);
-    // The file is still on disk — the parser simply never read it.
     expect(await readFile(secretPath, 'utf8')).toBe(secret);
   });
 
@@ -476,8 +429,6 @@ describe('XXE regression guards', () => {
 });
 
 describe('no stream surface', () => {
-  // Pins Decision 6 — this module takes bytes and classifies no read error, so
-  // the stream-ownership boundary cannot drift back in without a deliberate edit.
   it.each([['createCountingStream'], ['classifyEpubReadError'], ['Readable']])(
     'does not mention %s',
     async (symbol) => {
