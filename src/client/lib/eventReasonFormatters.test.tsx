@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { EventReasonDetails } from './eventReasonFormatters';
 import { qualityGateReasonSchema } from '@shared/schemas.js';
 
-/** A fully-populated, well-formed held_for_review reason blob. */
+/** Complete valid `held_for_review` payload. */
 const fullReason = {
   action: 'held',
   mbPerHour: 60,
@@ -23,7 +23,7 @@ const fullReason = {
   holdReasons: ['narrator_mismatch'],
 };
 
-/** A NULL_REASON-shaped blob: all keys present, T|null fields null. */
+/** Valid NULL_REASON-shaped blob with all nullable fields null. */
 const nullReason = {
   action: 'held',
   mbPerHour: null,
@@ -53,9 +53,6 @@ describe('EventReasonDetails', () => {
     expect(screen.getByText('Size:')).toBeInTheDocument();
   });
 
-  // #2104 AC37 — a NAMED renderer, not GenericDetails. The generic fallback
-  // would render the raw snake_case keys ("Relaxed_query") as labels; the named
-  // one gives each field a readable label.
   it('renders search_relaxed_held details with named labels rather than GenericDetails', () => {
     render(
       <EventReasonDetails
@@ -76,8 +73,6 @@ describe('EventReasonDetails', () => {
     expect(screen.getByText('Top candidate:')).toBeInTheDocument();
     expect(screen.getByText('Star Wars: The High Republic: Cataclysm')).toBeInTheDocument();
 
-    // COUNTERFACTUAL: omit the DETAIL_RENDERERS entry and GenericDetails
-    // renders these snake_case labels instead.
     expect(screen.queryByText('Relaxed_query:')).not.toBeInTheDocument();
     expect(screen.queryByText('Variant_tag:')).not.toBeInTheDocument();
   });
@@ -129,7 +124,6 @@ describe('EventReasonDetails', () => {
   it('renders download_failed with error text via error renderer', () => {
     render(<EventReasonDetails eventType="download_failed" reason={{ error: 'connection timeout' }} indexerMap={emptyMap} />);
     expect(screen.getByText('connection timeout')).toBeInTheDocument();
-    // Must render as plain text error, not as a generic "Error:" key-value row
     expect(screen.queryByText('Error:')).not.toBeInTheDocument();
   });
 
@@ -162,7 +156,6 @@ describe('EventReasonDetails', () => {
     expect(screen.getByText('{"foo":"bar"}')).toBeInTheDocument();
   });
 
-  // #464 — conditional Indexer row in GrabbedDetails
   it('grabbed — omits Indexer row when indexerId is absent', () => {
     render(<EventReasonDetails eventType="grabbed" reason={{ size: 1024, protocol: 'torrent' }} indexerMap={emptyMap} />);
     expect(screen.queryByText('Indexer:')).not.toBeInTheDocument();
@@ -187,7 +180,6 @@ describe('EventReasonDetails', () => {
     expect(screen.getByText('Size:')).toBeInTheDocument();
   });
 
-  // #1157 — grab_failed renders both release_title and error
   it('grab_failed — renders both release title and error message', () => {
     render(<EventReasonDetails eventType="grab_failed" reason={{ error: 'Connection refused', release_title: 'My.Book.MP3' }} indexerMap={emptyMap} />);
     expect(screen.getByText('Release:')).toBeInTheDocument();
@@ -196,8 +188,6 @@ describe('EventReasonDetails', () => {
   });
 });
 
-// #1305 — held_for_review reason blob is schema-validated before the QualityComparisonPanel cast.
-// Malformed/legacy blobs fall back to GenericDetails instead of rendering "NaN MB/hr" or throwing.
 describe('EventReasonDetails — held_for_review schema gate (#1305)', () => {
   const emptyMap = new Map<number, string>();
 
@@ -210,7 +200,6 @@ describe('EventReasonDetails — held_for_review schema gate (#1305)', () => {
     const { container } = renderHeld(rest);
     expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
     expect(container.textContent).not.toContain('NaN');
-    // Generic fallback renders the remaining keys as key-value rows
     expect(screen.getByText('Action:')).toBeInTheDocument();
   });
 
@@ -263,9 +252,6 @@ describe('EventReasonDetails — held_for_review schema gate (#1305)', () => {
     expect(screen.getByText('narrator mismatch')).toBeInTheDocument();
   });
 
-  // #1362 — the held_for_review fallback path is the rider this issue fixes: failed-parse
-  // legacy rows must render inside the standard generic-details container (they previously
-  // dumped bare), and the parse failure must emit a debug-level signal (previously silent).
   it('#1362: failed parse renders the generic fallback inside the standard boxed container', () => {
     const { container } = renderHeld({ ...nullReason, holdReasons: null });
     const box = container.querySelector('.bg-muted\\/50');
@@ -274,7 +260,6 @@ describe('EventReasonDetails — held_for_review schema gate (#1305)', () => {
     expect(box?.className).toContain('p-3');
     expect(box?.className).toContain('rounded-xl');
     expect(box?.className).toContain('border');
-    // the generic dump of surviving keys renders inside the box
     expect(box?.textContent).toContain('Action');
   });
 
@@ -309,8 +294,6 @@ describe('EventReasonDetails — held_for_review schema gate (#1305)', () => {
   });
 
   it('AC1: legacy blob missing several keys (the QualityComparisonPanel legacy case) falls back', () => {
-    // Mirrors the legacy-shaped blob from QualityComparisonPanel.test.tsx that
-    // is missing existingDuration/downloadedDuration/existingCodec/existingChannels.
     const legacy = {
       action: 'held',
       mbPerHour: 60,
@@ -331,7 +314,6 @@ describe('EventReasonDetails — held_for_review schema gate (#1305)', () => {
   });
 });
 
-// #1305 — direct schema-gate assertions (fast, render-independent)
 describe('qualityGateReasonSchema (#1305)', () => {
   it('accepts a NULL_REASON-shaped blob', () => {
     expect(qualityGateReasonSchema.safeParse(nullReason).success).toBe(true);
