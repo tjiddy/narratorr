@@ -22,14 +22,7 @@ import type { SettingsService } from './settings.service.js';
 import { normalizeMemberTitleForMatch } from './series-title-match.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 
-/**
- * Integration tests for `BookService.fixMatch` and `replaceSeriesLink` against
- * a real in-memory SQLite database. Covers the transactional persistence path
- * the route tests can't exercise (those mock `services.book.fixMatch`).
- *
- * AC mapping: F2 of PR #1130 review — direct service-level DB-mutation tests
- * for the new Fix Match transaction.
- */
+// Real SQLite coverage owns fixMatch transactions and replaceSeriesLink; route tests mock this boundary.
 describe('BookService.fixMatch — integration (#1129 F2)', () => {
   let dir: string;
   let db: Db;
@@ -66,7 +59,6 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       publishedDate: '2020-01-01',
       genres: ['Old Genre'],
     });
-    // Simulate locally-populated state that Fix Match must preserve
     await db.update(books).set({
       path: '/library/old-path',
       size: 12345,
@@ -75,7 +67,7 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       audioFileCount: 1,
       lastGrabGuid: 'guid:old',
       lastGrabInfoHash: 'hash:old',
-      // Maxed-out failed identity: the terminal state Fix Match exists to rescue (#1646).
+      // Exercise the exhausted enrichment state that Fix Match must reset.
       enrichmentStatus: 'failed',
       enrichmentAttempts: 5,
     }).where(eq(books.id, created.id));
@@ -107,8 +99,7 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     const [row] = await db.select().from(books).where(eq(books.id, bookId));
     expect(row!.asin).toBe('B_NEW');
     expect(row!.title).toBe('New Title');
-    // Regression guard (#1614): subtitle was declared on FixMatchReplacement but
-    // never written by buildFixMatchScalarUpdates; publisher wasn't projected at all.
+    // Regression guard: subtitle and publisher were previously omitted from scalar updates.
     expect(row!.subtitle).toBe('New Subtitle');
     expect(row!.publisher).toBe('New Publisher');
     expect(row!.description).toBe('New description');
@@ -120,9 +111,8 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     expect(row!.isbn).toBe('9781234567890');
     expect(row!.genres).toEqual(['Fantasy']);
     expect(row!.enrichmentStatus).toBe('pending');
-    // Fix Match grants a fresh attempt budget, not the stale count from the wrong identity (#1646).
+    // A new identity receives a fresh enrichment attempt budget.
     expect(row!.enrichmentAttempts).toBe(0);
-    // Preserved local state
     expect(row!.path).toBe('/library/old-path');
     expect(row!.size).toBe(12345);
     expect(row!.audioCodec).toBe('aac');
@@ -131,7 +121,6 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     expect(row!.lastGrabGuid).toBe('guid:old');
     expect(row!.lastGrabInfoHash).toBe('hash:old');
 
-    // Author/narrator junctions reflect ONLY the new identity
     const authorRows = await db
       .select({ name: authors.name })
       .from(bookAuthors)
@@ -146,7 +135,6 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       .where(eq(bookNarrators.bookId, bookId));
     expect(narratorRows.map((r) => r.name)).toEqual(['New Narrator']);
 
-    // series_members points at the NEW series; old membership gone
     const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
     expect(members).toHaveLength(1);
     const seriesRow = (await db.select().from(series).where(eq(series.id, members[0]!.seriesId)))[0]!;
@@ -159,7 +147,6 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     const svc = new BookService(db, log);
     const bookId = await seedBookA(svc);
 
-    // Pre-condition: an old series_members row exists for this book
     expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(1);
 
     const updated = await svc.fixMatch(bookId, {
@@ -171,7 +158,6 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       coverUrl: 'https://example.com/solo.jpg',
       duration: 500,
       publishedDate: '2024-05-02',
-      // No seriesName / seriesPosition
     });
     expect(updated).not.toBeNull();
 
@@ -179,18 +165,15 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     expect(row!.seriesName).toBeNull();
     expect(row!.seriesPosition).toBeNull();
     expect(row!.asin).toBe('B_STANDALONE');
-    // Full-overwrite semantics (#1614): a replacement without subtitle/publisher
-    // nulls the previously-stored values (intentional, unlike enrichment).
+    // Full-overwrite semantics: absent subtitle and publisher become null, unlike enrichment.
     expect(row!.subtitle).toBeNull();
     expect(row!.publisher).toBeNull();
 
-    // No membership rows remain for the book
     const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
     expect(members).toHaveLength(0);
   });
 
-  // #2069 AC13 — re-identifying a book is a NEW operator assertion, so the prior
-  // clears (which described the OLD record) are reset rather than honored.
+  // Re-identification resets operator clears that described the old identity.
   it('resets user_cleared_fields to SQL NULL in the same transaction as the scalar replacement', async () => {
     const svc = new BookService(db, log);
     const bookId = await seedBookA(svc);
@@ -206,8 +189,7 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
 
     const [row] = await db.select().from(books).where(eq(books.id, bookId));
     expect(row!.userClearedFields).toBeNull();
-    // Asserted from the same read as the replacement itself, so a reset that lands
-    // without the scalar rewrite (or vice versa) cannot pass.
+    // One read couples the clear reset to the scalar replacement.
     expect(row!.seriesName).toBe('New Series');
     expect(row!.enrichmentStatus).toBe('pending');
   });
@@ -358,20 +340,12 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
       seriesPosition: 1,
     });
 
-    // Capture the original membership BEFORE we force a failure.
     const before = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, created.id));
     expect(before).toHaveLength(1);
     const beforeRow = before[0]!;
     const bookSnapshotBefore = (await db.select().from(books).where(eq(books.id, created.id)))[0]!;
 
-    // Spy seriesMembers.insert by monkey-patching the underlying tx.insert
-    // call path: we wrap the BookService.fixMatch transaction by overriding
-    // `db.transaction` to invoke the callback then throw mid-flight, AFTER
-    // the membership delete but DURING the insert. Easier: pass a payload that
-    // forces a primary-key collision on `series_members` by pre-seeding a row
-    // with the same id we'd allocate next. SQLite autoincrement makes this
-    // unreliable across runs — use a simpler proxy: replace `tx.insert` so the
-    // membership insert throws.
+    // Fail the membership insert inside the real transaction after earlier writes have run.
     const origTransaction = db.transaction.bind(db);
     const txSpy = vi.spyOn(db, 'transaction').mockImplementation(async (cb: Parameters<typeof origTransaction>[0]) => {
       return origTransaction(async (tx) => {
@@ -398,7 +372,6 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
 
     txSpy.mockRestore();
 
-    // Transaction rolled back: book row + old member row are unchanged.
     const bookAfter = (await db.select().from(books).where(eq(books.id, created.id)))[0]!;
     expect(bookAfter.asin).toBe(bookSnapshotBefore.asin);
     expect(bookAfter.title).toBe(bookSnapshotBefore.title);
@@ -410,14 +383,8 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
   });
 });
 
-/**
- * #2150 — the operator-visible half. Fix Match onto a Hardcover-canonical series
- * used to seed a `source: 'local'` row, and since #2144 such a row claims its
- * book BEFORE the title matcher runs, so the canonical member rendered '+ Add'
- * for a book the operator owns while the book rendered a second time as its own
- * entry. These build the actual card the modal invalidates
- * (`GET /api/books/:id/series` → `SeriesCardService.getSeriesForBook`).
- */
+// Seeding a local row before canonical title matching caused a duplicate card entry and false “+ Add”.
+// These tests build the real SeriesCardService result consumed by the modal.
 describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)', () => {
   let dir: string;
   let db: Db;
@@ -444,7 +411,7 @@ describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)',
     }));
   }
 
-  /** A canonical `series` row plus its Hardcover member set — a cache HIT, so no fetch. */
+  /** Seed a canonical cache hit so no provider fetch can alter the fixture. */
   async function seedCanonicalBand(memberTitles: readonly string[]): Promise<number> {
     const [row] = await db.insert(series).values({ publicId: generatePublicId('sr'),
       hardcoverSeriesId: 5523,
@@ -481,7 +448,6 @@ describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)',
     return created.id;
   }
 
-  // AC7 — the fix. `seriesName` byte-identical to the cached `series.name`.
   it('AC7: the fix-matched book renders as exactly one canonical member with inLibrary, and the card issues no write', async () => {
     const svc = new BookService(db, log());
     const seriesId = await seedCanonicalBand(['Kings of the Wyld', 'Bloody Rose']);
@@ -492,8 +458,7 @@ describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)',
       seriesName: 'The Band', seriesPosition: 2,
     });
 
-    // The matched card takes `buildCardFromCache`'s fast path — assert no
-    // transaction is opened, not merely that the row count happens to be right.
+    // Pin the cache fast path by asserting it opens no transaction.
     const txSpy = vi.spyOn(db, 'transaction');
     const card = await cardService().getSeriesForBook(bookId);
     expect(txSpy).not.toHaveBeenCalled();
@@ -503,21 +468,17 @@ describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)',
     expect(card!.hardcoverSeriesId).toBe(5523);
     const owned = card!.members.filter((m) => m.libraryBookId === bookId);
     expect(owned).toHaveLength(1);
-    // The surviving entry is the CANONICAL member, not a locally-rendered clone.
+    // The surviving entry must be canonical, not a locally rendered clone.
     expect(owned[0]!.hardcoverBookId).toBe(1002);
     expect(owned[0]!.inLibrary).toBe(true);
     expect(card!.members).toHaveLength(2);
     expect(card!.members.every((m) => m.hardcoverBookId !== null)).toBe(true);
-    // Nothing local was seeded into the canonical series.
     const localRows = await db.select().from(seriesMembers)
       .where(and(eq(seriesMembers.seriesId, seriesId), eq(seriesMembers.source, 'local')));
     expect(localRows).toHaveLength(0);
   });
 
-  // AC7 — name-drift variant. The replacement name is normalized-equal but
-  // byte-different from the cached `series.name`; the own card loads its pool
-  // with the BOOK's `series_name`, which is exactly what Fix Match just wrote,
-  // so the book is in its own pool either way.
+  // The card pools by the just-written book series name, so normalized-equal spelling drift must still match.
   it('AC7: a normalized-equal, byte-different replacement series name yields the identical single-entry card', async () => {
     const svc = new BookService(db, log());
     await seedCanonicalBand(['Kings of the Wyld', 'Bloody Rose']);
@@ -527,7 +488,6 @@ describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)',
       asin: 'B_BR', title: 'Bloody Rose', authors: [{ name: 'Nicholas Eames' }],
       seriesName: 'the band', seriesPosition: 2,
     });
-    // Fix Match resolved onto the ONE canonical row rather than creating a second.
     const bandRows = await db.select().from(series).where(eq(series.normalizedName, 'the band'));
     expect(bandRows).toHaveLength(1);
     expect(bandRows[0]!.hardcoverSeriesId).toBe(5523);
@@ -539,9 +499,7 @@ describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)',
     expect(card!.members).toHaveLength(2);
   });
 
-  // AC8 — the #2144 case: the canonical member set does not contain the book
-  // (a dateless Hardcover stub). The card build's reconcile seeds the local row
-  // this call site no longer writes, so the book is never invisible.
+  // When Hardcover lacks the member, only card reconciliation may seed the local fallback.
   it('AC8: a book the canonical member set does not contain still renders, seeded by the card reconcile', async () => {
     const svc = new BookService(db, log());
     const seriesId = await seedCanonicalBand(['Kings of the Wyld']);
@@ -551,7 +509,7 @@ describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)',
       asin: 'B_OUT', title: 'Outland Interlude', authors: [{ name: 'Nicholas Eames' }],
       seriesName: 'The Band', seriesPosition: 3,
     });
-    // replaceSeriesLink itself seeded nothing — the reconcile is the only writer.
+    // replaceSeriesLink seeds nothing here; card reconciliation is the only writer.
     expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(0);
 
     const card = await cardService().getSeriesForBook(bookId);
@@ -566,18 +524,13 @@ describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)',
     expect(seeded[0]!.bookId).toBe(bookId);
   });
 
-  // AC9 — rollback AFTER the writes were issued. `replaceSeriesLink` is the last
-  // awaited step in `fixMatch`'s transaction, so there is no later application
-  // step to reject from: let the real callback finish, then throw before commit.
-  // A rollback that never reaches the write cannot distinguish a rolled-back
-  // mutation from one that never happened, which is why the pre-write case at
-  // ':212' is not a substitute for this one.
+  // Throw after the real callback because replaceSeriesLink is fixMatch's final awaited step.
+  // Requiring changed uncommitted state prevents a pre-write failure from passing vacuously.
   it('AC9: a failure after the link writes rolls every series_members row back to its pre-call state', async () => {
     const svc = new BookService(db, log());
     const seriesId = await seedCanonicalBand(['Kings of the Wyld', 'Bloody Rose']);
     const bookId = await seedOwnedBook(svc);
-    // A provider row in a SIBLING series (the null-link target) plus the book's
-    // own local row (the delete target), so all three write shapes are in flight.
+    // Seed sibling-provider and local rows so null-link, delete, and relink writes all execute.
     const [sibling] = await db.insert(series).values({ publicId: generatePublicId('sr'),
       hardcoverSeriesId: 77, name: 'Sibling', normalizedName: 'sibling',
     }).returning();
@@ -594,10 +547,6 @@ describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)',
     );
     const before = await snapshot(db);
 
-    // Captured INSIDE the transaction, after the link writes and before the
-    // throw. Asserting it differs from `before` is what makes this a POST-write
-    // rollback rather than the pre-write case already covered at ':212' — a
-    // rollback that never reached the write cannot distinguish the two.
     let uncommitted = '';
     const origTransaction = db.transaction.bind(db);
     const txSpy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (cb: Parameters<typeof origTransaction>[0]) => {
@@ -616,7 +565,6 @@ describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)',
 
     expect(uncommitted).not.toBe(before);
     expect(await snapshot(db)).toBe(before);
-    // And the scalar half rolled back with it.
     const [row] = await db.select().from(books).where(eq(books.id, bookId));
     expect(row!.asin).toBe('B_WRONG');
     expect(row!.seriesName).toBe('Some Other Series');

@@ -12,7 +12,7 @@ import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import { collectSortedAudioFiles } from '@core/utils/collect-audio-files.js';
 import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
-// Imported by path, not via the core/utils barrel (Node-only; barrel feeds the Vite client build).
+// Direct import keeps Node-only code out of the core/utils barrel consumed by Vite.
 import { sanitizedEnv } from '@core/utils/sanitized-env.js';
 import { COVER_FILE_REGEX } from '@core/utils/cover-regex.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -38,21 +38,18 @@ export type {
 
 const execFileAsync = promisify(execFile);
 
-/** Extensions we can write tags to via ffmpeg */
 const TAGGABLE_EXTENSIONS = new Set(['.mp3', '.m4a', '.m4b']);
 
 export interface TagMetadata {
-  artist?: string;       // author
-  albumArtist?: string;  // author
-  album?: string;        // book title
-  title?: string;        // book title (for single-file) or chapter/part
-  composer?: string;     // narrator
-  grouping?: string;     // series name (survives M4B; ABS series fallback)
-  track?: number;        // track number (multi-file only)
-  trackTotal?: number;   // total tracks
-  // ABS-survivable set (#1671): survives MP3 embedded tags; series*/subtitle/asin/
-  // publisher dropped by ffmpeg on M4B (ABS-via-OPF), date/genre/description survive.
-  // `seriesPart` is numeric so position 0 is preserved (`!= null`, not truthy).
+  artist?: string; // author
+  albumArtist?: string; // author
+  album?: string; // book title
+  title?: string; // book or part title
+  composer?: string; // narrator
+  grouping?: string; // series name; ABS fallback
+  track?: number;
+  trackTotal?: number;
+  // MP3 preserves these fields; M4B loses series/subtitle/ASIN/publisher, which OPF supplies to ABS.
   series?: string; seriesPart?: number; subtitle?: string; asin?: string;
   publisher?: string; description?: string; date?: string; genre?: string;
 }
@@ -69,12 +66,7 @@ export interface RetagResult {
   skipped: number;
   failed: number;
   warnings: string[];
-  /**
-   * Connector-refresh item built from the book's pre-tag-write state (title/author/path loaded
-   * before the irreversible in-place tag rewrite), so the caller can fire the `'metadata'` refresh
-   * without a post-mutation reload that could silently drop it. `null` only when there's no usable
-   * `libraryPath` (empty/missing) — see {@link enqueueRetagRefresh}.
-   */
+  /** Pre-write connector snapshot; null only without a usable library path. */
   refreshItem: BookRefreshItem | null;
 }
 
@@ -85,10 +77,6 @@ export const STRING_METADATA_TAGS: ReadonlyArray<readonly [keyof TagMetadata, st
   ['asin', 'asin'], ['publisher', 'publisher'], ['description', 'description'], ['date', 'date'], ['genre', 'genre'],
 ];
 
-/**
- * Build ffmpeg args for writing metadata tags to an audio file.
- * Uses temp file + verify + rename strategy to prevent corruption.
- */
 export function buildFfmpegArgs(
   inputPath: string,
   outputPath: string,
@@ -101,26 +89,17 @@ export function buildFfmpegArgs(
     args.push('-i', coverPath);
   }
 
-  // Map inputs. Exactly one video mapping either way: the new cover input when one was
-  // supplied, otherwise the source's OWN attached picture (#2078). Without that fallback the
-  // tag write is audio-only and silently strips embedded art — on every `populate_missing`
-  // re-tag (where shouldEmbedCover is false precisely BECAUSE the file already has a picture)
-  // and on every re-tag with Embed cover art off. The `?` makes the specifier optional, so a
-  // file with no video stream is unaffected.
+  // Always map one picture stream: supplied cover or optional source art; omitting the fallback strips existing covers.
   args.push('-map', '0:a');
   args.push('-map', coverPath ? '1' : '0:v?');
   args.push('-c:v', 'copy', '-disposition:v', 'attached_pic');
 
-  // Copy audio codec (no re-encode)
   args.push('-c:a', 'copy');
 
-  // Preserve chapters from the source. Without this ffmpeg drops the M4B chapter
-  // stream on re-tag (#1671); harmless for MP3, which has no chapter stream.
+  // Explicit mapping prevents ffmpeg from dropping M4B chapters during re-tagging.
   args.push('-map_chapters', '0');
 
-  // Write metadata tags. String fields (including the #1671 ABS-survivable set)
-  // are written via a table; the numeric `series-part`/`track` fields use `!= null`
-  // so a position/track of 0 is preserved (omit empties — no bare `key=`).
+  // Numeric null checks preserve zero while omitting empty metadata assignments.
   for (const [field, key] of STRING_METADATA_TAGS) {
     const value = tags[field];
     if (value) args.push('-metadata', `${key}=${value}`);
@@ -134,10 +113,6 @@ export function buildFfmpegArgs(
   return args;
 }
 
-/**
- * Tag a single audio file using ffmpeg.
- * Returns the result status for this file.
- */
 export async function tagFile(
   filePath: string,
   ffmpegPath: string,
@@ -152,20 +127,16 @@ export async function tagFile(
     return { file: fileName, status: 'skipped', reason: `Unsupported format: ${ext}` };
   }
 
-  // Read existing tags for populate_missing mode
   const existing = mode === 'populate_missing' ? await readExistingTags(filePath) : {};
   const resolvedTags = resolveTags(tags, existing, mode);
 
-  // Check if cover embedding is needed when in populate_missing mode
   const shouldEmbedCover = coverPath && (mode === 'overwrite' || !await fileHasCoverArt(filePath));
 
   if (!resolvedTags && !shouldEmbedCover) {
     return { file: fileName, status: 'skipped', reason: 'All tags already populated' };
   }
 
-  // Born-hidden temp (#1852 AC9): the shared dotPrefixBasename dot-prefixes the basename (like the
-  // `.cover-*.tmp` precedent) so a scan/ABS never folds it in mid-write; the `rename(tmpPath, filePath)`
-  // finalize below stays atomic. One home for the born-hidden path decision (shared with merge/bulk/convert).
+  // Create the temp file hidden so scans cannot ingest it before the atomic rename.
   const tmpPath = dotPrefixBasename(join(dirname(filePath), `${basename(filePath, ext)}.tmp${ext}`));
 
   try {
@@ -178,28 +149,23 @@ export async function tagFile(
 
     await execFileAsync(ffmpegPath, ffmpegArgs, { env: sanitizedEnv() });
 
-    // Verify temp file exists and has reasonable size
     const [originalStat, tmpStat] = await Promise.all([stat(filePath), stat(tmpPath)]);
     if (tmpStat.size < originalStat.size * 0.5) {
       await unlink(tmpPath).catch(() => {});
       return { file: fileName, status: 'failed', reason: 'Output file suspiciously small — possible corruption' };
     }
 
-    // Atomically replace original with temp (rename overwrites destination on POSIX)
+    // Atomically replace the original with the verified temp.
     await rename(tmpPath, filePath);
 
     return { file: fileName, status: 'tagged' };
   } catch (error: unknown) {
-    // Clean up temp file on failure
     await unlink(tmpPath).catch(() => {});
     const message = getErrorMessage(error);
     return { file: fileName, status: 'failed', reason: message };
   }
 }
 
-/**
- * Find a cover image file in a directory.
- */
 async function findCoverFile(dirPath: string): Promise<string | undefined> {
   try {
     const entries = await readdir(dirPath);
@@ -210,16 +176,10 @@ async function findCoverFile(dirPath: string): Promise<string | undefined> {
   }
 }
 
-/**
- * Collect audio files in a directory and sort them with locale-aware numeric ordering.
- */
 async function collectAudioFiles(dirPath: string): Promise<string[]> {
   return collectSortedAudioFiles(dirPath, { extensions: TAGGABLE_EXTENSIONS });
 }
 
-/**
- * Scan a directory for audio files with unsupported formats and return warning entries.
- */
 async function warnUnsupportedFormats(
   dirPath: string,
   log: FastifyBaseLogger,
@@ -255,10 +215,6 @@ export class TaggingService {
     private bookService?: BookService,
   ) {}
 
-  /**
-   * Tag audio files in a book's directory using metadata from the database.
-   * Called during import and manual re-tag.
-   */
   async tagBook(
     bookId: number,
     bookPath: string,
@@ -278,9 +234,6 @@ export class TaggingService {
     embedCover: boolean,
     excludeFields: ReadonlySet<RetagExcludableField> = new Set(),
   ): Promise<RetagResult> {
-    // Build the refresh item from the pre-write state passed in (title/author/path) so a re-tag
-    // caller fires the connector refresh without a post-mutation reload. Guard the path truthiness
-    // (empty string → no item) rather than asserting it non-null.
     const refreshItem: BookRefreshItem | null = bookPath
       ? { bookId, title: metadata.title, authorName: metadata.authorName ?? null, libraryPath: bookPath }
       : null;
@@ -288,7 +241,6 @@ export class TaggingService {
 
     const audioFiles = await collectAudioFiles(bookPath);
 
-    // Warn about unsupported audio formats in the directory
     const unsupported = await warnUnsupportedFormats(bookPath, this.log);
     result.skipped += unsupported.skipped;
     result.warnings.push(...unsupported.warnings);
@@ -298,7 +250,6 @@ export class TaggingService {
       return result;
     }
 
-    // Find cover image for embedding
     let coverPath: string | undefined;
     if (embedCover) {
       coverPath = await findCoverFile(bookPath);
@@ -312,8 +263,7 @@ export class TaggingService {
 
     for (let i = 0; i < audioFiles.length; i++) {
       const filePath = audioFiles[i]!;
-      // Multi-file overwrite is the only path where the desired title depends on
-      // the file's current tags (preserve existing chapter title → basename fallback).
+      // Multi-file overwrite preserves an existing chapter title before falling back to basename.
       const existingTags = !isSingleFile && mode === 'overwrite'
         ? await readExistingTags(filePath)
         : {};
@@ -350,11 +300,6 @@ export class TaggingService {
     return result;
   }
 
-  /**
-   * Re-tag files for an existing book. Called from the book detail page.
-   * Optional `excludeFields` lets the caller opt out of specific tag fields
-   * per the preview-modal flow; defaults to empty (write everything).
-   */
   async retagBook(
     bookId: number,
     excludeFields: ReadonlySet<RetagExcludableField> = new Set(),
@@ -383,12 +328,7 @@ export class TaggingService {
     );
   }
 
-  /**
-   * Pure planner — returns the per-file outcomes the apply path would
-   * produce, without invoking ffmpeg or touching disk/DB. Used by
-   * `GET /api/books/:id/retag/preview` so the user can review and opt out
-   * of specific tag fields before committing.
-   */
+  /** Plan per-file outcomes without ffmpeg or mutation for the preview route. */
   async planRetag(
     bookId: number,
     overrides: { mode?: TagMode; embedCover?: boolean } = {},
@@ -411,8 +351,7 @@ export class TaggingService {
     const unsupported = await warnUnsupportedFormats(book.path!, this.log);
     warnings.push(...unsupported.warnings);
 
-    // Always probe for cover file so the modal can disable the embedCover checkbox
-    // when no cover is on disk — independent of whether embedCover is currently on.
+    // Probe regardless of the toggle so the modal can disable embedding when no cover exists.
     const coverPath = await findCoverFile(book.path!);
     if (embedCover && !coverPath) {
       warnings.push('Cover art embedding enabled but no cover image found in book directory');
@@ -427,8 +366,7 @@ export class TaggingService {
         hasCoverFile: !!coverPath,
         isSingleFile: false,
         canonical: pickCanonical(canonicalTags),
-        // Surface unsupported-only folders as skip-unsupported rows so the per-file outcomes
-        // mirror the apply path (which reports each entry via `skipped` + per-file warnings).
+        // Unsupported-only folders still need per-file rows matching the apply path.
         files: unsupported.entries.map(entry => ({ file: entry, outcome: 'skip-unsupported' as const })),
         warnings,
       };
@@ -455,7 +393,6 @@ export class TaggingService {
     };
   }
 
-  /** Build the per-file plan rows: unsupported entries + planFile() output for each taggable file. */
   private async buildPlanFiles(args: {
     audioFiles: string[];
     unsupported: string[];
@@ -474,9 +411,7 @@ export class TaggingService {
 
     for (let i = 0; i < args.audioFiles.length; i++) {
       const filePath = args.audioFiles[i]!;
-      // Mirror tagBook: pre-read existing tags for multi-file overwrite so the
-      // per-file title decision is shared, and pass them to planFile so the
-      // diff-side read isn't repeated.
+      // Share tagBook's title decision and pass the same read into planFile to avoid a second probe.
       const existingTags = !args.isSingleFile && args.mode === 'overwrite'
         ? await readExistingTags(filePath)
         : undefined;
@@ -496,7 +431,6 @@ export class TaggingService {
     return files;
   }
 
-  /** Shared validation for both `retagBook` and `planRetag`. */
   private async resolveRetagInputs(bookId: number): Promise<{
     book: NonNullable<Awaited<ReturnType<NonNullable<TaggingService['bookService']>['getById']>>>;
     ffmpegPath: string;
