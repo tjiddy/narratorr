@@ -16,11 +16,7 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-// #1774 — spread the REAL barrel (importOriginal) so the newly-referenced helpers
-// (`templateHasToken`, `composeEditionSuffixLeaf`, `sanitizeEditionDiscriminator`) resolve to their
-// real implementations and the "Multiple editions" preview row matches production. Only the two
-// render fakes and the preset seam are overridden — the render fakes preserve the `[sep:…]`/`[case:…]`
-// tag assertions the existing tests depend on. See learning `vimock-barrel-replace-drops-named-exports`.
+// Spread the real barrel so unmocked naming helpers stay production-faithful; render fakes expose options through tags.
 vi.mock('@core/utils/index.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@core/utils/index.js')>()),
   renderTemplate: (template: string, tokens: Record<string, unknown>, options?: { separator?: string; case?: string }) => {
@@ -87,8 +83,6 @@ describe('NamingSettingsSection', () => {
     });
 
     it('format inputs keep an accessible name (row header is a span, so the input labels itself)', async () => {
-      // Regression guard: the stacked row header hosts the interactive "?" button and therefore
-      // renders as a <span>, not a <label> — without aria-label the inputs would be nameless.
       renderWithProviders(<NamingSettingsSection />);
       await waitFor(() => {
         expect(screen.getByLabelText('Folder format')).toHaveAttribute('id', 'folderFormat');
@@ -273,16 +267,13 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByLabelText('Case')).toBeInTheDocument();
       });
-      // Change case to 'upper'
       await user.selectOptions(screen.getByLabelText('Case'), 'upper');
       const saveBtn = screen.getByRole('button', { name: /save/i });
       expect(saveBtn).toBeInTheDocument();
-      // Submit and let it fail
       fireEvent.submit(saveBtn.closest('form')!);
       await waitFor(() => {
         expect(mockToast.error).toHaveBeenCalledWith('Network error');
       });
-      // Edited value still selected and save button still visible for retry
       expect(screen.getByLabelText('Case')).toHaveValue('upper');
       expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
     });
@@ -294,7 +285,6 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
       });
-      // Each "With series" label should share a flex row with its preview value
       const withSeriesLabels = screen.getAllByText('With series');
       for (const label of withSeriesLabels) {
         const row = label.closest('div');
@@ -307,13 +297,11 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{author} - {title}');
       });
-      // File format previews should contain .m4b suffix
       const withSeries = screen.getAllByTestId('preview-with-series');
       // The second preview-with-series belongs to the file format field
       expect(withSeries.length).toBe(2);
       expect(withSeries[1]!.textContent).toContain('.m4b');
       expect(withSeries[1]!.textContent).not.toContain('.mp3');
-      // Without-series file row also stays .m4b
       const withoutSeries = screen.getAllByTestId('preview-without-series');
       expect(withoutSeries[1]!.textContent).toContain('.m4b');
       expect(withoutSeries[1]!.textContent).not.toContain('.mp3');
@@ -324,7 +312,6 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{author} - {title}');
       });
-      // Only the file format field renders preview-multi-file (folder passes no previewMultiFile)
       const multiFile = screen.getByTestId('preview-multi-file');
       expect(multiFile.textContent).toContain('.mp3');
       expect(multiFile.textContent).not.toContain('.m4b');
@@ -389,7 +376,6 @@ describe('NamingSettingsSection', () => {
       });
       await user.click(screen.getByLabelText('Toggle folder tokens'));
       expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'true');
-      // Panel should be visible with token group headings
       expect(screen.getByText('Author')).toBeInTheDocument();
     });
 
@@ -425,15 +411,12 @@ describe('NamingSettingsSection', () => {
         expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
       });
       await user.click(screen.getByLabelText('Toggle folder tokens'));
-      // Should show folder-scoped groups
       expect(screen.getByText('Author')).toBeInTheDocument();
       expect(screen.getByText('Title')).toBeInTheDocument();
       expect(screen.getByText('Series')).toBeInTheDocument();
       expect(screen.getByText('Narrator')).toBeInTheDocument();
       expect(screen.getByText('Metadata')).toBeInTheDocument();
-      // #1712 — {edition} is discoverable in the folder token picker.
       expect(screen.getByText('{edition}')).toBeInTheDocument();
-      // Should NOT show file-specific group
       expect(screen.queryByText('File-specific')).not.toBeInTheDocument();
     });
 
@@ -446,7 +429,6 @@ describe('NamingSettingsSection', () => {
       await user.click(screen.getByLabelText('Toggle file tokens'));
       expect(screen.getByText('Author')).toBeInTheDocument();
       expect(screen.getByText('File-specific')).toBeInTheDocument();
-      // File-specific tokens should be present
       expect(screen.getByText('{trackNumber}')).toBeInTheDocument();
       expect(screen.getByText('{trackTotal}')).toBeInTheDocument();
       expect(screen.getByText('{partName}')).toBeInTheDocument();
@@ -458,18 +440,14 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
       });
-      // Focus the input and move cursor to end
       const input = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
       await user.click(input);
       input.setSelectionRange(input.value.length, input.value.length);
-      // Open inline panel and click a token
       await user.click(screen.getByLabelText('Toggle folder tokens'));
       await user.click(screen.getByText('{series}'));
-      // Token should be appended at the end since cursor was at the end
       await waitFor(() => {
         expect(input.value).toBe('{author}/{title}{series}');
       });
-      // Form should be dirty — save button visible
       expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
     });
 
@@ -479,14 +457,11 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
       });
-      // Focus and select "{title}" (characters 9-16 in "{author}/{title}")
       const input = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
       await user.click(input);
       input.setSelectionRange(9, 16);
-      // Open inline panel and click {series} to replace the selection
       await user.click(screen.getByLabelText('Toggle folder tokens'));
       await user.click(screen.getByText('{series}'));
-      // {title} should be replaced with {series}
       await waitFor(() => {
         expect(input.value).toBe('{author}/{series}');
       });
@@ -501,7 +476,6 @@ describe('NamingSettingsSection', () => {
       await user.click(screen.getByLabelText('Toggle folder tokens'));
       expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'true');
       await user.click(screen.getByText('{series}'));
-      // Panel should still be open after token insertion
       expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'true');
       expect(screen.getByText('Author')).toBeInTheDocument();
     });
@@ -512,13 +486,10 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
       });
-      // Open inline panel
       await user.click(screen.getByLabelText('Toggle folder tokens'));
       expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'true');
-      // Open modal
       await user.click(screen.getByLabelText('Folder token reference'));
       expect(screen.getByText('Folder Token Reference')).toBeInTheDocument();
-      // Inline panel should still be open
       expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'true');
     });
 
@@ -540,13 +511,10 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
       });
-      // Open both panels
       await user.click(screen.getByLabelText('Toggle folder tokens'));
       await user.click(screen.getByLabelText('Toggle file tokens'));
-      // Close folder panel
       await user.click(screen.getByLabelText('Toggle folder tokens'));
       expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'false');
-      // File panel should still be open
       expect(screen.getByLabelText('Toggle file tokens')).toHaveAttribute('aria-expanded', 'true');
     });
   });
@@ -573,16 +541,12 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{author}');
       });
-      // File format validation warning should be shown
       const warnings = screen.getAllByText(/Template must include/);
       expect(warnings.length).toBeGreaterThanOrEqual(1);
-      // Make form dirty to trigger save button
       const user = userEvent.setup();
       await user.selectOptions(screen.getByLabelText('Separator'), 'dash');
-      // Submit should be blocked by validation — updateSettings should not be called
       fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
       await waitFor(() => {
-        // Give time for submit to process
         expect(mockApi.updateSettings).not.toHaveBeenCalled();
       });
     });
@@ -603,13 +567,11 @@ describe('NamingSettingsSection', () => {
 
     it('deletes entire {title} token when Backspace pressed after closing }', async () => {
       const input = await setupWithValue('{author}/{title}');
-      // Position cursor after } of {title} — position 16
       input.setSelectionRange(16, 16);
       fireEvent.keyDown(input, { key: 'Backspace' });
       await waitFor(() => {
         expect(input.value).toBe('{author}/');
       });
-      // Cursor should be at position 9 (where { was) via requestAnimationFrame
       await waitFor(() => {
         expect(input.selectionStart).toBe(9);
       });
@@ -617,7 +579,6 @@ describe('NamingSettingsSection', () => {
 
     it('deletes entire {seriesPosition:00} token (format specifier) on Backspace', async () => {
       const input = await setupWithValue('{author}/{seriesPosition:00}');
-      // After } at position 28 (string length = 28)
       input.setSelectionRange(28, 28);
       fireEvent.keyDown(input, { key: 'Backspace' });
       await waitFor(() => {
@@ -627,7 +588,6 @@ describe('NamingSettingsSection', () => {
 
     it('deletes entire {series? - } token (conditional text) on Backspace', async () => {
       const input = await setupWithValue('{author}/{series? - }{title}');
-      // After } of {series? - } at position 21
       input.setSelectionRange(21, 21);
       fireEvent.keyDown(input, { key: 'Backspace' });
       await waitFor(() => {
@@ -637,7 +597,6 @@ describe('NamingSettingsSection', () => {
 
     it('deletes entire {series?} token (empty conditional) on Backspace', async () => {
       const input = await setupWithValue('{author}/{series?}{title}');
-      // After } of {series?} at position 18
       input.setSelectionRange(18, 18);
       fireEvent.keyDown(input, { key: 'Backspace' });
       await waitFor(() => {
@@ -647,7 +606,6 @@ describe('NamingSettingsSection', () => {
 
     it('deletes entire {trackNumber:00? - pt} token (combined format+conditional) on Backspace', async () => {
       const input = await setupWithValue('{title}{trackNumber:00? - pt}');
-      // After } at position 29 (string length = 29)
       input.setSelectionRange(29, 29);
       fireEvent.keyDown(input, { key: 'Backspace' });
       await waitFor(() => {
@@ -657,7 +615,6 @@ describe('NamingSettingsSection', () => {
 
     it('deletes entire {seriesPosition:00? - } token (combined format+conditional with trailing space) on Backspace', async () => {
       const input = await setupWithValue('{seriesPosition:00? - }{title}');
-      // After } of {seriesPosition:00? - } at position 23
       input.setSelectionRange(23, 23);
       fireEvent.keyDown(input, { key: 'Backspace' });
       await waitFor(() => {
@@ -681,13 +638,11 @@ describe('NamingSettingsSection', () => {
 
     it('deletes entire {title} token when Delete pressed before opening {', async () => {
       const input = await setupWithValue('{author}/{title}');
-      // Position cursor before { of {title} — position 9
       input.setSelectionRange(9, 9);
       fireEvent.keyDown(input, { key: 'Delete' });
       await waitFor(() => {
         expect(input.value).toBe('{author}/');
       });
-      // Cursor should stay at position 9 via requestAnimationFrame
       await waitFor(() => {
         expect(input.selectionStart).toBe(9);
       });
@@ -695,7 +650,6 @@ describe('NamingSettingsSection', () => {
 
     it('deletes entire {seriesPosition:00} token (format specifier) on Delete', async () => {
       const input = await setupWithValue('{author}/{seriesPosition:00}');
-      // Before { at position 9
       input.setSelectionRange(9, 9);
       fireEvent.keyDown(input, { key: 'Delete' });
       await waitFor(() => {
@@ -705,7 +659,6 @@ describe('NamingSettingsSection', () => {
 
     it('deletes entire {series? - } token (conditional text) on Delete', async () => {
       const input = await setupWithValue('{author}/{series? - }{title}');
-      // Before { of {series? - } at position 9
       input.setSelectionRange(9, 9);
       fireEvent.keyDown(input, { key: 'Delete' });
       await waitFor(() => {
@@ -715,7 +668,6 @@ describe('NamingSettingsSection', () => {
 
     it('deletes entire {trackNumber:00? - pt} token (combined format+conditional) on Delete', async () => {
       const input = await setupWithValue('{title}{trackNumber:00? - pt}');
-      // Before { at position 7
       input.setSelectionRange(7, 7);
       fireEvent.keyDown(input, { key: 'Delete' });
       await waitFor(() => {
@@ -739,17 +691,14 @@ describe('NamingSettingsSection', () => {
 
     it('does not intercept Backspace when cursor is inside a token (not at boundary)', async () => {
       const input = await setupWithValue('{author}/{title}');
-      // Cursor inside {title} — between t and i at position 11
       input.setSelectionRange(11, 11);
       const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true });
       const prevented = !input.dispatchEvent(event);
-      // Should NOT prevent default — let browser handle normal deletion
       expect(prevented).toBe(false);
     });
 
     it('does not intercept Delete when cursor is inside a token (not at boundary)', async () => {
       const input = await setupWithValue('{author}/{title}');
-      // Cursor inside {title} — between t and l at position 12
       input.setSelectionRange(12, 12);
       const event = new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true });
       const prevented = !input.dispatchEvent(event);
@@ -758,7 +707,6 @@ describe('NamingSettingsSection', () => {
 
     it('does not intercept Backspace when text selection exists', async () => {
       const input = await setupWithValue('{author}/{title}');
-      // Select part of the token
       input.setSelectionRange(9, 13);
       const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true });
       const prevented = !input.dispatchEvent(event);
@@ -767,17 +715,7 @@ describe('NamingSettingsSection', () => {
 
     it('does not intercept Backspace for non-token character /', async () => {
       const input = await setupWithValue('{author}/{title}');
-      // Cursor after / at position 9
-      // Wait — position 9 is actually the { of {title}. Position 8 is after /
-      // {author}/ = positions 0-8, so after / is position 8... no.
-      // {author} = 8 chars (0-7), / = position 8, {title} starts at 9
-      // Cursor after / means position 9... but char at pos 8 is /
-      // For backspace: pos-1 = 8, char is '/', not '}'
       input.setSelectionRange(9, 9);
-      // Actually pos-1 = 8 = '/' which is not '}', so this should fall through.
-      // But pos = 9 = '{' which would trigger Delete logic. For Backspace at pos 9, char at pos-1=8 is '/'.
-      // Let me use a value where / is clearly not next to a token boundary.
-      // Actually {author}/{title}: at pos 9, Backspace checks pos-1=8 which is '/', not '}'. Correct.
       const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true });
       input.setSelectionRange(9, 9);
       const prevented = !input.dispatchEvent(event);
@@ -786,7 +724,6 @@ describe('NamingSettingsSection', () => {
 
     it('does not intercept Delete for non-token character /', async () => {
       const input = await setupWithValue('{author}/{title}');
-      // Cursor before / at position 8 — char at pos 8 is '/', not '{'
       input.setSelectionRange(8, 8);
       const event = new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true });
       const prevented = !input.dispatchEvent(event);
@@ -824,7 +761,6 @@ describe('NamingSettingsSection', () => {
         expect(el).toHaveValue('{author}{title}');
         return el;
       });
-      // After } of {author} at position 8
       input.setSelectionRange(8, 8);
       fireEvent.keyDown(input, { key: 'Backspace' });
       await waitFor(() => {
@@ -843,7 +779,6 @@ describe('NamingSettingsSection', () => {
         expect(el).toHaveValue('{author}{title}');
         return el;
       });
-      // Before { of {title} at position 8
       input.setSelectionRange(8, 8);
       fireEvent.keyDown(input, { key: 'Delete' });
       await waitFor(() => {
@@ -905,7 +840,6 @@ describe('NamingSettingsSection', () => {
 
     it('falls through to normal deletion when } has no matching {', async () => {
       const input = await setupWithValue('text}more');
-      // After } at position 5
       input.setSelectionRange(5, 5);
       const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true });
       const prevented = !input.dispatchEvent(event);
@@ -914,7 +848,6 @@ describe('NamingSettingsSection', () => {
 
     it('falls through to normal deletion when { has no matching }', async () => {
       const input = await setupWithValue('text{more');
-      // Before { at position 4
       input.setSelectionRange(4, 4);
       const event = new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true });
       const prevented = !input.dispatchEvent(event);
@@ -923,7 +856,6 @@ describe('NamingSettingsSection', () => {
 
     it('falls through to normal deletion when candidate {..} is not a valid token', async () => {
       const input = await setupWithValue('{not a token}rest');
-      // After } at position 13
       input.setSelectionRange(13, 13);
       const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true });
       const prevented = !input.dispatchEvent(event);
@@ -932,7 +864,6 @@ describe('NamingSettingsSection', () => {
 
     it('falls through to normal deletion on Delete when candidate {..} is not a valid token', async () => {
       const input = await setupWithValue('{not a token}rest');
-      // Before { at position 0 — {not a token} has closing } at 12 but fails regex
       input.setSelectionRange(0, 0);
       const event = new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true });
       const prevented = !input.dispatchEvent(event);
@@ -942,9 +873,6 @@ describe('NamingSettingsSection', () => {
 
     it('falls through to normal deletion for } with preceding { but non-token content between', async () => {
       const input = await setupWithValue('prefix}suffix{title}');
-      // After } at position 7 — scanning backward finds no { before this }
-      // Actually { at position 13? No. 'prefix}suffix{title}' = p(0)r(1)e(2)f(3)i(4)x(5)}(6)s(7)u(8)f(9)f(10)i(11)x(12){(13)...
-      // } is at position 6. Scanning backward from 6 for { finds none before it. Fall through.
       input.setSelectionRange(7, 7);
       const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true });
       const prevented = !input.dispatchEvent(event);
@@ -964,15 +892,12 @@ describe('NamingSettingsSection', () => {
         expect(el).toHaveValue('{author}/{title}');
         return el;
       });
-      // No save button yet
       expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
-      // Delete {title} via Backspace
       input.setSelectionRange(16, 16);
       fireEvent.keyDown(input, { key: 'Backspace' });
       await waitFor(() => {
         expect(input.value).toBe('{author}/');
       });
-      // Save button should now appear
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
       });
@@ -989,13 +914,11 @@ describe('NamingSettingsSection', () => {
         expect(el).toHaveValue('{author}/{title}');
         return el;
       });
-      // Delete {title} — leaves {author}/ which is missing {title}
       input.setSelectionRange(16, 16);
       fireEvent.keyDown(input, { key: 'Backspace' });
       await waitFor(() => {
         expect(input.value).toBe('{author}/');
       });
-      // Validation error should appear — missing required {title} token
       await waitFor(() => {
         const errors = screen.getAllByText(/Template must include/);
         expect(errors.length).toBeGreaterThanOrEqual(1);
@@ -1033,7 +956,6 @@ describe('NamingSettingsSection', () => {
         expect(el).toHaveValue('{author} - {title}');
         return el;
       });
-      // Delete {title} from file format — '{author} - {title}'.length = 18, cursor after }
       input.setSelectionRange(18, 18);
       fireEvent.keyDown(input, { key: 'Backspace' });
       await waitFor(() => {
@@ -1049,7 +971,6 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getAllByText('With series').length).toBeGreaterThanOrEqual(1);
       });
-      // Both folder and file have "With series"/"Without series", but only file has "Multi-file"
       expect(screen.getByText('Multi-file')).toBeInTheDocument();
     });
 
@@ -1059,7 +980,6 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getAllByText('With series').length).toBeGreaterThanOrEqual(1);
       });
-      // Only 1 "Multi-file" label (file only — folder has no multi-file preview)
       const multiFileLabels = screen.getAllByText('Multi-file');
       expect(multiFileLabels).toHaveLength(1);
     });
@@ -1071,23 +991,20 @@ describe('NamingSettingsSection', () => {
         expect(screen.getByText('Multi-file')).toBeInTheDocument();
       });
 
-      // renderFilename is called 3 times for file format: with-series, without-series, multi-file
+      // Call order: with series, without series, multi-file.
       const filenameCalls = mockRenderFilename.mock.calls.filter(
         (call: unknown[]) => typeof call[0] === 'string' && call[0] === '{author} - {title}',
       );
-      // With-series call: tokens should NOT have trackNumber
       const withSeriesTokens = filenameCalls[0]?.[1] as Record<string, unknown>;
       expect(withSeriesTokens).not.toHaveProperty('trackNumber');
       expect(withSeriesTokens).not.toHaveProperty('trackTotal');
       expect(withSeriesTokens).not.toHaveProperty('partName');
 
-      // Without-series call: tokens should NOT have trackNumber
       const withoutSeriesTokens = filenameCalls[1]?.[1] as Record<string, unknown>;
       expect(withoutSeriesTokens).not.toHaveProperty('trackNumber');
       expect(withoutSeriesTokens).not.toHaveProperty('trackTotal');
       expect(withoutSeriesTokens).not.toHaveProperty('partName');
 
-      // Multi-file call: tokens should have trackNumber=3, trackTotal=12, partName='Chapter 3'
       const multiFileTokens = filenameCalls[2]?.[1] as Record<string, unknown>;
       expect(multiFileTokens).toHaveProperty('trackNumber', 3);
       expect(multiFileTokens).toHaveProperty('trackTotal', 12);
@@ -1102,7 +1019,6 @@ describe('NamingSettingsSection', () => {
         expect(screen.getByText('Multi-file')).toBeInTheDocument();
       });
 
-      // Change separator to period
       mockRenderFilename.mockClear();
       await user.selectOptions(screen.getByLabelText('Separator'), 'period');
 
@@ -1114,7 +1030,6 @@ describe('NamingSettingsSection', () => {
         expect(multiFileOptions).toEqual(expect.objectContaining({ separator: 'period' }));
       });
 
-      // Change case to upper
       mockRenderFilename.mockClear();
       await user.selectOptions(screen.getByLabelText('Case'), 'upper');
 
@@ -1135,7 +1050,6 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByText('Multiple editions')).toBeInTheDocument();
       });
-      // Exactly one such row (folder only) — the file box does not gain it.
       expect(screen.getAllByText('Multiple editions')).toHaveLength(1);
       expect(screen.getAllByTestId('preview-multi-edition')).toHaveLength(1);
     });
@@ -1146,7 +1060,6 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByTestId('preview-multi-edition')).toBeInTheDocument();
       });
-      // Folder = With series / Without series / Multiple editions; File = With series / Without series / Multi-file.
       expect(screen.getAllByTestId('preview-multi-file')).toHaveLength(1);
       expect(screen.getAllByTestId('preview-multi-edition')).toHaveLength(1);
     });
@@ -1157,8 +1070,6 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByTestId('preview-multi-edition')).toBeInTheDocument();
       });
-      // composeEditionSuffixLeaf/sanitizeEditionDiscriminator are the REAL core primitives (importOriginal),
-      // so the leaf suffix matches production byte-for-byte rather than a hardcoded string.
       expect(screen.getByTestId('preview-multi-edition').textContent).toBe('Brandon Sanderson/The Way of Kings (Full Cast)');
     });
 
@@ -1189,7 +1100,6 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByTestId('preview-file-edition')).toBeInTheDocument();
       });
-      // Exactly one such row (file only) — the folder box does not gain it.
       expect(screen.getAllByText('With edition')).toHaveLength(1);
       expect(screen.getAllByTestId('preview-file-edition')).toHaveLength(1);
     });
@@ -1210,7 +1120,6 @@ describe('NamingSettingsSection', () => {
       });
       const row = screen.getByTestId('preview-file-edition');
       expect(row.textContent).toMatch(/Add \{edition\} to include the edition label in filenames/);
-      // Must NOT byte-duplicate the With-series file row.
       const withSeriesFile = screen.getAllByTestId('preview-with-series')[1]!;
       expect(row.textContent).not.toBe(withSeriesFile.textContent);
     });
@@ -1248,7 +1157,6 @@ describe('NamingSettingsSection', () => {
         expect(el).toHaveValue('{title}{ - pt?trackNumber:00}');
         return el;
       });
-      // Cursor after closing brace of { - pt?trackNumber:00}: '{title}{ - pt?trackNumber:00}'.length = 29
       input.setSelectionRange(29, 29);
       fireEvent.keyDown(input, { key: 'Backspace' });
       await waitFor(() => {
@@ -1267,7 +1175,6 @@ describe('NamingSettingsSection', () => {
         expect(el).toHaveValue('{title}{ - pt?trackNumber:00}');
         return el;
       });
-      // Cursor at opening brace of { - pt?trackNumber:00}: position 7 (after '{title}')
       input.setSelectionRange(7, 7);
       fireEvent.keyDown(input, { key: 'Delete' });
       await waitFor(() => {
