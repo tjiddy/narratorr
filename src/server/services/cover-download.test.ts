@@ -18,14 +18,8 @@ vi.mock('node:dns/promises', () => ({
 
 const dispatcherCloseSpy = vi.fn().mockResolvedValue(undefined);
 
-// Override `fetchWithSsrfRedirect` with a `globalThis.fetch`-based walker so
-// the existing `vi.stubGlobal('fetch', mockFetch)` continues to intercept the
-// cover-download hop. Production routes through undici's fetch when a dispatcher
-// is attached — the helper's routing is asserted in network-service.test.ts
-// and exercised end-to-end in cover-download.e2e.test.ts.
-//
-// `createSsrfSafeDispatcher` is also stubbed so the dispatcher.close() call in
-// downloadRemoteCover hits a spy instead of a real Agent.
+// Use global fetch so existing stubs intercept redirects; production dispatching is tested elsewhere.
+// Stub dispatcher creation so close() never touches a real Agent.
 vi.mock('@core/utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   const MAX = 5;
@@ -114,7 +108,6 @@ function createRedirectResponse(location: string, status = 302) {
   });
 }
 
-/** Default to a public IP so most tests proceed past the SSRF gate. */
 function mockPublicDns() {
   mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
 }
@@ -234,8 +227,6 @@ describe('downloadRemoteCover', () => {
 
   it("returns 'written' even when the post-rename DB coverUrl update throws (file materialized)", async () => {
     mockFetch.mockResolvedValue(createImageResponse());
-    // DB update rejects AFTER the cover.* rename committed — the file changed on disk regardless,
-    // so the outcome must stay 'written' (a stale coverUrl self-heals on the next reconcile).
     mockDb.update.mockReturnValue({
       set: vi.fn().mockReturnValue({ where: vi.fn().mockRejectedValue(new Error('DB locked')) }),
     });
@@ -246,7 +237,7 @@ describe('downloadRemoteCover', () => {
     );
 
     expect(result).toBe('written');
-    expect(rename).toHaveBeenCalled(); // the irreversible write committed
+    expect(rename).toHaveBeenCalled();
   });
 
   it('logs warning on download failure without throwing', async () => {
@@ -454,9 +445,7 @@ describe('downloadRemoteCover', () => {
   describe('size cap', () => {
     it('refuses when Content-Length header exceeds MAX_COVER_SIZE without reading body', async () => {
       const tooBig = MAX_COVER_SIZE + 1;
-      // Stub the body so we can assert getReader() was NEVER called — that's
-      // the actual "body read" boundary AC7 protects. cancel() is allowed
-      // (used to drain the connection without consuming bytes).
+      // getReader marks body consumption; cancel may drain without consuming.
       const cancelSpy = vi.fn().mockResolvedValue(undefined);
       const getReaderSpy = vi.fn(() => {
         throw new Error('getReader() must not be called when Content-Length exceeds the cap');
@@ -488,10 +477,7 @@ describe('downloadRemoteCover', () => {
     });
 
     it('refuses when streamed body exceeds MAX_COVER_SIZE mid-flight and cancels the reader (server lies about Content-Length)', async () => {
-      // Spy directly on reader.cancel to assert AC7's required cancellation
-      // contract. Wrapping response.body lets us mock the reader the service
-      // sees without depending on whether the host stream wrapper forwards
-      // `getReader().cancel()` to a custom underlying-source `cancel` callback.
+      // Spy on the reader directly; host wrappers need not forward source cancellation.
       const cancelSpy = vi.fn().mockResolvedValue(undefined);
       const fakeReader = {
         read: vi.fn()
@@ -651,7 +637,6 @@ describe('downloadRemoteCover', () => {
   describe('redirect handling', () => {
     it('refuses chain of 6 hops (exceeds MAX_REDIRECTS=5)', async () => {
       mockedDnsLookup.mockReset();
-      // 6 lookups will be needed (one per hop until limit exceeded)
       for (let i = 0; i < 7; i++) {
         mockedDnsLookup.mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }]);
       }
@@ -924,9 +909,7 @@ describe('downloadRemoteCover', () => {
         inject<Db>(mockDb), log,
       );
 
-      // Prove the body-read failure path was taken — without these, the
-      // dispatcher-close assertion alone passes on any path that reaches the
-      // `finally` block (e.g. an early helper failure that skips body read).
+      // Dispatcher close also occurs on pre-read failures, so prove this path consumed the reader.
       expect(result).toBe('failed');
       expect(readSpy).toHaveBeenCalled();
       expect(cancelSpy).toHaveBeenCalled();
@@ -959,9 +942,7 @@ describe('isRemoteCoverUrl', () => {
   });
 });
 
-// #2159 — the optional trailing failure sink that lets the reconcile job NAME the cause. The
-// `'written' | 'skipped' | 'failed'` union is unchanged (it is stubbed at many mock sites); the
-// underlying cause rides a side channel instead.
+// Preserve the widely mocked outcome union; report the underlying cause through the optional sink.
 describe('downloadRemoteCover — onFailure side channel (#2159)', () => {
   let mockDb: ReturnType<typeof createMockDb>;
   let log: FastifyBaseLogger;

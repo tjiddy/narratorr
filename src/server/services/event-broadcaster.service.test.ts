@@ -85,7 +85,6 @@ describe('EventBroadcasterService', () => {
     });
 
     it('is a no-op with zero connected clients', () => {
-      // Should not throw
       broadcaster.emit('grab_started', {
         download_id: 1, book_id: 2, book_title: 'Test', release_title: 'test.torrent',
       });
@@ -104,7 +103,6 @@ describe('EventBroadcasterService', () => {
         download_id: 1, book_id: 2, book_title: 'My Book',
       });
 
-      // c2 still received the message
       expect(c2.reply.raw.write).toHaveBeenCalledTimes(1);
     });
 
@@ -150,7 +148,7 @@ describe('EventBroadcasterService', () => {
     });
   });
 
-  // #1776 — periodic heartbeat keeps idle reverse proxies from cutting the stream.
+  // Heartbeats keep idle reverse proxies from cutting the stream.
   describe('heartbeat', () => {
     beforeEach(() => {
       vi.useFakeTimers();
@@ -241,8 +239,7 @@ describe('EventBroadcasterService', () => {
     });
   });
 
-  // #1796 — graceful shutdown must END hijacked SSE replies so they stop being
-  // in-flight and Fastify's forceCloseConnections:'idle' default can reap them.
+  // Fastify cannot reap hijacked SSE replies until shutdown ends them.
   describe('stop() ends client replies', () => {
     it('ends every connected client and clears the set', () => {
       const c1 = createMockClient('c1');
@@ -278,11 +275,7 @@ describe('EventBroadcasterService', () => {
     });
   });
 
-  // #1813 — a client that reconnects during the graceful-shutdown drain window
-  // (after stop() but before app.close()) must NOT re-register a never-ended
-  // hijacked reply, which would re-block app.close() and re-introduce the #1796
-  // deploy-dies-by-SIGKILL hang. Once stop() has run, addClient() ends the incoming
-  // reply immediately instead of registering it and never restarts the heartbeat.
+  // A reconnect during the shutdown drain must be ended or it blocks app.close() again.
   describe('addClient after stop() (drain-window reconnect)', () => {
     it('ends the late client immediately, does not register it, and clientCount stays 0', () => {
       broadcaster.stop();
@@ -322,8 +315,7 @@ describe('EventBroadcasterService', () => {
     });
   });
 
-  // #1796 — bound stream lifetime server-side: the heartbeat tick ends streams
-  // older than the max-age cap so a replayed stream token cannot outlive its window.
+  // Bound stream lifetime so replayed tokens cannot keep a stream indefinitely.
   describe('max-age sweep', () => {
     beforeEach(() => {
       vi.useFakeTimers();
@@ -350,8 +342,7 @@ describe('EventBroadcasterService', () => {
 
     it('does not end a client whose age is exactly at the cap (> not >=)', () => {
       const now = Date.now();
-      // Age at the tick == exactly MAX_STREAM_AGE_MS: connected HEARTBEAT_INTERVAL_MS
-      // before the cap so that after one tick advance its age equals the cap.
+      // First tick lands exactly at the cap; only strictly older clients expire.
       const atCap = createMockClient('at-cap', now - (MAX_STREAM_AGE_MS - HEARTBEAT_INTERVAL_MS));
       broadcaster.addClient(atCap);
 
@@ -360,7 +351,6 @@ describe('EventBroadcasterService', () => {
       expect(atCap.reply.raw.end).not.toHaveBeenCalled();
       expect(broadcaster.clientCount).toBe(1);
 
-      // One more tick pushes it just over the cap → now swept.
       vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
 
       expect(atCap.reply.raw.end).toHaveBeenCalledTimes(1);
@@ -379,7 +369,7 @@ describe('EventBroadcasterService', () => {
       broadcaster.addClient(otherStale);
       broadcaster.addClient(fresh);
 
-      // A throw inside the setInterval callback would crash the process — assert none escapes.
+      // A throw inside the setInterval callback would crash the process.
       expect(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS)).not.toThrow();
 
       expect(otherStale.reply.raw.end).toHaveBeenCalledTimes(1);
@@ -387,10 +377,6 @@ describe('EventBroadcasterService', () => {
       expect(fresh.reply.raw.write).toHaveBeenCalledWith('event: hb\ndata: {}\n\n');
     });
   });
-  // ==========================================================================
-  // #2129 — per-client emit (the connect-time state greeting)
-  // ==========================================================================
-
   describe('emitTo', () => {
     const SNAPSHOT = { active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'processing' as const, percentage: 0.35 }], queued: [] };
     const FRAME = `event: merge_state\ndata: ${JSON.stringify(SNAPSHOT)}\n\n`;
@@ -428,8 +414,6 @@ describe('EventBroadcasterService', () => {
     });
 
     it('is a no-op for a client refused during the shutdown drain — its reply is already ended', () => {
-      // stop() latches `stopping`, so addClient ends the incoming reply instead of registering
-      // it (#1813). A write-after-end there must not throw out of a hijacked handler.
       broadcaster.stop();
       const lateClient = createMockClient('late');
       broadcaster.addClient(lateClient);

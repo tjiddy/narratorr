@@ -11,13 +11,9 @@ import { createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import { authRoutes } from './auth.js';
 
-/** Short time window for fast tests (ms). */
 const TEST_WINDOW_MS = 200;
 
-/**
- * Creates a rate-limit test app with a very short time window.
- * Separate from the main auth test app to avoid counter leakage.
- */
+// Isolate the app so rate-limit counters cannot leak across suites.
 async function createRateLimitTestApp(
   services: Services,
   fastifyOpts: FastifyServerOptions = {},
@@ -58,7 +54,6 @@ describe('rate limiting', () => {
       resetMockServices(services);
       const ip = '10.0.0.1';
 
-      // Send max allowed requests (5 for login)
       for (let i = 0; i < 5; i++) {
         const res = await app.inject({
           method: 'POST',
@@ -69,7 +64,6 @@ describe('rate limiting', () => {
         expect(res.statusCode).not.toBe(429);
       }
 
-      // 6th request should be rate limited
       const res = await app.inject({
         method: 'POST',
         url: '/api/auth/login',
@@ -82,7 +76,6 @@ describe('rate limiting', () => {
     it('includes retry-after header in 429 response', async () => {
       const ip = '10.0.0.2';
 
-      // Exhaust the limit
       for (let i = 0; i < 5; i++) {
         await app.inject({
           method: 'POST',
@@ -155,7 +148,6 @@ describe('rate limiting', () => {
     it('rate limits are independent per IP address', async () => {
       resetMockServices(services);
 
-      // Exhaust limit from IP A
       for (let i = 0; i < 5; i++) {
         await app.inject({
           method: 'POST',
@@ -165,7 +157,6 @@ describe('rate limiting', () => {
         });
       }
 
-      // IP A should be limited
       const limitedRes = await app.inject({
         method: 'POST',
         url: '/api/auth/login',
@@ -174,7 +165,6 @@ describe('rate limiting', () => {
       });
       expect(limitedRes.statusCode).toBe(429);
 
-      // IP B should still be fine
       const freeRes = await app.inject({
         method: 'POST',
         url: '/api/auth/login',
@@ -194,7 +184,6 @@ describe('rate limiting', () => {
       try {
         const socketPeer = '10.0.0.99';
 
-        // Exhaust limit for client A (XFF: 203.0.113.1)
         for (let i = 0; i < 5; i++) {
           await trustProxyApp.inject({
             method: 'POST',
@@ -205,7 +194,6 @@ describe('rate limiting', () => {
           });
         }
 
-        // Client A should be limited
         const limitedRes = await trustProxyApp.inject({
           method: 'POST',
           url: '/api/auth/login',
@@ -215,7 +203,6 @@ describe('rate limiting', () => {
         });
         expect(limitedRes.statusCode).toBe(429);
 
-        // Client B (different XFF, same socket peer) should still be free
         const freeRes = await trustProxyApp.inject({
           method: 'POST',
           url: '/api/auth/login',
@@ -235,7 +222,6 @@ describe('rate limiting', () => {
       try {
         const socketPeer = '10.0.0.98';
 
-        // Exhaust limit through XFF A
         for (let i = 0; i < 5; i++) {
           await baselineApp.inject({
             method: 'POST',
@@ -246,7 +232,6 @@ describe('rate limiting', () => {
           });
         }
 
-        // Different XFF, same socket peer → still limited (bucket shared)
         const stillLimitedRes = await baselineApp.inject({
           method: 'POST',
           url: '/api/auth/login',
@@ -266,7 +251,6 @@ describe('rate limiting', () => {
       resetMockServices(services);
       const ip = '10.0.0.40';
 
-      // Send many requests — should never get 429
       for (let i = 0; i < 20; i++) {
         const res = await app.inject({
           method: 'GET',
@@ -286,7 +270,6 @@ describe('rate limiting', () => {
     it('allows requests again after time window expires', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
 
-      // Create a separate app with a very short time window for recovery testing
       const recoveryApp = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
       recoveryApp.setValidatorCompiler(validatorCompiler);
       recoveryApp.setSerializerCompiler(serializerCompiler);
@@ -297,7 +280,6 @@ describe('rate limiting', () => {
         request.user = { username: 'admin' };
       });
 
-      // Register a simple test route with a short window
       recoveryApp.post('/api/auth/test-rate-limit', {
         config: { rateLimit: { max: 2, timeWindow: TEST_WINDOW_MS } },
       }, async () => {
@@ -308,7 +290,6 @@ describe('rate limiting', () => {
       const ip = '10.0.0.50';
 
       try {
-        // Exhaust the limit
         for (let i = 0; i < 2; i++) {
           await recoveryApp.inject({
             method: 'POST',
@@ -317,7 +298,6 @@ describe('rate limiting', () => {
           });
         }
 
-        // Should be rate limited
         const limitedRes = await recoveryApp.inject({
           method: 'POST',
           url: '/api/auth/test-rate-limit',
@@ -325,10 +305,8 @@ describe('rate limiting', () => {
         });
         expect(limitedRes.statusCode).toBe(429);
 
-        // Advance past the rate-limit window using fake timers
         await vi.advanceTimersByTimeAsync(TEST_WINDOW_MS + 1);
 
-        // Should be allowed again
         const recoveredRes = await recoveryApp.inject({
           method: 'POST',
           url: '/api/auth/test-rate-limit',

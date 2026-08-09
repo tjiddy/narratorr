@@ -15,13 +15,13 @@ import { v1MetadataRoutes } from './metadata.js';
 import { metadataSearchResultV1Schema } from '@shared/schemas/v1/metadata.js';
 import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 
-// Mock config so the auth plugin runs with authBypass off (mirrors books.test).
+// Keep authBypass off so requests exercise API-key auth.
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
 
 const VALID_KEY = 'valid-key';
 const keyHeaders = { 'x-api-key': VALID_KEY };
 
-/** A full `BookMetadata`-shaped provider result (leaky internals included). */
+/** Include provider internals that the public DTO must strip. */
 function providerBook(overrides?: Record<string, unknown>) {
   return {
     asin: 'B00ASIN',
@@ -55,7 +55,6 @@ const metadataService = { search: vi.fn() } as unknown as MetadataService;
 const bookService = { findLibraryStatusByAsins: vi.fn() } as unknown as BookService;
 const settingsService = { get: vi.fn() } as unknown as SettingsService;
 
-/** A library annotation as the service returns it (#1961 added `companionEbook`). */
 function annotation(overrides?: Record<string, unknown>) {
   return { bookId: 'bk_abc123', status: 'imported', companionEbook: null, ...overrides };
 }
@@ -202,7 +201,7 @@ describe('v1 metadata routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/search?q=wool', headers: keyHeaders });
 
       expect(res.statusCode).toBe(200);
-      // No ASINs at all → no lookup issued (avoids an empty IN ()).
+      // Avoid an empty IN ().
       expect(bookService.findLibraryStatusByAsins as Mock).not.toHaveBeenCalled();
       expect(res.json().data[0]).not.toHaveProperty('library');
     });
@@ -225,8 +224,6 @@ describe('v1 metadata routes', () => {
 
       expect(res.statusCode).toBe(200);
       const [hit, miss] = res.json().data;
-      // The annotated hit carries a non-null companion; the miss carries no
-      // `library` key at all (never `library: { companionEbook: null }`).
       expect(hit.library).toEqual({ bookId: 'bk_hit', status: 'imported', companionEbook: EPUB });
       expect(miss).not.toHaveProperty('library');
       expect(bookService.findLibraryStatusByAsins as Mock).toHaveBeenCalledWith(['B00HIT', 'B00MISS'], { companionEnabled: true });
@@ -234,7 +231,6 @@ describe('v1 metadata routes', () => {
 
     it('matches a case-drifted ASIN via the uppercased map key', async () => {
       (metadataService.search as Mock).mockResolvedValue({ books: [providerBook({ asin: 'b00asin' })], authors: [], series: [] });
-      // Service normalizes keys to uppercase; the route looks up with toUpperCase().
       (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(
         new Map([['B00ASIN', annotation({ bookId: 'bk_drift' })]]),
       );
@@ -249,9 +245,7 @@ describe('v1 metadata routes', () => {
       (metadataService.search as Mock).mockResolvedValue({ books: [providerBook()], authors: [], series: [] });
       const boom = new Error('db down');
       (bookService.findLibraryStatusByAsins as Mock).mockRejectedValue(boom);
-      // With logger:false the abstract logger is a singleton, so request.log
-      // delegates to app.log — spying on app.log.warn captures the route's
-      // request.log.warn on the swallowed enrichment-failure path.
+      // With logger:false, request.log delegates to app.log.
       const warnSpy = vi.spyOn(app.log, 'warn');
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/search?q=wool', headers: keyHeaders });
@@ -261,7 +255,6 @@ describe('v1 metadata routes', () => {
       expect(Object.keys(body).sort()).toEqual(['data', 'total']);
       expect(body.total).toBe(1);
       expect(body.data[0]).not.toHaveProperty('library');
-      // The required failure log is emitted (deleting the route's log.warn fails this).
       expect(warnSpy).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.anything() }),
         'v1 metadata-search library enrichment failed',
@@ -270,9 +263,6 @@ describe('v1 metadata routes', () => {
     });
   });
 
-  // #1961 — the nested annotation is the LIVE consumer surface for the whole
-  // companion feature. The route reads the flag once per request and passes it
-  // down; the service owns the batch load and the shared exposure->DTO mapper.
   describe('companionEbook on the library annotation (#1961)', () => {
     const search = async () =>
       app.inject({ method: 'GET', url: '/api/v1/metadata/search?q=wool', headers: keyHeaders });
@@ -297,9 +287,6 @@ describe('v1 metadata routes', () => {
       });
     });
 
-    // F14 — pin the EXACT settings wiring: one read, the right category, and the
-    // `true` value actually reaching the service. Without this, a generic service
-    // mock returning a companion regardless of the supplied option would pass.
     it('reads companionEpub EXACTLY ONCE per request and passes companionEnabled: true through', async () => {
       (settingsService.get as Mock).mockResolvedValue({ enabled: true });
       (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(
@@ -347,9 +334,6 @@ describe('v1 metadata routes', () => {
       );
     });
 
-    // AC 18 — the new dependency must not grow the enrichment's blast radius:
-    // the settings failure is caught SEPARATELY, so the `library` annotation
-    // itself survives.
     it('still annotates library (companionEbook: null) with a warn and a 200 when the settings read rejects', async () => {
       (settingsService.get as Mock).mockRejectedValue(new Error('settings db down'));
       (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(
@@ -409,7 +393,6 @@ describe('v1 metadata routes', () => {
   });
 });
 
-/** Assert a body is the canonical v1 error envelope, NOT the internal `{ statusCode, error, message }`. */
 function expectV1Envelope(body: unknown): void {
   expect(v1ErrorEnvelopeSchema.safeParse(body).success).toBe(true);
   const b = body as Record<string, unknown>;

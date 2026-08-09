@@ -30,37 +30,23 @@ import type { ConnectorRow } from './types.js';
 
 type NewConnector = typeof connectors.$inferInsert;
 
-/** Result of a targets lookup — a success carrying targets, or a field-scoped failure envelope. */
 export type ConnectorTargetsResult =
   | { success: true; targets: ConnectorTarget[] }
   | (ConnectorTestResult & { success: false });
 
-/** Timing knobs for the refresh queue — forwarded verbatim to `ConnectorRefreshQueue`. */
 export type ConnectorServiceOptions = ConnectorRefreshQueueOptions;
 
 /**
- * Owns connector CRUD (encrypt-on-write / decrypt-on-read + adapter cache) and the
- * connector-specific resolution that feeds the shared refresh queue. The debounce /
- * serialization / retry / timeout / drain / flush-logging scaffolding lives in
- * `ConnectorRefreshQueue`; this service reaches it ONLY through the injected
- * `resolveFlush` callback. The adapters stay dumb transport — they issue one
- * request and throw/return.
- *
- * Background flushes use THIS service's injected `Db` + `FastifyBaseLogger` (the
- * app-level singletons), never per-request objects — the deferred closure must
- * outlive the request that triggered it.
+ * Owns CRUD and adapter state; ConnectorRefreshQueue owns scheduling and retries.
+ * Queue closures use app-scoped DB/log instances because they outlive triggering requests.
  */
 export class ConnectorService {
   private adapters = new AdapterCache<ConnectorAdapter>();
-  // BEST-EFFORT, IN-MEMORY refresh queue (see ConnectorRefreshQueue). Connector /
-  // adapter / DB state reaches it only through the resolveFlush callback below.
   private readonly queue: ConnectorRefreshQueue;
 
   constructor(private db: Db, private log: FastifyBaseLogger, opts: ConnectorServiceOptions = {}) {
     this.queue = new ConnectorRefreshQueue((entry) => this.resolveFlush(entry), log, opts);
   }
-
-  // ─── CRUD ──────────────────────────────────────────────────────────────────
 
   private decryptRow(row: ConnectorRow): ConnectorRow {
     if (!row.settings) return row;
@@ -97,7 +83,6 @@ export class ConnectorService {
     }
     const result = await this.db.update(connectors).set(toUpdate).where(eq(connectors.id, id)).returning();
 
-    // Drop the cached adapter so the next access re-instantiates with fresh settings.
     this.adapters.delete(id);
     this.log.info({ id }, 'Connector updated');
     const row = result[0] || null;
@@ -112,8 +97,6 @@ export class ConnectorService {
     this.log.info({ id }, 'Connector deleted');
     return true;
   }
-
-  // ─── Adapter construction ────────────────────────────────────────────────────
 
   getAdapter(connector: ConnectorRow): ConnectorAdapter {
     let adapter = this.adapters.get(connector.id);
@@ -143,8 +126,6 @@ export class ConnectorService {
     this.adapters.clear();
   }
 
-  // ─── Diagnostics: test + targets ─────────────────────────────────────────────
-
   async test(id: number): Promise<ConnectorTestResult> {
     const connector = await this.getById(id);
     if (!connector) return { success: false, message: 'Connector not found' };
@@ -173,9 +154,7 @@ export class ConnectorService {
   async listTargetsConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<ConnectorTargetsResult> {
     let adapter: ConnectorAdapter;
     try {
-      // Targets-scoped schema: the selector field this fetch populates
-      // (libraryId/sectionId) is optional, so a brand-new connector resolves an
-      // adapter from connect fields alone (#1523).
+      // Target discovery cannot require the selector field it populates.
       adapter = await this.adapterForConfig(data, connectorTargetsSettingsSchemas);
     } catch (error: unknown) {
       return { success: false, message: getErrorMessage(error) };
@@ -194,12 +173,7 @@ export class ConnectorService {
     }
   }
 
-  /**
-   * Build an adapter from an unsaved config, resolving secret sentinels against the
-   * saved row when an id is supplied. `schemas` selects which per-type settings map
-   * validates the config — the strict map (default) for test-with-selection, the
-   * targets-scoped map (selector optional) for the fetch-the-dropdown path.
-   */
+  // Resolve saved secret sentinels; callers choose strict or selector-optional validation.
   private async adapterForConfig(
     data: { type: string; settings: Record<string, unknown>; id?: number },
     schemas: Record<string, z.ZodTypeAny> = connectorSettingsSchemas,
@@ -214,14 +188,7 @@ export class ConnectorService {
     return this.createAdapter(fakeRow, schemas);
   }
 
-  // ─── Refresh queue ───────────────────────────────────────────────────────────
-
-  /**
-   * Fan out a refresh to every enabled connector. Synchronously enumerates
-   * connectors (the pre-flight), then enqueues each item under its connector's
-   * single debounce window on the queue. Caller should invoke fire-and-forget —
-   * never await it in the import/rename/scan path.
-   */
+  // Import paths call this fire-and-forget after the enabled-connector preflight.
   async notifyRefresh(reason: ConnectorReason, items: ConnectorImportItem[]): Promise<void> {
     if (items.length === 0) return;
     const enabled = await this.db.select().from(connectors).where(eq(connectors.enabled, true));
@@ -232,30 +199,18 @@ export class ConnectorService {
     }
   }
 
-  /**
-   * Bounded graceful drain for shutdown — delegates to the queue, which clears +
-   * drops pending batches and races in-flight flushes against the drain budget.
-   */
   stop(): Promise<void> {
     return this.queue.stop();
   }
 
   /**
-   * The queue's extraction seam: resolve one pending flush to the connector-specific
-   * request plan. Returns `null` to skip (connector disabled/not-found at flush
-   * time — the disabled-at-flush guarantee), or throws. A throw AFTER the row was
-   * resolved (getAdapter on drifted settings / unknown type, estimateRequestCount)
-   * is wrapped in `FlushResolutionError` carrying the connector-derived `logContext`
-   * so the queue's failed-flush warn keeps the full type/name/url fields; a throw
-   * BEFORE the row exists (getById rejecting) propagates bare and the queue degrades
-   * those fields to undefined.
+   * Re-resolve at flush time and skip disabled or missing connectors.
+   * Once a row exists, wrap resolution failures with its log context.
    */
   private async resolveFlush(entry: PendingFlush): Promise<ResolvedFlush | null> {
     const connector = await this.getById(entry.connectorId);
     if (!connector || !connector.enabled) return null;
-    // The redacted host disambiguates same-type connectors at 3am — assembled from
-    // the row the moment it resolves so a subsequent getAdapter/estimate throw still
-    // carries it. `reasons`/`count` are merged in by the queue from the entry.
+    // Assemble the redacted host before getAdapter so later failures still carry it.
     const logContext: ConnectorLogContext = {
       connectorId: connector.id,
       connectorType: connector.type,
@@ -265,8 +220,7 @@ export class ConnectorService {
     try {
       const adapter = this.getAdapter(connector);
       const batch = { reasons: entry.reasons, items: entry.items };
-      // Scale the outer watchdog to how many sequential requests this batch will
-      // make so a multi-request provider (Plex) is not aborted mid-flush.
+      // Scale the watchdog for adapters that issue sequential requests.
       const requestCount = Math.max(1, adapter.estimateRequestCount(batch));
       return { requestCount, logContext, run: (signal) => adapter.refreshImport(batch, signal) };
     } catch (error: unknown) {

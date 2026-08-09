@@ -8,10 +8,7 @@ import { createE2EApp } from './e2e-helpers.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Tests that assert on post-cleanup filesystem state (existsSync === false)
-// are skipped on Windows because libSQL's native binding leaks the DB file
-// handle past Client.close(), preventing rmSync from removing the run dir.
-// Cleanup still runs — it's just best-effort on Windows (see rmDirOrLeak).
+// Windows skips removal assertions because libSQL keeps the DB handle open after Client.close().
 describe('createE2EApp harness', () => {
   const orphans: string[] = [];
 
@@ -20,7 +17,7 @@ describe('createE2EApp harness', () => {
       try {
         rmSync(p, { recursive: true, force: true });
       } catch {
-        // Best-effort — test-scope cleanup.
+        // Test cleanup is best-effort.
       }
     }
     orphans.length = 0;
@@ -42,7 +39,6 @@ describe('createE2EApp harness', () => {
     orphans.push(e2e.dir);
     const dbPath = join(e2e.dir, 'narratorr.db');
 
-    // Simulate libSQL WAL/SHM sidecars that may materialize after writes.
     writeFileSync(`${dbPath}-wal`, 'wal-bytes');
     writeFileSync(`${dbPath}-shm`, 'shm-bytes');
 
@@ -73,13 +69,7 @@ describe('createE2EApp harness', () => {
   });
 
   it('registers signal handlers only once across repeated createE2EApp() calls', async () => {
-    // Guard against regression of registerSignalHandlersOnce() — without the
-    // once-only check, each of the 10+ consumer suites would add three more
-    // listeners (SIGINT/SIGTERM/exit) and trip MaxListenersExceededWarning.
-    // Prime the module state with one call so handlers are definitely
-    // registered, capture the baseline listener counts, then make additional
-    // calls and assert the counts stay flat. If the guard is removed the
-    // second call would grow each count by 1 and this test fails.
+    // Listener leaks compound across consumer suites and trigger MaxListenersExceededWarning.
     const primed = await createE2EApp();
     orphans.push(primed.dir);
 
@@ -104,29 +94,21 @@ describe('createE2EApp harness', () => {
   });
 
   it.skipIf(process.platform === 'win32')('removes the run directory when the process is interrupted by SIGINT', () => {
-    // Spawn a child that boots createE2EApp, prints its dir, then SIGINTs
-    // itself. The module-level signal handler must purge the dir before the
-    // child exits, leaving nothing behind for the parent to observe.
     const fixture = resolve(__dirname, 'e2e-helpers-abnormal-exit.fixture.ts');
     const result = spawnSync(process.execPath, ['--import', 'tsx', fixture], {
       encoding: 'utf-8',
       timeout: 30_000,
     });
 
-    // Verify the child actually completed via the installed SIGINT handler
-    // rather than the parent's timeout fallback. spawnSync surfaces a
-    // timeout kill as `result.error` plus a non-null `signal`; our handler
-    // returns exit code 130 after purging dirs, so a clean run must show
-    // status === 130 and signal === null.
+    // Exit 130 with no signal proves the handler, not spawnSync's timeout, ended the child.
     expect(result.error, `child spawn error (likely timeout):\n${String(result.error)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBeUndefined();
     expect(result.signal, `child was killed by external signal instead of handling SIGINT itself:\nstderr:\n${result.stderr}`).toBeNull();
     expect(result.status, `child exited with wrong code — handler must exit(130):\nstderr:\n${result.stderr}`).toBe(130);
 
-    // Extract the dir the child reported on its first stdout line.
     const firstLine = result.stdout.split('\n').find((l) => l.startsWith('{'));
     expect(firstLine, `child stdout missing dir payload:\n${result.stdout}\n---stderr---\n${result.stderr}`).toBeTruthy();
     const { dir } = JSON.parse(firstLine!) as { dir: string };
-    orphans.push(dir); // Defensive in case the signal handler missed it.
+    orphans.push(dir); // Defensive cleanup in case the signal handler misses it.
 
     expect(dir.startsWith(join(tmpdir(), 'narratorr-e2e-'))).toBe(true);
     expect(existsSync(dir)).toBe(false);

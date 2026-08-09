@@ -4,22 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 
-/**
- * The #2158 ladder, end to end against a real migrated DB: **OPF → embedded tags → provider**.
- *
- * The two halves of the ladder live in two different processes — the staged submission runner reads
- * the sidecar and computes narrator provenance, the manual import adapter runs the tag fill and the
- * Audnexus pass — so neither suite alone can observe the precedence. This one drains a genuine
- * staged submission and then hands the enqueued job to the real adapter, and asserts on the
- * **persisted book row and its narrator junction rows** rather than on a call argument: the
- * fill-empty writes that decide the ladder all run AFTER the create, so a call-argument assertion
- * here is structurally unable to see them (`vacuous-assertion-observation-points`).
- *
- * Mocked: the audio scanner (the "tags" rung — a real m4b fixture would pin music-metadata, not the
- * ladder), ffmpeg resolution, and the metadata provider (the "provider" rung). Everything between —
- * the OPF read, the overlay, dedup classification, create, the job payload round-trip through Zod,
- * the tag gate, and the Audnexus fill-empty writes — is real.
- */
+// Precedence spans the staged runner and adapter, so assert persisted rows after both execute.
+// Only scanner, ffmpeg, and provider are mocked; OPF parsing through fill-empty writes is real.
 
 vi.mock('@core/utils/audio-scanner.js', () => ({ scanAudioDirectory: vi.fn() }));
 vi.mock('@core/utils/audio-processor.js', async (importOriginal) => ({
@@ -48,7 +34,6 @@ const OPF_NARRATOR = 'Opf Narrator';
 const TAG_NARRATOR = 'Tag Narrator';
 const PROVIDER_NARRATOR = 'Provider Narrator';
 
-/** A hand-written managed sidecar carrying every descriptive field the ladder arbitrates. */
 function curatedOpf(): string {
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
@@ -113,7 +98,7 @@ describe('OPF → tags → provider import ladder (#2158, DB-backed)', () => {
 
     enrichBook = vi.fn().mockResolvedValue(null);
     const metadataService = { enrichBook, resolveBook: vi.fn().mockResolvedValue(null) } as unknown as MetadataService;
-    // `writeOpf: false` so the adapter's sidecar write cannot rewrite the fixture mid-test.
+    // Prevent the adapter from rewriting the OPF fixture mid-test.
     const settingsService = createMockSettingsService({ tagging: { writeOpf: false }, library: { fileFormat: '' } });
     adapter = new ManualImportAdapter({
       db,
@@ -131,7 +116,6 @@ describe('OPF → tags → provider import ladder (#2158, DB-backed)', () => {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* Windows keeps libSQL handles open */ }
   });
 
-  /** A book folder holding one audio file, plus a `metadata.opf` when `opf` is supplied. */
   function seedFolder(name: string, opf?: string): string {
     const folder = join(dir, name);
     mkdirSync(folder, { recursive: true });
@@ -179,7 +163,6 @@ describe('OPF → tags → provider import ladder (#2158, DB-backed)', () => {
     };
   }
 
-  /** Drain the submission, then run the real adapter over the job the runner enqueued. */
   async function runLadder(item: StagedImportItem) {
     await seedProcessing(item);
     await drain();
@@ -192,8 +175,6 @@ describe('OPF → tags → provider import ladder (#2158, DB-backed)', () => {
   }
 
   const narratorNames = (detail: { narrators: { name: string }[] }): string[] => detail.narrators.map((n) => n.name);
-
-  // ── AC7: all three rungs, one scenario each ─────────────────────────────
 
   it('(a) OPF + tags + provider all disagreeing → every descriptive field comes from the OPF', async () => {
     const path = seedFolder('with-opf-', curatedOpf());
@@ -218,12 +199,7 @@ describe('OPF → tags → provider import ladder (#2158, DB-backed)', () => {
     const path = seedFolder('no-opf-');
     setTags(TAG_NARRATOR);
 
-    // The shape the client actually sends for an auto-matched row: `narrators` deep-equal to
-    // `metadata.narrators` (`buildEditedFromBestMatch` copies one into the other).
-    //
-    // COUNTERFACTUAL: this row (and the cleared-narrator row below) reds when the tag gate reverts
-    // to "the book has any narrators" — verified. No other row in the suite catches that mutation,
-    // because every other one either has an OPF or genuinely empty narrators.
+    // Auto-matched rows carry top-level narrators deep-equal to metadata.narrators; this pins the tag gate.
     const { row, detail, payload } = await runLadder({
       path, title: 'Folder Title', forceImport: true,
       narrators: [PROVIDER_NARRATOR], metadata: providerMatch(),
@@ -231,7 +207,6 @@ describe('OPF → tags → provider import ladder (#2158, DB-backed)', () => {
 
     expect(payload.narratorSource).toBe('provider');
     expect(narratorNames(detail)).toEqual([TAG_NARRATOR]);
-    // Everything else still comes from the provider.
     expect(row).toMatchObject({ subtitle: 'Provider Subtitle', description: 'Provider Description', publisher: 'Provider Publisher' });
   });
 
@@ -247,8 +222,6 @@ describe('OPF → tags → provider import ladder (#2158, DB-backed)', () => {
     expect(narratorNames(detail)).toEqual([PROVIDER_NARRATOR]);
     expect(row).toMatchObject({ subtitle: 'Provider Subtitle', description: 'Provider Description' });
   });
-
-  // ── AC8 / D8: the provenance table, plus the two OPF cross-products ─────
 
   it('curated via OPF → the tag narrator is rejected', async () => {
     const path = seedFolder('curated-opf-', curatedOpf());
@@ -287,10 +260,7 @@ describe('OPF → tags → provider import ladder (#2158, DB-backed)', () => {
   });
 
   it('OPF + provider-copied item.narrators → the OPF wins', async () => {
-    // COUNTERFACTUAL: the F6 defect in one row. `buildBookCreatePayload` reads
-    // `item.narrators?.length ? item.narrators : meta?.narrators`, so an overlay that wrote
-    // `metadata.narrators` instead of replacing top-level `item.narrators` silently loses here —
-    // an auto-matched row always arrives with a non-empty `item.narrators`. Verified red.
+    // Auto-match already has top-level narrators; a metadata-only OPF overlay would be lost.
     const path = seedFolder('opf-vs-provider-', curatedOpf());
     setTags(TAG_NARRATOR);
 
@@ -315,10 +285,7 @@ describe('OPF → tags → provider import ladder (#2158, DB-backed)', () => {
   });
 
   it('a CLEARED narrator field (narrators omitted, metadata retained) is refillable from tags', async () => {
-    // `BookEditModal` omits `narrators` entirely when the field is emptied, so a deliberate clear is
-    // byte-identical to a field that was never populated — the server cannot tell them apart and
-    // deliberately does not try (D8). Durable clears are `userClearedFields`' job (#2152); the OPF
-    // carries no tombstones, so a re-imported book starts tombstone-free by design.
+    // The client omits cleared narrators, indistinguishable from never populated; durable clears use tombstones.
     const path = seedFolder('cleared-');
     setTags(TAG_NARRATOR);
 
@@ -330,15 +297,10 @@ describe('OPF → tags → provider import ladder (#2158, DB-backed)', () => {
     expect(narratorNames(detail)).toEqual([TAG_NARRATOR]);
   });
 
-  // ── AC9: Audnexus cannot clobber narrators that landed after its snapshot ──
-
   it('AC9: the Audnexus pass leaves tag-supplied narrators in place', async () => {
     const path = seedFolder('audnexus-');
     setTags(TAG_NARRATOR);
-    // A DIFFERENT narrator from Audnexus, otherwise the assertion cannot distinguish "skipped" from
-    // "wrote the same value". The provider match carries no narrators, so `existingNarrator` is null
-    // at snapshot time and the tag fill is what puts narrators on the row — the exact ordering the
-    // in-transaction re-read exists to survive.
+    // A different provider narrator distinguishes a skipped write from an identical one.
     enrichBook.mockResolvedValue({ narrators: ['Audnexus Narrator'], asin: 'B00LADDER1' });
 
     const { detail } = await runLadder({

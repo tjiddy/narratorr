@@ -9,15 +9,7 @@ import { sessionCookieOptions } from '../utils/cookie-options.js';
 
 const SESSION_MAX_AGE_S = 7 * 24 * 60 * 60;
 
-/**
- * After a credential change rotates the session secret, reissue a fresh cookie
- * in forms mode so the caller stays signed in on this device. The cookie is
- * signed with the rotated secret and carries the effective (possibly renamed)
- * username — the forms middleware trusts the cookie payload username directly,
- * so a renamed user must not receive a cookie with the stale name. Basic mode
- * has no session cookie to reissue; none/api-key paths don't reach here with a
- * forms-cookie identity. Mode is determined the same way the middleware does.
- */
+/** Reissue a forms cookie with the rotated secret and effective username. */
 async function reissueSessionCookie(
   authService: AuthService,
   request: FastifyRequest,
@@ -35,14 +27,11 @@ async function reissueSessionCookie(
 }
 
 export async function authRoutes(app: FastifyInstance, authService: AuthService) {
-  // GET /api/auth/status — public, minimal payload (#742): only { mode, authenticated }.
-  // Admin-only fields (hasUser, username, localBypass, bypassActive, envBypass) live on
-  // GET /api/auth/admin-status to avoid leaking deployment state on the unauthenticated surface.
+  // Keep public status limited to mode/authenticated; deployment details require admin auth.
   app.get('/api/auth/status', async (request) => {
     try {
       const status = await authService.getStatus();
 
-      // Determine if the current request is authenticated
       let authenticated = true;
       if (status.mode === 'forms') {
         const cookie = request.cookies?.narratorr_session;
@@ -62,7 +51,6 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
     }
   });
 
-  // GET /api/auth/admin-status — protected, exposes admin/deployment fields previously on /status.
   app.get('/api/auth/admin-status', async (request) => {
     const status = await authService.getStatus();
     const bypassActive = config.authBypass || (status.localBypass && isPrivateIp(request.ip));
@@ -76,7 +64,6 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
     };
   });
 
-  // DELETE /api/auth/credentials — only allowed when AUTH_BYPASS is active
   app.delete('/api/auth/credentials', async (request, reply) => {
     if (!config.authBypass) {
       return reply.status(403).send({ error: 'Only available when AUTH_BYPASS is active' });
@@ -93,7 +80,6 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
     }
   });
 
-  // POST /api/auth/login — public, sets session cookie
   app.post<{ Body: LoginInput }>(
     '/api/auth/login',
     {
@@ -109,7 +95,6 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         return reply.status(401).send({ error: 'Invalid credentials' });
       }
 
-      // Set session cookie
       const secret = await authService.getSessionSecret();
       const cookie = authService.createSessionCookie(username, secret);
 
@@ -123,13 +108,11 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
     },
   );
 
-  // POST /api/auth/logout — public, clears cookie
   app.post('/api/auth/logout', async (request, reply) => {
     reply.clearCookie('narratorr_session', sessionCookieOptions(config, request));
     return { success: true };
   });
 
-  // POST /api/auth/setup — public if no user exists, else protected (handled by middleware)
   app.post<{ Body: SetupCredentialsInput }>(
     '/api/auth/setup',
     {
@@ -151,12 +134,10 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
     },
   );
 
-  // GET /api/auth/config — protected, returns config without sessionSecret
   app.get('/api/auth/config', async () => {
     return authService.getConfig();
   });
 
-  // PUT /api/auth/config — protected, updates mode and/or localBypass
   app.put<{ Body: UpdateAuthConfigInput }>(
     '/api/auth/config',
     { schema: { body: updateAuthConfigSchema } },
@@ -175,7 +156,6 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
     },
   );
 
-  // PUT /api/auth/password — protected, change password
   app.put<{ Body: ChangePasswordInput }>(
     '/api/auth/password',
     { schema: { body: changePasswordSchema } },
@@ -191,8 +171,6 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         const effectiveUsername = await authService.changePassword(user.username, currentPassword, newPassword, newUsername);
         request.log.info({ username: user.username, newUsername }, 'Credentials updated');
 
-        // changePassword rotated the session secret, invalidating the caller's
-        // current cookie — reissue a fresh one in forms mode (see helper).
         await reissueSessionCookie(authService, request, reply, effectiveUsername);
 
         return { success: true };
@@ -205,20 +183,14 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
     },
   );
 
-  // POST /api/auth/stream-token — protected, mints a short-lived stream token (#1453).
-  // Reaching this handler means the request already passed the non-key auth chain
-  // (forms cookie / basic+CSRF / none / LAN bypass) in the auth plugin — the route
-  // is NOT under `/api/v*`, so the API key cannot authenticate it, and the plugin
-  // never accepts a stream token here (stream tokens are accepted only on the SSE
-  // endpoints), so a stream token cannot mint another. Basic-auth callers reach
-  // this POST through the existing `enforceCsrf` gate (X-Requested-With required).
+  // API keys and existing stream tokens cannot authenticate this non-v1 minting route.
+  // Basic-auth callers still pass through the CSRF gate.
   app.post('/api/auth/stream-token', async () => {
     const secret = await authService.getSessionSecret();
     const token = authService.mintStreamToken(secret);
     return { token, expiresInMs: STREAM_TOKEN_TTL_MS };
   });
 
-  // POST /api/auth/api-key/regenerate — protected
   app.post('/api/auth/api-key/regenerate', {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
   }, async (request) => {

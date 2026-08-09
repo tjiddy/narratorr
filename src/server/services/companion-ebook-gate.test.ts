@@ -15,21 +15,14 @@ const FILENAME = 'book.epub';
 
 interface Overrides {
   enabled?: boolean;
-  /** `null` = rung 2 resolves nothing. */
   resolvedId?: number | null;
-  /** `null` = rung 3 finds no row. */
   book?: { status: BookStatus; path: string | null } | null;
-  /** `null` = no observation row at all. */
   observation?: { status: CompanionEbookStatus; filename: string | null } | null;
   libraryRoot?: string;
   gate?: (input: CompanionEbookExposureInput) => boolean;
 }
 
-/**
- * Every rung is an injected double, so each read can be asserted directly — including the
- * ones a route-level suite cannot tell apart (`resolveByPublicId` and `findCompanionEbook`
- * are both `db.select` at the v1 boundary).
- */
+// Inject each rung separately because route-level db.select calls cannot distinguish their order.
 function makeDeps(overrides: Overrides = {}) {
   const settingsGet = vi.fn(async (key: string) => {
     if (key === 'companionEpub') return { enabled: overrides.enabled ?? true };
@@ -60,7 +53,6 @@ function makeDeps(overrides: Overrides = {}) {
   return { deps, settingsGet, getById, resolveBookId, findObservation, gate };
 }
 
-/** Rung 8 is the ONLY `library` read; every other settings call is rung 1. */
 function libraryReads(settingsGet: ReturnType<typeof vi.fn>): number {
   return settingsGet.mock.calls.filter((call) => call[0] === 'library').length;
 }
@@ -71,8 +63,6 @@ describe('evaluateCompanionEbookGate — the success context', () => {
 
     const result = await evaluateCompanionEbookGate(deps);
 
-    // `bookId` is asserted explicitly: it is the value the v1 success tail cannot reconstruct
-    // once the helper owns rungs 2-3 (AC2).
     expect(result).toEqual({
       context: { bookId: BOOK_ID, bookPath: BOOK_PATH, filename: FILENAME, libraryRoot: LIBRARY_ROOT },
     });
@@ -91,9 +81,6 @@ describe('evaluateCompanionEbookGate — the success context', () => {
 
     await evaluateCompanionEbookGate(deps);
 
-    // The helper's whole observable surface. It takes no logger and no reconciler, so "logs
-    // nothing, triggers nothing" is structural; what a double CAN see is that it never issues
-    // a read twice or a read it was not asked for (AC9).
     expect(settingsGet.mock.calls).toEqual([['companionEpub'], ['library']]);
     expect(resolveBookId).toHaveBeenCalledTimes(1);
     expect(getById.mock.calls).toEqual([[BOOK_ID]]);
@@ -102,10 +89,7 @@ describe('evaluateCompanionEbookGate — the success context', () => {
   });
 
   it('resolves a truthy but non-persistable stored basename to a context, not a rejection', async () => {
-    // A padded `' book.epub'` is rejected by `isPersistableCompanionBasename` in the OPENER,
-    // which is the single validation authority and carries the `invalid_filename` outcome plus
-    // its warn + reconcile side effects (AC10). A trim or basename guard here would silently
-    // delete both. This row is the detector.
+    // Preserve the raw basename; the opener alone owns invalid_filename and its side effects.
     const { deps } = makeDeps({ observation: { status: 'available', filename: ' book.epub' } });
 
     const result = await evaluateCompanionEbookGate(deps);
@@ -145,7 +129,6 @@ describe('evaluateCompanionEbookGate — one rejection per rung', () => {
     await expect(evaluateCompanionEbookGate(deps)).resolves.toEqual({ rejection: 'not_exposed' });
   });
 
-  // The guard is `!filename`, not a nullish check — `''` must reject too.
   it.each([[null], ['']])('rung 6: rejects no_file for a stored filename of %p', async (filename) => {
     const { deps } = makeDeps({ observation: { status: 'available', filename } });
 
@@ -184,9 +167,6 @@ describe('evaluateCompanionEbookGate — short-circuiting', () => {
   });
 
   it('rung 3 short-circuits the observation read, the predicate and the library read', async () => {
-    // The shipped v1 route row for this case asserts only that `getById` was called, so it
-    // stays green if rung 4 is reordered ahead of rung 3 — and at the v1 boundary `db.select`
-    // is the shared observable for both reads anyway. This is the detector.
     const { deps, settingsGet, findObservation, gate } = makeDeps({ book: null });
 
     await evaluateCompanionEbookGate(deps);
@@ -213,8 +193,7 @@ describe('evaluateCompanionEbookGate — dependency failures propagate (AC13)', 
   const boom = new Error('dependency exploded');
 
   async function expectPropagated(deps: CompanionEbookGateDeps): Promise<void> {
-    // Assert on the REJECTION, never on a returned arm: translating an outage into `no_book`
-    // is exactly the false negative this rule exists to prevent.
+    // Dependency outages must not be translated into a negative gate result.
     await expect(evaluateCompanionEbookGate(deps)).rejects.toThrow('dependency exploded');
   }
 
@@ -257,8 +236,6 @@ describe('evaluateCompanionEbookGate — dependency failures propagate (AC13)', 
   });
 
   it('a rung-4 fault is unobservable when rung 3 already short-circuited', async () => {
-    // Precedence: the shipped ladder answers its book-shaped negative here. Reordering rung 4
-    // ahead of rung 3 turns this same request into a 500 — an AC7 violation.
     const { deps, findObservation } = makeDeps({ book: null });
     findObservation.mockRejectedValue(boom);
 

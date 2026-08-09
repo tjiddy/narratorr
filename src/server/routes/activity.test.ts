@@ -124,7 +124,6 @@ describe('activity routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.data[1].qualityGate).toEqual(gate2);
       expect(body.data[2].qualityGate).toEqual(gate3);
-      // Should be called once with all pending_review IDs, not once per download
       expect(services.qualityGate.getQualityGateDataBatch).toHaveBeenCalledTimes(1);
       expect(services.qualityGate.getQualityGateDataBatch).toHaveBeenCalledWith([2, 3]);
     });
@@ -256,9 +255,6 @@ describe('activity routes', () => {
       expect(JSON.parse(res.payload).status).toBe('retry_error');
     });
 
-    // #1857 F12 / #1861 — the book is already served by a grab blocker (a live
-    // download / replacement winner, a QG-eligible completed row, or a pending auto
-    // import job); the response literal stays `already_active`.
     it('returns exactly 200 { status: "already_active" } when the book already has a grab blocker', async () => {
       (services.downloadOrchestrator.retry as Mock).mockResolvedValue({ status: 'already_active' });
 
@@ -292,8 +288,6 @@ describe('activity routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    // #1103 F4 — manual retry on an imported-book download returns 409 and does NOT
-    // touch the retry budget. Verifies HTTP contract (status code) AND budget invariance.
     it('returns 409 IMPORTED_BOOK_NO_RETRY and leaves retry budget unchanged when book is imported', async () => {
       (services.downloadOrchestrator.retry as Mock).mockRejectedValue(
         new DownloadError(
@@ -302,7 +296,6 @@ describe('activity routes', () => {
         ),
       );
 
-      // Burn an attempt so we can observe whether the route mutates the budget.
       services.retryBudget.consumeAttempt(42);
       const remainingBefore = services.retryBudget.hasRemaining(42);
 
@@ -321,7 +314,6 @@ describe('activity routes', () => {
       expect(res.statusCode).toBe(500);
     });
 
-    // #149 — typed error routing via plugin (ERR-1)
     it('returns 404 when orchestrator throws DownloadError NOT_FOUND (plugin-routed)', async () => {
       (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new DownloadError('Download 999 not found', 'NOT_FOUND'));
 
@@ -383,7 +375,6 @@ describe('activity routes', () => {
 
     it('returns approve result unchanged on enqueue conflict (no 4xx/5xx) (#747)', async () => {
       (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing', bookId: 1 });
-      // Simulate a benign idempotency outcome — another path already enqueued.
       vi.mocked(enqueueAutoImport).mockResolvedValueOnce(false);
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
@@ -418,8 +409,6 @@ describe('activity routes', () => {
       expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
     });
   });
-
-  // Slot-based concurrency tests removed in #636 — approve now enqueues via enqueueAutoImport
 
   describe('POST /api/activity/:id/reject', () => {
     it('transitions pending_review download to failed with default retry=false', async () => {
@@ -553,7 +542,6 @@ describe('activity routes', () => {
     });
   });
 
-  // #372 — Default pagination enforcement and section split
   describe('GET /api/activity — default pagination', () => {
     it('applies default limit=50 when no limit param provided', async () => {
       (services.download.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
@@ -769,7 +757,6 @@ describe('activity routes', () => {
     });
   });
 
-  // #301 — Reject endpoint with retry body field
   describe('POST /api/activity/:id/reject with retry flag (#301)', () => {
     it('passes retry=true from request body to orchestrator.reject(id, { retry: true })', async () => {
       (services.qualityGateOrchestrator.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
@@ -832,16 +819,7 @@ describe('activity routes', () => {
   });
 });
 
-// ─── #2069 AC16: no raw tombstone column in a schema-less activity response ───
-//
-// `GET /api/activity` declares only a querystring schema, so nothing strips extra
-// keys off the serialized download rows — whatever `DownloadService` puts on
-// `.book` is what ships. This drives the REAL service (over a mock db) rather than
-// the service mock, so the assertion watches the object the projection acts on.
-//
-// Counterfactual: revert `DownloadWithBook.book` to `BookRow` (drop the
-// `stripClearedFields` calls) and this goes red alongside the service-level cases
-// in `download.service.test.ts`.
+// The schema-less route uses the real service so this catches raw-column projection leaks.
 describe('GET /api/activity — user_cleared_fields never reaches the response (#2069)', () => {
   it('serializes the joined book without the raw column', async () => {
     const db = createMockDb();
@@ -855,8 +833,7 @@ describe('GET /api/activity — user_cleared_fields never reaches the response (
       inject<DownloadClientService>({} as DownloadClientService),
       inject<FastifyBaseLogger>(createMockLogger()),
     );
-    // `createMockServices` spreads its overrides into a plain object, so bind the
-    // real method rather than handing it the instance.
+    // createMockServices spreads overrides, so preserve the real method's receiver.
     const localServices = createMockServices({
       download: { getAll: realDownloadService.getAll.bind(realDownloadService) },
     });
@@ -870,7 +847,6 @@ describe('GET /api/activity — user_cleared_fields never reaches the response (
       const body = JSON.parse(res.payload);
       expect(body.data[0].book).toBeDefined();
       expect('userClearedFields' in body.data[0].book).toBe(false);
-      // The rest of the row still ships, so this is not passing on an empty response.
       expect(body.data[0].book.title).toBe(seededBook.title);
     } finally {
       await localApp.close();

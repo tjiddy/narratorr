@@ -21,16 +21,7 @@ import type { EventHistoryService } from './event-history.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { DownloadRow } from './types.js';
 
-// ============================================================================
-// Confirmed cancel-&-replace workflow (#1857)
-//
-// Runs under the per-book admission mutex (established by the orchestrator). It
-// gathers blockers, classifies, and — for the replaceable case — runs the
-// claim-first cancellation protocol, then grabs the replacement inheriting the
-// deterministic `bookStatusAtGrab` snapshot. Book status is owned SYNCHRONOUSLY
-// here: forward via the orchestrator's grab primitive, revert via the guarded
-// helper (the single coordination retained beyond a plain revert).
-// ============================================================================
+// Called under the per-book lock; the inherited status snapshot drives grab and guarded revert.
 
 export interface ReplaceCtx {
   db: Db;
@@ -45,8 +36,7 @@ export interface ReplaceCtx {
   safe: (fn: () => void) => void;
 }
 
-/** First non-null `bookStatusAtGrab` over the gathered client-stage cohort
- *  (already ordered `addedAt DESC, id DESC`); null when all are null (F6). */
+/** First non-null snapshot from the newest-first gathered cohort. */
 function selectInheritedSnapshot(targets: DownloadRow[]): BookStatus | null {
   for (const t of targets) {
     if (t.bookStatusAtGrab != null) return t.bookStatusAtGrab;
@@ -62,7 +52,6 @@ function activeExistsError(active: { title: string; count: number }): DuplicateD
   return new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active });
 }
 
-/** Best-effort permanent blacklist of a cancelled (replaced) release. */
 async function blacklistReplacedTarget(ctx: ReplaceCtx, t: DownloadRow): Promise<void> {
   if (!ctx.blacklistService) return;
   if (!t.infoHash && !t.guid) {
@@ -83,7 +72,6 @@ async function blacklistReplacedTarget(ctx: ReplaceCtx, t: DownloadRow): Promise
   }
 }
 
-/** Post-commit external cleanup for each claimed row (best-effort, per-row). */
 async function cleanupClaimedTargets(ctx: ReplaceCtx, targets: DownloadRow[], reason: string): Promise<void> {
   for (const t of targets) {
     await ctx.downloadService.removeExternalItem(t);
@@ -96,12 +84,7 @@ async function cleanupClaimedTargets(ctx: ReplaceCtx, targets: DownloadRow[], re
   }
 }
 
-/**
- * Guarded book-status revert on a no-grab / failed-grab path (F61/F67). Reverts
- * to the in-memory `snapshot` ONLY while the book is still `downloading` (the
- * status a client-stage tracked grab owns). A late `importing` promotion makes
- * the guard miss → revert skipped, `importing` preserved, no SSE.
- */
+// Revert only from downloading; a late importing transition wins and emits no revert SSE.
 async function coordinateReplaceRevert(ctx: ReplaceCtx, bookId: number, snapshot: BookStatus | null): Promise<void> {
   const { landed, status } = await guardedRevertBookStatus(ctx.db, { id: bookId }, snapshot, 'downloading');
   if (landed) {
@@ -109,18 +92,12 @@ async function coordinateReplaceRevert(ctx: ReplaceCtx, bookId: number, snapshot
   }
 }
 
-/** Ordinary grab within the mutex (nothing to replace) — the consolidated
- *  blocker classification runs inside `DownloadService.checkDuplicateDownloads`. */
 async function grabAsOrdinary(ctx: ReplaceCtx, params: GrabParams): Promise<number> {
   const dl = await ctx.grab(params, {});
   return dl.id;
 }
 
-/**
- * Run the confirmed replace workflow, returning the winner download id. Throws
- * `DuplicateDownloadError` for the `PIPELINE_ACTIVE` / (double-miss)
- * `ACTIVE_DOWNLOAD_EXISTS` dispositions. Bounded single retry on a claim miss.
- */
+// A claim miss receives one bounded retry.
 export async function runReplaceWorkflow(ctx: ReplaceCtx, params: GrabParams, attempt = 0): Promise<number> {
   const bookId = params.bookId!;
   const classification = classifyBlockers(await gatherBookBlockers(ctx.db, bookId));
@@ -143,7 +120,6 @@ export async function runReplaceWorkflow(ctx: ReplaceCtx, params: GrabParams, at
     throw error;
   }
 
-  // Claim committed → external cleanup, then residual late-blocker check, then grab.
   await cleanupClaimedTargets(ctx, targets, reason);
 
   const late = await gatherBookBlockers(ctx.db, bookId);
@@ -159,24 +135,17 @@ export async function runReplaceWorkflow(ctx: ReplaceCtx, params: GrabParams, at
     );
     return dl.id;
   } catch (grabError: unknown) {
-    // Failed replacement grab — revert from the same in-memory snapshot.
     await coordinateReplaceRevert(ctx, bookId, snapshot);
     throw grabError;
   }
 }
 
-/**
- * Guard-miss / in-tx-recheck rollback disposition (F20). Nothing was cancelled
- * (the claim tx rolled back), so no revert is needed. Re-classify against fresh
- * state; a still-replaceable book gets ONE bounded retry of the whole
- * gather→claim, then falls to `ACTIVE_DOWNLOAD_EXISTS` (let the user re-confirm).
- */
+// A claim miss rolled back cancellation; reclassify without reverting and retry once if replaceable.
 async function handleClaimMiss(ctx: ReplaceCtx, params: GrabParams, attempt: number): Promise<number> {
   const bookId = params.bookId!;
   const reclass = classifyBlockers(await gatherBookBlockers(ctx.db, bookId));
   if (reclass.kind === 'pipeline') throw pipelineError(reclass.reason);
   if (reclass.kind === 'clear') return grabAsOrdinary(ctx, params);
-  // Still replaceable but the tuple changed — bounded single retry, else surface.
   if (attempt < 1) return runReplaceWorkflow(ctx, params, attempt + 1);
   throw activeExistsError(reclass.active);
 }
