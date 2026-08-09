@@ -19,7 +19,6 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-/** Wrap element in providers — used for rerender() calls that need provider context. */
 function withProviders(ui: React.ReactElement, queryClient: QueryClient) {
   return (
     <QueryClientProvider client={queryClient}>
@@ -74,7 +73,6 @@ describe('LibraryBookCard', () => {
       renderWithProviders(<LibraryBookCard {...defaultProps({ book: nullLabel })} />);
       expect(screen.queryByTestId('edition-label')).not.toBeInTheDocument();
 
-      // Absent key (factory omits it) behaves identically to null.
       renderWithProviders(<LibraryBookCard {...defaultProps()} />);
       expect(screen.queryByTestId('edition-label')).not.toBeInTheDocument();
     });
@@ -101,9 +99,6 @@ describe('LibraryBookCard', () => {
     });
   });
 
-  // #1663 — the top-left chip no longer conflates `failed` with `missing`. `missing` keeps
-  // the broken-link "files missing from disk" chip; `failed` renders a distinct import-failed
-  // chip whose tooltip reflects retry availability (driven by useRetryImportAvailable).
   describe('missing / import-failed indicator', () => {
     it('renders frosted chip with broken-link icon for missing status', () => {
       const book = createMockLibraryBook({ status: 'missing' });
@@ -118,7 +113,6 @@ describe('LibraryBookCard', () => {
     });
 
     it('failed status renders a distinct import-failed chip (retry unavailable copy by default)', () => {
-      // Default api mock returns { available: false } → "Import failed".
       const book = createMockLibraryBook({ status: 'failed' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTitle('Import failed')).toBeInTheDocument();
@@ -247,10 +241,6 @@ describe('LibraryBookCard', () => {
       expect(screen.getByTestId('status-bar').className).not.toContain('status-bar-shimmer');
     });
 
-    // #1447 (S2d) — the `?? bookStatusConfig.wanted` masking fallback was removed;
-    // bookStatusConfig is drift-guarded against BOOK_STATUSES. Every canonical
-    // status renders first-class, so an off-enum value surfaces the drift (throws)
-    // rather than being silently masked with the "wanted" stone style.
     it('renders each canonical status with its own first-class bar style', () => {
       const statuses: BookStatus[] = ['wanted', 'searching', 'downloading', 'importing', 'imported', 'missing', 'failed'];
       for (const status of statuses) {
@@ -462,7 +452,6 @@ describe('LibraryBookCard', () => {
     it('hides narrator and series DOM nodes together when collapsedCount > 0', () => {
       renderWithProviders(<LibraryBookCard {...defaultProps({ collapsedCount: 3 })} />);
       expect(screen.queryByText('Michael Kramer')).not.toBeInTheDocument();
-      // Series position label is specific to the hover section (title shows series name without position)
       expect(screen.queryByText('The Stormlight Archive #1')).not.toBeInTheDocument();
     });
 
@@ -522,7 +511,6 @@ describe('LibraryBookCard', () => {
       const onRetryImport = vi.fn();
       renderWithProviders(<LibraryBookCard {...defaultProps({ book, isMenuOpen: true, onRetryImport })} />);
 
-      // Wait for the query to settle, then verify menu renders without retry option
       await waitFor(() => {
         expect(api.checkRetryImportAvailable).toHaveBeenCalledWith(book.id);
       });
@@ -604,7 +592,6 @@ describe('options button callback (REACT-2 / existing test gap)', () => {
 describe('React.memo (REACT-2 refactor)', () => {
   it('does not re-render when parent re-renders but props are unchanged', () => {
     const book = createMockLibraryBook();
-    // Same function references for both renders — unchanged-props scenario for memo
     const stableProps = {
       book,
       index: 0,
@@ -616,9 +603,7 @@ describe('React.memo (REACT-2 refactor)', () => {
       onRemove: vi.fn(),
     };
 
-    // useImageError is called on every execution of the LibraryBookCard component body.
-    // React.memo bails out when props are unchanged, so the body does NOT execute again.
-    // Removing memo would cause a second call on re-render — making this assertion fail.
+    // useImageError call count is the render sentinel for React.memo.
     const hookSpy = vi.spyOn(ImageErrorModule, 'useImageError');
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -648,7 +633,6 @@ describe('React.memo (REACT-2 refactor)', () => {
       rerender(withProviders(<LibraryBookCard {...defaultProps({ index: 9 })} />, queryClient));
       expect(screen.getByRole('link')).toHaveStyle({ animationDelay: '450ms' });
 
-      // Capped at index 9
       rerender(withProviders(<LibraryBookCard {...defaultProps({ index: 15 })} />, queryClient));
       expect(screen.getByRole('link')).toHaveStyle({ animationDelay: '450ms' });
     });

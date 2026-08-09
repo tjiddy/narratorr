@@ -119,7 +119,6 @@ describe('bulk delete', () => {
       { wrapper: createWrapper(queryClient) },
     );
 
-    // Select all books
     act(() => {
       result.current.setSelectedIds(new Set([1, 2, 3]));
     });
@@ -222,7 +221,6 @@ describe('bulk delete', () => {
     });
 
     await waitFor(() => {
-      // 2 + 1 preserved foreign files aggregated across the two fulfilled deletions.
       expect(toast.success).toHaveBeenCalledWith('Deleted 2 books — kept 3 non-audio files');
     });
   });
@@ -254,7 +252,6 @@ describe('bulk delete', () => {
     });
 
     await waitFor(() => {
-      // 1 preserved file from the single fulfilled deletion that had foreign files.
       expect(toast.success).toHaveBeenCalledWith('Deleted 2 of 3 books — 1 failed — kept 1 non-audio file');
     });
   });
@@ -400,7 +397,7 @@ describe('bulk search', () => {
       expect(api.searchBook).toHaveBeenCalledWith(1);
     });
 
-    // Non-wanted books (2) are folded into the single "skipped" count per issue contract
+    // Non-wanted selections count as skipped without API calls.
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('Searched 1 book, 1 grabbed, 2 skipped');
     });

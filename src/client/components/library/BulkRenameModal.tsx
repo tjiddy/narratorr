@@ -40,12 +40,6 @@ function Caret({ expanded }: { expanded: boolean }) {
   );
 }
 
-/**
- * One mismatched-book row. Collapsed: caret + library-relative folder diff.
- * Expanded: lazily fetches the per-book preview (`GET /books/:id/rename/preview`)
- * and renders its folder + file diff via the shared sections. The per-book query
- * never fires until the row is expanded.
- */
 function BulkRenameRow({ item }: { item: BulkRenamePreviewItem }) {
   const [expanded, setExpanded] = useState(false);
   const { data, isLoading, error } = useQuery({
@@ -106,12 +100,6 @@ function BulkRenameRow({ item }: { item: BulkRenamePreviewItem }) {
   );
 }
 
-/**
- * "Rename All Books" confirmation with a per-book folder-rename preview. Replaces
- * the old count-only confirm (#1406): shows the capped from→to folder list, lets
- * each row expand to its file diff, and defines an explicit empty state when no
- * book is mismatched.
- */
 export function BulkRenameModal({ isOpen, onClose, onConfirm }: BulkRenameModalProps) {
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.bulkRenamePreview(),
@@ -126,10 +114,7 @@ export function BulkRenameModal({ isOpen, onClose, onConfirm }: BulkRenameModalP
   if (!isOpen) return null;
 
   const hasFileRule = data !== undefined && Boolean(data.fileFormat);
-  // Empty only when the run would visit nothing. `jobTotal` already encodes both
-  // cases (= importedTotal with a file rule, else the folder-mismatch count), so a
-  // file-format-only change — zero folder mismatches but importedTotal > 0 — keeps
-  // the button enabled instead of falsely reporting "nothing to rename".
+  // jobTotal includes file-only work; folder mismatches alone cannot determine emptiness.
   const isEmpty = data !== undefined && data.jobTotal === 0;
   const canRename = data !== undefined && !isEmpty;
   const remaining = data ? data.mismatchedTotal - data.items.length : 0;

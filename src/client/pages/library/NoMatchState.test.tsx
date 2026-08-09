@@ -53,7 +53,6 @@ describe('NoMatchState', () => {
       const link = screen.getByText('Add Book').closest('a');
       const href = link?.getAttribute('href') ?? '';
       expect(href).toContain('/search?q=');
-      // URLSearchParams encodes & and ' correctly
       expect(href).not.toContain('&more');
       const params = new URLSearchParams(href.split('?')[1]);
       expect(params.get('q')).toBe("king's cage & more");

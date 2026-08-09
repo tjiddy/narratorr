@@ -72,8 +72,8 @@ describe('BookContextMenu', () => {
       const user = userEvent.setup();
       renderMenu();
 
-      await user.keyboard('{ArrowDown}'); // -> Remove
-      await user.keyboard('{ArrowDown}'); // -> Search (wrap)
+      await user.keyboard('{ArrowDown}');
+      await user.keyboard('{ArrowDown}');
       const items = screen.getAllByRole('menuitem');
       expect(items[0]).toHaveFocus();
     });
@@ -82,7 +82,7 @@ describe('BookContextMenu', () => {
       const user = userEvent.setup();
       renderMenu();
 
-      await user.keyboard('{ArrowUp}'); // wrap to Remove
+      await user.keyboard('{ArrowUp}');
       const items = screen.getAllByRole('menuitem');
       expect(items[1]).toHaveFocus();
     });
@@ -91,7 +91,6 @@ describe('BookContextMenu', () => {
       const user = userEvent.setup();
       const props = renderMenu();
 
-      // Focus is on first item (Search Releases)
       await user.keyboard('{Enter}');
       expect(props.onSearchReleases).toHaveBeenCalledTimes(1);
     });
@@ -100,7 +99,7 @@ describe('BookContextMenu', () => {
       const user = userEvent.setup();
       const props = renderMenu();
 
-      await user.keyboard('{ArrowDown}'); // -> Remove
+      await user.keyboard('{ArrowDown}');
       await user.keyboard(' ');
       expect(props.onRemove).toHaveBeenCalledTimes(1);
     });
@@ -156,9 +155,7 @@ describe('BookContextMenu', () => {
       const onRemove = vi.fn();
       renderMenu({ onRetryImport, onRemove });
 
-      // ArrowDown from Search Releases (index 0) → Retry Import (index 1)
       await user.keyboard('{ArrowDown}');
-      // Enter should invoke Retry Import, NOT Remove
       await user.keyboard('{Enter}');
 
       expect(onRetryImport).toHaveBeenCalledTimes(1);
@@ -170,7 +167,6 @@ describe('BookContextMenu', () => {
       const onSearchReleases = vi.fn();
       renderMenu({ onRetryImport: vi.fn(), onSearchReleases });
 
-      // ArrowDown 3 times: Search (0) → Retry (1) → Remove (2) → Search (0)
       await user.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}');
       await user.keyboard('{Enter}');
 

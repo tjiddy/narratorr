@@ -7,13 +7,6 @@ function chipTitle(activity: BookActivity): string {
     : activity.label;
 }
 
-/**
- * Presentational activity indicator (approved mock 2026-08-03, v4).
- * `chip` — cover-overlay square for the grid card's top-left stack, styled as
- * a sibling of the missing/failed chips. `inline` — mini icon + label for the
- * table view's status cell. Renders nothing when activity is null so callers
- * can pass the hook result straight through.
- */
 export function BookActivityBadge({ activity, variant }: { activity: BookActivity | null; variant: 'chip' | 'inline' }) {
   if (!activity) return null;
   const working = activity.state === 'working';

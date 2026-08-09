@@ -12,7 +12,7 @@ export function useLibraryBulkActions(visibleBooks: LibraryBookListItem[]) {
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  // Intersect selection with visible books so filtered-out books are excluded
+  // Intersect selection with visible books so later filters exclude hidden selections.
   const visibleBookIds = useMemo(() => new Set(visibleBooks.map((b) => b.id)), [visibleBooks]);
   const effectiveSelectedIds = useMemo(() => {
     const intersection = new Set<number>();
@@ -31,7 +31,6 @@ export function useLibraryBulkActions(visibleBooks: LibraryBookListItem[]) {
       );
       const succeeded = results.filter((r) => r.status === 'fulfilled').length;
       const failed = results.filter((r) => r.status === 'rejected').length;
-      // #1589: aggregate the foreign files preserved across all on-disk deletions.
       const preservedForeign = results.reduce(
         (n, r) => (r.status === 'fulfilled' ? n + (r.value.fileSummary?.preservedForeign.length ?? 0) : n),
         0,
@@ -83,7 +82,7 @@ export function useLibraryBulkActions(visibleBooks: LibraryBookListItem[]) {
         const val = result.value as SingleBookSearchResult;
         if (val.result === 'grabbed') grabbed++;
         else if (val.result === 'skipped') skipped++;
-        else failed++; // no_results counts as failed
+        else failed++; // The API reports no_results as a failed search.
       }
 
       return { grabbed, skipped, failed, searched: wantedBooks.length };

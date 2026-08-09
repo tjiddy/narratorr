@@ -67,7 +67,6 @@ describe('StatusDropdown', () => {
 
       await user.click(screen.getByRole('button', { name: /all.*25/i }));
 
-      // All 6 options should now be visible
       expect(screen.getByRole('option', { name: /all/i })).toBeInTheDocument();
       expect(screen.getByRole('option', { name: /wanted/i })).toBeInTheDocument();
       expect(screen.getByRole('option', { name: /downloading/i })).toBeInTheDocument();
@@ -88,7 +87,6 @@ describe('StatusDropdown', () => {
 
       await user.click(screen.getByRole('button', { name: /all/i }));
 
-      // Each option should display its count
       expect(screen.getByRole('option', { name: /wanted.*10/i })).toBeInTheDocument();
       expect(screen.getByRole('option', { name: /downloading.*3/i })).toBeInTheDocument();
       expect(screen.getByRole('option', { name: /imported.*12/i })).toBeInTheDocument();
@@ -162,7 +160,6 @@ describe('StatusDropdown', () => {
 
       await user.click(screen.getByRole('button', { name: /all/i }));
 
-      // The listbox should be a descendant of document.body via portal
       const listbox = screen.getByRole('listbox');
       expect(document.body.contains(listbox)).toBe(true);
     });
@@ -280,9 +277,8 @@ describe('StatusDropdown', () => {
         <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
       );
       await user.click(screen.getByRole('button', { name: /all.*25/i }));
-      // 6 options (index 0-5); 5 presses from 0 reaches 5 (last)
       for (let i = 0; i < 5; i++) await user.keyboard('{ArrowDown}');
-      await user.keyboard('{ArrowDown}'); // wraps to 0
+      await user.keyboard('{ArrowDown}');
       const options = screen.getAllByRole('option');
       expect(options[0]).toHaveFocus();
     });
@@ -293,8 +289,8 @@ describe('StatusDropdown', () => {
         <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
       );
       await user.click(screen.getByRole('button', { name: /all.*25/i }));
-      await user.keyboard('{ArrowDown}'); // index 1
-      await user.keyboard('{ArrowUp}');   // back to index 0
+      await user.keyboard('{ArrowDown}');
+      await user.keyboard('{ArrowUp}');
       const options = screen.getAllByRole('option');
       expect(options[0]).toHaveFocus();
     });
@@ -305,7 +301,7 @@ describe('StatusDropdown', () => {
         <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
       );
       await user.click(screen.getByRole('button', { name: /all.*25/i }));
-      await user.keyboard('{ArrowUp}'); // wraps to index 5 (last)
+      await user.keyboard('{ArrowUp}');
       const options = screen.getAllByRole('option');
       expect(options[5]).toHaveFocus();
     });
@@ -317,7 +313,7 @@ describe('StatusDropdown', () => {
         <StatusDropdown statusFilter="all" onStatusFilterChange={onChange} statusCounts={defaultCounts} />,
       );
       await user.click(screen.getByRole('button', { name: /all.*25/i }));
-      await user.keyboard('{ArrowDown}'); // focus 'wanted' (index 1)
+      await user.keyboard('{ArrowDown}');
       await user.keyboard('{Enter}');
       expect(onChange).toHaveBeenCalledWith('wanted');
     });
@@ -339,7 +335,7 @@ describe('StatusDropdown', () => {
         <StatusDropdown statusFilter="all" onStatusFilterChange={onChange} statusCounts={defaultCounts} />,
       );
       await user.click(screen.getByRole('button', { name: /all.*25/i }));
-      await user.keyboard('{ArrowDown}'); // focus 'wanted'
+      await user.keyboard('{ArrowDown}');
       await user.keyboard(' ');
       expect(onChange).toHaveBeenCalledWith('wanted');
     });
@@ -396,9 +392,9 @@ describe('StatusDropdown', () => {
       );
       const trigger = screen.getByRole('button', { name: /all.*25/i });
       await user.click(trigger);
-      await user.keyboard('{ArrowDown}'); // move off first item
-      await user.click(trigger); // close via trigger
-      await user.click(trigger); // reopen
+      await user.keyboard('{ArrowDown}');
+      await user.click(trigger);
+      await user.click(trigger);
       expect(screen.getAllByRole('option')[0]).toHaveFocus();
     });
   });
@@ -406,7 +402,6 @@ describe('StatusDropdown', () => {
   describe('status aggregation', () => {
     it('Downloading option shows the aggregated count passed via statusCounts', async () => {
       const user = userEvent.setup();
-      // statusCounts.downloading=3 represents searching+downloading books (aggregated at service layer)
       render(
         <StatusDropdown
           statusFilter="all"

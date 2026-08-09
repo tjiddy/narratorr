@@ -162,7 +162,6 @@ describe('LibraryActionsMenu', () => {
       await openMenu(user);
 
       const menu = screen.getByRole('menu');
-      // 3 dividers: after imports, after refresh/search, before remove-missing
       expect(menu.querySelectorAll('.border-t')).toHaveLength(3);
     });
   });
@@ -315,7 +314,6 @@ describe('LibraryActionsMenu', () => {
 
       const focusable = screen.getAllByRole('menuitem').filter((el) => !el.hasAttribute('disabled'));
       const labels = focusable.map((el) => el.textContent);
-      // Bulk items are disabled; non-bulk actions remain focusable.
       expect(labels).toEqual([
         'Import Files',
         'Import Existing Library',
@@ -352,19 +350,16 @@ describe('LibraryActionsMenu', () => {
 
     it('reflects the retag-count prefetch as a busy trigger that also disables other bulk items', async () => {
       const user = userEvent.setup();
-      // Keep the count prefetch pending so isLoadingCount stays true.
       (api.getBulkRetagCount as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
       renderMenu();
       await openMenu(user);
       await user.click(screen.getByRole('menuitem', { name: /re-tag all books/i }));
 
-      // Menu closed on click; trigger now shows the loading state.
       const trigger = screen.getByRole('button', { name: /library actions/i });
       await waitFor(() => {
         expect(trigger.textContent).toMatch(/loading/i);
       });
 
-      // Reopen — bulk items are disabled while the prefetch is in flight.
       await user.click(trigger);
       expect(screen.getByRole('menuitem', { name: /rename all books/i })).toBeDisabled();
       expect(screen.getByRole('menuitem', { name: /re-tag all books/i })).toBeDisabled();
@@ -385,7 +380,6 @@ describe('LibraryActionsMenu', () => {
     });
   });
 
-  // #2159 — "1 failure" used to be the whole answer; finding WHICH book meant grepping container logs.
   describe('named failure disclosure', () => {
     const liveCase: BulkJobFailure = { bookId: 226, title: "Captain's Fury", error: 'ENOENT' };
 
@@ -437,7 +431,6 @@ describe('LibraryActionsMenu', () => {
       expect(screen.queryByText(/and \d+ more/)).not.toBeInTheDocument();
     });
 
-    // AC17 — the answer matters most AFTER the run; the hook's progress survives completion.
     it('still discloses the named failures after the job completes', async () => {
       const user = userEvent.setup();
       renderMenu({}, { isRunning: false, jobType: null, completed: 694, total: 694, failures: 1, failureDetails: [liveCase] });
@@ -478,9 +471,9 @@ describe('LibraryActionsMenu', () => {
       await openMenu(user);
 
       expect(screen.getByRole('menuitem', { name: /import files/i })).toHaveFocus();
-      await user.keyboard('{ArrowUp}'); // wrap to last enabled item
+      await user.keyboard('{ArrowUp}');
       expect(screen.getByRole('menuitem', { name: /remove missing books/i })).toHaveFocus();
-      await user.keyboard('{ArrowDown}'); // wrap back to first
+      await user.keyboard('{ArrowDown}');
       expect(screen.getByRole('menuitem', { name: /import files/i })).toHaveFocus();
     });
 
