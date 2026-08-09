@@ -54,21 +54,16 @@ export class ImportOrchestrator {
     private mergeService?: MergeService,
   ) {}
 
-  /** Wire cyclic / late-bound deps after construction. Call once during composition. */
+  /** Wire cyclic dependencies once during composition. */
   wire(deps: ImportOrchestratorWireDeps): void {
     this.wired.set(deps);
   }
 
-  /**
-   * Import a download with full side-effect orchestration.
-   * Wraps ImportService.importDownload() with pre/post side effects:
-   * SSE start → core import → tagging → post-processing → SSE success → notification → event recording.
-   * On failure: SSE failure → failure notification → failure event recording.
-   */
+  /** Wrap the core import with lifecycle emissions and best-effort side effects. */
   async importDownload(downloadId: number, callbacks?: ImportProgressCallbacks): Promise<ImportResult> {
     const ctx = await this.importService.getImportContext(downloadId);
 
-    // Pre-import SSE — book status always, download status only if not already importing (approve-path dedupe)
+    // Always emit book status; suppress duplicate download status on the approve path.
     emitBookImporting({ broadcaster: this.broadcaster, bookId: ctx.bookId, bookStatus: ctx.bookStatus, log: this.log });
     if (ctx.downloadStatus !== 'importing') {
       emitDownloadImporting({ broadcaster: this.broadcaster, downloadId: ctx.downloadId, bookId: ctx.bookId, downloadStatus: ctx.downloadStatus, log: this.log });
@@ -77,21 +72,17 @@ export class ImportOrchestrator {
     try {
       const result = await this.importService.importDownload(downloadId, callbacks);
 
-      // Success side effects
       await this.dispatchSuccessSideEffects(result, ctx);
 
       return result;
     } catch (error: unknown) {
-      // Failure side effects — ImportService already cleaned up files + reverted DB
+      // ImportService has already cleaned files and reverted the DB.
       this.dispatchFailureSideEffects(error, ctx);
       throw error;
     }
   }
 
-  /**
-   * Process all eligible downloads by enqueueing them as auto import jobs.
-   * The serial ImportQueueWorker drains from the queue.
-   */
+  /** Enqueue eligible downloads for the serial import worker. */
   async processCompletedDownloads(): Promise<number> {
     const { bookImportService, nudgeImportWorker } = this.wired.require();
 
@@ -102,10 +93,7 @@ export class ImportOrchestrator {
     let enqueued = 0;
     for (const download of admittedDownloads) {
       try {
-        // enqueueAutoImport returns false on conflict — expected race outcome
-        // in batch processing, not a failure. Counter only increments when
-        // a row was actually created; conflict is logged at debug level inside
-        // the helper, NOT warn (downgraded to avoid noise per #747).
+        // A conflict is an expected batch race, not a failure; count only created jobs.
         const created = await enqueueAutoImport(
           bookImportService, download.id, download.bookId, nudgeImportWorker, this.log,
         );
@@ -124,7 +112,6 @@ export class ImportOrchestrator {
   }
 
   private async dispatchSuccessSideEffects(result: ImportResult, ctx: ImportContext): Promise<void> {
-    // Best-effort: tagging
     try {
       const taggingSettings = await this.settingsService.get('tagging');
       await embedTagsForImport({
@@ -144,9 +131,7 @@ export class ImportOrchestrator {
       this.log.warn({ error: serializeError(tagError), bookId: ctx.bookId }, 'Tagging failed during import — continuing');
     }
 
-    // Best-effort: OPF metadata sidecar (media-server handoff). Independent of tag embedding — never
-    // touches audio, needs no ffmpeg. Pass ctx.bookId (NOT ctx.book, which predates enrichAfterImport);
-    // the shared helper reloads BookWithAuthor fresh so an enrichment-filled narrator is written.
+    // OPF is independent of ffmpeg/tag embedding. Pass the id so the helper reloads post-enrichment metadata.
     try {
       const taggingSettings = await this.settingsService.get('tagging');
       if (this.bookService) {
@@ -159,7 +144,6 @@ export class ImportOrchestrator {
       this.log.warn({ error: serializeError(opfError), bookId: ctx.bookId }, 'OPF write failed during import — continuing');
     }
 
-    // Best-effort: post-processing
     try {
       const processingForScript = await this.settingsService.get('processing');
       await runImportPostProcessing({
@@ -172,18 +156,14 @@ export class ImportOrchestrator {
       this.log.warn({ error: serializeError(scriptError), bookId: ctx.bookId }, 'Post-processing failed during import — continuing');
     }
 
-    // Fire-and-forget: SSE download/book status transitions. Job-lifecycle
-    // `import_complete` is emitted by ImportQueueWorker.processJob — see #1108.
+    // The worker, not this status transition, owns the import_complete lifecycle event.
     emitImportStatusSuccess({ broadcaster: this.broadcaster, downloadId: result.downloadId, bookId: result.bookId, log: this.log });
 
-    // Fire-and-forget: notification
     notifyImportComplete({ notifierService: this.notifierService, bookTitle: ctx.bookTitle, authorName: ctx.authorName, targetPath: result.targetPath, fileCount: result.fileCount, log: this.log });
 
-    // Fire-and-forget: event recording
     recordImportEvent({ eventHistory: this.eventHistory, bookId: ctx.bookId, bookTitle: ctx.bookTitle, authorName: ctx.authorName, downloadId: result.downloadId, bookPath: ctx.bookPath, targetPath: result.targetPath, fileCount: result.fileCount, totalSize: result.totalSize, log: this.log });
 
-    // Fire-and-forget: connector refresh (media-server scan). Fires only after the
-    // DB commit and once the final target path exists — never awaited.
+    // Dispatch connector refresh only after commit and final-path creation; never await it.
     if (this.connectorService) {
       fireAndForget(
         this.connectorService.notifyRefresh('import', [{ bookId: ctx.bookId, title: ctx.bookTitle, authorName: ctx.authorName, libraryPath: result.targetPath }]),
@@ -192,25 +172,13 @@ export class ImportOrchestrator {
       );
     }
 
-    // Auto-merge (#1836), DOWNLOAD path only — reached solely via this success dispatcher,
-    // which manual/library import never invoke. The LAST awaited step before the method returns:
-    // it comes after the three awaited import side effects (tag/OPF/script) and, being placed
-    // after the fire-and-forget block above, never blocks those dispatches (they already kicked
-    // off un-awaited). Ordering relative to them is not load-bearing.
+    // Download-only auto-merge is the final awaited step; manual/library imports never enter this dispatcher.
     await this.maybeEnqueueAutoMerge(result, ctx);
   }
 
   /**
-   * Opt-in auto-merge for multi-file downloads (#1836). Enqueues into the same bounded merge
-   * queue as the manual Merge button; the enqueue is fully isolated from the import — no
-   * rejection or later merge failure may fail/revert the completed import.
-   *
-   * Admission uses the SAME eligibility signal as the manual Merge button: a live top-level
-   * `readdir` of the committed folder filtered by AUDIO_EXTENSIONS. It deliberately does NOT use
-   * `ImportResult.fileCount` (a recursive count of the SOURCE folder) or the persisted
-   * `books.topLevelAudioFileCount` (written by swallow-on-failure enrichment; can be a stale 0).
-   * `enqueueMerge` re-validates via its own live readdir + the synchronous in-progress/queue
-   * duplicate guard, so this pre-count is an admission optimization, not the sole guard.
+   * Merge enqueue failures never affect a completed import. Admission uses a live top-level audio
+   * count, not the recursive source count or stale DB enrichment; enqueueMerge revalidates and deduplicates.
    */
   private async maybeEnqueueAutoMerge(result: ImportResult, ctx: ImportContext): Promise<void> {
     if (!this.mergeService) return;
@@ -228,33 +196,24 @@ export class ImportOrchestrator {
       await this.mergeService.enqueueMerge(ctx.bookId, 'auto');
       this.log.info({ bookId: ctx.bookId, topLevelAudioCount }, 'Auto-merge enqueued for multi-file download');
     } catch (mergeError: unknown) {
-      // Idempotency: a duplicate completion / worker retry while a merge is queued or running
-      // throws ALREADY_* from the synchronous guard — benign, log at debug, no second job.
+      // Duplicate completion/retry while queued or running is an idempotent skip.
       if (mergeError instanceof MergeError && (mergeError.code === 'ALREADY_IN_PROGRESS' || mergeError.code === 'ALREADY_QUEUED')) {
         this.log.debug({ bookId: ctx.bookId, code: mergeError.code }, 'Auto-merge already queued/running — idempotent skip');
         return;
       }
-      // Failure isolation: neither a pre-enqueue admission rejection (MergeError, e.g. ineligible
-      // book or ffmpeg unconfigured) nor any other enqueue error may fail/revert the import. A
-      // pre-enqueue rejection records no merge_failed — it is a skipped admission, not a merge
-      // attempt. A mid-run merge failure surfaces on MergeService's own merge_failed path.
+      // Pre-enqueue rejection is skipped admission, not merge_failed; only a started merge owns that event.
       this.log.warn({ error: serializeError(mergeError), bookId: ctx.bookId }, 'Auto-merge enqueue failed — import unaffected');
     }
   }
 
   private dispatchFailureSideEffects(error: unknown, ctx: ImportContext): void {
-    // Fire-and-forget: SSE failure — emit the REAL reverted lifecycle (the pre-grab
-    // snapshot, falling back to the conservative REVERT_FALLBACK_STATUS for legacy
-    // null rows) so the payload matches the persisted revert. Never path-derived.
+    // Emit the persisted pre-grab lifecycle, with the legacy fallback; never infer it from paths.
     emitImportFailure({ broadcaster: this.broadcaster, downloadId: ctx.downloadId, bookId: ctx.bookId, revertedBookStatus: ctx.bookStatusAtGrab ?? REVERT_FALLBACK_STATUS, log: this.log });
 
-    // Fire-and-forget: failure notification
     notifyImportFailure({ notifierService: this.notifierService, downloadTitle: ctx.downloadTitle, error, log: this.log });
 
-    // Fire-and-forget: failure event recording
     recordImportFailedEvent({ eventHistory: this.eventHistory, bookId: ctx.bookId, bookTitle: ctx.bookTitle, authorName: ctx.authorName, downloadId: ctx.downloadId, source: 'auto', error, log: this.log });
 
-    // #504 — Blacklist content failures and trigger re-search
     if (isContentFailure(error)) {
       const { blacklistService, retrySearchDeps } = this.wired.require();
       blacklistAndRetrySearch({
