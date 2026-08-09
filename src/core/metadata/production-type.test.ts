@@ -23,8 +23,6 @@ describe('normalizeProductionType (#1710)', () => {
   });
 
   it('never produces the reserved values, though they are valid enum members', () => {
-    // Reserved for stories 2/3 — no provider field surfaces them today, so the
-    // helper cannot emit them even when handed the literal string.
     for (const reserved of ['full_cast', 'dramatized', 'graphic_audio'] as const) {
       expect(PRODUCTION_TYPES).toContain(reserved);
       expect(normalizeProductionType(reserved)).toBe('unknown');

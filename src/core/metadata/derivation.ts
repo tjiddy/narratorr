@@ -1,10 +1,7 @@
 import { AuthorMetadataSchema, SeriesMetadataSchema } from './schemas.js';
 import type { BookMetadata, AuthorMetadata, SeriesMetadata } from './types.js';
 
-// Name-keyed, first-occurrence-wins dedup with safeParse construction.
-// Single source of truth for the author/series derivation contract — used by
-// `AudibleProvider.searchSeries` (catalog-search side) and
-// `MetadataService.search()` (post-filter derivation, see #1020).
+// Shared search-path derivation: name-keyed, first occurrence wins, and construction is schema-checked.
 export function deriveAuthorsFromBooks(books: BookMetadata[]): AuthorMetadata[] {
   const authorMap = new Map<string, AuthorMetadata>();
   for (const book of books) {
