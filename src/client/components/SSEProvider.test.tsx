@@ -4,8 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { SSEProvider } from './SSEProvider';
 
-// #1453 — SSEProvider mints a short-lived stream token and threads it into
-// useEventSource as `?token=`, instead of reading the long-lived API key.
+// SSE auth uses a short-lived stream token, never the long-lived API key.
 vi.mock('@/lib/api', () => ({
   api: {
     mintStreamToken: vi.fn(),
@@ -81,7 +80,7 @@ describe('SSEProvider', () => {
   });
 
   it('re-mints and reconnects on a stream error (e.g. token expiry) #1453', async () => {
-    // First mint → token1, second mint (after the error-driven refetch) → token2.
+    // The error-driven refetch returns token2.
     vi.mocked(api.mintStreamToken)
       .mockResolvedValueOnce({ token: 'token1', expiresInMs: 300_000 })
       .mockResolvedValueOnce({ token: 'token2', expiresInMs: 300_000 });
@@ -93,8 +92,6 @@ describe('SSEProvider', () => {
     });
     expect(MockEventSource.instances[0]!.url).toContain('token=token1');
 
-    // Simulate the stream dropping (expired token). The provider should re-mint
-    // and reopen with the fresh token rather than failing permanently.
     act(() => { MockEventSource.instances[0]!.simulateError(); });
 
     await waitFor(() => {

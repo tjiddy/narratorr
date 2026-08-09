@@ -23,9 +23,7 @@ beforeEach(() => {
 describe('ToolbarDropdown', () => {
   it('renders children into document.body portal when open is true', () => {
     render(<Wrapper open={true} onClose={vi.fn()} />);
-    // Portal renders into document.body — screen queries search body by default
     expect(screen.getByTestId('panel')).toBeInTheDocument();
-    // The panel should be a direct child of document.body (portal)
     expect(document.body.querySelector('[data-testid="panel"]')).toBeInTheDocument();
   });
 
@@ -97,10 +95,7 @@ describe('ToolbarDropdown', () => {
 
       rerender(<Wrapper open={true} onClose={onClose} />);
 
-      // panel is portaled to body; its wrapper div carries the computed position
       const portalWrapper = getByTestId('panel').parentElement!;
-      // top = rect.bottom + window.scrollY + 4 = 100 + 0 + 4 = 104
-      // left = rect.left + window.scrollX     = 50  + 0     = 50
       expect(portalWrapper).toHaveStyle({ top: '104px', left: '50px' });
     });
 
@@ -116,7 +111,6 @@ describe('ToolbarDropdown', () => {
 
       rerender(<Wrapper open={true} onClose={onClose} />);
 
-      // Simulate the trigger moving after a scroll (different bottom position)
       vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
         bottom: 140, left: 50, top: 120, right: 150, width: 100, height: 20,
         x: 50, y: 120, toJSON: () => ({}),
@@ -127,7 +121,6 @@ describe('ToolbarDropdown', () => {
       });
 
       const portalWrapper = getByTestId('panel').parentElement!;
-      // top = 140 + 0 + 4 = 144
       expect(portalWrapper).toHaveStyle({ top: '144px', left: '50px' });
     });
 
@@ -143,7 +136,6 @@ describe('ToolbarDropdown', () => {
 
       rerender(<Wrapper open={true} onClose={onClose} />);
 
-      // Simulate the trigger moving after a resize (different left position)
       vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
         bottom: 100, left: 80, top: 80, right: 180, width: 100, height: 20,
         x: 80, y: 80, toJSON: () => ({}),
@@ -154,7 +146,6 @@ describe('ToolbarDropdown', () => {
       });
 
       const portalWrapper = getByTestId('panel').parentElement!;
-      // left = 80 + 0 = 80
       expect(portalWrapper).toHaveStyle({ top: '104px', left: '80px' });
     });
 
@@ -171,18 +162,16 @@ describe('ToolbarDropdown', () => {
       rerender(<Wrapper open={true} onClose={vi.fn()} />);
 
       const portalWrapper = getByTestId('panel').parentElement!;
-      // Give the rendered panel a measurable width (jsdom returns 0 by default)
+      // jsdom reports zero layout width unless it is stubbed.
       vi.spyOn(portalWrapper, 'getBoundingClientRect').mockReturnValue({
         bottom: 0, left: 0, top: 0, right: 177, width: 177, height: 120,
         x: 0, y: 0, toJSON: () => ({}),
       } as DOMRect);
 
-      // Re-run positioning now that the panel width is measurable
       act(() => {
         window.dispatchEvent(new Event('resize'));
       });
 
-      // 390 (viewport) − 177 (panel) − 8 (margin) = 205
       expect(portalWrapper).toHaveStyle({ left: '205px' });
       cwSpy.mockRestore();
     });
@@ -209,7 +198,6 @@ describe('ToolbarDropdown', () => {
         window.dispatchEvent(new Event('resize'));
       });
 
-      // max(8, min(-20, 400 − 100 − 8)) = 8
       expect(portalWrapper).toHaveStyle({ left: '8px' });
       cwSpy.mockRestore();
     });
@@ -228,7 +216,7 @@ describe('ToolbarDropdown', () => {
     });
 
     it('pressing Escape while dropdown is open suppresses a bubble-phase modal listener registered before the dropdown', () => {
-      // Simulate the real registration order: modal registers first (bubble), dropdown registers after (capture)
+      // The parent modal listens in bubble; the dropdown captures Escape and stops it.
       const modalEscapeHandler = vi.fn();
       document.addEventListener('keydown', modalEscapeHandler);
 
@@ -237,9 +225,7 @@ describe('ToolbarDropdown', () => {
 
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true }));
 
-      // Dropdown closes (capture phase fires first)
       expect(onClose).toHaveBeenCalledTimes(1);
-      // Modal listener never fires (stopImmediatePropagation suppressed it)
       expect(modalEscapeHandler).not.toHaveBeenCalled();
 
       document.removeEventListener('keydown', modalEscapeHandler);

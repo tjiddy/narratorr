@@ -7,9 +7,8 @@ type Position = { top: number; left: number };
 const VIEWPORT_MARGIN = 8;
 
 function computePosition(rect: DOMRect, panelWidth: number, viewportWidth: number): Position {
-  // Clamp the left edge so the panel never spills off the right of the viewport
-  // when the trigger sits near the edge. Anchors to the trigger when there's
-  // room; a viewportWidth of 0 (no layout — jsdom or pre-paint) skips the clamp.
+  // Anchor to the trigger and clamp to the viewport. Width 0 means layout is
+  // unavailable, so skip the right clamp.
   const maxLeft = viewportWidth > 0 ? viewportWidth - panelWidth - VIEWPORT_MARGIN : Infinity;
   return {
     top: rect.bottom + window.scrollY + 4,
@@ -45,7 +44,6 @@ export function ToolbarDropdown({
     );
   }, [triggerRef]);
 
-  // Compute position when opening; recompute on scroll/resize
   useEffect(() => {
     if (!open) return;
     updatePosition();
@@ -57,10 +55,10 @@ export function ToolbarDropdown({
     };
   }, [open, updatePosition]);
 
-  // Close on outside click — dual-ref: close only when click is outside BOTH trigger and panel
+  // The portaled panel and its trigger both count as inside.
   useClickOutside([triggerRef, panelRef], onClose, open);
 
-  // Close on Escape
+  // Capture first so Escape closes only the dropdown, not its parent modal.
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
