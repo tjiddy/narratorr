@@ -1,62 +1,10 @@
 /**
- * One-off pre-merge blast check for the #2096 matcher rebuild.
- *
- *   pnpm exec tsx src/server/services/series-title-match-blast-check.ts [dbPath]
- *
- * Replays the PRE-#2096 pairing (colon-truncating scalar normalizer, scalar
- * equality) and the POST-#2096 pairing (title-variant sets, asymmetric
- * acceptance rule) over the live library × cached `series_members`, and prints
- * every member whose outcome moved.
- *
- * TWO position modes, both required, reported for every scope below:
- *
- *   1. FULL — positions exactly as stored. This is what users actually see.
- *   2. TITLE-PATH ONLY — every position forced to null on both sides, so the
- *      position pass can never fire. Position rescue masks title-path
- *      regressions: a member that used to pair by title and now does not still
- *      shows "unchanged" in mode 1 whenever the positions happen to agree.
- *      Mode 2 is the one that can actually see a title-path regression.
- *
- * Candidate pools are replayed ONE PRODUCTION POOL AT A TIME. Production never
- * builds a single global pool, and a global pool cannot stand in for the real
- * ones: both matchers are ordered, first-claim-wins greedy algorithms, so an
- * unrelated book that sorts earlier in a wider pool can be claimed identically by
- * BOTH versions and mask a delta that the real, narrower pool would expose. A
- * superset over-reports AND under-reports here; it is not a safety net, so this
- * script does not use one.
- *
- *   RENDER — `books.series_name = series.name`, the `buildCardFromCache` pool
- *     (`series-card.service.ts`, via `loadLibraryBooksForSeries`). One pool per
- *     series.
- *
- *   BIND(P) — `books.series_name IN (series.name, P)`, replayed SEPARATELY for
- *     each plausible prior name P, with P reported alongside every row. This is
- *     the exact shape production builds: `bindHardcoverSeries` reads
- *     `priorSeriesName` from the initiating book at `series-card.service.ts:389`
- *     and passes `[resolved.name, priorSeriesName]` — canonical plus exactly ONE
- *     prior name — into `persistMembers` at line 413.
- *
- * Deriving P from `series_members.book_id` (books already linked to the row) is
- * WRONG and was this script's earlier defect: linkage is an OUTPUT of the bind,
- * not an input. `relinkBookToBoundSeries` runs at line 440, AFTER `persistMembers`
- * has already matched, so the initiating book is typically UNLINKED while it is
- * being matched — which is precisely the Chapterhouse shape (a book on
- * `Dune Chronicles` with no member row, bound to the canonical `Dune`).
- *
- * P is instead derived by REACHABILITY: the distinct `books.series_name` values
- * (excluding the canonical) of every book that either matcher could actually
- * return for some member of this series. The pruning is sound rather than
- * heuristic — a book neither matcher can ever return is never claimed, so it can
- * neither produce a delta nor mask one, in any pool containing it.
- *
- * Read-only: opens the DB, runs SELECTs, writes nothing.
- *
- * STALE since #2175: production no longer keys either pool on an exact
- * `books.series_name` match — it loads every series-carrying book and filters on
- * `normalizeSeriesName` equality (with a byte-exact fallback for names that
- * normalize to empty). The pool descriptions below therefore describe the
- * pre-#2175 shape. This is a one-off pre-merge script for #2096; re-running or
- * reworking it was explicitly out of scope there.
+ * One-off read-only matcher blast check: `pnpm exec tsx ... [dbPath]`.
+ * Compare pre/post #2096 pairings in full and position-null modes; positions can mask title regressions.
+ * Replay each production pool separately because greedy first-claim matching makes global supersets lie.
+ * RENDER is one canonical series pool; BIND(P) is canonical plus exactly one prior name.
+ * Derive P from candidates either matcher can reach, never `series_members` linkage (a bind output).
+ * STALE since #2175 changed pool normalization; rework before rerunning.
  */
 
 import { existsSync } from 'fs';
@@ -70,9 +18,7 @@ import {
   type LibraryBookSummary,
 } from './series-title-match.js';
 
-// ─── The pre-#2096 pairing, replicated verbatim ──────────────────────────────
-
-/** The pre-#2096 scalar normalizer: TRUNCATES at the first colon, strips all parens/brackets. */
+/** Pre-#2096 normalization truncates at the first colon and strips all parentheses/brackets. */
 function legacyNormalize(title: string): string {
   let stripped = title
     .replace(/[’‘]/g, "'")
@@ -116,13 +62,10 @@ function legacyFindInLibraryMatch(
   return null;
 }
 
-// ─── Diffing ─────────────────────────────────────────────────────────────────
-
 type Outcome = 'newly-paired' | 'unpaired' | 'repaired' | 'unchanged';
 
 interface Row {
   seriesName: string;
-  /** The one prior name this pool added, or null for the RENDER pool. */
   priorName: string | null;
   memberTitle: string;
   memberPosition: number | null;
@@ -138,10 +81,7 @@ function classify(before: number | null, after: number | null): Outcome {
   return 'repaired';
 }
 
-/**
- * Pair every member of every series both ways. `ignorePositions` nulls all
- * positions so only the title path can fire.
- */
+/** `ignorePositions` isolates title matching by nulling both sides. */
 function diffSeries(
   members: HardcoverMemberSummary[],
   candidates: LibraryBookSummary[],
@@ -189,7 +129,7 @@ function report(label: string, rows: Row[], pairings: number, pools: number): vo
     console.log('  (no outcome changed)');
     return;
   }
-  // Unpairings first — those are the ones that need a named justification.
+  // Report unpairings first because each needs explicit justification.
   const order: Outcome[] = ['unpaired', 'repaired', 'newly-paired'];
   for (const outcome of order) {
     for (const row of rows.filter((r) => r.outcome === outcome)) {
@@ -201,7 +141,6 @@ function report(label: string, rows: Row[], pairings: number, pools: number): vo
   }
 }
 
-/** The two production pool shapes. See the module header. */
 const SCOPES = ['render', 'bind'] as const;
 type Scope = (typeof SCOPES)[number];
 
@@ -213,25 +152,19 @@ const SCOPE_LABEL: Record<Scope, string> = {
 interface Accumulator {
   full: Row[];
   titleOnly: Row[];
-  /** Number of (series, pool) replays — a bind series contributes one per prior name. */
   pools: number;
-  /** Number of member×pool pairings evaluated; the denominator for `unchanged`. */
   pairings: number;
 }
 
 /**
- * Can either matcher ever return `candidate` for `member`? Used to prune the
- * prior-name search space. Sound, not heuristic: a candidate no matcher can
- * return is never claimed, so it cannot produce a delta or mask one in ANY pool
- * that contains it. Both matchers are consulted because the arms differ — the
- * point is to keep a book that only the NEW matcher can reach.
+ * Consult both matchers when pruning prior names. An unreachable candidate cannot be claimed,
+ * produce a delta, or mask one.
  */
 function reachable(member: HardcoverMemberSummary, candidate: LibraryBookSummary): boolean {
   const solo = [candidate];
   if (legacyFindInLibraryMatch(member, solo, new Set()) !== null) return true;
   if (findInLibraryMatch(member, solo, new Set()) !== null) return true;
-  // Title-path reachability too: a shared position is not required for a pool to
-  // matter, and the positions-ignored mode below runs with every position nulled.
+  // Check title-only reachability because the second report nulls every position.
   const blind = { ...member, position: null };
   const blindSolo = [{ ...candidate, seriesPosition: null }];
   return (
@@ -240,58 +173,27 @@ function reachable(member: HardcoverMemberSummary, candidate: LibraryBookSummary
   );
 }
 
-/**
- * A replay candidate — production's projection plus the `series_name` the pools
- * filter on.
- *
- * `seriesName` is NON-NULLABLE by construction, and that is a postcondition of
- * `loadReplayCandidates` rather than of the column: a `seriesName`-tombstoned
- * book stores `series_name = NULL`, SQL `IN` never matches one, so production
- * can never pool it and the loader drops it. Encoding the guarantee in the type
- * — instead of carrying `string | null` and casting at each use site — is what
- * makes tombstone exclusion part of this module's API rather than a comment.
- */
+/** The loader drops NULL `series_name` rows, which production's SQL `IN` cannot pool. */
 export interface ReplayCandidate extends LibraryBookSummary {
   seriesName: string;
 }
 
 /**
- * The replay's ENTIRE candidate universe, in production's pinned order. Every
- * pool below is a `.filter()` of this list, and `Array.prototype.filter`
- * preserves order, so pinning it here pins every replayed pool.
- *
- * `ORDER BY books.id`, matching the order production pins (#2108 —
- * `loadLibraryBooksForSeriesNames` carries the same `asc(books.id)`), so each
- * replayed pool presents candidates in the same sequence production's
- * `WHERE series_name IN (…)` would. Load-bearing, because both matchers are
- * first-claim-wins within a match-quality tier. Before #2108 both sides were
- * unordered, which agreed only by planner accident; the replay must track
- * production's contract, or its whole premise (replayed pool order equals
- * production's) is false — and a blast check whose pools differ from
- * production's reports planner-dependent deltas that production never sees.
- *
- * A `seriesName`-tombstoned book has `series_name = NULL` and SQL `IN` never
- * matches it, so production can never pool one; they are dropped here.
- *
- * EXPORTED for `series-title-match-blast-check.test.ts`, which is the only
- * executable signal on that ordering contract — the forced-index integration
- * fixture observes production's loader, not this one.
+ * Load the full universe in production's `books.id` order; filtered pools preserve this order.
+ * Ordering is load-bearing because both matchers are greedy first-claim-wins (#2108).
+ * Exported so the dedicated test can guard this loader rather than production's separate loader.
  */
 export async function loadReplayCandidates(db: Db): Promise<ReplayCandidate[]> {
   const allBooks = await db
     .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition, seriesName: books.seriesName })
     .from(books)
     .orderBy(asc(books.id));
-  // A type PREDICATE, not a bare boolean: it is what carries the non-null
-  // guarantee out to `ReplayCandidate` so no caller has to assert it back.
   return allBooks.filter((b): b is ReplayCandidate => b.seriesName !== null);
 }
 
 async function main(): Promise<void> {
   const dbPath = process.argv[2] ?? process.env.DATABASE_PATH ?? './config/narratorr.db';
-  // libsql happily CREATES a missing file, which would turn "I pointed this at
-  // the wrong path" into a silent all-zeroes report — the one failure mode that
-  // makes a blast check actively misleading. Refuse instead.
+  // libsql creates missing files, so refuse a misleading all-zeroes report.
   if (!existsSync(dbPath)) {
     console.error(`No database at ${dbPath}. Point this at the live library, e.g.\n  pnpm exec tsx ${process.argv[1]} /path/to/config/narratorr.db`);
     process.exitCode = 1;
@@ -324,19 +226,14 @@ async function main(): Promise<void> {
     const canonicalPool = named.filter((b) => b.seriesName === row.name);
     replay('render', members, canonicalPool, row.name, null);
 
-    // Prior names, derived by REACHABILITY rather than by linkage — linkage is an
-    // output of the bind (`relinkBookToBoundSeries`, series-card.service.ts:440),
-    // so the initiating book is typically still unlinked while it is matched.
+    // Derive prior names by reachability; linkage is a bind output and is usually absent here.
     const priorNames = new Set(
       named
         .filter((b) => b.seriesName !== row.name && members.some((m) => reachable(m, b)))
         .map((b) => b.seriesName),
     );
 
-    // One pool per prior name — canonical + exactly ONE extra, the shape
-    // `bindHardcoverSeries` builds. Never all prior names at once, and never a
-    // global pool: a wider pool lets an earlier unrelated book be claimed by both
-    // matcher versions and mask a delta the real pool would show.
+    // Replay canonical plus one prior name; a wider greedy pool can mask real deltas.
     for (const priorName of priorNames) {
       const bindPool = named.filter((b) => b.seriesName === row.name || b.seriesName === priorName);
       replay('bind', members, bindPool, row.name, priorName);
@@ -359,13 +256,7 @@ async function main(): Promise<void> {
   db.$client.close();
 }
 
-// CLI entry point — only when run directly via `tsx <this file>`, mirroring
-// `src/db/migrate.ts`. The ordering drift guard imports this module for
-// `loadReplayCandidates`, and an unguarded top-level `await main()` would run
-// the whole replay on import — which, with no live library at the default path,
-// also sets `process.exitCode = 1` and would fail the entire vitest run. No
-// `isBundled` companion check is needed here: nothing imports this module from
-// the server, so tsup (entry `src/server/index.ts`) never inlines it.
+// The ordering test imports this module; run the CLI only when invoked directly.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await main();
 }
