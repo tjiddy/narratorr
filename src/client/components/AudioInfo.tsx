@@ -33,7 +33,7 @@ function buildAudioParts(book: BookWithAuthor): { techParts: string[]; fileParts
 
 interface AudioInfoProps {
   book: BookWithAuthor;
-  /** When true, renders without outer animation wrapper and uses tighter padding */
+  /** Removes the outer animation and tightens padding. */
   compact?: boolean;
 }
 

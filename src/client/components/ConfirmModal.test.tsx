@@ -117,7 +117,6 @@ describe('ConfirmModal', () => {
     );
     const stayBtn = screen.getByText('Stay on page').closest('button')!;
     const discardBtn = screen.getByText('Discard changes').closest('button')!;
-    // Stay is the visual primary; Discard is secondary (no destructive styling).
     expect(stayBtn).toHaveClass('bg-primary', 'text-primary-foreground');
     expect(discardBtn).not.toHaveClass('bg-destructive');
     expect(discardBtn).toHaveClass('border', 'border-border');
@@ -159,13 +158,10 @@ describe('ConfirmModal', () => {
       render(<ConfirmModal {...defaultProps} />);
       const cancelBtn = screen.getByText('Cancel').closest('button')!;
       const deleteBtn = screen.getByText('Delete').closest('button')!;
-      // Focus the first button
       cancelBtn.focus();
       expect(document.activeElement).toBe(cancelBtn);
-      // Tab to second button
       await user.keyboard('{Tab}');
       expect(document.activeElement).toBe(deleteBtn);
-      // Tab wraps back to first
       await user.keyboard('{Tab}');
       expect(document.activeElement).toBe(cancelBtn);
     });

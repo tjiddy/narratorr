@@ -72,7 +72,7 @@ describe('ManualAddFormModal', () => {
       const user = userEvent.setup();
       const onClose = vi.fn();
 
-      // Mock addBook to never resolve — keeps mutation in pending state
+      // Hold the mutation in its pending state.
       const { api } = await import('@/lib/api');
       vi.mocked(api.addBook).mockReturnValue(new Promise(() => {}));
 
@@ -80,17 +80,15 @@ describe('ManualAddFormModal', () => {
         <ManualAddFormModal isOpen={true} onClose={onClose} />,
       );
 
-      // Fill required field and submit to trigger pending state
       const titleInput = screen.getByPlaceholderText('Book title');
       await user.type(titleInput, 'Test Book');
       await user.click(screen.getByRole('button', { name: /add book/i }));
 
-      // Wait for the close button to become disabled (pending state propagated)
       await waitFor(() => {
         expect(screen.getByLabelText('Close')).toBeDisabled();
       });
 
-      // Use fireEvent to bypass disabled attribute — tests the onClick guard directly
+      // fireEvent bypasses disabled so the handler guard is exercised directly.
       fireEvent.click(screen.getByLabelText('Close'));
 
       expect(onClose).not.toHaveBeenCalled();
@@ -141,17 +139,14 @@ describe('ManualAddFormModal', () => {
         <ManualAddFormModal isOpen={true} onClose={onClose} />,
       );
 
-      // Fill required field and submit to trigger pending state
       const titleInput = screen.getByPlaceholderText('Book title');
       await user.type(titleInput, 'Test Book');
       await user.click(screen.getByRole('button', { name: /add book/i }));
 
-      // Wait for pending state
       await waitFor(() => {
         expect(screen.getByLabelText('Close')).toBeDisabled();
       });
 
-      // Escape should be suppressed by handleEscape guard
       await user.keyboard('{Escape}');
       expect(onClose).not.toHaveBeenCalled();
     });

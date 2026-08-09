@@ -66,7 +66,6 @@ describe('CoverImage', () => {
         <CoverImage src="https://example.com/cover.jpg" alt="Test" fallback={<span>FB</span>} className="w-20 h-20" />,
       );
 
-      // The ring overlay (absolute inset-0 ring-1) should NOT have w-20 or h-20
       const ringElement = container.querySelector('.ring-1.ring-inset');
       expect(ringElement).toBeInTheDocument();
       expect(ringElement).not.toHaveClass('w-20');
@@ -78,7 +77,6 @@ describe('CoverImage', () => {
         <CoverImage src="https://example.com/cover.jpg" alt="Test" fallback={<span>FB</span>} className="w-20 h-20" />,
       );
 
-      // The outer wrapper should have both className and its own classes
       const outerDiv = container.firstElementChild;
       expect(outerDiv).toHaveClass('w-20', 'h-20', 'relative', 'overflow-hidden');
     });
@@ -90,7 +88,6 @@ describe('CoverImage', () => {
     });
 
     it('prefixes app-relative cover URLs with URL_BASE', async () => {
-      // Mock resolveUrl to simulate URL_BASE = /narratorr
       vi.spyOn(await import('@/lib/url-utils'), 'resolveUrl').mockImplementation(
         (url) => {
           if (!url) return undefined;
@@ -99,7 +96,6 @@ describe('CoverImage', () => {
         },
       );
 
-      // Re-import component to pick up mocked resolveUrl
       const { CoverImage: PrefixedCoverImage } = await import('@/components/CoverImage');
 
       renderWithProviders(

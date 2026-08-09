@@ -9,9 +9,7 @@ interface ConfirmModalProps {
   confirmLabel?: string;
   cancelLabel?: string;
   confirmDisabled?: boolean;
-  /** Button variant for the cancel action. Defaults to 'secondary'. */
   cancelVariant?: ButtonVariant;
-  /** Button variant for the confirm action. Defaults to 'destructive'. */
   confirmVariant?: ButtonVariant;
   onConfirm: () => void;
   onCancel: () => void;
@@ -61,12 +59,10 @@ export function ConfirmModal({
         aria-describedby="confirm-modal-description"
         tabIndex={-1}
       >
-        {/* Icon */}
         <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-destructive/10 rounded-full">
           <AlertTriangleIcon className="w-6 h-6 text-destructive" />
         </div>
 
-        {/* Content */}
         <div className="text-center mb-6">
           <h3 id="confirm-modal-title" className="font-display text-xl font-semibold mb-2">{title}</h3>
           <p id="confirm-modal-description" className="text-muted-foreground">{message}</p>
@@ -78,7 +74,6 @@ export function ConfirmModal({
           </div>
         )}
 
-        {/* Actions */}
         <div className="flex flex-col-reverse sm:flex-row gap-3">
           <Button
             variant={cancelVariant}

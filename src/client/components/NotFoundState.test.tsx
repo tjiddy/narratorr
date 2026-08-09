@@ -27,7 +27,6 @@ describe('NotFoundState', () => {
     renderWithRouter(
       <NotFoundState icon={BookOpenIcon} title="Not found" subtitle="Gone" backTo="/library" backLabel="Back" />
     );
-    // BookOpenIcon renders an svg
     const heading = screen.getByRole('heading', { level: 2 });
     expect(heading.closest('div')?.parentElement?.querySelector('svg')).toBeInTheDocument();
   });
