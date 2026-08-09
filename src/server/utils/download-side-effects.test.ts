@@ -46,7 +46,6 @@ describe('emitGrabStarted', () => {
 
   it('skips emission when broadcaster is undefined', () => {
     const log = createMockLog();
-    // Should not throw
     emitGrabStarted({ broadcaster: undefined, downloadId: 1, bookId: 2, bookTitle: 'Test', releaseTitle: 'Test', log });
   });
 
@@ -231,7 +230,7 @@ describe('notifyGrab', () => {
     (notifier.notify as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('notify fail'));
     const log = createMockLog();
     notifyGrab({ notifierService: notifier, title: 'Test', size: undefined, log });
-    // Allow microtask to settle
+    // Allow the rejection microtask to settle.
     await new Promise((r) => setTimeout(r, 10));
     expect(log.warn).toHaveBeenCalled();
   });
@@ -334,7 +333,6 @@ describe('recordDownloadFailedEvent', () => {
 
   it('skips recording when eventHistory is undefined', () => {
     recordDownloadFailedEvent({ eventHistory: undefined, downloadId: 1, bookId: 2, bookTitle: 'Test', errorMessage: 'fail', log });
-    // No assertion needed — should not throw
   });
 
   it('skips recording when bookId is falsy', () => {
@@ -476,8 +474,7 @@ describe('recordSearchRelaxedHeldEvent', () => {
       source: 'auto',
       reason: { relaxed_query: 'haunted starlight', variant_tag: 'suffix(1)', release_title: 'Haunted Starlight - George Mann' },
     });
-    // The log line the two auto-grab paths used to copy in lockstep — no attempt field
-    // on the scheduled-cycle path.
+    // The scheduled path omits attempt.
     expect(log.info).toHaveBeenCalledWith(
       { bookId: 9, title: 'Haunted Starlight', relaxedQuery: 'haunted starlight', variantTag: 'suffix(1)', releaseTitle: 'Haunted Starlight - George Mann' },
       'Relaxed-query candidates held for review — none carried the canonical title anchors',

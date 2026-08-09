@@ -93,7 +93,6 @@ describe('preserveBookCover', () => {
     (mkdir as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (copyFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
-    // Call twice — both should succeed without error
     await preserveBookCover('/library/Author/Book', 42, '/config', log);
     await preserveBookCover('/library/Author/Book', 42, '/config', log);
 
@@ -101,17 +100,15 @@ describe('preserveBookCover', () => {
   });
 
   it('removes stale cover siblings when extension changes (jpg → png)', async () => {
-    // Book directory has cover.png
     (readdir as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce(['cover.png'])        // readdir(bookPath) — find new cover
-      .mockResolvedValueOnce(['cover.jpg']);         // readdir(cacheDir) — stale sibling
+      .mockResolvedValueOnce(['cover.png'])        // readdir(bookPath): book directory
+      .mockResolvedValueOnce(['cover.jpg']);         // stale cache sibling
     (mkdir as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (copyFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     await preserveBookCover('/library/Author/Book', 42, '/config', log);
 
-    // Should remove the stale cover.jpg before copying cover.png
     const unlinkPath = String(vi.mocked(unlink).mock.calls[0]![0]).split('\\').join('/');
     expect(unlinkPath).toBe('/config/covers/42/cover.jpg');
     const copySrc = String(vi.mocked(copyFile).mock.calls[0]![0]).split('\\').join('/');
@@ -122,8 +119,8 @@ describe('preserveBookCover', () => {
 
   it('does not remove same-extension file when overwriting', async () => {
     (readdir as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce(['cover.jpg'])        // readdir(bookPath)
-      .mockResolvedValueOnce(['cover.jpg']);         // readdir(cacheDir) — same extension
+      .mockResolvedValueOnce(['cover.jpg'])        // readdir(bookPath): book directory
+      .mockResolvedValueOnce(['cover.jpg']);         // same cache extension
     (mkdir as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (copyFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
@@ -176,7 +173,6 @@ describe('cleanCoverCache', () => {
   it('does nothing when no cache entry exists (idempotent, no error)', async () => {
     (rm as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
-    // force: true means rm won't throw for missing dirs
     await cleanCoverCache(999, '/config', log);
 
     const rmPath = String(vi.mocked(rm).mock.calls[0]![0]).split('\\').join('/');

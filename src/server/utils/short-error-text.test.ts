@@ -3,7 +3,6 @@ import { toShortErrorText } from './short-error-text.js';
 import { RenameError } from '../services/rename.service.js';
 import { RetagError } from '../services/tagging.service.js';
 
-/** The live #2159 case: a stale `imported` row pointing at a manually-deleted folder. */
 function makeEnoent(): NodeJS.ErrnoException {
   return Object.assign(
     new Error("ENOENT: no such file or directory, open '/audiobooks/Jim Butcher/Codex Alera/04 - Captain's Fury/metadata.opf'"),
@@ -25,7 +24,6 @@ describe('toShortErrorText (#2159)', () => {
     });
 
     it('still prefixes when the message merely starts with the code as a longer word', () => {
-      // `ENOENTX` is not `ENOENT` + non-alphanumeric, so the prefix is NOT suppressed.
       expect(toShortErrorText(Object.assign(new Error('ENOENTX blew up'), { code: 'ENOENT' })))
         .toBe('ENOENT: ENOENTX blew up');
     });

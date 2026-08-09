@@ -1,22 +1,11 @@
-// Leaf primitives for folder parsing (issue #1557). Holds the runtime symbols
-// that both folder-parsing.ts and folder-parsing-patterns.ts share, so neither
-// sibling has to import the other for them. This module imports nothing from
-// either sibling — it is the bottom of the one-way dependency graph:
-//   folder-parsing.ts ─▶ folder-parsing-patterns.ts ─▶ folder-parsing-primitives.ts
-//   folder-parsing.ts ───────────────────────────────▶ folder-parsing-primitives.ts
-
-// ─── Regex Constants ────────────────────────────────────────────────
-
-/** Codec/format tags to strip from folder names (case-insensitive, word-boundary). */
 export const CODEC_TAGS = ['MP3', 'M4B', 'M4A', 'FLAC', 'OGG', 'AAC', 'Unabridged', 'Abridged'];
 
 /** Non-global codec regex for `.test()` guards — no `lastIndex` state between calls. */
 export const CODEC_TEST_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'i');
 
-/** Global codec regex (strips all matches) — the stripping twin of `CODEC_TEST_REGEX`. */
+// Global stripping twin of CODEC_TEST_REGEX.
 const CODEC_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'gi');
 
-/** Shared normalization: underscore/dot→space, codec strip, collapse whitespace, trim. */
 export function normalizeFolderName(name: string): string {
   return name
     .replace(/[_.]/g, ' ')
@@ -25,23 +14,14 @@ export function normalizeFolderName(name: string): string {
     .trim();
 }
 
-/** Matches a bare 4-digit year (1900–2099) at end of string. */
 export const BARE_YEAR_REGEX = /\b((?:19|20)\d{2})\s*$/;
 
-/**
- * The repository's single notion of "this number is a year": 1900–2099. Shared by
- * `extractYear`, the clean pipeline's trailing-year strips, and the #2145 leading-position
- * guard that keeps the Detailed preset's positions and the Plex preset's years — which
- * render into the identical folder-name slot — from being read as each other.
- */
+// Shared 1900–2099 window, including year-versus-leading-position disambiguation.
 export function isYearInWindow(value: number): boolean {
   return Number.isInteger(value) && value >= 1900 && value <= 2099;
 }
 
-/**
- * Extracts a 4-digit year (1900–2099) from a folder name string.
- * Checks parenthesized, bracketed, and bare trailing years.
- */
+/** Extracts a parenthesized, bracketed, or bare trailing year in the shared window. */
 export function extractYear(name: string): number | undefined {
   const normalized = normalizeFolderName(name);
   for (const regex of [/\((\d{4})\)\s*$/, /\[(\d{4})\]\s*$/, BARE_YEAR_REGEX]) {
@@ -53,10 +33,7 @@ export function extractYear(name: string): number | undefined {
   return undefined;
 }
 
-/**
- * Matches a trailing parenthetical containing a person's name (1-3 words).
- * Does NOT match: years (2020), codec tags (handled by CODEC_REGEX), or long subtitles (>3 words).
- */
+// A trailing 1–3-word person name, excluding year-shaped content.
 export const NARRATOR_PAREN_REGEX = /\s*\((?!(?:19|20)\d{2}\))(\S+(?:\s+\S+){0,2})\)\s*$/;
 
 const EDITION_PAREN_YEAR_PREFIX = /^(?:19|20)\d{2}\b/;
@@ -69,10 +46,8 @@ export function isEditionParen(content: string): boolean {
     || EDITION_PAREN_KEYWORD.test(content);
 }
 
-/** P9: `Last, First` author convention — exactly two name-shaped tokens around a comma. */
 const LAST_FIRST_AUTHOR_REGEX = /^([\w'.-]+),\s*([\w'.-]+)$/;
 
-/** Apply P9 swap: `Last, First` → `First Last`. No-op if pattern doesn't match. */
 export function applyLastFirstSwap(author: string): string {
   const match = author.match(LAST_FIRST_AUTHOR_REGEX);
   if (match) return `${match[2]} ${match[1]}`;

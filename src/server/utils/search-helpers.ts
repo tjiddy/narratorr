@@ -16,18 +16,7 @@ export interface SearchTraceResult {
   results: BookMetadata[];
 }
 
-/**
- * Search for books with automatic author/title swap retry on zero results,
- * returning a trace of the queries issued and whether the swap path fired.
- *
- * Builds the initial query as `${title} ${author}` (or `title` alone when no
- * author is provided). When the initial search returns zero results and an
- * author is present, retries with title and author swapped — this handles
- * folder names where author and title are in the wrong order. The returned
- * `SearchTraceResult` captures `initialQuery`, `initialResultCount`,
- * `swapRetry`, and `swapQuery` so callers can replay the search→enrich
- * pipeline from the audit log.
- */
+/** Search once, then retry zero-result author/title inversions while returning an audit trace. */
 export async function searchWithSwapRetryTrace(args: {
   searchFn: SearchFn;
   title: string;
@@ -50,7 +39,6 @@ export async function searchWithSwapRetryTrace(args: {
     };
   }
 
-  // Swap retry: try with author as title and title as author
   log.debug({ title, author }, 'Zero results — retrying with swapped author/title');
   const swapQuery = `${author} ${title}`;
   const swappedOptions = options

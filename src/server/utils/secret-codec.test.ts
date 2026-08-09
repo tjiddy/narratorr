@@ -22,26 +22,8 @@ import {
 } from './secret-codec.js';
 import { notifierSettingsSchemas } from '@shared/schemas/notifier.js';
 
-// Heuristic for detecting secret-shaped notifier field names. Today's 10
-// registered notifier secrets all match: `url`, `webhookUrl`, `headers`,
-// `*Token` (botToken / pushoverToken / gotifyToken / ntfyAccessToken),
-// `*Pass` (smtpPass),
-// `*User` (pushoverUser), `*Topic` (ntfyTopic). The `*User` / `*Topic` suffixes
-// were added in #1307; the `*Key` / `*Secret` / `*Password` suffixes were added
-// in #1357 (anticipatory widening — every other SECRET_FIELDS entity already
-// uses `apiKey`-shaped names, so the next unregistered credential of any of
-// these shapes is caught by the drift guard rather than silently stored
-// plaintext, at zero denylist cost since no current field matches them).
-// Non-secret notifier fields (gotifyUrl, ntfyServer, smtpHost, chatId,
-// fromAddress, toAddress, path, method, bodyTemplate, etc.) do NOT match — the
-// `^url$` and `^webhookUrl$` alternatives are anchored, so `gotifyUrl` /
-// `ntfyServer` slip past, and the suffix rules only catch the suffix shape.
-// `email.smtpUser` is the one genuine false positive (an SMTP username, not a
-// credential — unlike smtpPass), so it lives in the explicit denylist below.
-// The denylist is keyed by `${type}.${field}` (#1357), not the bare field name:
-// exempting `smtpUser` globally would also silently skip a future non-email type
-// that reused `smtpUser`-shaped naming for a real secret. Add to the denylist
-// only when a non-secret `${type}.${field}` genuinely matches this heuristic.
+// Keep this broader than today's registry so new credential-shaped fields fail the drift guard.
+// Exact names are anchored; subtype-scoped exceptions prevent global blind spots.
 const NOTIFIER_SECRET_NAME_HEURISTIC = /^(url|webhookUrl|headers|.*Token|.*Pass|.*User|.*Topic|.*Key|.*Secret|.*Password)$/;
 const NOTIFIER_SECRET_HEURISTIC_FALSE_POSITIVES = new Set(['email.smtpUser']);
 
@@ -135,15 +117,14 @@ describe('SecretCodec', () => {
     it('decrypting tampered ciphertext throws or produces wrong output', () => {
       const plaintext = 'secret';
       const encrypted = encrypt(plaintext, TEST_KEY);
-      // Corrupt a byte deep in the ciphertext payload (past $ENC$ prefix + base64 IV)
+      // Corrupt the encoded payload beyond the IV.
       const tampered = encrypted.slice(0, 20) + 'X' + encrypted.slice(21);
       try {
         const result = decrypt(tampered, TEST_KEY);
-        // AES-GCM should throw on tag mismatch, but if base64 corruption
-        // shifts segment boundaries, it may produce garbage instead
+        // Text corruption may fail authentication or decode to nonmatching garbage.
         expect(result).not.toBe(plaintext);
       } catch {
-        // Expected: GCM auth tag verification failure
+        // Expected authentication failure.
       }
     });
   });
@@ -226,27 +207,21 @@ describe('SecretCodec', () => {
   });
 
   describe('#1357 opportunistic decrypt (rollback-proofing)', () => {
-    // `futureSecret` is deliberately absent from SECRET_FIELDS for every entity.
-    // Using a key the real registry doesn't know about proves the opportunistic
-    // path against the production registry — no vi.mock of the private
-    // SECRET_FIELDS is needed (and could not work: decryptFields resolves the
-    // registry through the same-module getSecretFieldNames binding that vi.mock
-    // cannot intercept — see CLAUDE.md "ESM same-module calls bypass vi.mock").
+    // Use an unknown real-registry key; same-module bindings make mocking SECRET_FIELDS ineffective.
 
     it('decryptFields decrypts an $ENC$ value under a key NOT in SECRET_FIELDS', () => {
       const row = { futureSecret: encrypt('rolled-forward', TEST_KEY), ntfyServer: 'https://ntfy.sh' };
       const decrypted = decryptFields('notifier', row, TEST_KEY);
       expect(decrypted.futureSecret).toBe('rolled-forward');
-      // Non-encrypted sibling untouched.
       expect(decrypted.ntfyServer).toBe('https://ntfy.sh');
     });
 
     it('encryptFields and maskFields leave an unregistered key untouched (encrypt/mask stay registry-scoped)', () => {
       const plaintext = 'a-real-future-secret';
       const encrypted = encryptFields('notifier', { futureSecret: plaintext }, TEST_KEY);
-      expect(encrypted.futureSecret).toBe(plaintext); // not encrypted — outside the registry
+      expect(encrypted.futureSecret).toBe(plaintext);
       const masked = maskFields('notifier', { futureSecret: plaintext });
-      expect(masked.futureSecret).toBe(plaintext); // not masked — outside the registry
+      expect(masked.futureSecret).toBe(plaintext);
     });
 
     it('passes a malformed non-base64 $ENC$ blob through unchanged without throwing', () => {
@@ -256,7 +231,7 @@ describe('SecretCodec', () => {
     });
 
     it('passes an undersized $ENC$ payload (shorter than IV+auth-tag) through unchanged', () => {
-      const undersized = '$ENC$' + Buffer.from('shorttag').toString('base64'); // 8 bytes < 12+16
+      const undersized = '$ENC$' + Buffer.from('shorttag').toString('base64'); // 8 bytes; IV + tag need 28.
       const row = { futureSecret: undersized };
       expect(() => decryptFields('notifier', row, TEST_KEY)).not.toThrow();
       expect(row.futureSecret).toBe(undersized);
@@ -265,9 +240,9 @@ describe('SecretCodec', () => {
     it('passes a corrupted-auth-tag $ENC$ value through unchanged (decipher.final failure)', () => {
       const valid = encrypt('secret', TEST_KEY);
       const payload = Buffer.from(valid.slice('$ENC$'.length), 'base64');
-      payload[13] = payload[13]! ^ 0xff; // flip a byte inside the 16-byte auth tag (offset 12..27)
+      payload[13] = payload[13]! ^ 0xff; // Auth tag occupies bytes 12–27.
       const corrupted = '$ENC$' + payload.toString('base64');
-      const row = { pushoverUser: corrupted }; // a registered field — still must passthrough on failure
+      const row = { pushoverUser: corrupted };
       expect(() => decryptFields('notifier', row, TEST_KEY)).not.toThrow();
       expect(row.pushoverUser).toBe(corrupted);
     });
@@ -286,18 +261,15 @@ describe('SecretCodec', () => {
   });
 
   describe('#1404 decrypt-failure diagnostic logging', () => {
-    // A logger stub exposing just the `warn` spy decryptFields touches.
     function mockLogger(): { warn: ReturnType<typeof vi.fn>; logger: FastifyBaseLogger } {
       const warn = vi.fn();
       return { warn, logger: { warn } as unknown as FastifyBaseLogger };
     }
 
-    // A registered secret field holding a $ENC$ blob that fails to decrypt
-    // (corrupted auth tag under the right key — the lost/regenerated-key symptom).
     function corruptBlob(): string {
       const valid = encrypt('secret', TEST_KEY);
       const payload = Buffer.from(valid.slice('$ENC$'.length), 'base64');
-      payload[13] = payload[13]! ^ 0xff; // flip a byte inside the 16-byte auth tag
+      payload[13] = payload[13]! ^ 0xff; // Inside the auth tag.
       return '$ENC$' + payload.toString('base64');
     }
 
@@ -312,7 +284,6 @@ describe('SecretCodec', () => {
         { entity: 'indexer', failedFields: ['apiKey'] },
         expect.stringContaining('secret.key'),
       );
-      // #1357 passthrough unchanged — the corrupt blob is returned verbatim.
       expect(result.apiKey).toBe(blob);
       expect(result.hostname).toBe('example.com');
     });
@@ -349,7 +320,6 @@ describe('SecretCodec', () => {
     it('never logs a decrypted value or the raw $ENC$ blob (negative-leak)', () => {
       const { warn, logger } = mockLogger();
       const blob = corruptBlob();
-      // A sibling that DOES decrypt — its plaintext must not leak into the warn either.
       const decryptable = encrypt('super-secret-plaintext', TEST_KEY);
       decryptFields('indexer', { apiKey: blob, apiUrl: decryptable }, TEST_KEY, logger);
 
@@ -507,7 +477,6 @@ describe('SecretCodec', () => {
         pushoverUser: encrypt('real-user', TEST_KEY),
         ntfyTopic: encrypt('real-topic', TEST_KEY),
       };
-      // Sentinel resolves to the stored ciphertext byte-for-byte...
       const resolved = resolveSentinelFields(
         { pushoverUser: '********', ntfyTopic: '********' },
         existing,
@@ -515,12 +484,10 @@ describe('SecretCodec', () => {
       );
       expect(resolved.pushoverUser).toBe(existing.pushoverUser);
       expect(resolved.ntfyTopic).toBe(existing.ntfyTopic);
-      // ...and encryptFields does not re-encrypt an already-encrypted value (isEncrypted skip path).
       const reEncrypted = encryptFields('notifier', { ...resolved } as Record<string, unknown>, TEST_KEY);
       expect(reEncrypted.pushoverUser).toBe(existing.pushoverUser);
       expect(reEncrypted.ntfyTopic).toBe(existing.ntfyTopic);
 
-      // A non-sentinel new value passes resolution untouched and IS encrypted on write.
       const newValue = resolveSentinelFields({ pushoverUser: 'brand-new-user' }, existing, allow);
       expect(newValue.pushoverUser).toBe('brand-new-user');
       const encrypted = encryptFields('notifier', { ...newValue } as Record<string, unknown>, TEST_KEY);
@@ -566,11 +533,6 @@ describe('SecretCodec', () => {
     });
 
     it('heuristic against real notifier schemas flags exactly today\'s secret fields with subtype mappings', () => {
-      // Locks in the heuristic's positive output — without this, removing one of
-      // the exact-name regex alternatives (`url`, `webhookUrl`, `headers`) would
-      // not surface in any other test on this file, because those fields are
-      // already registered (drift guard would still return empty) and the
-      // false-positive fixture only exercises non-matching names.
       const flagged = findSecretShapedNotifierFields(notifierSettingsSchemas);
       const sortKey = (a: { type: string; field: string }) => `${a.type}.${a.field}`;
       const sorted = [...flagged].sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
@@ -587,9 +549,7 @@ describe('SecretCodec', () => {
         { type: 'webhook', field: 'headers' },
         { type: 'webhook', field: 'url' },
       ]);
-      // And confirm the heuristic doesn't pull in any of the documented non-secret
-      // fields. smtpUser matches the `*User` suffix but is an SMTP username, not a
-      // credential — it is excluded via the explicit false-positive denylist.
+      // smtpUser is the sole suffix-shaped false positive.
       const flaggedFields = new Set(flagged.map(({ field }) => field));
       for (const nonSecret of ['gotifyUrl', 'ntfyServer', 'chatId', 'smtpHost', 'smtpUser', 'fromAddress', 'toAddress', 'path', 'method', 'bodyTemplate']) {
         expect(flaggedFields.has(nonSecret), `${nonSecret} should not be flagged as secret-shaped`).toBe(false);
@@ -642,9 +602,6 @@ describe('SecretCodec', () => {
       const fakeSchemas = {
         email: z.object({ smtpUser: z.string(), smtpHost: z.string() }).strict(),
       };
-      // email.smtpUser matches the `*User` suffix but is on the explicit
-      // false-positive denylist, so it is neither flagged as secret-shaped nor
-      // reported as a registry miss even when the registered set is empty.
       expect(findSecretShapedNotifierFields(fakeSchemas)).toEqual([]);
       expect(findUnregisteredNotifierSecrets(fakeSchemas, new Set())).toEqual([]);
     });
@@ -659,7 +616,6 @@ describe('SecretCodec', () => {
         { type: 'widget', field: 'fooSecret' },
         { type: 'widget', field: 'fooPassword' },
       ]));
-      // `name` is not secret-shaped and is not flagged.
       expect(flagged).toHaveLength(3);
     });
 
@@ -668,9 +624,6 @@ describe('SecretCodec', () => {
         email: z.object({ smtpUser: z.string() }).strict(),
         webhook: z.object({ smtpUser: z.string() }).strict(),
       };
-      // The bare `smtpUser` name is not globally exempt — only `email.smtpUser`
-      // is. A future non-email type reusing the same name for a real secret is
-      // still flagged.
       const flagged = findSecretShapedNotifierFields(fakeSchemas);
       expect(flagged).toEqual([{ type: 'webhook', field: 'smtpUser' }]);
     });
@@ -708,7 +661,6 @@ describe('resolveSentinelFields', () => {
     const incoming = { apiKey: '********', newField: 'value' };
     const existing = { hostname: 'old.com' };
     const result = resolveSentinelFields(incoming, existing, indexerAllow);
-    // apiKey sentinel has no match in existing — keeps undefined (existing value)
     expect(result.apiKey).toBeUndefined();
     expect(result.newField).toBe('value');
   });
@@ -716,7 +668,6 @@ describe('resolveSentinelFields', () => {
   it('handles null/undefined existing record', () => {
     const incoming = { apiKey: '********', hostname: 'new.com' };
     const result = resolveSentinelFields(incoming, null, indexerAllow);
-    // No existing record to look up — sentinel stays as undefined
     expect(result.apiKey).toBeUndefined();
     expect(result.hostname).toBe('new.com');
   });
@@ -909,9 +860,7 @@ describe('makeTestSchema', () => {
     });
   });
 
-  // #1499 — baseUrl gained a strict http(s) URL refinement, which rejects the
-  // masked sentinel. The /test and /targets paths must still admit it via the
-  // sentinel union (and the strict create superRefine must NOT re-run here).
+  // Strict baseUrl refinements must admit the sentinel on /test and /targets.
   describe('connector — sentinel-aware baseUrl', () => {
     const testSchema = makeTestSchema(createConnectorSchema, 'connector');
     // Mirrors the /targets schema built in connectors.ts (no name required).
@@ -962,8 +911,6 @@ describe('makeTestSchema', () => {
   });
 });
 
-// #1499 — the connector PUT route wires this exact schema (see connectors.ts).
-// Build it the same way to assert the wired update path, not just the service.
 describe('connector update schema (sentinel-aware PUT path)', () => {
   const updateSchema = makeUpdateConnectorSchema(
     loosenSettingsSchemas(connectorSettingsSchemas, 'connector'),

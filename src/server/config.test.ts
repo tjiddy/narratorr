@@ -5,7 +5,6 @@ describe('config', () => {
 
   beforeEach(() => {
     vi.resetModules();
-    // Restore env to original state
     for (const key of Object.keys(process.env)) {
       if (!(key in originalEnv)) {
         delete process.env[key];

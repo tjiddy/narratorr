@@ -6,15 +6,8 @@ import { serializeError } from '../utils/serialize-error.js';
 
 type UpdateChannel = 'stable' | 'develop';
 
-// GitHub API response shapes — third-party payloads consumed only by this job,
-// so they live here, NOT in src/shared/schemas/ (reserved for cross-client/server
-// domain contracts). Default `.strip()` (NOT `.strict()`): GitHub adds response
-// fields over time and `.strict()` would reject every new key and break the
-// check; we read only the named fields. Fields required for the channel to
-// proceed stay required so an absent value fails the parse and degrades to the
-// existing graceful no-op; `commits` (and per-commit `sha`) are `.nullish()` so
-// a thin/absent commit list still parses and reaches the `developHeadSha`
-// 'develop' fallback rather than becoming a parse failure.
+// GitHub adds fields, so these schemas strip unknown keys. Nullish commit data
+// reaches the 'develop' fallback instead of invalidating the whole response.
 const githubReleaseSchema = z.object({
   tag_name: z.string(),
   html_url: z.string(),
@@ -34,19 +27,11 @@ interface CachedUpdate {
 
 let cachedUpdate: CachedUpdate | undefined;
 
-/** Reset cached state — for testing only. */
 export function _resetUpdateCache() {
   cachedUpdate = undefined;
 }
 
-/**
- * Meaningful identity of the cached update for change detection. Two checks are
- * "the same" when they point at the same channel + version, so a same-version
- * re-check (or a URL-only difference) is a no-op and does not nudge. A
- * none→available, version→different-version, or available→cleared transition is
- * a change. A failed/early-return check leaves `cachedUpdate` untouched, so
- * prior and next are the same reference → no change.
- */
+// A URL-only change does not notify consumers.
 function updateIdentityChanged(prior: CachedUpdate | undefined, next: CachedUpdate | undefined): boolean {
   if (!prior && !next) return false;
   if (!prior || !next) return true;
@@ -56,10 +41,7 @@ function updateIdentityChanged(prior: CachedUpdate | undefined, next: CachedUpda
 const RELEASES_API_URL = 'https://api.github.com/repos/tjiddy/narratorr/releases/latest';
 const COMPARE_API_BASE = 'https://api.github.com/repos/tjiddy/narratorr/compare';
 
-// Build fetch options *per call* — `AbortSignal.timeout` starts counting the
-// moment it is created, so a module-scoped signal would be permanently aborted
-// 10s after load and fail every scheduled/manual check thereafter. Each fetch
-// gets a fresh 10s budget.
+// AbortSignal.timeout starts immediately; create it per request, not at module load.
 function fetchOpts(): RequestInit {
   return {
     headers: { 'Accept': 'application/vnd.github.v3+json' },
@@ -67,19 +49,7 @@ function fetchOpts(): RequestInit {
   };
 }
 
-/**
- * Channel-aware update detection. Classifies the running build *before* any
- * fetch, then routes to the correct comparison:
- * - Local / unbuilt (`dev`, or no baked commit) → no-op, fetch neither endpoint.
- * - Develop build (`develop-<sha>`) → compare the running commit against
- *   `develop` HEAD via the GitHub compare API (`ahead_by > 0` ⇒ newer build).
- * - Stable build (the fallthrough — any real release tag, e.g. `v1.2.3`) →
- *   semver compare against `/releases/latest`.
- *
- * Stable is the *else* branch (not `dev`, not `develop-`); the existing
- * `isNewerVersion` strips an optional leading `v`, so real `vX.Y.Z` images are
- * handled without a strict `X.Y.Z` gate in the router.
- */
+// Every built, non-develop version follows the stable path; isNewerVersion accepts a leading v.
 export async function checkForUpdate(
   log: FastifyBaseLogger,
   onUpdateChanged?: () => void,
@@ -87,12 +57,8 @@ export async function checkForUpdate(
   const currentVersion = getVersion();
   const currentCommit = getCommit();
 
-  // Local / unbuilt → no-op. Leave any prior cache untouched, fetch nothing.
   if (currentVersion === 'dev' || currentCommit === 'unknown') return;
 
-  // Capture the prior cached value before the channel check mutates it, so we
-  // can detect a status change and nudge consumers (e.g. the health card) only
-  // when the meaningful identity actually changed.
   const prior = cachedUpdate;
 
   if (currentVersion.startsWith('develop-')) {
@@ -106,7 +72,6 @@ export async function checkForUpdate(
   }
 }
 
-/** Stable channel: semver compare against the latest GitHub release. */
 async function checkStableUpdate(log: FastifyBaseLogger, currentVersion: string): Promise<void> {
   try {
     const response = await fetch(RELEASES_API_URL, fetchOpts());
@@ -135,12 +100,8 @@ async function checkStableUpdate(log: FastifyBaseLogger, currentVersion: string)
   }
 }
 
-/**
- * Develop channel: compare the running commit against `develop` HEAD. A
- * positive `ahead_by` means develop has advanced past the running build, so a
- * newer develop image exists. `develop` is force-push-protected, so the running
- * commit is always an ancestor of HEAD (no `diverged` edge in practice).
- */
+// GitHub's ahead_by > 0 means develop advanced beyond currentCommit. The branch
+// is force-push-protected, so currentCommit is assumed to be its ancestor.
 async function checkDevelopUpdate(log: FastifyBaseLogger, currentCommit: string): Promise<void> {
   try {
     const response = await fetch(`${COMPARE_API_BASE}/${currentCommit}...develop`, fetchOpts());
@@ -172,16 +133,8 @@ async function checkDevelopUpdate(log: FastifyBaseLogger, currentCommit: string)
   }
 }
 
-/**
- * The compare API lists `commits` oldest-first; the last entry is `develop`
- * HEAD. Return its short sha (bare, no `v` prefix — the develop copy supplies
- * its own wording). Falls back to `develop` if the shape is unexpectedly thin.
- *
- * Abbreviated to the same width as `getCommit()` so the two read as a pair in
- * the UI ("on X, develop is at Y"). This is presentation only — nothing compares
- * the two strings; `ahead_by` is what decides whether an update exists — so the
- * width here is free to change without affecting update detection.
- */
+// GitHub orders compare commits oldest-first. This display label matches
+// getCommit's width; ahead_by, not the label, determines freshness.
 function developHeadSha(data: { commits?: unknown }): string {
   const commits = data.commits;
   if (Array.isArray(commits) && commits.length > 0) {
@@ -191,11 +144,6 @@ function developHeadSha(data: { commits?: unknown }): string {
   return 'develop';
 }
 
-/**
- * Returns the current update status, or undefined if no update is available.
- * The additive `channel` discriminator lets consumers render channel-appropriate
- * copy without inspecting URL strings; existing fields are unchanged.
- */
 export function getUpdateStatus(): {
   latestVersion: string;
   releaseUrl: string;

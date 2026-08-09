@@ -84,14 +84,12 @@ describe('serializeError', () => {
     });
 
     it('serializes cause chain at exactly the depth cap', () => {
-      // Build a chain of exactly 5 levels (depth cap)
       let err: Error = new Error('level 0');
       for (let i = 1; i < 5; i++) {
         err = new Error(`level ${i}`, { cause: err });
       }
       const result = serializeError(err);
 
-      // Walk the chain — should have all 5 levels
       let current = result;
       for (let i = 4; i >= 1; i--) {
         expect(current.message).toBe(`level ${i}`);
@@ -102,14 +100,12 @@ describe('serializeError', () => {
     });
 
     it('truncates cause chain exceeding depth cap without crash', () => {
-      // Build a chain of 10 levels — should be truncated at 5
       let err: Error = new Error('level 0');
       for (let i = 1; i < 10; i++) {
         err = new Error(`level ${i}`, { cause: err });
       }
       const result = serializeError(err);
 
-      // Count depth
       let depth = 0;
       let current: typeof result | undefined = result;
       while (current) {
@@ -128,7 +124,6 @@ describe('serializeError', () => {
 
       expect(result.message).toBe('circular');
       expect(result.type).toBe('Error');
-      // Should not have infinite cause chain
       expect(result.cause).toBeUndefined();
     });
 
@@ -140,7 +135,6 @@ describe('serializeError', () => {
       const result = serializeError(a);
       expect(result.message).toBe('A');
       expect(result.cause!.message).toBe('B');
-      // The cycle should be broken
       expect(result.cause!.cause).toBeUndefined();
     });
   });
@@ -241,8 +235,6 @@ describe('serializeError', () => {
       expect(result.message).not.toContain('passkey');
     });
 
-    // #2166 — `.code` used to be copied verbatim while message/stack were scrubbed, so a
-    // URL-bearing code leaked from the utility that advertises itself as log-safe.
     it('strips secret-shaped query params from a URL embedded in err.code', () => {
       const err = Object.assign(new Error('request failed'), {
         code: 'connect ECONNREFUSED https://mam.test/tor/js/loadSearch.php?mam_id=SECRETID',
@@ -276,9 +268,6 @@ describe('serializeError', () => {
     });
   });
 
-  // #2159 — `redactUrlsInText` was module-private (`redactUrlsInMessage`); the composed-string
-  // formatter in `short-error-text.ts` needs it directly, so it is now a public export. These
-  // assertions pin the string-level contract; `serializeError`'s own behavior above is unchanged.
   describe('redactUrlsInText (exported string-level redactor)', () => {
     it('redacts a secret-bearing URL in a bare string', () => {
       const redacted = redactUrlsInText('EACCES: failed at https://example.com/api?apikey=secret123');

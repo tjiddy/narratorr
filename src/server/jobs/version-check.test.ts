@@ -4,20 +4,13 @@ import type { FastifyBaseLogger } from 'fastify';
 import type * as versionModule from '../utils/version.js';
 import { SHORT_SHA_LENGTH } from '../utils/version.js';
 
-// The develop HEAD sha the compare fixtures return, abbreviated the way the job
-// abbreviates it. Derived from the constant so a width change does not have to be
-// re-typed here — see SHORT_SHA_LENGTH's doc comment for why the width is fixed.
 const DEVELOP_HEAD_SHA = 'def56780000';
 const DEVELOP_HEAD_SHORT = DEVELOP_HEAD_SHA.slice(0, SHORT_SHA_LENGTH);
 
-// Mock global fetch
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-// Mock getVersion/getCommit only — keep the real isNewerVersion so this test
-// validates production semver comparison (not a re-implementation of it).
-// `channelState` is hoisted so each test can drive the channel router by
-// setting the running version/commit before invoking the check.
+// Mock only build identity; semver comparison stays production-real.
 const channelState = vi.hoisted(() => ({ version: '0.1.0', commit: 'abc1234' }));
 vi.mock('../utils/version.js', async () => {
   const actual = await vi.importActual<typeof versionModule>('../utils/version.js');
@@ -57,8 +50,6 @@ describe('version check job', () => {
     log = createMockLogger();
     mockFetch.mockReset();
     _resetUpdateCache();
-    // Default to a stable build with a real baked commit so the existing
-    // stable-channel suites run the releases path (not the unbuilt no-op).
     channelState.version = '0.1.0';
     channelState.commit = 'abc1234';
   });
@@ -102,17 +93,15 @@ describe('version check job', () => {
 
   describe('GitHub API — failure modes', () => {
     it('429 rate limit → cached last-known result preserved, error logged', async () => {
-      // First: cache a successful result
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
       await runCheck();
       expect(getUpdateStatus()).toBeDefined();
 
-      // Then: rate limit
       mockFetch.mockResolvedValue({ ok: false, status: 429, statusText: 'Too Many Requests' });
       await runCheck();
 
       expect(log.warn).toHaveBeenCalled();
-      expect(getUpdateStatus()).toBeDefined(); // cached result preserved
+      expect(getUpdateStatus()).toBeDefined();
     });
 
     it('5xx error → cached result preserved, error logged, job completes', async () => {
@@ -136,7 +125,6 @@ describe('version check job', () => {
       });
       await runCheck();
 
-      // Should keep cached result since response fails the schema parse.
       expect(getUpdateStatus()).toBeDefined();
       expect(log.warn).toHaveBeenCalledWith('Version check: GitHub API returned unexpected response shape');
     });
@@ -154,8 +142,6 @@ describe('version check job', () => {
     });
 
     it('extra GitHub fields → still parses (.strip(), not .strict()) and yields the update', async () => {
-      // A realistic /releases/latest payload carries many more keys than we read.
-      // Default `.strip()` must drop them; `.strict()` would reject the parse.
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({
@@ -195,7 +181,6 @@ describe('version check job', () => {
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
       await runCheck();
 
-      // Return payload with tag_name but missing html_url
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ tag_name: 'v0.3.0' }),
@@ -237,9 +222,6 @@ describe('version check job', () => {
   });
 
   describe('real semver comparison drives job behavior', () => {
-    // These fixtures exercise the boundary cases handled by the real isNewerVersion:
-    // it returns false for non-strict-X.Y.Z inputs (incl. prereleases, partial versions),
-    // and only flags ascending major/minor/patch as newer.
     it.each([
       { current: '0.1.0', latest: 'v0.1.1', expectsUpdate: true, label: 'patch bump' },
       { current: '0.1.0', latest: 'v1.0.0', expectsUpdate: true, label: 'major bump' },
@@ -273,23 +255,20 @@ describe('version check job', () => {
 
       const status = getUpdateStatus();
       expect(status).toEqual({
-        latestVersion: DEVELOP_HEAD_SHORT, // develop HEAD short sha (bare, no v-prefix)
+        latestVersion: DEVELOP_HEAD_SHORT,
         releaseUrl: COMPARE_HTML_URL,
         channel: 'develop',
       });
-      // Only the compare endpoint was hit — /releases/latest is never fetched.
       const url = mockFetch.mock.calls[0]![0] as string;
       expect(url).toBe('https://api.github.com/repos/tjiddy/narratorr/compare/abc1234...develop');
       expect(mockFetch.mock.calls.every(([u]) => !String(u).includes('/releases/latest'))).toBe(true);
     });
 
     it('develop sitting on HEAD (ahead_by 0) → clears a previously-cached update', async () => {
-      // Seed a develop update first.
       mockFetch.mockResolvedValue(makeGitHubCompare(3, COMPARE_HTML_URL));
       await runCheck();
       expect(getUpdateStatus()).toBeDefined();
 
-      // Now develop has not advanced past the running commit.
       mockFetch.mockResolvedValue(makeGitHubCompare(0, COMPARE_HTML_URL));
       await runCheck();
 
@@ -313,8 +292,6 @@ describe('version check job', () => {
 
       await runCheck();
 
-      // Empty commits is a *successful* parse that reaches developHeadSha's
-      // fallback — not a warn-and-preserve no-op.
       expect(getUpdateStatus()).toEqual({
         latestVersion: 'develop',
         releaseUrl: COMPARE_HTML_URL,
@@ -323,10 +300,6 @@ describe('version check job', () => {
       expect(log.warn).not.toHaveBeenCalled();
     });
 
-    // Pins the `.nullish()` leniency the spec/learning require: each of these
-    // payloads must PARSE (not warn-and-preserve) and reach developHeadSha's
-    // 'develop' fallback. A regression to `.optional()` (rejects null) or a
-    // required `commits`/`sha` would turn these into compare-parse failures.
     it.each([
       { label: 'absent commits', payload: { ahead_by: 1, html_url: COMPARE_HTML_URL } },
       { label: 'commits: null', payload: { ahead_by: 1, html_url: COMPARE_HTML_URL, commits: null } },
@@ -345,9 +318,6 @@ describe('version check job', () => {
     });
 
     it('head commit missing sha → parses (sha is lenient) and falls back to the develop sentinel', async () => {
-      // The head commit lacks a string `sha`. The schema's `sha: z.string().nullish()`
-      // must accept this so the payload PARSES and flows through to developHeadSha's
-      // fallback. A required `sha` would instead reject the parse and warn-and-preserve.
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ ahead_by: 1, html_url: COMPARE_HTML_URL, commits: [{ sha: 'aaa' }, {}] }),
@@ -459,7 +429,6 @@ describe('version check job', () => {
         releaseUrl: 'https://github.com/releases/v1.1.0',
         channel: 'stable',
       });
-      // Releases endpoint was used; the compare endpoint was never fetched.
       expect(mockFetch.mock.calls[0]![0]).toContain('/releases/latest');
       expect(mockFetch.mock.calls.every(([u]) => !String(u).includes('/compare/'))).toBe(true);
     });
@@ -467,7 +436,6 @@ describe('version check job', () => {
 
   describe('dev / unbuilt → no-op', () => {
     it('getVersion() === dev → neither endpoint fetched, prior cache untouched', async () => {
-      // Seed a stable update under a real build first.
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
       await runCheck();
       expect(getUpdateStatus()).toBeDefined();
@@ -478,7 +446,7 @@ describe('version check job', () => {
       await runCheck();
 
       expect(mockFetch).not.toHaveBeenCalled();
-      expect(getUpdateStatus()).toBeDefined(); // prior cache preserved
+      expect(getUpdateStatus()).toBeDefined();
     });
 
     it('getCommit() === unknown → neither endpoint fetched, prior cache untouched', async () => {
@@ -526,10 +494,7 @@ describe('version check job', () => {
   });
 
   describe('timeout signal freshness (F1)', () => {
-    // The abort signal must be built per fetch call. A module-scoped
-    // `AbortSignal.timeout(10_000)` would start counting at load and be
-    // permanently aborted once the app has been up past the window, silently
-    // failing every scheduled/manual check thereafter.
+    // AbortSignal.timeout starts at construction, so a shared signal expires permanently.
     function captureSignals() {
       const signals: (AbortSignal | undefined)[] = [];
       mockFetch.mockImplementation((_url: string, opts?: RequestInit) => {
@@ -545,13 +510,10 @@ describe('version check job', () => {
         const signals = captureSignals();
 
         await runCheck();
-        // Simulate the app being up well past the 10s fetch timeout window.
         vi.advanceTimersByTime(11_000);
         await runCheck();
 
         expect(mockFetch).toHaveBeenCalledTimes(2);
-        // A shared module-scoped signal would be the same object on both calls
-        // (and already aborted after the advance); a per-call signal is distinct.
         expect(signals[0]).not.toBe(signals[1]);
         expect(signals[1]?.aborted).toBe(false);
       } finally {
@@ -593,7 +555,6 @@ describe('version check job', () => {
     });
 
     it('available → different version invokes the callback once', async () => {
-      // Seed an available update first (no callback so the count starts clean).
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
       await runCheck();
       const onUpdateChanged = vi.fn();
@@ -606,16 +567,11 @@ describe('version check job', () => {
     });
 
     it('channel change with the SAME latestVersion invokes the callback once (channel participates in identity)', async () => {
-      // Seed a stable-channel update at latestVersion '0.2.0' (no callback yet).
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
       await runCheck();
       expect(getUpdateStatus()).toMatchObject({ latestVersion: '0.2.0', channel: 'stable' });
 
-      // Now the running build is a develop image. The compare API's HEAD commit
-      // sha is '0.2.0' so `developHeadSha` (sha.slice(0,7)) yields the IDENTICAL
-      // latestVersion '0.2.0' — only the channel differs (stable → develop).
-      // If the production identity dropped the `channel` comparison, this would
-      // be seen as a no-op and the callback would NOT fire.
+      // Make the short SHA equal the stable label, isolating channel identity.
       channelState.version = 'develop-abc1234';
       channelState.commit = 'abc1234';
       mockFetch.mockResolvedValue(makeGitHubCompare(2, COMPARE_HTML_URL, '0.2.0'));
@@ -632,7 +588,6 @@ describe('version check job', () => {
       await runCheck();
       const onUpdateChanged = vi.fn();
 
-      // Latest release now matches the running build → cache clears.
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.1.0', 'https://github.com/releases/v0.1.0'));
       await runCheckWith(onUpdateChanged);
 
@@ -645,14 +600,12 @@ describe('version check job', () => {
       await runCheck();
       const onUpdateChanged = vi.fn();
 
-      // Re-check yields the same available version → meaningful identity unchanged.
       await runCheckWith(onUpdateChanged);
 
       expect(onUpdateChanged).not.toHaveBeenCalled();
     });
 
     it('no cached update and still no update does not invoke the callback', async () => {
-      // Running build is already latest → nothing cached, nothing changes.
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.1.0', 'https://github.com/releases/v0.1.0'));
       const onUpdateChanged = vi.fn();
 
@@ -670,7 +623,7 @@ describe('version check job', () => {
       await runCheckWith(onUpdateChanged);
 
       expect(onUpdateChanged).not.toHaveBeenCalled();
-      expect(getUpdateStatus()?.latestVersion).toBe('0.2.0'); // prior cache intact
+      expect(getUpdateStatus()?.latestVersion).toBe('0.2.0');
     });
 
     it('completes without throwing when no callback is wired', async () => {

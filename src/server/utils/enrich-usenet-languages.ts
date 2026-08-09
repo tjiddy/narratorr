@@ -13,53 +13,24 @@ import { enrichmentCache, type EnrichmentCacheValue } from './enrichment-cache.j
 const NZB_FETCH_CONCURRENCY = 5;
 const NZB_FETCH_TIMEOUT_MS = 5000;
 
-/**
- * Phase-2 fetch cap for auto-grab call sites (scheduled/interactive grab, retry
- * search, RSS). The interactive/post-process display path stays uncapped. #1315.
- */
+// Auto-grab paths cap Phase 2; interactive post-processing remains uncapped.
 export const AUTO_GRAB_PHASE2_CAP = 10;
 
 type Phase2Source = 'newsgroup' | 'name' | 'title' | 'unresolved';
 
 export interface EnrichUsenetOptions {
-  /**
-   * Cap on the number of Phase-2 NZB fetches per run. When set, after the cache
-   * is consulted the remaining cache-miss candidates are ranked (matchScore,
-   * then seeders, then grabs; all desc, missing lowest) and only the top N are
-   * fetched — the rest keep their Phase-1 result and are NOT fetched. Omit for
-   * today's uncapped behavior (used by the interactive/post-process path).
-   */
+  /** After cache lookup, fetch only the top N by matchScore, seeders, then grabs; omit for uncapped. */
   maxPhase2Fetches?: number;
 }
 
-/**
- * Cache key for a release, namespaced by indexer identity (#1328).
- *
- * `guid` is free-form indexer-supplied text, so two configured indexers emitting
- * bare numeric/hash guids could collide and cross-apply one release's cached
- * `language`/`nzbName` to a different release for up to 24h. Prefixing with the
- * indexer keeps each indexer's keyspace separate; cross-indexer dedup of the
- * same release is no real loss (URL-style guids embed the host, so identical
- * guids across indexers are rare).
- *
- * The release portion is computed with `||` (not `??`) so an empty-string guid
- * falls through to `downloadUrl` — `??` only falls through on `null`/`undefined`.
- * When both are empty the release is uncacheable and we return `undefined`,
- * NEVER a poison `indexer:` / `indexer:undefined` key that every keyless result
- * would share. `indexer: string` is always present on `SearchResult`; the
- * optional numeric `indexerId` is the preferred (collision-free) namespace when
- * the indexer search has stamped it.
- */
+// Namespace free-form GUIDs by indexer to prevent cross-indexer cache collisions.
+// `||` intentionally falls back from an empty GUID to URL; no release key means no cache entry.
 function cacheKeyFor(result: SearchResult): string | undefined {
   const releaseKey = result.guid || result.downloadUrl;
   return releaseKey ? `${result.indexerId ?? result.indexer}:${releaseKey}` : undefined;
 }
 
-/**
- * Compare two optional numbers descending; missing (`undefined`) ranks lowest.
- * Avoids Infinity arithmetic (which yields NaN for two missing values and
- * corrupts `Array.sort`).
- */
+// Branch instead of subtracting: -Infinity - -Infinity is NaN.
 function cmpDesc(a: number | undefined, b: number | undefined): number {
   const av = a ?? -Infinity;
   const bv = b ?? -Infinity;
@@ -67,19 +38,13 @@ function cmpDesc(a: number | undefined, b: number | undefined): number {
   return av > bv ? -1 : 1;
 }
 
-/** Phase-2 ranking tuple: matchScore, then seeders, then grabs — all descending. */
 function comparePhase2(a: SearchResult, b: SearchResult): number {
   return cmpDesc(a.matchScore, b.matchScore)
     || cmpDesc(a.seeders, b.seeders)
     || cmpDesc(a.grabs, b.grabs);
 }
 
-/**
- * Apply a cached enrichment outcome to a result. Returns `true` when it set a
- * language (so the caller can bump the audit counter). Reapplies the cached
- * `nzbName` so the downstream multi-part filter still sees it on a hit; on a
- * `fetch-failed` entry `nzbName` is intentionally absent.
- */
+// Reapply cached nzbName so the downstream multi-part filter still sees it on a hit.
 function applyCacheHit(result: SearchResult, entry: EnrichmentCacheValue, logger: FastifyBaseLogger): boolean {
   let detected = false;
   if (entry.language && !result.language) {
@@ -96,11 +61,7 @@ function applyCacheHit(result: SearchResult, entry: EnrichmentCacheValue, logger
   return detected;
 }
 
-/**
- * Consult the cache for every fetch candidate. Cache hits are applied in-place
- * and dropped from the returned `misses` set; misses (no live entry) survive to
- * Phase-2 fetching. A stored `undefined` language is a HIT, never a miss.
- */
+// A live entry with undefined language is still a hit; only absent entries are misses.
 function consultCache(
   needsFetch: SearchResult[],
   logger: FastifyBaseLogger,
@@ -112,9 +73,7 @@ function consultCache(
     const key = cacheKeyFor(result);
     const entry = key ? enrichmentCache.get(key) : undefined;
     if (entry) {
-      // Every live entry is a hit (#1328 counter), distinct from `hitsDetected`
-      // which only counts hits that actually SET a language (an `unresolved`
-      // entry is a hit that detects nothing).
+      // cacheHits counts all live entries; hitsDetected only entries that set language.
       cacheHits++;
       if (applyCacheHit(result, entry, logger)) hitsDetected++;
     } else {
@@ -124,26 +83,13 @@ function consultCache(
   return { misses, hitsDetected, cacheHits };
 }
 
-/**
- * Apply the per-call-site Phase-2 cap to the cache-miss candidate set. Returns
- * the kept candidates (`toFetch`) and the ranked dropped tail (`skipped`). When
- * the cap is unset or not exceeded, `toFetch` is the candidates unchanged and
- * `skipped` is empty. Otherwise ranks by `comparePhase2`, keeps the top `cap` as
- * `toFetch`, exposes `ranked.slice(cap)` as `skipped`, and logs the skipped
- * count. The split is taken from the RANKED ordering — `skipped` is the set the
- * cap actually drops, not an insertion-order tail of `candidates`.
- */
 function selectCappedCandidates(
   candidates: SearchResult[],
   cap: number | undefined,
   logger: FastifyBaseLogger,
 ): { toFetch: SearchResult[]; skipped: SearchResult[] } {
   if (cap === undefined) return { toFetch: candidates, skipped: [] };
-  // Clamp to a non-negative integer before slicing. An unclamped negative cap
-  // would hit `ranked.slice(0, -n)` = keep-all-but-n (the INVERSE of a cap),
-  // and a fractional cap would lean on implicit slice coercion — floor it so a
-  // fractional value rounds down to whole fetches (#1330). No-op on current
-  // call paths (cap is always `AUTO_GRAB_PHASE2_CAP` or undefined).
+  // Clamp before slice: negative values invert the cap and fractions coerce implicitly.
   const effectiveCap = Math.max(0, Math.floor(cap));
   if (candidates.length <= effectiveCap) return { toFetch: candidates, skipped: [] };
   const ranked = [...candidates].sort(comparePhase2);
@@ -154,19 +100,7 @@ function selectCappedCandidates(
   return { toFetch: ranked.slice(0, effectiveCap), skipped: ranked.slice(effectiveCap) };
 }
 
-/**
- * Group cache-miss candidates by cache key and pick one representative per group
- * so a release appearing more than once in a single run (duplicate feed items,
- * overlapping indexer categories) is fetched exactly ONCE (#1328). Every miss
- * came through `needsFetch`, which only admits results with a `downloadUrl`, so
- * `cacheKeyFor` always returns a defined key here.
- *
- * The representative is the highest-ranked member by `comparePhase2` — the same
- * ranking the Phase-2 cap uses — so grouping BEFORE the cap means a key occupies
- * at most one cap slot and a duplicate is never stranded in the cap-skipped tail
- * just because its twin took the slot. After the representative's outcome is
- * known, `propagateDuplicates` copies its observable enrichment to every member.
- */
+// Group before the cap so duplicates consume one slot; the highest-ranked member represents each key.
 function groupMissesByKey(
   misses: SearchResult[],
 ): { groups: Map<string, SearchResult[]>; representatives: SearchResult[] } {
@@ -184,18 +118,7 @@ function groupMissesByKey(
   return { groups, representatives };
 }
 
-/**
- * Copy a representative's observable enrichment (`language`, `nzbName`) to every
- * other member of its group once its fetch (or cap-skipped title check) has
- * settled (#1328). Guarded the same way as `applyCacheHit` so an earlier
- * Phase-1 signal on a duplicate is never overwritten. Returns the count of
- * members that transitioned undefined→detected, so the caller folds it into the
- * `languagesDetected` audit counter exactly as a cache hit would.
- *
- * Only `language`/`nzbName` are propagated: the resolved/unresolved/fetch-failed
- * discriminant is internal cache metadata, not a `SearchResult` field — the
- * single cache write under the representative's key carries it.
- */
+// Copy only missing observable fields; the cache outcome remains representative-only.
 function propagateToGroup(rep: SearchResult, group: SearchResult[], logger: FastifyBaseLogger): number {
   let detected = 0;
   for (const member of group) {
@@ -213,12 +136,6 @@ function propagateToGroup(rep: SearchResult, group: SearchResult[], logger: Fast
   return detected;
 }
 
-/**
- * Propagate every representative's settled enrichment to its duplicates. Runs
- * after both the Phase-2 fetch and the cap-skipped title check, so each
- * representative's `language`/`nzbName` is final. Single-member groups are a
- * no-op. Returns the number of duplicate members that gained a language.
- */
 function propagateDuplicates(
   representatives: SearchResult[],
   groups: Map<string, SearchResult[]>,
@@ -232,22 +149,8 @@ function propagateDuplicates(
   return detected;
 }
 
-/**
- * Run the zero-network-cost title check over the ranked cap-skipped tail. The cap
- * exists to protect fetch concurrency, but the title check costs no network — so
- * cap-skipped candidates still get the free `detectLanguageFromText(title)` pass
- * that pre-#1315 every fetch candidate received via the post-fetch cascade. This
- * closes the wrong-language auto-grab gap on a cold cache (#1326): an undetected
- * German release (e.g. `(Ungekürzt)`) at rank 11+ otherwise passes the language
- * filter as `undetermined`. Mirrors `tryTitleFallback` — guarded on
- * `result.language`, reuses `normalizeLanguage(detectLanguageFromText(...))`, and
- * bumps the audit counter. Emits a distinct `title-cap-skipped` debug signal.
- *
- * Deliberately does NOT write to the enrichment cache: title-only is not a
- * terminal outcome, and caching it under the success TTL would suppress the real
- * NZB fetch (which populates `nzbName` and the newsgroup signal) on a later run.
- * Returns the number of candidates whose language transitioned undefined→detected.
- */
+// The cap limits network only; skipped candidates still get free title detection.
+// Do not cache title-only outcomes—a later run must still fetch NZB metadata.
 function detectCapSkippedTitles(skipped: SearchResult[], logger: FastifyBaseLogger): number {
   let detected = 0;
   for (const result of skipped) {
@@ -264,13 +167,7 @@ function detectCapSkippedTitles(skipped: SearchResult[], logger: FastifyBaseLogg
   return detected;
 }
 
-/**
- * Defense-in-depth title fallback for fetch-failure branches (non-OK response or
- * thrown exception). Returns `true` when it sets `result.language` so the caller
- * can bump the `languagesDetected` audit counter. Guarded on `result.language`
- * so an earlier signal (Phase 1) is never overwritten. Signal name is distinct
- * from the Phase-2 successful-fetch `title-pattern` signal — grep-friendly.
- */
+// Fetch failures still get title detection without overwriting an earlier signal.
 function tryTitleFallback(result: SearchResult, logger: FastifyBaseLogger): boolean {
   if (result.language) return false;
   const titleLang = normalizeLanguage(detectLanguageFromText(result.title));
@@ -283,12 +180,7 @@ function tryTitleFallback(result: SearchResult, logger: FastifyBaseLogger): bool
   return true;
 }
 
-/**
- * Walk the post-fetch signal cascade — newsgroups → nzbName → title — and set
- * `result.language` on the first hit. Each pass is guarded on `result.language`
- * (not a separate flag) so an earlier hit always wins. Emits per-signal debug
- * traces so a search can be replayed from log output.
- */
+// First match wins: newsgroup → NZB name → title.
 function detectPhase2Source(
   result: SearchResult,
   groups: string[],
@@ -321,22 +213,8 @@ function detectPhase2Source(
 }
 
 /**
- * Enrich Usenet search results with language detected from newsgroup metadata.
- *
- * Priority:
- * 1. Skip results that already have language, are torrents, or lack downloadUrl
- * 2. If result.newsgroup is populated, detect language from it (no fetch)
- * 3. If result.newsgroup is absent, fetch the NZB and parse <group> tags
- *
- * The optional `lanAllowlist` (#1149) lets the NZB-body fetch reach a configured
- * indexer's host:port even when its address is private/loopback. The fetch
- * still routes through the SSRF helpers and any redirect hop outside the
- * allowlist is refused. The leaf parameter is optional only so existing
- * test invocations stay valid; production wrappers (postProcessSearchResults,
- * searchAndGrabForBook, retrySearch, runRssJob) take `indexerService` as a
- * required dependency and forward the allowlist.
- *
- * Mutates results in-place. Non-blocking: fetch failures are logged and skipped.
+ * Mutates Usenet results in place; fetch failures are logged and skipped.
+ * lanAllowlist permits a configured private indexer while redirect hops remain SSRF-checked.
  */
 export async function enrichUsenetLanguages(
   results: SearchResult[],
@@ -349,13 +227,11 @@ export async function enrichUsenetLanguages(
   let nzbFetched = 0;
   let languagesDetected = 0;
 
-  // Identify Usenet results that need language detection
   const usenetResults = results.filter(
     (r) => r.protocol === 'usenet' && !r.language,
   );
 
-  // Phase 1: Detect language from existing newsgroup field; fall through to NZB fetch
-  // when newsgroup is generic (no language token found) so nzbName is still populated.
+  // Fetch generic newsgroups too, because downstream filtering still needs nzbName.
   const needsFetch: SearchResult[] = [];
   for (const result of usenetResults) {
     logger.debug({
@@ -373,12 +249,9 @@ export async function enrichUsenetLanguages(
         languagesDetected++;
         logger.debug({ title: result.title, newsgroup: result.newsgroup, detectedLanguage: lang }, 'Phase-1: language detected from existing newsgroup');
       } else if (result.downloadUrl) {
-        // Generic newsgroup (e.g., alt.binaries.audiobooks) — fall through to NZB fetch
-        // so nzbName is populated for reject/required word filtering and name-based language detection
         logger.debug({ title: result.title, newsgroup: result.newsgroup }, 'Phase-1: newsgroup generic, falling through to NZB fetch');
         needsFetch.push(result);
       } else {
-        // No fetch possible — try title as a last resort before giving up.
         const titleLang = normalizeLanguage(detectLanguageFromText(result.title));
         if (titleLang) {
           result.language = titleLang;
@@ -392,7 +265,6 @@ export async function enrichUsenetLanguages(
       logger.debug({ title: result.title }, 'Phase-1: no newsgroup, falling through to NZB fetch');
       needsFetch.push(result);
     } else {
-      // No newsgroup AND no downloadUrl — try title as a last resort.
       const titleLang = normalizeLanguage(detectLanguageFromText(result.title));
       if (titleLang) {
         result.language = titleLang;
@@ -404,28 +276,16 @@ export async function enrichUsenetLanguages(
     }
   }
 
-  // Cache consult: serve releases enriched by any prior run (this is the #1315
-  // fix — a release seen by ANY call site is never re-fetched within its TTL).
-  // Hits are applied in-place and dropped; misses proceed to the (capped) fetch.
   const { misses, hitsDetected, cacheHits } = consultCache(needsFetch, logger);
   languagesDetected += hitsDetected;
 
-  // Within-run dedup (#1328): group the cache-miss candidates by key and fetch
-  // one representative per key. Grouping happens BEFORE the cap so a key occupies
-  // at most one cap slot; each representative's enrichment is propagated to its
-  // duplicates after it settles.
   const { groups, representatives } = groupMissesByKey(misses);
 
-  // Per-call-site Phase-2 cap (ranked) applied to the representatives, before
-  // any semaphore permit is acquired so capped-out candidates don't consume slots.
   const { toFetch, skipped } = selectCappedCandidates(representatives, options?.maxPhase2Fetches, logger);
   const capSkipped = skipped.length;
 
-  // Free title check over the ranked cap-skipped tail (#1326). Runs pre-permit —
-  // it is pure CPU and consumes no fetch concurrency. No cache write on this path.
   languagesDetected += detectCapSkippedTitles(skipped, logger);
 
-  // Phase 2: Fetch NZBs in parallel with concurrency limit
   const semaphore = new Semaphore(NZB_FETCH_CONCURRENCY);
 
   async function fetchAndEnrich(result: SearchResult): Promise<void> {
@@ -453,21 +313,17 @@ export async function enrichUsenetLanguages(
           'NZB fetch failed with non-OK status',
         );
         if (tryTitleFallback(result, logger)) languagesDetected++;
-        // Short failure TTL: a transient indexer error self-heals after ~1h.
-        // Preserve any title-fallback language; nzbName stays absent (came from
-        // the title, not the NZB body) so a later success can populate it.
+        // Cache title fallback but leave nzbName empty so a later successful fetch can populate it.
         enrichmentCache.set(cacheKey, { outcome: 'fetch-failed', language: result.language, nzbName: undefined });
         return;
       }
       const xml = await response.text();
 
-      // Extract NZB name (meta tag first, file subject as fallback)
       const nzbName = parseNzbName(xml) || parseNzbFileSubject(xml);
       if (nzbName) result.nzbName = nzbName;
       const groups = parseNzbGroups(xml);
 
-      // Capture only the specific fields we need — never log the full XML body
-      // (NZBs commonly carry <meta type="password"> RAR/par2 archive passwords).
+      // Never log NZB XML; it commonly contains archive passwords.
       logger.debug({
         title: result.title,
         groupCount: groups.length,
@@ -476,16 +332,10 @@ export async function enrichUsenetLanguages(
         fileSubject: result.nzbName,
       }, 'Phase-2: NZB parsed');
 
-      // Walk the detection signals in priority order — newsgroup → nzbName → title.
-      // Guarded on result.language so earlier signals win; the title fallback
-      // is defense-in-depth for cases where uploaders strip parenthetical
-      // language markers like (Ungekürzt) from the NZB meta name.
       const source = detectPhase2Source(result, groups, logger);
       if (source !== 'unresolved') languagesDetected++;
 
-      // Cache the successful outcome under the long TTL. `unresolved` (no signal
-      // matched) is cached too — a stored `undefined` language is a HIT, so it
-      // is never re-fetched within the TTL. nzbName is preserved either way.
+      // Cache unresolved results too; undefined language is still a hit.
       enrichmentCache.set(cacheKey, {
         outcome: source === 'unresolved' ? 'unresolved' : 'resolved',
         language: result.language,
@@ -512,8 +362,6 @@ export async function enrichUsenetLanguages(
 
   await Promise.all(toFetch.map((r) => fetchAndEnrich(r)));
 
-  // Every representative (fetched or cap-skipped) now has its final observable
-  // enrichment — fan it out to the within-run duplicates that share its key.
   languagesDetected += propagateDuplicates(representatives, groups, logger);
 
   const totalFetchMs = Date.now() - startMs;

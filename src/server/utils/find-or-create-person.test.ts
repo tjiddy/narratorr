@@ -7,8 +7,8 @@ describe('findOrCreateAuthor', () => {
   describe('happy path', () => {
     it('inserts new author and returns ID when slug not found', async () => {
       const db = createMockDb();
-      db.select.mockReturnValueOnce(mockDbChain([])); // not found
-      db.insert.mockReturnValueOnce(mockDbChain([{ id: 42 }])); // inserted
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 42 }]));
 
       const id = await findOrCreateAuthor(inject<DbOrTx>(db), 'Brandon Sanderson');
 
@@ -114,8 +114,6 @@ describe('findOrCreateAuthor', () => {
         .rejects.toThrow('Failed to find or create author: Ghost Author');
     });
 
-    // #1443 — publicId must be generated PER insert attempt (not hoisted), so a
-    // retried create after a unique conflict carries a fresh, non-colliding id.
     it('generates a fresh publicId on each insert attempt (not a hoisted constant)', async () => {
       const db = createMockDb();
       db.select.mockReturnValueOnce(mockDbChain([]));

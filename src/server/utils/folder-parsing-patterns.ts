@@ -1,62 +1,32 @@
-// Pattern helpers for folder-parsing.ts (issue #1034). Extracted to keep the
-// main module under the file-size cap; behaviour is unchanged from inlining.
-
 import { CODEC_TEST_REGEX, isEditionParen, isYearInWindow, NARRATOR_PAREN_REGEX, applyLastFirstSwap } from './folder-parsing-primitives.js';
 import type { ParsedFolder } from './folder-parsing.js';
 
-/**
- * `<title> - <series>, Book N [by Author] [(Narrator)]` — rightmost-dash split.
- * Greedy `(.+)` + non-greedy `(.+?)` + `, Book N` anchor walks the engine to
- * the rightmost ` - ` that produces a valid match. The series side allows
- * internal dashes (required for `The Three-Body Problem`-style titles).
- */
+// Match the rightmost viable " - " before "<series>, Book N"; series may contain dashes.
 const TITLE_DASH_SERIES_BOOK_REGEX = /^(.+)\s+-\s+(.+?)\s*,\s*Book\s+(\d+(?:\.\d+)?)\s*(?:by\s+(.+?))?\s*(?:\(([^)]+)\))?\s*$/i;
 
 const SERIES_KEYWORD_REGEX = /\b(?:series|saga|chronicles|trilogy|cycle)\b/i;
 
-/** Release-tag phrases NOT in `CODEC_TAGS` (which covers single codec/format labels
- * only); denied from `bracketTagStrip`'s whole-title unwrap as release metadata,
- * not titles. Compared case-insensitively against the normalized inner. (#1331) */
+// Multi-word release tags not covered by CODEC_TAGS.
 const TAG_PHRASE_DENYLIST = new Set(
   ['Graphic Audio', 'GraphicAudio', 'GA', 'Dramatized Adaptation', 'Dramatized', 'Full Cast', 'Full-Cast']
     .map((p) => p.toLowerCase()),
 );
-// `isReleaseTagInner` splits the inner on whitespace before testing each token,
-// so a token never contains an internal space — the dead `\s*` matcher these
-// regexes carried pre-#1332 could never fire and is dropped.
 const BITRATE_TOKEN_REGEX = /^\d+(?:\.\d+)?k(bps)?$/i; // `64k`, `128kbps`
 const SAMPLE_RATE_TOKEN_REGEX = /^\d+(?:\.\d+)?khz$/i; // `22khz`, `44khz`, joined `44.1khz`
-/** Bare numeric / decimal token — a filler digit inside a multi-token tag, e.g.
- * the `44` left over when `normalize` dot-splits `44.1kHz` → `44 1kHz`, or the
- * `64` in a spaced `64 kbps`. A LONE numeric inner is NOT a tag (it is a title
- * like `[1984]` / `[22]`), so the classifier requires ≥1 strong tag token too. */
+// Numeric fillers belong to multi-token tags, but a lone numeric bracket is a title.
 const BARE_NUMERIC_TOKEN_REGEX = /^\d+(?:\.\d+)?$/;
-/** Bare unit token left when a sample-rate / bitrate is spaced from its number
- * (`64 kbps` → `64` `kbps`, `44.1 kHz` → `44.1` `khz`). */
 const UNIT_TOKEN_REGEX = /^(?:k|kb|kbps|kbit|khz|hz|mhz|mb|mbps|vbr|cbr)$/i;
-/** Audible ASIN shape — defensive: `extractASIN` removes ASIN brackets before the
- * clean pipeline, but a second ASIN bracket would survive to here. */
+// A second ASIN bracket can survive extractASIN's first-match removal.
 const ASIN_TOKEN_REGEX = /^B0[A-Z0-9]{8}$/i;
-/** Strip leading/trailing token punctuation so `64k,` / `-` (from `[64k, 22khz]`,
- * `[MP3 - 64k]`) reduce to bare tag tokens / empty separators. */
 const TOKEN_PUNCT_STRIP_REGEX = /^[-–—,]+|[-–—,]+$/g;
 
-/** A `strong` tag token carries release-metadata meaning on its own (codec, bitrate,
- * sample rate, spaced unit, ASIN) — distinct from a bare numeric filler token. */
 function isStrongReleaseTagToken(t: string): boolean {
   return CODEC_TEST_REGEX.test(t) || BITRATE_TOKEN_REGEX.test(t) || SAMPLE_RATE_TOKEN_REGEX.test(t)
     || UNIT_TOKEN_REGEX.test(t) || ASIN_TOKEN_REGEX.test(t);
 }
 
-/**
- * True when `trimmedInner` is entirely release-tag tokens (codec/format label,
- * bitrate `64k`, sample rate `22khz`, spaced unit `64 kbps`, dot-split `44 1khz`)
- * or a known release-tag phrase (`Graphic Audio`). Such inners are release
- * metadata, so the bracket-tag strip keeps deleting them rather than unwrapping.
- * A LONE bare numeric (`1984`, `22`) is a TITLE, not a tag — the classifier only
- * fires when every token is a strong tag or numeric filler AND at least one strong
- * tag is present. Any other non-tag token ⇒ `false`. Exported for tests. (#1331/#1332)
- */
+// Every token must be tag-like or numeric filler, with at least one strong tag.
+// Requiring a strong token preserves bare numeric titles such as [1984].
 export function isReleaseTagInner(trimmedInner: string): boolean {
   const normalized = trimmedInner.toLowerCase().replace(/\s+/g, ' ').trim();
   if (!normalized) return false;
@@ -69,15 +39,10 @@ export function isReleaseTagInner(trimmedInner: string): boolean {
   return tokens.some(isStrongReleaseTagToken);
 }
 
-/** True when `segment` is wholly a SEQUENCE of bracketed release tags — one or more
- * `[...]` groups with no other text, every inner passing `isReleaseTagInner`
- * (`[Graphic Audio]`, `[64k 22khz]`, `[Graphic Audio] [64k 22khz]`). Used by the
- * author/title dash split so a pure-tag segment (on either side) is never treated
- * as a title or author, and by the shared cleanName collapse guard. (#1331/#1332) */
+// Require bracket groups only, with release metadata in every inner.
 export function isPureReleaseTagBracket(segment: string): boolean {
   const trimmed = segment.trim();
   if (!trimmed.startsWith('[')) return false;
-  // Reject if any non-bracket text remains once every `[...]` group is removed.
   if (trimmed.replace(/\s*\[[^\]]*\]\s*/g, '').trim() !== '') return false;
   const inners = [...trimmed.matchAll(/\[([^\]]*)\]/g)].map((m) => m[1]!.trim());
   return inners.length > 0 && inners.every((inner) => isReleaseTagInner(inner));
@@ -101,11 +66,6 @@ function hasTitleDashSeriesDisambiguator(match: RegExpMatchArray): boolean {
   return false;
 }
 
-/**
- * Match `TITLE_DASH_SERIES_BOOK_REGEX` and (if disambiguator passes) return
- * the resolved record. `transform` is `cleanName` for the cleaned parser,
- * `identity` for the raw parser. Returns null when the pattern doesn't fire.
- */
 export function tryTitleDashSeriesBook(
   input: string,
   asinTail: { asin?: string },
@@ -124,23 +84,11 @@ export function tryTitleDashSeriesBook(
   };
 }
 
-/**
- * Trailing parenthetical series marker: `(Series Name Book N)`, `(Series Name Vol|Volume N)`,
- * or `(Series Name #N)`. Series name is the non-greedy left capture (group 1); position is
- * either the Book/Vol number (group 2, Arabic decimal or Roman) or the hash number (group 3).
- * Anchored at end-of-string so it only consumes a true trailing paren.
- */
+// Trailing series position in Book/Vol/Volume, Roman, or # forms.
 const SERIES_PAREN_REGEX =
   /\s*\((.+?)\s+(?:(?:book|vol(?:ume)?)\s+(\d+(?:\.\d+)?|[ivxlcdm]+)|#\s*(\d+(?:\.\d+)?))\)\s*$/i;
 
-/**
- * Extract a trailing `(Series Name Book|Vol|Volume N)` / `(Series Name #N)` paren from an
- * input, returning the paren-stripped remainder plus the raw series name and numeric position.
- * Returns null when the paren is absent, when the captured series name is actually a codec
- * (`Unabridged`) or edition (`2nd Edition`) label rather than a series, when the position can't
- * be parsed, or when stripping the paren would leave nothing. Callers apply their own
- * cleanName/identity transform to the returned series name.
- */
+// Reject codec/edition parens, invalid positions, and an empty remainder.
 export function trySeriesParen(
   input: string,
 ): { remainder: string; series: string; seriesPosition: number } | null {
@@ -155,11 +103,7 @@ export function trySeriesParen(
   return { remainder, series, seriesPosition: position };
 }
 
-/**
- * Cross-segment agreement: `<series-prefix> <position> <separator> <title>`.
- * Position can be Arabic (1, 01, 0.15) or Roman (I, IV, XII). Separator is
- * hyphen, en-dash, em-dash, underscore, or colon, with optional whitespace.
- */
+// `<series-prefix> <Arabic|Roman position> <separator> <title>`.
 const SERIES_PREFIX_POSITION_REGEX = /^(.+?)\s+(\d+(?:\.\d+)?|[IVX]+)\s*[-–—_:]\s*(.+)$/i;
 
 const CROSS_SEGMENT_STOPWORDS = new Set([
@@ -175,11 +119,6 @@ function distinctiveTokens(s: string): Set<string> {
 
 const ROMAN_NUMERAL_MAP: Record<string, number> = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 };
 
-/**
- * Parse a captured position string as Arabic decimal or Roman numeral.
- * Returns `undefined` for unparseable input — defensive guard so callers
- * never emit `seriesPosition: undefined` (incompatible with exactOptionalPropertyTypes).
- */
 function parseRomanOrArabicPosition(s: string): number | undefined {
   if (/^\d+(?:\.\d+)?$/.test(s)) {
     const v = parseFloat(s);
@@ -196,13 +135,7 @@ function parseRomanOrArabicPosition(s: string): number | undefined {
   return result || undefined;
 }
 
-/**
- * 2-part path: when the series-folder name shares a distinctive (non-stopword)
- * token with the filename's series prefix, treat the folder as the series and
- * the filename's `<series-prefix> <position> <separator> <title>` as the book.
- * Returns null when the position can't be parsed (preserves
- * exactOptionalPropertyTypes — never emits seriesPosition: undefined).
- */
+// Accept only when folder and filename prefix share a distinctive non-stopword token.
 export function tryCrossSegmentAgreement(
   seriesFolder: string,
   titleSegment: string,
@@ -225,48 +158,20 @@ export function tryCrossSegmentAgreement(
   };
 }
 
-/**
- * Bare leading-position prefixes on a leaf directory — `01 - Title`, `2.5 – Title`,
- * `01. - Title`, `01.- Title`, `01. Title`. This is exactly the shape family the
- * `leadingNumeric` clean step strips today (`folder-parsing.ts`), in the same order and
- * with the same `[–-]` separator class, so the capture recovers positions that used to be
- * discarded as noise rather than changing which titles are produced. Em-dash is
- * deliberately absent — `leadingNumeric` does not strip it, so capturing it would change
- * the title too (#2145). Group 1 is the position literal, group 2 the remainder.
- */
+// Mirror leadingNumeric shapes so capturing position does not change titles; em dash stays excluded.
 const LEADING_POSITION_REGEXES: readonly RegExp[] = [
   /^(\d+\.\d+)\s*[–-]\s*(.*)$/,
   /^(\d+)[.\s]*[–-]\s*(.*)$/,
   /^(\d+)\.(?!\d)\s*(.*)$/,
 ];
 
-/**
- * True when the position literal was written as a BARE 4-digit integer inside the
- * repository's existing year window (`isYearInWindow`, the same 1900–2099 bound
- * `extractYear` and the clean pipeline's trailing-year strips use). narratorr's own Plex
- * preset folder format renders a year into this exact prefix slot of this exact shape
- * (`{author}/{series?/}{year? - }{title}` → `Stephen King/The Dark Tower/1982 - The
- * Gunslinger`), so the window is what keeps the Detailed preset's positions and the Plex
- * preset's years from being read as each other. The test is on the LITERAL, not just the
- * value: `01984` and `1984.5` are not year-shaped, and everything outside the window
- * (`1899`, `2100`, `1000`, `12345`) is captured normally. Cross-segment agreement is
- * deliberately NOT subject to this — its distinctive-token intersection is a disambiguator
- * the bare prefix has no equivalent of.
- */
+// Bare 1900–2099 prefixes collide with Plex year folders; suppress only literal four-digit forms.
+// Cross-segment agreement has its own disambiguator and intentionally bypasses this guard.
 function isYearShapedPositionLiteral(literal: string, position: number): boolean {
   return /^\d{4}$/.test(literal) && isYearInWindow(position);
 }
 
-/**
- * Capture a bare `NN - Title` leading position from a leaf segment, returning the
- * position-free remainder and the numeric position. Returns null when no prefix shape
- * fires, when the remainder is LEXICALLY empty (`03 - ` is only a position and separator,
- * so there is no title to keep — that leaf behaves exactly as it did before), when the
- * position can't be parsed, or when the prefix is year-shaped. Callers apply their own
- * cleanName/identity transform to the remainder: a remainder that is real text but
- * transforms to empty (`03 - [Graphic Audio]`) still captures, matching the 1-part and
- * 2-part position routes. (#2145)
- */
+// Require a lexical remainder; callers may later clean it to empty while retaining position.
 export function tryLeadingPositionLeaf(
   segment: string,
 ): { remainder: string; seriesPosition: number } | null {
@@ -282,22 +187,14 @@ export function tryLeadingPositionLeaf(
   return null;
 }
 
-/**
- * Anchored descriptor: a full ` - `-delimited segment that IS a
- * `Book N of [the] <Series> Series|Saga|Trilogy|Cycle|Chronicles` unit (#1271).
- * The series-keyword tail is part of the anchor, so a bare title word like
- * "The Saga of Pliocene Exile" (no leading `Book N of`) never matches. Group 1 is
- * the position (Arabic decimal or Roman); group 2 is the series name.
- */
+// The anchored series-keyword tail prevents bare titles such as "The Saga of Pliocene Exile" matching.
 const BOOK_OF_SERIES_DESCRIPTOR_REGEX =
   /^Book\s+(\d+(?:\.\d+)?|[IVXLCDM]+)\s+of\s+(?:the\s+)?(.+?)\s+(?:series|saga|trilogy|cycle|chronicles)\s*$/i;
 
-/** Split an input into ` - ` / ` – ` / ` — `-delimited segments (each trimmed). */
 function splitDashSegments(input: string): string[] {
   return input.split(/\s+[-–—]\s+/).map((s) => s.trim());
 }
 
-/** Locate the first segment that IS a `Book N of <Series> Saga` descriptor. */
 function findDescriptorSegment(segments: string[]): { index: number; match: RegExpMatchArray } | null {
   for (let i = 0; i < segments.length; i++) {
     const match = segments[i]!.match(BOOK_OF_SERIES_DESCRIPTOR_REGEX);
@@ -306,7 +203,6 @@ function findDescriptorSegment(segments: string[]): { index: number; match: RegE
   return null;
 }
 
-/** Build the `{ series, seriesPosition? }` overlay captured from a descriptor match. */
 function descriptorSeriesOverlay(
   match: RegExpMatchArray,
   transform: (s: string) => string,
@@ -316,24 +212,8 @@ function descriptorSeriesOverlay(
   return position !== undefined ? { series, seriesPosition: position } : { series };
 }
 
-/**
- * Recognize an inline `Book N of [the] <Series> Series|Saga|Trilogy|Cycle|Chronicles`
- * descriptor segment and resolve title/author around it (#1271). Two structural shapes:
- *
- * - **Trailing descriptor** — `Author - Title - <descriptor>`: strip the descriptor and let
- *   the existing `Author - Title` first-dash heuristic (`resolveAuthorTitle`) resolve the
- *   remainder.
- * - **Middle descriptor** — `Title - <descriptor> - Author`: the real author is the TRAILING
- *   segment and the real title is the LEADING segment, so assign them directly — a naive strip
- *   would leave `Title - Author`, which the first-dash heuristic would invert.
- *
- * The series-keyword tail is part of the anchored segment match, so a bare title word
- * (`The Saga of Pliocene Exile`, `The Chronicles of Amber`) never triggers the strip. Returns
- * null when no descriptor segment is present, when it sits at the leading edge with trailing
- * content (no title to assign), or when stripping would blank the name (degenerate
- * `Book 1 of the Series` falls through to the title-only path). `transform` is `cleanName`
- * for the cleaned parser, `identity` for raw — both paths run this branch identically.
- */
+// Trailing descriptors reuse author-title parsing; middle descriptors are Title - descriptor - Author.
+// Assign the middle form directly so the first-dash heuristic cannot invert title and author.
 export function tryBookOfSeriesDescriptor(
   input: string,
   asinTail: { asin?: string },
@@ -346,17 +226,15 @@ export function tryBookOfSeriesDescriptor(
   if (!found) return null;
   const overlay = descriptorSeriesOverlay(found.match, transform);
 
-  // Trailing descriptor — strip it, reuse the existing dash/by heuristic on the remainder.
   if (found.index === segments.length - 1) {
     const residual = segments.slice(0, found.index).join(' - ');
-    if (!residual) return null; // descriptor-only — fall back to the title-only path (AC6)
+    if (!residual) return null;
     const resolved = resolveAuthorTitle(residual)
       ?? { title: transform(residual), author: null, series: null, ...asinTail };
     return { ...resolved, ...overlay, ...asinTail };
   }
 
-  // Middle descriptor — leading segment is the title, trailing segment(s) the author.
-  if (found.index === 0) return null; // no leading title segment to assign
+  if (found.index === 0) return null;
   const title = segments.slice(0, found.index).join(' - ');
   const author = segments.slice(found.index + 1).join(' - ');
   if (!title) return null;

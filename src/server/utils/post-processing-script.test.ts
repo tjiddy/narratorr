@@ -1,12 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 
-// Mock node:child_process
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
 
-// Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
   access: vi.fn(),
 }));

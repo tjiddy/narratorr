@@ -44,8 +44,7 @@ describe('getVersion / getUserAgent shared resolver agreement', () => {
   });
 
   afterEach(() => {
-    // Guarantee the stubbed GIT_TAG is cleared even if an assertion throws
-    // mid-test — a bare `delete process.env.GIT_TAG` would leak on failure.
+    // Cleanup still runs when an assertion throws.
     vi.unstubAllEnvs();
   });
 
@@ -73,7 +72,6 @@ describe('getVersion / getUserAgent shared resolver agreement', () => {
     vi.stubEnv('GIT_TAG', 'v9.9.9');
     const { getVersion } = await loadBoth();
     expect(getVersion()).toBe('v9.9.9');
-    // Mutating the env after first resolution must not change the cached value.
     vi.stubEnv('GIT_TAG', 'v0.0.0');
     expect(getVersion()).toBe('v9.9.9');
   });
@@ -166,7 +164,6 @@ describe('getBuildTime', () => {
 });
 
 describe('isNewerVersion', () => {
-  // Import statically since isNewerVersion is a pure function with no side effects
   let isNewerVersion: (current: string, latest: string) => boolean;
 
   beforeEach(async () => {
@@ -214,19 +211,13 @@ describe('SHORT_SHA_LENGTH — the one number, and the sites that must agree wit
     const { join } = await import('node:path');
     const root = join(import.meta.dirname, '..', '..', '..');
 
-    // version-check.ts abbreviates the develop HEAD sha for display beside
-    // getCommit()'s output. A bare `slice(0, <number>)` there would drift.
     const versionCheck = readFileSync(join(root, 'src/server/jobs/version-check.ts'), 'utf8');
     expect(versionCheck).toContain('slice(0, SHORT_SHA_LENGTH)');
     expect(versionCheck).not.toMatch(/sha\.slice\(0,\s*\d+\)/);
 
-    // 7 is git's own floor (a fresh repo abbreviates to 7); anything below that
-    // would be shorter than git will ever print.
+    // Git never abbreviates below seven characters.
     expect(SHORT_SHA_LENGTH).toBeGreaterThanOrEqual(7);
   });
 
-  // The fourth site — `${GITHUB_SHA::N}` in .github/workflows/docker.yml — is
-  // deliberately NOT asserted here. docker/docker-workflow.test.ts already owns
-  // "what docker.yml contains" and now derives that width from SHORT_SHA_LENGTH.
-  // Asserting it in both places would be the same decision in two homes.
+  // docker-workflow.test.ts owns the workflow's mirrored width.
 });

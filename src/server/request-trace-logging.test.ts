@@ -3,12 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { Writable } from 'node:stream';
 import { registerRequestTraceLogging } from './request-trace-logging.js';
 
-/**
- * Proves the PRODUCTION wiring: the test imports the same registration export
- * `main()` calls (registerRequestTraceLogging) — it does NOT re-declare the hook
- * bodies inline. A request with a sentinel query param must log the pathname but
- * never the query string at trace level.
- */
+/** Exercise the exact production hook registration, not a test copy. */
 describe('registerRequestTraceLogging', () => {
   let app: FastifyInstance;
   let lines: string[];
@@ -45,7 +40,6 @@ describe('registerRequestTraceLogging', () => {
     expect(incoming).toBeDefined();
     expect(completed).toBeDefined();
 
-    // Both events carry the sanitized pathname and method, no query string.
     expect(JSON.parse(incoming!)).toMatchObject({ url: '/api/search', method: 'GET' });
     expect(JSON.parse(completed!)).toMatchObject({ url: '/api/search', method: 'GET' });
   });

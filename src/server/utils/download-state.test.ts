@@ -99,10 +99,7 @@ describe('display-status query conditions', () => {
   });
 });
 
-// #1857 F16 — the QG-eligibility rule ("completed display + non-empty externalId")
-// is a safety-critical decision shared by the QG batch query and the replace
-// blocker classification. This named consistency test pins the in-memory twin so
-// it cannot drift from the intended set the SQL condition selects.
+// Pin the in-memory replace-blocker rule to the QG query semantics.
 describe('isQualityGateEligibleRow (QG-eligibility twin, #1857 F16)', () => {
   const row = (clientStatus: ClientStatus, pipelineStage: PipelineStage, externalId: string | null) =>
     ({ clientStatus, pipelineStage, externalId });
@@ -116,16 +113,13 @@ describe('isQualityGateEligibleRow (QG-eligibility twin, #1857 F16)', () => {
   });
 
   it('excludes an empty-string externalId identically to null (#1861 truthiness alignment)', () => {
-    // A pre-existing `external_id = ''` row must NOT be gate-eligible — otherwise it
-    // strands as a permanent blocker the gate never drains. Aligned with the QG
-    // orchestrator's `!row.externalId` skip and the insert handoff.
     expect(isQualityGateEligibleRow(row('completed', 'idle', ''))).toBe(false);
   });
 
   it('excludes non-completed-display rows regardless of externalId', () => {
     expect(isQualityGateEligibleRow(row('downloading', 'idle', 'ext-1'))).toBe(false);
     expect(isQualityGateEligibleRow(row('queued', 'idle', 'ext-1'))).toBe(false);
-    // A pipeline-stage row derives to its stage (checking/importing), not 'completed'.
+    // Non-idle pipeline stages override completed client state.
     expect(isQualityGateEligibleRow(row('completed', 'checking', 'ext-1'))).toBe(false);
     expect(isQualityGateEligibleRow(row('completed', 'importing', 'ext-1'))).toBe(false);
   });

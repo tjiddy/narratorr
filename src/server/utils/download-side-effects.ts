@@ -9,8 +9,6 @@ import { safeEmit } from './safe-emit.js';
 import { serializeError } from './serialize-error.js';
 
 
-// ── emitGrabStarted ─────────────────────────────────────────────────────
-
 export interface EmitGrabStartedArgs {
   broadcaster: EventBroadcasterService | undefined;
   downloadId: number;
@@ -20,7 +18,6 @@ export interface EmitGrabStartedArgs {
   log: FastifyBaseLogger;
 }
 
-/** Emit grab_started SSE event. Fire-and-forget. */
 export function emitGrabStarted(args: EmitGrabStartedArgs): void {
   const { broadcaster, downloadId, bookId, bookTitle, releaseTitle, log } = args;
   safeEmit(broadcaster, 'grab_started', {
@@ -28,23 +25,15 @@ export function emitGrabStarted(args: EmitGrabStartedArgs): void {
   }, log);
 }
 
-// ── emitBookStatusChangeOnGrab ──────────────────────────────────────────
-
 export interface EmitBookStatusChangeOnGrabArgs {
   broadcaster: EventBroadcasterService | undefined;
   bookId: number;
   isHandoff: boolean;
-  /**
-   * The book's real lifecycle BEFORE the grab (the `bookStatusAtGrab` snapshot).
-   * A re-grab from `failed`/`missing`/`imported` must report that true prior
-   * state, not a hardcoded `'wanted'`. Falls back to `'wanted'` only when no
-   * snapshot is available (legacy rows / orphan grabs).
-   */
+  /** The captured pre-grab lifecycle; legacy rows fall back to wanted. */
   oldStatus: BookStatus | null;
   log: FastifyBaseLogger;
 }
 
-/** Emit book_status_change SSE for a grab (prior lifecycle → downloading or missing). */
 export function emitBookStatusChangeOnGrab(args: EmitBookStatusChangeOnGrabArgs): void {
   const { broadcaster, bookId, isHandoff, oldStatus, log } = args;
   const newStatus = isHandoff ? 'missing' : 'downloading';
@@ -53,31 +42,22 @@ export function emitBookStatusChangeOnGrab(args: EmitBookStatusChangeOnGrabArgs)
   }, log);
 }
 
-// ── emitDownloadProgress ────────────────────────────────────────────────
-
 export interface EmitDownloadProgressArgs {
   broadcaster: EventBroadcasterService | undefined;
   downloadId: number;
   bookId: number;
   progress: number;
-  /**
-   * Current download rate in bytes/sec. Optional — callers without adapter
-   * context (e.g. DownloadOrchestrator.updateProgress) may omit it and the
-   * payload will be emitted with `speed: null`. `0` is preserved (stalled).
-   */
+  /** Bytes/sec; omission emits null while zero remains a stalled rate. */
   speed?: number | null;
   log: FastifyBaseLogger;
 }
 
-/** Emit download_progress SSE. Fire-and-forget. */
 export function emitDownloadProgress(args: EmitDownloadProgressArgs): void {
   const { broadcaster, downloadId, bookId, progress, speed, log } = args;
   safeEmit(broadcaster, 'download_progress', {
     download_id: downloadId, book_id: bookId, percentage: progress, speed: speed ?? null, eta: null,
   }, log);
 }
-
-// ── emitDownloadStatusChange ────────────────────────────────────────────
 
 export interface EmitDownloadStatusChangeArgs {
   broadcaster: EventBroadcasterService | undefined;
@@ -88,15 +68,12 @@ export interface EmitDownloadStatusChangeArgs {
   log: FastifyBaseLogger;
 }
 
-/** Emit download_status_change SSE. Fire-and-forget. */
 export function emitDownloadStatusChange(args: EmitDownloadStatusChangeArgs): void {
   const { broadcaster, downloadId, bookId, oldStatus, newStatus, log } = args;
   safeEmit(broadcaster, 'download_status_change', {
     download_id: downloadId, book_id: bookId, old_status: oldStatus, new_status: newStatus,
   }, log);
 }
-
-// ── emitBookStatusChange ────────────────────────────────────────────────
 
 export interface EmitBookStatusChangeArgs {
   broadcaster: EventBroadcasterService | undefined;
@@ -106,15 +83,12 @@ export interface EmitBookStatusChangeArgs {
   log: FastifyBaseLogger;
 }
 
-/** Emit book_status_change SSE. Fire-and-forget. */
 export function emitBookStatusChange(args: EmitBookStatusChangeArgs): void {
   const { broadcaster, bookId, oldStatus, newStatus, log } = args;
   safeEmit(broadcaster, 'book_status_change', {
     book_id: bookId, old_status: oldStatus, new_status: newStatus,
   }, log);
 }
-
-// ── notifyGrab ──────────────────────────────────────────────────────────
 
 export interface NotifyGrabArgs {
   notifierService: NotifierService | undefined;
@@ -123,7 +97,6 @@ export interface NotifyGrabArgs {
   log: FastifyBaseLogger;
 }
 
-/** Fire-and-forget grab notification. */
 export function notifyGrab(args: NotifyGrabArgs): void {
   const { notifierService, title, size, log } = args;
   if (!notifierService) return;
@@ -138,8 +111,6 @@ export function notifyGrab(args: NotifyGrabArgs): void {
   );
 }
 
-// ── recordGrabbedEvent ──────────────────────────────────────────────────
-
 export interface RecordGrabbedEventArgs {
   eventHistory: EventHistoryService | undefined;
   bookId: number | undefined;
@@ -150,7 +121,6 @@ export interface RecordGrabbedEventArgs {
   log: FastifyBaseLogger;
 }
 
-/** Fire-and-forget grabbed event recording. Skips if no eventHistory or bookId. */
 export function recordGrabbedEvent(args: RecordGrabbedEventArgs): void {
   const { eventHistory, bookId, bookTitle, downloadId, source, reason, log } = args;
   if (!eventHistory || !bookId) return;
@@ -158,8 +128,6 @@ export function recordGrabbedEvent(args: RecordGrabbedEventArgs): void {
     bookId, bookTitle, downloadId, eventType: 'grabbed', source, reason,
   }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record grabbed event'));
 }
-
-// ── recordDownloadCompletedEvent ────────────────────────────────────────
 
 export interface RecordDownloadCompletedEventArgs {
   eventHistory: EventHistoryService | undefined;
@@ -169,7 +137,6 @@ export interface RecordDownloadCompletedEventArgs {
   log: FastifyBaseLogger;
 }
 
-/** Fire-and-forget download_completed event recording. */
 export function recordDownloadCompletedEvent(args: RecordDownloadCompletedEventArgs): void {
   const { eventHistory, downloadId, bookId, bookTitle, log } = args;
   if (!eventHistory || !bookId) return;
@@ -178,8 +145,6 @@ export function recordDownloadCompletedEvent(args: RecordDownloadCompletedEventA
     reason: { progress: 1 },
   }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record download_completed event'));
 }
-
-// ── recordDownloadFailedEvent ─────────────────────────────────────────
 
 export interface RecordDownloadFailedEventArgs {
   eventHistory: EventHistoryService | undefined;
@@ -190,7 +155,6 @@ export interface RecordDownloadFailedEventArgs {
   log: FastifyBaseLogger;
 }
 
-/** Fire-and-forget download_failed event recording. Skips if no eventHistory or bookId. */
 export function recordDownloadFailedEvent(args: RecordDownloadFailedEventArgs): void {
   const { eventHistory, bookId, bookTitle, downloadId, errorMessage, log } = args;
   if (!eventHistory || !bookId) return;
@@ -199,8 +163,6 @@ export function recordDownloadFailedEvent(args: RecordDownloadFailedEventArgs): 
     reason: { error: errorMessage },
   }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record download_failed event'));
 }
-
-// ── recordGrabFailedEvent ─────────────────────────────────────────────
 
 export interface RecordGrabFailedEventArgs {
   eventHistory: EventHistoryService;
@@ -215,7 +177,6 @@ export interface RecordGrabFailedEventArgs {
   log: FastifyBaseLogger;
 }
 
-/** Fire-and-forget grab_failed event recording. */
 export function recordGrabFailedEvent(args: RecordGrabFailedEventArgs): void {
   const { eventHistory, book, releaseTitle, errorMessage, log } = args;
   eventHistory.create({
@@ -229,8 +190,6 @@ export function recordGrabFailedEvent(args: RecordGrabFailedEventArgs): void {
   }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record grab_failed event'));
 }
 
-// ── recordSearchRelaxedHeldEvent ──────────────────────────────────────
-
 export interface RecordSearchRelaxedHeldEventArgs {
   eventHistory: EventHistoryService;
   book: {
@@ -239,25 +198,14 @@ export interface RecordSearchRelaxedHeldEventArgs {
     authors?: Array<{ name: string }> | null;
     narrators?: Array<{ name: string }> | null;
   };
-  /** The relaxed rung's transport query. */
   relaxedQuery: string;
-  /** The winning variant's tag — `prefix(2)`, `first+last`, … */
   variantTag: string;
-  /** The highest-ranked DOWNLOADABLE candidate, which by construction failed the floor. */
   releaseTitle: string;
-  /** Retry-path attempt counter — present only on the retry-search caller. */
   attempt?: number;
   log: FastifyBaseLogger;
 }
 
-/**
- * Fire-and-forget `search_relaxed_held` recording (#2104 D9), plus its operator log line —
- * one home for both (#2142), so the two auto-grab paths cannot drift on wording or fields.
- * The structured `attempt` field is what distinguishes the retry path in the logs.
- *
- * Persisted rather than broadcast: a scheduled cycle runs every 360 minutes, so an SSE toast
- * would simply be missed.
- */
+// Centralize the two auto-grab paths' event and log shape; persist because scheduled SSE is missed.
 export function recordSearchRelaxedHeldEvent(args: RecordSearchRelaxedHeldEventArgs): void {
   const { eventHistory, book, relaxedQuery, variantTag, releaseTitle, attempt, log } = args;
   log.info({

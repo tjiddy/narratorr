@@ -53,7 +53,6 @@ describe('computeFolderTarget', () => {
       narratorLibrary,
       OPTS,
     );
-    // Primary narrator (first in the ordered list) drives the {narrator} token.
     expect(result.targetPath).toBe('/library/Michael Kramer/The Way of Kings');
 
     const lastFirst = computeFolderTarget(
@@ -158,11 +157,7 @@ describe('computeFolderTarget', () => {
   });
 });
 
-/**
- * #2152 AC11 — the FOLDER seam, verified separately from the file seam: they are
- * independent token maps (`import-helpers.ts` vs `paths.ts`) and neither stands in
- * for the other. Keyed on the COLUMN; a regression pin, no production change expected.
- */
+// Folder naming is column-keyed and independently pinned from file naming.
 describe('#2152 AC11 — a cleared position renders no folder segment prefix', () => {
   const DETAILED = { path: '/library', folderFormat: '{author}/{series}/{seriesPosition:00? - }{title}' };
 
@@ -191,8 +186,7 @@ describe('#2152 AC11 — a cleared position renders no folder segment prefix', (
     });
 
     it('the DECOUPLED state renders "07 - " too — the seam is column-keyed', () => {
-      // Post-bind shape: bind adopted the canonical name and left the stale column
-      // alone (AC9), and `FolderTargetRow` carries no tombstone the seam could read.
+      // FolderTargetRow deliberately exposes no tombstone state.
       const result = computeFolderTarget(hunters(7, 'Dune'), 'Frank Herbert', DETAILED, OPTS);
       expect(result.targetPath.split('\\').join('/')).toBe('/library/Frank Herbert/Dune/07 - Hunters of Dune');
       expect(Object.keys(hunters(7))).not.toContain('userClearedFields');

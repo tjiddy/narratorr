@@ -19,25 +19,12 @@ export class PathOutsideLibraryError extends Error {
   }
 }
 
-/**
- * Containment decision shared by {@link assertPathInsideLibrary} (lexical relative) and
- * {@link assertRealPathInsideLibrary} (realpath-canonicalized relative): a path is OUTSIDE the
- * root when its already-computed relative path is empty (equals the root), starts with `..`
- * (an upward escape or sibling-prefix attack), or is absolute (cross-drive on Windows). The
- * caller computes `rel` — lexically or via realpath — so this predicate stays agnostic to how
- * resolution happened and the two guards keep their distinct inputs while sharing one decision.
- *
- * NOT for `cleanEmptyParents` or the import-source-outside check: those answer the opposite
- * (must-be-OUTSIDE) question with a different predicate — folding them in would be a wrong-merge.
- */
+/** Equality, upward escapes, and Windows cross-drive paths are outside the root. */
 function isOutsideRoot(rel: string): boolean {
   return rel === '' || rel.startsWith('..') || isAbsolute(rel);
 }
 
-/**
- * Throw `PathOutsideLibraryError` unless `bookPath` is a true descendant of `libraryRoot`.
- * Rejects equality, `..` escapes, sibling-prefix attacks, and (on Windows) cross-drive paths.
- */
+/** Require `bookPath` to be a true descendant, not equal to `libraryRoot`. */
 export function assertPathInsideLibrary(bookPath: string, libraryRoot: string): void {
   const normalizedRoot = normalize(resolve(libraryRoot));
   const normalizedBook = normalize(resolve(bookPath));
@@ -48,25 +35,10 @@ export function assertPathInsideLibrary(bookPath: string, libraryRoot: string): 
 }
 
 /**
- * Async, symlink-aware containment guard for a DB-sourced path that is about to
- * feed a destructive op (e.g. `renameBook`'s `oldPath`). Runs the lexical
- * `assertPathInsideLibrary` check **first and unconditionally** — a lexical
- * escape is rejected even when the path doesn't exist on disk — then re-runs the
- * `relative`/`isAbsolute` containment on the `realpath`-canonicalized values to
- * catch an in-library symlink whose target escapes the root (mirrors
- * `import-preview.ts`).
- *
- * An in-library path that doesn't exist on disk surfaces as a `realpath` ENOENT,
- * which is **swallowed** — the check returns without error, leaving the caller's
- * own logic to surface the real missing-path cause (preserving today's behavior).
- * A non-ENOENT `realpath` error propagates.
- *
- * Deliberately kept separate from the synchronous `assertPathInsideLibrary`: that
- * helper's call sites pass not-yet-created target paths, on which `realpath`
- * would spuriously ENOENT — so folding realpath into it would break those flows.
+ * Reject lexical escapes before resolving symlinks. Missing in-library paths pass so the
+ * destructive caller can report its own ENOENT; other realpath failures propagate.
  */
 export async function assertRealPathInsideLibrary(bookPath: string, libraryRoot: string): Promise<void> {
-  // Lexical containment first and unconditional — rejects escapes for a missing path too.
   assertPathInsideLibrary(bookPath, libraryRoot);
 
   let realRoot: string;
@@ -75,7 +47,7 @@ export async function assertRealPathInsideLibrary(bookPath: string, libraryRoot:
     realRoot = await realpath(libraryRoot);
     realBook = await realpath(bookPath);
   } catch (error: unknown) {
-    // In-library path absent on disk: swallow so the caller surfaces the real cause.
+    // Let the caller classify a missing in-library path.
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
@@ -86,25 +58,10 @@ export async function assertRealPathInsideLibrary(bookPath: string, libraryRoot:
   }
 }
 
-/**
- * The ENOENT-**rejecting** twin of {@link assertRealPathInsideLibrary} (#1974 AC4), for the
- * companion-ebook open-and-verify helper.
- *
- * Identical in every respect — lexical containment first and unconditional, then the
- * `realpath`-canonicalized re-check through the same `isOutsideRoot` predicate, catching a
- * **parent-directory** symlink escape and not only a final-component one — except that a
- * `realpath` ENOENT **propagates** instead of being swallowed.
- *
- * That difference is the whole point. The sibling's swallow-and-return is deliberate and its
- * callers depend on it (they pass DB paths whose absence their own logic surfaces), but a
- * serve-time file opener must never conclude "contained" from "vanished": the caller
- * classifies the propagated errno as a `missing` outcome instead. The sibling's behaviour and
- * callers are untouched.
- */
+/** Symlink-aware containment that propagates ENOENT for serve-time file verification. */
 export async function assertRealPathInsideLibraryStrict(bookPath: string, libraryRoot: string): Promise<void> {
   assertPathInsideLibrary(bookPath, libraryRoot);
 
-  // No ENOENT branch: every realpath failure, absence included, is the caller's to classify.
   const realRoot = await realpath(libraryRoot);
   const realBook = await realpath(bookPath);
 
@@ -113,21 +70,17 @@ export async function assertRealPathInsideLibraryStrict(bookPath: string, librar
   }
 }
 
-/** Minimal book shape required by renameFilesWithTemplate. */
 export interface RenameableBook {
   title: string;
   seriesName?: string | null;
   seriesPosition?: number | null;
   narrators?: Array<{ name: string }> | null;
   publishedDate?: string | null;
-  /** Stored edition_label (#1712) — source for the `{edition}` file-naming token. */
+  /** Source for the `{edition}` token. */
   editionLabel?: string | null;
 }
 
-/**
- * Walk up from bookPath removing empty directories, stopping at libraryRoot.
- * Only runs when bookPath is a normalized descendant of libraryRoot.
- */
+/** Remove empty ancestors up to, but never including, `libraryRoot`. */
 export async function cleanEmptyParents(
   bookPath: string,
   libraryRoot: string,
@@ -136,7 +89,7 @@ export async function cleanEmptyParents(
   const normalizedRoot = normalize(resolve(libraryRoot));
   const normalizedBook = normalize(resolve(bookPath));
 
-  // Use relative path to verify true ancestry — startsWith('/library') would match '/library2'
+  // startsWith would misclassify sibling prefixes such as `/library2`.
   const rel = relative(normalizedRoot, normalizedBook);
   if (!rel || rel.startsWith('..') || resolve(rel) === resolve(normalizedBook)) {
     log.debug({ bookPath, libraryRoot }, 'Book path not under library root, skipping parent cleanup');
@@ -157,32 +110,17 @@ export async function cleanEmptyParents(
   }
 }
 
-/**
- * Number of digits needed to zero-pad sequential ordinals for `count` items.
- * `padWidth(99) === 2`, `padWidth(100) === 3`, `padWidth(1000) === 4`.
- * Mirrors the width logic in `collectMultiDiscFiles` (import-helpers.ts).
- */
 export function padWidth(count: number): number {
   return String(count).length;
 }
 
-/**
- * The naming half of a `ProcessingContext` (audio-processor) — the fields the convert/merge
- * paths add on top of the required `author`/`title`. All optional so an empty result (missing
- * book) or an empty `fileFormat` cleanly falls back inside audio-processor.
- */
 export interface BookNamingContext {
   bookTokens?: Record<string, string | number | undefined | null>;
   namingOptions?: NamingOptions;
   fileFormat?: string;
 }
 
-/**
- * Assemble the naming half of the `ProcessingContext` from a book row + library naming settings.
- * Centralizes the "omit empty `fileFormat`" fallback rule (so audio-processor keeps its basename /
- * `${author} - ${title}` fallback) and the null-book guard in ONE place, keeping the call site
- * (`MergeService.runStaging`) below the complexity cap.
- */
+/** Omit empty formats so audio-processor retains its filename fallback. */
 export function buildNamingContext(
   book: RenameableBook | null | undefined,
   authorName: string | null,
@@ -197,22 +135,7 @@ export function buildNamingContext(
   };
 }
 
-/**
- * Build the book-LEVEL naming token map from a book row and its resolved author.
- *
- * The single shared source of the `{author}`/`{title}`/`{series}`/`{narrator}`/`{year}`/
- * `{edition}` (+ sort variants) tokens consumed at rename time (`planFileRenames`) and at merge
- * time (`MergeService.runStaging`, which reaches audio-processor's merged-output stem builder).
- * Keeping the book→tokens decision in ONE place stops those paths from drifting on how a book row
- * maps to filename tokens (the anti-drift consistency-test target). Per-FILE tokens
- * (`trackNumber`/`trackTotal`/`partName`) are computed per file by each caller and are
- * intentionally NOT built here.
- *
- * A null/empty `authorName` falls back to `'Unknown Author'` (matches the rename path).
- * Missing optional fields render as absent (undefined), not literal `null`/`undefined`.
- * `seriesPosition` uses `?? undefined` so a legitimate `0` survives (a `|| undefined`
- * would swallow it).
- */
+/** Shared book-level token mapping for rename and merge; `??` preserves position zero. */
 export function buildBookNameTokens(
   book: RenameableBook,
   authorName: string | null,
@@ -229,29 +152,13 @@ export function buildBookNameTokens(
     narrator: primaryNarrator || undefined,
     narratorLastFirst: primaryNarrator ? toLastFirst(primaryNarrator) : undefined,
     year: extractYear(book.publishedDate),
-    // Stored edition_label (#1712); null/empty renders nothing via stripEmptyWrappers.
     edition: book.editionLabel ?? undefined,
   };
 }
 
 /**
- * Pure planner: list audio files in `targetPath` and compute the `{from, to}[]`
- * filename pairs the apply path would produce, without touching disk.
- *
- * Ordering is filename-based and numeric (via the shared `compareAudioNames`
- * comparator), matching the import-time sort so the import-baked sequential
- * numbering is preserved at rename time — never re-derived from array index over
- * a lexicographically-sorted list, and never from ID3 tags.
- *
- * When the rendered stems do not all disambiguate the book's files (the format
- * carries no per-file token, e.g. `{author} - {title}`, so multiple files render
- * to the same stem), a zero-padded sequential ordinal is appended to *every*
- * file including the first — `<stem> (001)`, `<stem> (002)`, … — in numeric-sort
- * order. Formats that already render unique stems (`{partName}`, `{trackNumber}`)
- * are left untouched.
- *
- * Returned pairs are bare filenames (no path component) to match the apply path's
- * `rename(join(targetPath, from), join(targetPath, to))` call site below.
+ * Plan bare-filename renames in numeric play order. Colliding rendered stems receive
+ * zero-padded ordinals on every file; already-unique stems remain unchanged.
  */
 export async function planFileRenames(
   targetPath: string,
@@ -272,9 +179,7 @@ export async function planFileRenames(
 
   const isMultiFile = audioFiles.length > 1;
 
-  // Render every stem first (in numeric-sort order). trackNumber follows the
-  // sorted position, so once the array is numeric-sorted it is the authoritative
-  // play-order ordinal feeding both {trackNumber} renders and the fallback below.
+  // Numeric sort defines the authoritative play-order ordinal.
   const stems = audioFiles.map((fileName, i) => {
     const ext = extname(fileName);
     const tokens = {
@@ -288,9 +193,7 @@ export async function planFileRenames(
     return renderFilename(fileFormat, tokens, options);
   });
 
-  // Forced sequential numbering is keyed off rendered-stem *collisions* (the shared
-  // helper appends an ordinal to every file when any two stems collide), NOT the
-  // absence of {trackNumber}.
+  // Collisions, not token presence, trigger sequential suffixes.
   const finalStems = disambiguateStems(stems);
 
   const renames: { from: string; to: string }[] = [];
@@ -306,10 +209,7 @@ export async function planFileRenames(
   return renames;
 }
 
-/**
- * Rename audio files in a directory using the file format template.
- * Returns count of files renamed. Rolls back on failure.
- */
+/** Rename planned audio files and roll completed renames back on failure. */
 export async function renameFilesWithTemplate(
   targetPath: string,
   fileFormat: string,
@@ -322,14 +222,12 @@ export async function renameFilesWithTemplate(
   const renames = await planFileRenames(targetPath, fileFormat, book, authorName, options);
   if (renames.length === 0) return 0;
 
-  // Perform renames with rollback tracking
   const completed: { from: string; to: string }[] = [];
   try {
     for (const { from, to } of renames) {
       await rename(join(targetPath, from), join(targetPath, to));
       completed.push({ from, to });
-      // Shield rename loop from progress-callback failures — SSE/broadcaster
-      // errors should never cause rollback of successfully-renamed files.
+      // Shield successful renames from progress-callback failures and rollback.
       try {
         onProgress?.(completed.length, renames.length);
       } catch (progressError: unknown) {
@@ -338,7 +236,6 @@ export async function renameFilesWithTemplate(
       log.debug({ from, to }, 'Renamed file using template');
     }
   } catch (error: unknown) {
-    // Attempt rollback
     log.error({ error: serializeError(error), completed: completed.length, total: renames.length }, 'Rename failed mid-operation, attempting rollback');
     for (const { from, to } of completed.reverse()) {
       try {

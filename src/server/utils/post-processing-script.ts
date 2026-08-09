@@ -28,7 +28,6 @@ export async function runPostProcessingScript(args: PostProcessingScriptArgs): P
     return { success: true };
   }
 
-  // Check if script exists before trying to execute
   try {
     await access(scriptPath);
   } catch (error: unknown) {

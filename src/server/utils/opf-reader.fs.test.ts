@@ -4,14 +4,8 @@ import { tmpdir } from 'node:os';
 import type { FastifyBaseLogger } from 'fastify';
 
 /**
- * AC6 — the I/O half of the OPF reader.
- *
- * Uses the `fs-spy-over-importactual` pattern: `node:fs/promises` is partially mocked and the two
- * spied functions are defaulted to the REAL implementations in `beforeEach`, so the happy-path test
- * runs against a genuine tmpdir while each failure case injects one errno. Every fixture/assertion
- * call goes through the `actualFs` handle, never the imported binding — an armed
- * `mockImplementationOnce` rejection meant for the code under test must not be consumed by the test's
- * own setup.
+ * Setup uses actualFs so fixtures cannot consume one-shot failures armed on the partially mocked
+ * imports under test.
  */
 const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
 
@@ -54,7 +48,6 @@ describe('readOpfMetadata (AC6)', () => {
 
   afterEach(async () => {
     for (const dir of dirs) {
-      // Tolerant teardown per `windows-hostile-test-primitives` — a leaked tmpdir beats a red suite.
       try { await actualFs.rm(dir, { recursive: true, force: true }); } catch { /* best effort */ }
     }
   });
@@ -84,8 +77,7 @@ describe('readOpfMetadata (AC6)', () => {
 
     expect(log.warn).toHaveBeenCalledTimes(1);
     const logged = vi.mocked(log.warn).mock.calls[0]![0] as { error: Record<string, unknown> };
-    // `type: 'Error'` is the load-bearing term: `expect.objectContaining({ message })` reads through
-    // to Error.prototype and would pass against a RAW error, leaving `serializeError` deletable.
+    // `type` proves the log contains a serialized value rather than a raw Error.
     expect(logged.error).not.toBeInstanceOf(Error);
     expect(Object.keys(logged.error).sort()).toEqual(['code', 'message', 'stack', 'type']);
     expect(logged.error).toMatchObject({ type: 'Error', code });
@@ -104,7 +96,6 @@ describe('readOpfMetadata (AC6)', () => {
 
     expect(await readOpfMetadata(dir, log)).toBeNull();
 
-    // readFile is never reached, so the parser is never entered either.
     expect(readFile).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledTimes(1);
     expect(vi.mocked(log.warn).mock.calls[0]![0]).toMatchObject({ maxBytes: MAX_OPF_BYTES });
@@ -115,7 +106,7 @@ describe('readOpfMetadata (AC6)', () => {
 
     expect(await readOpfMetadata(dir, log)).toMatchObject({ title: 'On Disk' });
 
-    // Never assert a path.join()ed string without normalising — backslashes on Windows.
+    // Normalize joined paths for Windows.
     const opfPath = String((readFile as Mock).mock.calls[0]![0]).split('\\').join('/');
     expect(opfPath).toContain('/metadata.opf');
     expect(log.warn).not.toHaveBeenCalled();
@@ -144,7 +135,7 @@ describe('readOpfMetadata (AC6)', () => {
     expect(payloads).toContainEqual(expect.objectContaining({ field: 'description', kind: 'truncated' }));
     expect(payloads).toContainEqual(expect.objectContaining({ field: 'genres', kind: 'capped' }));
     expect(payloads).toContainEqual(expect.objectContaining({ field: 'asin', kind: 'dropped-over-bound' }));
-    // The 8 000-char description must not reach a log line.
+    // Normalized field values must never reach logs.
     expect(JSON.stringify(vi.mocked(log.debug).mock.calls)).not.toContain('dddddddddd');
   });
 });

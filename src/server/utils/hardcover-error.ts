@@ -1,11 +1,7 @@
 import { RateLimitError, TransientError, MetadataError } from '@core/metadata/errors.js';
 import { getErrorMessage } from './error-message.js';
 
-/**
- * Map a Hardcover probe failure to an actionable, user-facing message. Shared by
- * the settings Test button (`POST /api/settings/metadata/hardcover/test`) and the
- * `hardcover` health check so both surfaces give the same guidance.
- */
+// Keep settings-test and health-check guidance identical.
 export function mapHardcoverError(error: unknown): string {
   if (error instanceof RateLimitError) {
     const seconds = Math.ceil(error.retryAfterMs / 1000);
@@ -15,11 +11,7 @@ export function mapHardcoverError(error: unknown): string {
     return "Couldn't reach Hardcover. Check your network and try again.";
   }
   if (error instanceof MetadataError) {
-    // Hardcover's GraphQL endpoint typically returns HTTP 200 with the auth
-    // failure buried in the response envelope ("Malformed Authorization header",
-    // "Could not verify JWT: ..."). The HTTP 401/403 substring branch still
-    // covers the network-layer failure mode; the regex covers the GraphQL one.
-    // Both branches return the same Bearer-prefix hint — see #1138 Bug 2.
+    // Hardcover may bury auth failures in a 200 GraphQL envelope; also recognize transport 401/403.
     if (
       error.message.includes('401') ||
       error.message.includes('403') ||

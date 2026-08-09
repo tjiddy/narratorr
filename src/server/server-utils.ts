@@ -16,7 +16,7 @@ export async function registerStaticAndSpa(
   const clientPath = clientPathOverride ?? path.join(__dirname, '../client');
   if (!fs.existsSync(clientPath)) return;
 
-  // Read index.html once — nonce injection happens per-request
+  // Cache index.html; inject request-specific nonces later.
   const indexHtmlPath = path.join(clientPath, 'index.html');
   const rawIndexHtml = fs.readFileSync(indexHtmlPath, 'utf-8');
 
@@ -27,15 +27,14 @@ export async function registerStaticAndSpa(
     const baseHref = urlBasePrefix ? `${urlBasePrefix}/` : '/';
     let html = rawIndexHtml.replace('<head>', `<head><base href="${baseHref}">`);
     html = html.replace('</head>', `${configScript}\n</head>`);
-    // Inject nonce into pre-existing inline <script> tags (those without a src attribute)
+    // Inject the nonce into existing inline scripts without src or nonce attributes.
     if (nonce) {
       html = html.replace(/<script(?![^>]*\bsrc\b)(?![^>]*\bnonce\b)([^>]*)>/g, `<script nonce="${nonce}"$1>`);
     }
     return reply.type('text/html').send(html);
   }
 
-  // Register explicit routes for HTML entry points — these take priority
-  // over @fastify/static's wildcard, ensuring config script + nonce injection
+  // Explicit entry routes beat the static wildcard and guarantee injection.
   const entryPaths = urlBasePrefix
     ? [`${urlBasePrefix}/`, `${urlBasePrefix}/index.html`]
     : ['/', '/index.html'];
@@ -44,7 +43,6 @@ export async function registerStaticAndSpa(
     app.get(entryPath, (_request, reply) => sendIndexHtml(reply));
   }
 
-  // Serve static assets (JS, CSS, images, etc.)
   await app.register(fastifyStatic, {
     root: clientPath,
     prefix: urlBasePrefix || '/',
@@ -52,17 +50,15 @@ export async function registerStaticAndSpa(
     wildcard: true,
   });
 
-  // SPA fallback — serve index.html for in-scope non-API routes only
+  // The SPA fallback is restricted to in-scope, non-API routes.
   app.setNotFoundHandler((request, reply) => {
     const urlPath = request.url.split('?')[0]!;
     const apiPrefix = urlBasePrefix ? `${urlBasePrefix}/api/` : '/api/';
 
-    // Reject requests outside the URL_BASE scope
     if (urlBasePrefix && !urlPath.startsWith(`${urlBasePrefix}/`) && urlPath !== urlBasePrefix) {
       return reply.status(404).send({ error: 'Not found' });
     }
 
-    // Don't serve SPA for API routes
     if (urlPath.startsWith(apiPrefix)) {
       return reply.status(404).send({ error: 'Not found' });
     }

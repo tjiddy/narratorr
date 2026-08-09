@@ -8,37 +8,10 @@ import {
   type SecretEntity,
 } from './secret-codec.js';
 
-// ─── Service-side sentinel helpers (#844) ────────────────────────────────────
-//
-// The #844 invariant — sentinel placeholders for secret fields resolve only
-// against an entity's own secret-field allowlist, and a sentinel on a non-secret
-// key is rejected (`SentinelOnNonSecretFieldError`) — lives here, once, for the
-// service layer. Every entity service (connector, download-client, import-list,
-// indexer, notifier) and `settings.service` delegates to one of the two helpers
-// below rather than re-implementing the recipe inline.
-//
-// The two helpers are NOT interchangeable — they differ in the source of
-// `existing` and in whether encryption follows:
-//   • Persist path (`update`/`set`): `existing` is the RAW, still-encrypted row
-//     read via `db.select()`. `resolveAndEncryptSettings` resolves then encrypts;
-//     because `encryptFields` skips `$ENC$`-prefixed values, a sentinel that
-//     resolved to a stored secret keeps its exact stored bytes.
-//   • Test/config path (`testConfig`/`adapterForConfig`): `existing` is the
-//     DECRYPTED row from `getById`. `resolveSettings` resolves to real plaintext
-//     and does NOT encrypt — the adapter connection test needs live credentials.
-// Encrypting on the test path would hand the adapter ciphertext and break the
-// live test, so the split is deliberate; do not collapse the two.
-//
-// Both helpers own the clone (they spread `incoming` internally), so callers do
-// not need to pre-spread. `resolveSentinelFields`/`encryptFields` tolerate a
-// null/undefined `existing` (an absent secret resolves to `undefined`).
+// Persist resolves against encrypted rows and re-encrypts; config tests resolve against
+// decrypted rows and return plaintext credentials. The two paths are not interchangeable.
 
-/**
- * Persist-path helper: resolve secret-field sentinels in `incoming` against the
- * RAW (encrypted) `existing` settings, then encrypt. Returns a fresh object;
- * `incoming` is not mutated. Throws `SentinelOnNonSecretFieldError` for a
- * sentinel on a non-secret key.
- */
+/** Resolve against raw stored settings, then encrypt a fresh object. */
 export function resolveAndEncryptSettings(
   entity: SecretEntity,
   incoming: Record<string, unknown>,
@@ -49,12 +22,7 @@ export function resolveAndEncryptSettings(
   return encryptFields(entity, settings, getKey());
 }
 
-/**
- * Test/config-path helper: resolve secret-field sentinels in `incoming` against
- * the DECRYPTED `existing` settings and return the plaintext result WITHOUT
- * encrypting. Returns a fresh object; `incoming` is not mutated. Throws
- * `SentinelOnNonSecretFieldError` for a sentinel on a non-secret key.
- */
+/** Resolve against decrypted settings and return a fresh plaintext object. */
 export function resolveSettings(
   entity: SecretEntity,
   incoming: Record<string, unknown>,
@@ -73,24 +41,12 @@ export interface ResolveSentinelArgs {
   entity: SecretEntity;
   incoming: Record<string, unknown>;
   id: number | undefined;
-  /** Lazily fetches the persisted record's settings. Only invoked when a
-   *  secret-field sentinel is present and an id was provided. */
+  /** Fetch persisted settings only when resolving a sentinel with an id. */
   loadExisting: () => Promise<Record<string, unknown> | null>;
   notFoundMessage: string;
 }
 
-/**
- * Route-side sentinel preflight. Detects sentinel values in `incoming`,
- * rejects sentinels on non-secret keys, and resolves secret-field sentinels
- * against the persisted record. Returns the merged plaintext settings, or a
- * `{ ok: false, status, message }` directive the route handler should emit.
- *
- * Status mapping matches the AC for the masked-credential routes:
- *   - sentinel on non-secret field        → 400
- *   - sentinel on secret field, no id     → 400
- *   - sentinel on secret field, unknown id → 404
- *   - no sentinels                        → returns incoming unchanged
- */
+/** Route preflight returning plaintext settings or the exact 400/404 response directive. */
 export async function resolveSentinelSettings(
   args: ResolveSentinelArgs,
 ): Promise<SentinelResolution> {
@@ -126,11 +82,7 @@ export async function resolveSentinelSettings(
     return { ok: false, status: 404, message: notFoundMessage };
   }
 
-  // Belt-and-suspenders: the non-secret pre-check at L48-55 already filters
-  // sentinels on disallowed keys, so resolveSentinelFields shouldn't throw
-  // SentinelOnNonSecretFieldError here. Catch is retained in case a future
-  // change to existing-record shape (or allowlist drift between getSecretFieldNames
-  // and resolveSentinelFields) reintroduces the throw path.
+  // Retain the catch against future allowlist drift despite the pre-check above.
   try {
     const resolved = { ...incoming };
     resolveSentinelFields(resolved, existing, allowlist);

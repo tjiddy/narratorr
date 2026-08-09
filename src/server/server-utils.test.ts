@@ -18,7 +18,6 @@ function createMockApp() {
   } as unknown as Parameters<typeof listenWithRetry>[0];
 }
 
-/** Create a Fastify app with production security plugins + registerStaticAndSpa */
 async function createAppWithHelmet(urlBasePrefix: string, clientPath: string) {
   const app = Fastify({ logger: false });
   await registerSecurityPlugins(app, false);
@@ -100,7 +99,6 @@ describe('registerStaticAndSpa', () => {
   let tmpDir: string;
 
   beforeAll(() => {
-    // Create a temp directory with a realistic index.html matching the built output
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'narratorr-test-'));
     fs.writeFileSync(
       path.join(tmpDir, 'index.html'),
@@ -495,7 +493,6 @@ describe('registerStaticAndSpa', () => {
 
   describe('static asset pass-through', () => {
     it('serves a JS asset file at root prefix instead of HTML fallback', async () => {
-      // Create a temp asset file alongside index.html
       const assetContent = 'console.log("app");';
       fs.writeFileSync(path.join(tmpDir, 'app.js'), assetContent);
 
@@ -553,7 +550,6 @@ describe('registerStaticAndSpa', () => {
       await registerStaticAndSpa(app, '', '/nonexistent/path');
       await app.ready();
 
-      // Without static routes, Fastify returns its default 404
       const res = await app.inject({ method: 'GET', url: '/' });
       expect(res.statusCode).toBe(404);
       await app.close();
@@ -609,7 +605,6 @@ describe('registerStaticAndSpa', () => {
       const app = await createAppWithHelmet('', tmpDir);
 
       const res = await app.inject({ method: 'GET', url: '/' });
-      // The inline theme script should have a nonce attribute
       expect(res.body).toMatch(/<script nonce="[a-f0-9]+">[\s\S]*?localStorage/);
       await app.close();
     });
@@ -627,9 +622,7 @@ describe('registerStaticAndSpa', () => {
 
       const res = await app.inject({ method: 'GET', url: '/' });
       const nonceMatches = [...res.body.matchAll(/nonce="([a-f0-9]+)"/g)].map((m) => m[1]);
-      // Should have at least 2 nonces (theme script + config script)
       expect(nonceMatches.length).toBeGreaterThanOrEqual(2);
-      // All nonces should be the same per-request value
       expect(new Set(nonceMatches).size).toBe(1);
       await app.close();
     });
@@ -638,10 +631,8 @@ describe('registerStaticAndSpa', () => {
       const app = await createAppWithHelmet('', tmpDir);
 
       const res = await app.inject({ method: 'GET', url: '/' });
-      // Count inline scripts: theme bootstrap + injected config = 2
       const inlineScripts = [...res.body.matchAll(/<script(?![^>]*\bsrc=)[^>]*>/g)];
       expect(inlineScripts.length).toBeGreaterThanOrEqual(2);
-      // Every inline script should have a nonce
       for (const match of inlineScripts) {
         expect(match[0]).toMatch(/nonce="[a-f0-9]+"/);
       }
@@ -652,7 +643,6 @@ describe('registerStaticAndSpa', () => {
       const app = await createAppWithHelmet('', tmpDir);
 
       const res = await app.inject({ method: 'GET', url: '/' });
-      // The external module script should NOT have a nonce
       expect(res.body).toMatch(/<script type="module" crossorigin src="\.\/assets\/index-abc123\.js"><\/script>/);
       await app.close();
     });
@@ -663,7 +653,6 @@ describe('registerStaticAndSpa', () => {
       const res = await app.inject({ method: 'GET', url: '/' });
       const csp = res.headers['content-security-policy'] as string;
       const headerNonce = csp.match(/'nonce-([a-f0-9]+)'/)?.[1];
-      // Get nonce from the inline theme script
       const themeNonce = res.body.match(/<script nonce="([a-f0-9]+)">[\s\S]*?localStorage/)?.[1];
 
       expect(headerNonce).toBeDefined();
@@ -673,8 +662,6 @@ describe('registerStaticAndSpa', () => {
     });
 
     it('registerStaticAndSpa with security plugins: style-src has no nonce while script-src retains it and HTML nonce matches', async () => {
-      // F2: prove the real HTML-serving path works correctly with cspNonceStripPlugin enabled.
-      // Tests B6: if cspNonceStripPlugin were removed from registerSecurityPlugins, this test fails.
       const app = await createAppWithHelmet('', tmpDir);
 
       const res = await app.inject({ method: 'GET', url: '/' });
@@ -682,13 +669,9 @@ describe('registerStaticAndSpa', () => {
       const scriptSegment = csp.split(';').find((s) => s.trim().startsWith('script-src'));
       const styleSegment = csp.split(';').find((s) => s.trim().startsWith('style-src'));
 
-      // script-src retains nonce
       expect(scriptSegment).toMatch(/'nonce-[a-f0-9]+'/);
-      // style-src has NO nonce (cspNonceStripPlugin removes it)
       expect(styleSegment).not.toMatch(/'nonce-/);
-      // HTML inline scripts still have the nonce injected
       expect(res.body).toMatch(/nonce="[a-f0-9]+"/);
-      // The nonce in the HTML matches the nonce in the CSP script-src
       const scriptNonce = scriptSegment!.match(/'nonce-([a-f0-9]+)'/)?.[1];
       expect(scriptNonce).toBeDefined();
       expect(res.body).toContain(`nonce="${scriptNonce}"`);
@@ -697,14 +680,12 @@ describe('registerStaticAndSpa', () => {
     });
 
     it('HTML is returned without nonce attributes when reply.cspNonce is unavailable', async () => {
-      // Without helmet, reply.cspNonce is undefined
       const app = Fastify({ logger: false });
       await registerStaticAndSpa(app, '', tmpDir);
       await app.ready();
 
       const res = await app.inject({ method: 'GET', url: '/' });
       expect(res.statusCode).toBe(200);
-      // Theme script should be present but without nonce
       expect(res.body).toMatch(/<script>[\s\S]*?localStorage/);
       expect(res.body).not.toMatch(/<script nonce="[^"]*">[\s\S]*?localStorage/);
       await app.close();
@@ -723,7 +704,6 @@ describe('registerStaticAndSpa', () => {
       const app = await createAppWithHelmet('', tmpDir);
 
       const res = await app.inject({ method: 'GET', url: '/' });
-      // The full theme script body should be intact
       expect(res.body).toContain('localStorage.getItem("theme")');
       expect(res.body).toContain('document.documentElement.classList.add("dark")');
       await app.close();

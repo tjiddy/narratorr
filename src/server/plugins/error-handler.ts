@@ -18,10 +18,6 @@ import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutErro
 import { SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
 import { BackupRecoveryError, BackupAmbiguityError, MarkerPathConflictError } from '../utils/import-staging.js';
 
-// ---------------------------------------------------------------------------
-// Error → HTTP status registry
-// ---------------------------------------------------------------------------
-
 type ErrorEntry =
   | { type: 'flat'; status: number }
   | { type: 'coded'; codes: Record<string, number> };
@@ -50,19 +46,14 @@ const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   [DownloadClientTimeoutError, { type: 'flat', status: 504 }],
   [DownloadClientError, { type: 'flat', status: 502 }],
   [SentinelOnNonSecretFieldError, { type: 'flat', status: 400 }],
-  // Marker-recovery failures surfaced by the synchronous rename route (#1418). 503 is
-  // transient (recovery re-attempts on retry / next boot sweep); 409 is structural (operator
-  // must remove the stray folder occupying the marker path). The async merge route surfaces
-  // these via merge_failed (already 202'd), not the global handler.
+  // Rename maps transient recovery to 503 and structural conflicts to 409;
+  // asynchronous merges report the same failures through merge_failed.
   [BackupRecoveryError, { type: 'coded', codes: { BACKUP_RECOVERY_FAILED: 503 } }],
   [MarkerPathConflictError, { type: 'coded', codes: { MARKER_PATH_CONFLICT: 409 } }],
-  // Structural, non-retryable (#1911): both conventions' backups are populated and recovery
-  // cannot choose safely — the operator must remove/quarantine one backup. Mirrors the
-  // structural 409 of MarkerPathConflictError, NOT the transient 503 of BackupRecoveryError.
+  // Two populated backup conventions are structural ambiguity, not a transient failure.
   [BackupAmbiguityError, { type: 'coded', codes: { BACKUP_AMBIGUOUS: 409 } }],
 ]);
 
-/** Maps typed error codes to HTTP status codes. */
 function getStatusForError(error: unknown): number | null {
   for (const [ErrorClass, entry] of ERROR_REGISTRY) {
     if (error instanceof ErrorClass) {
@@ -87,7 +78,7 @@ async function errorHandlerPluginInner(app: FastifyInstance) {
       return reply.status(status).send({ error: error.message });
     }
 
-    // Fastify validation errors (from schema validation) — preserve Fastify's default format
+    // Preserve Fastify's validation response shape.
     if ('validation' in error && error.validation) {
       return reply.status(400).send({
         statusCode: 400,
@@ -96,12 +87,8 @@ async function errorHandlerPluginInner(app: FastifyInstance) {
       });
     }
 
-    // Genuine Fastify framework client errors (#1831) — e.g. FST_ERR_CTP_BODY_TOO_LARGE
-    // (413) when a confirm/match request exceeds the body limit on a direct, un-proxied
-    // deployment. The message is framework-generated (never an internal/stack leak), so
-    // it is safe to surface with an accurate status. Scoped strictly to `FST_`-coded 4xx:
-    // a blanket "has statusCode → pass through" would forward 5xx-coded framework errors
-    // and arbitrary thrown objects carrying a statusCode, defeating the no-leak mask below.
+    // Pass through only FST_-coded 4xx; broader statusCode handling could leak 5xx
+    // or arbitrary thrown-object messages.
     const fstError = error as { code?: string; statusCode?: number };
     if (
       fstError.code?.startsWith('FST_') &&
@@ -113,7 +100,7 @@ async function errorHandlerPluginInner(app: FastifyInstance) {
       return reply.status(fstError.statusCode).send({ error: error.message });
     }
 
-    // Untyped errors — 500 with generic message (no stack leak)
+    // Untyped failures get a generic response with no stack or message leak.
     request.log.error(error, error.message || 'Unhandled error');
     return reply.status(500).send({ error: 'Internal server error' });
   });

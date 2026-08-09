@@ -6,12 +6,12 @@ describe('isTorrentRemovalDeferred', () => {
 
   describe('seed time gating', () => {
     it('returns true when seed time not elapsed (torrent protocol, minSeedTime > 0)', () => {
-      const download = { completedAt: new Date(Date.now() - 30_000), protocol: 'torrent' as const }; // 30s ago, need 60min
+      const download = { completedAt: new Date(Date.now() - 30_000), protocol: 'torrent' as const };
       expect(isTorrentRemovalDeferred(download, { ...baseSettings, minSeedRatio: 0 }, 0)).toBe(true);
     });
 
     it('returns false when seed time elapsed (torrent protocol, minSeedTime > 0)', () => {
-      const download = { completedAt: new Date(Date.now() - 3_700_000), protocol: 'torrent' as const }; // ~61min ago
+      const download = { completedAt: new Date(Date.now() - 3_700_000), protocol: 'torrent' as const };
       expect(isTorrentRemovalDeferred(download, { ...baseSettings, minSeedRatio: 0 }, 0)).toBe(false);
     });
 
@@ -21,7 +21,7 @@ describe('isTorrentRemovalDeferred', () => {
     });
 
     it('at boundary: elapsed exactly equals minSeedTime → returns false (removal proceeds)', () => {
-      const exactMs = 60 * 60_000; // 60 minutes
+      const exactMs = 60 * 60_000;
       const download = { completedAt: new Date(Date.now() - exactMs), protocol: 'torrent' as const };
       expect(isTorrentRemovalDeferred(download, { ...baseSettings, minSeedRatio: 0 }, 0)).toBe(false);
     });
@@ -86,9 +86,7 @@ describe('isTorrentRemovalDeferred', () => {
   describe('null/missing data', () => {
     it('handles null completedAt — seed time check skipped, ratio still applies', () => {
       const download = { completedAt: null, protocol: 'torrent' as const };
-      // Ratio below threshold → deferred
       expect(isTorrentRemovalDeferred(download, { minSeedTime: 60, minSeedRatio: 1.0 }, 0.5)).toBe(true);
-      // Ratio met → not deferred (seed time skipped because no completedAt)
       expect(isTorrentRemovalDeferred(download, { minSeedTime: 60, minSeedRatio: 1.0 }, 1.0)).toBe(false);
     });
   });

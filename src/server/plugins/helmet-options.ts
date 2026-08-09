@@ -4,8 +4,7 @@ const sharedOptions = {
   crossOriginEmbedderPolicy: false,
   frameguard: { action: 'deny' as const },
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' as const },
-  // Self-hosted app — TLS termination is handled by reverse proxies, not us.
-  // HSTS would break direct HTTP access (e.g., http://192.168.x.x:3000).
+  // HSTS would break direct HTTP; optional reverse proxies terminate TLS.
   hsts: false,
 };
 
@@ -34,7 +33,7 @@ export function buildHelmetOptions(isDev: boolean): FastifyHelmetOptions {
         frameAncestors: ["'self'"],
         objectSrc: ["'none'"],
         scriptSrcAttr: ["'none'"],
-        // No upgrade-insecure-requests — self-hosted app may run over plain HTTP
+        // No upgrade-insecure-requests; self-hosted instances may use plain HTTP.
       },
     },
   };

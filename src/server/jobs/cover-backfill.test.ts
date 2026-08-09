@@ -78,7 +78,6 @@ describe('runCoverBackfill', () => {
     expect(whereFn).toHaveBeenCalledTimes(1);
     const predicate = whereFn.mock.calls[0]![0];
 
-    // Recursive Drizzle expression inspector (established pattern from book-list.service.test.ts)
     function containsSubstring(val: unknown, substring: string): boolean {
       if (typeof val === 'string') return val.includes(substring);
       if (Array.isArray(val)) return val.some((v) => containsSubstring(v, substring));
@@ -90,7 +89,6 @@ describe('runCoverBackfill', () => {
       return false;
     }
 
-    // Both halves of the predicate must be present
     expect(containsSubstring(predicate, 'cover_url')).toBe(true);
     expect(containsSubstring(predicate, 'http%')).toBe(true);
     expect(containsSubstring(predicate, 'path')).toBe(true);
@@ -104,7 +102,7 @@ describe('runCoverBackfill', () => {
     ]);
     vi.mocked(downloadRemoteCover)
       .mockResolvedValueOnce('written')
-      .mockResolvedValueOnce('failed') // second one fails
+      .mockResolvedValueOnce('failed')
       .mockResolvedValueOnce('written');
 
     await runCoverBackfill(inject<Db>(mockDb), log);
@@ -144,8 +142,6 @@ describe('runCoverBackfill', () => {
   });
 
   it('is idempotent — returns empty when SQL query finds no remote-URL books', async () => {
-    // After first backfill, all coverUrl values are local (/api/books/:id/cover)
-    // The SQL LIKE 'http%' filter excludes them, returning empty set
     const mockDb = createMockDb([]);
 
     await runCoverBackfill(inject<Db>(mockDb), log);
@@ -162,7 +158,6 @@ describe('runCoverBackfill', () => {
     ]);
     vi.mocked(downloadRemoteCover).mockRejectedValueOnce(new Error('Unexpected'));
 
-    // Should not throw
     await expect(runCoverBackfill(inject<Db>(mockDb), log)).resolves.toBeUndefined();
   });
 
@@ -175,7 +170,7 @@ describe('runCoverBackfill', () => {
     ]);
     vi.mocked(downloadRemoteCover)
       .mockResolvedValueOnce('written')
-      .mockResolvedValueOnce('failed'); // second cover did not materialize → no refresh
+      .mockResolvedValueOnce('failed');
 
     await runCoverBackfill(inject<Db>(mockDb), log, connector);
 

@@ -1,12 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildSeriesNameTargets, seriesNameMatchesTargets } from './series-name-targets.js';
 
-/**
- * The membership rule the series-card pool is loaded through (#2175). Pure, so
- * every equivalence-class and guard case is pinned here; the DB-facing halves
- * (one statement, no pool-derived parameters, id order) live in
- * `series-card.integration.test.ts`.
- */
+// Pure pool membership lives here; DB query semantics live in series-card.integration.test.ts.
 describe('series name targets (#2175)', () => {
   describe('buildSeriesNameTargets', () => {
     it('collapses spellings of one equivalence class onto a single normalized entry', () => {

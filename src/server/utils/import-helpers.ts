@@ -16,19 +16,11 @@ import type { NamingOptions } from '@core/utils/naming.js';
 
 import type { authors } from '@db/schema.js';
 
-/** Minimum ratio of target/source file size for copy verification to pass. */
 export const COPY_VERIFICATION_THRESHOLD = 0.99;
 
-/**
- * Typed marker for import failures caused by bad release content (not host/environment).
- * `isContentFailure` recognizes this via `instanceof` so the failure classification no longer
- * depends on substring-matching the message text. Mirrors the existing custom-error convention
- * (`BackupRecoveryError`): extend `Error`, set `this.name`, preserve a descriptive message.
- */
+// Typed content fault keeps retry policy independent of message text.
 export class ContentFailureError extends Error {
-  /** Serialization-safe discriminant (#1346) — survives prototype loss across a process/JSON
-   * boundary the way `instanceof` cannot. Matches the `BackupRecoveryError` / `PathOutsideLibraryError`
-   * convention. */
+  /** Survives prototype loss across process/JSON boundaries. */
   readonly code = 'CONTENT_FAILURE' as const;
 
   constructor(message: string, options?: { cause?: unknown }) {
@@ -37,12 +29,6 @@ export class ContentFailureError extends Error {
   }
 }
 
-/**
- * Single source of truth for the copy-verification check shared by all four copy paths
- * (`verifyCopy`, `stagedAudioReplace`, `copyToLibrary`, `copyDiscGroupToLibrary`). Throws a
- * `ContentFailureError` — whose message retains the source/target byte sizes for diagnostics —
- * when the copied target is smaller than `sourceSize * COPY_VERIFICATION_THRESHOLD`.
- */
 export function assertCopyVerified(sourceSize: number, targetSize: number): void {
   if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
     throw new ContentFailureError(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
@@ -60,30 +46,15 @@ export interface ImportResult {
   totalSize: number;
 }
 
-/** Extract a 4-digit year from a date string like "2010-11-02" or "2010". */
 export function extractYear(publishedDate: string | null | undefined): string | undefined {
   if (!publishedDate) return undefined;
   const match = publishedDate.match(/(\d{4})/);
   return match ? match[1] : undefined;
 }
 
-/**
- * Cap the unbounded `{title}`/`{titleSort}` token values (#1739) so the in-place `{edition}`
- * discriminator in the folder leaf survives the segment-length cap instead of being dropped by
- * generic truncation. Only the token branch needs this — the suffix branch budgets via
- * `composeEditionSuffixLeaf`. Token-naming transforms only ever shrink (or preserve) length, so
- * capping the raw value before render keeps the rendered leaf ≤ limit.
- *
- * The leaf length is measured with SHORT stand-ins for BOTH the title tokens and the `{edition}`
- * discriminator, so the probe renders never themselves hit the 255-char cap — a real ~255-char
- * discriminator would otherwise saturate every probe, hide the title-contribution count, and leave
- * the title unbudgeted so the final render truncates `{edition}` away entirely (F3). From the probes
- * we derive: how many title contributions land in the leaf (`titleCount`), how many `{edition}`
- * occurrences (`editionCount`), and the pure literal/wrapper `structureLen`. The real discriminator's
- * verbatim length is then added back analytically. When the discriminator alone saturates the
- * segment, `perTokenBudget` floors to 1 so the title shrinks to near-nothing and the (still long)
- * discriminator dominates the leaf and survives truncation at the tail (never reduced to empty).
- */
+// Budget title tokens so an in-place edition discriminator survives the segment cap.
+// Short Y/E probes reveal token multiplicities without saturating; allocate the remaining
+// literal-adjusted space per title occurrence, with a one-character floor (#1739).
 function budgetTitleTokensForEdition(
   folderFormat: string,
   tokens: Record<string, string | number | undefined>,
@@ -99,15 +70,13 @@ function budgetTitleTokensForEdition(
     const segments = renderTemplate(folderFormat, probe, options).split('/');
     return (segments[segments.length - 1] ?? '').length;
   };
-  // Each title contribution grows by 1 char from `Y` → `YY` (edition held at the short `E`); the
-  // delta is the title-contribution count. Likewise for the `{edition}` occurrence count.
+  // Probe deltas reveal title and edition occurrence counts.
   const baseLen = leafLen('Y', 'E');
   const titleCount = leafLen('YY', 'E') - baseLen;
-  if (titleCount <= 0) return; // no title token contributes to the discriminator leaf
+  if (titleCount <= 0) return;
   const editionCount = leafLen('Y', 'EE') - baseLen;
 
-  // Subtract the 1-char title and edition stand-ins to recover the pure literal/wrapper length, then
-  // add back the real discriminator's verbatim length at each occurrence.
+  // Remove stand-ins to recover literal/wrapper length, then add the real discriminator.
   const structureLen = baseLen - titleCount - editionCount;
   const discriminatorLen = String(tokens.edition ?? '').length;
   const fixedLen = structureLen + editionCount * discriminatorLen;
@@ -120,21 +89,8 @@ function budgetTitleTokensForEdition(
   }
 }
 
-/**
- * Build the target directory from a folder format string and book metadata.
- *
- * `editionLabel` (#1711) disambiguates a DIFFERENT recording of an owned book so
- * the two coexist in distinct folders: when present (and non-empty after
- * sanitization) it is appended as ` (label)` to the rendered leaf folder. A
- * null/absent/empty label renders the EXACT same path as before — existing
- * single-recording books are never re-pathed.
- *
- * Double-render rule (#1712): the same `editionLabel` also feeds the optional
- * `{edition}` naming token. If the active folder template already contains
- * `{edition}` the token renders the label in place, so the mandatory collision
- * suffix is suppressed to avoid rendering the label twice. When the template has
- * no `{edition}`, the suffix stays a template-independent collision discriminator.
- */
+// A sanitized edition renders through {edition} when present; otherwise it becomes a
+// collision suffix. Empty labels preserve the old path, and the token branch budgets title.
 export function buildTargetPath(
   libraryPath: string,
   folderFormat: string,
@@ -152,10 +108,6 @@ export function buildTargetPath(
   const author = authorName || 'Unknown Author';
   const narratorNames = book.narrators?.map(n => n.name) ?? [];
   const primaryNarrator = narratorNames[0];
-  // Sanitize the edition label ONCE into a path-safe discriminator (#1739) consumed by BOTH the
-  // in-place `{edition}` token and the mandatory suffix, so the two folder paths can never diverge
-  // on slash-fragmentation, illegal chars, or length. Null/empty (incl. a label that sanitizes to
-  // empty) renders the unchanged base path — no token, no suffix, never an `Unknown` discriminator.
   const discriminator = sanitizeEditionDiscriminator(editionLabel);
   const hasEditionToken = templateHasToken(folderFormat, 'edition');
   const tokens: Record<string, string | number | undefined> = {
@@ -168,70 +120,38 @@ export function buildTargetPath(
     narrator: primaryNarrator || undefined,
     narratorLastFirst: primaryNarrator ? toLastFirst(primaryNarrator) : undefined,
     year: extractYear(book.publishedDate),
-    // The sanitized discriminator (never the raw label). Null renders nothing via the
-    // EMPTY_TOKEN_SENTINEL + stripEmptyWrappers machinery; non-null renders verbatim (folder-only).
     edition: discriminator ?? undefined,
   };
 
-  // Token branch: the `{edition}` discriminator is rendered in place, so budget the title down first
-  // (#1739, F9) — otherwise generic segment truncation drops the trailing `(label)` after a long title.
   if (discriminator && hasEditionToken) {
     budgetTitleTokensForEdition(folderFormat, tokens, options);
   }
 
   let rendered = renderTemplate(folderFormat, tokens, options);
-  // Suffix branch: append the mandatory collision suffix only when the template does NOT render the
-  // discriminator itself via `{edition}`. `composeEditionSuffixLeaf` budgets the base so the
-  // discriminator survives the segment cap and never ends in a reserved import-sibling suffix.
   if (discriminator && !hasEditionToken) {
     const segments = rendered.split('/');
     segments[segments.length - 1] = composeEditionSuffixLeaf(segments[segments.length - 1] ?? '', discriminator);
     rendered = segments.join('/');
   }
-  // Always use POSIX separators — paths are stored in DB and consumed inside Docker (Linux)
+  // Persist POSIX separators for Linux containers, even when built on Windows.
   return join(libraryPath, ...rendered.split('/')).split('\\').join('/');
 }
 
-/**
- * Shared recursive byte walker behind {@link getPathSize}, {@link getAudioPathSize}, and
- * {@link getVisiblePathSize}. Kept **private** (per `esm-same-module-vi-mock-bypass`): the wrappers
- * call it through the local binding, so tests mock at the `node:fs/promises` boundary, not the
- * sizer export. Do NOT export it or add `__internal` indirection just to enable mocking.
- *
- * Four policy axes, preserved byte-for-byte from the three original walkers:
- *  - **Hidden:** `includeHidden` false skips any `isHiddenName(entry.name)` entry **before** its
- *    path is built or `stat`/`readdir` is called, so an unreadable/vanishing hidden subtree is
- *    never entered (F40); `includeHidden` true visits every entry.
- *  - **Audio predicate:** `audioOnly` true counts a file only when its **lowercased** extension is
- *    in `AUDIO_EXTENSIONS`, decided from `entry.name` **before** `stat` (a visible non-audio child
- *    is never stat'd); otherwise every admitted file counts.
- *  - **Direct-file root:** a `path` that stats as a file returns `stats.size` for the all-files
- *    presets; for `audioOnly`, `stats.size` only when the basename is non-hidden **and** audio,
- *    else `0` (F32).
- *  - **Identity root (F38):** the hidden skip applies to `readdir` entries, not the root — a hidden
- *    **directory** root is still descended.
- *
- * Children are classified by `Dirent` **only** (`isFile()` counts, `isDirectory()` recurses, any
- * other kind ignored with no further I/O) — deliberately asymmetric with the root, whose following
- * `stat(path)` follows a root symlink and lets a non-file/non-dir root fall through to `readdir`
- * (no `isDirectory()` guard) so its error propagates. No `try/catch`: a rejected root `stat`,
- * root/directory `readdir`, or **admitted** child `stat` propagates — the walker fails loudly
- * rather than adopt the catch-and-return-zero contract of `getAudioStats`.
- */
+// Keep private so wrappers retain the local binding and tests mock node:fs/promises.
+// Hidden children are rejected before I/O, but a hidden directory root is still walked;
+// audio-only direct hidden files return zero. Dirent controls child traversal and errors propagate.
 async function walkSize(path: string, { includeHidden, audioOnly }: { includeHidden: boolean; audioOnly: boolean }): Promise<number> {
   const stats = await stat(path);
   if (stats.isFile()) {
     if (!audioOnly) return stats.size;
-    // Direct-file audio branch: a hidden file is never book audio (F32) — `getAudioPathSize('/x/.foo.mp3')` is 0.
     return !isHiddenName(basename(path)) && AUDIO_EXTENSIONS.has(extname(path).toLowerCase()) ? stats.size : 0;
   }
 
   let total = 0;
   const entries = await readdir(path, { withFileTypes: true });
   for (const entry of entries) {
-    if (!includeHidden && isHiddenName(entry.name)) continue; // skip hidden files AND dot-dir subtrees, before any child I/O
+    if (!includeHidden && isHiddenName(entry.name)) continue;
     if (entry.isFile()) {
-      // Audio predicate is evaluated on the Dirent name, BEFORE stat — a non-audio child is never stat'd.
       if (audioOnly && !AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) continue;
       const s = await stat(join(path, entry.name));
       total += s.size;
@@ -242,31 +162,22 @@ async function walkSize(path: string, { includeHidden, audioOnly }: { includeHid
   return total;
 }
 
-/** Recursively get total size of a path (file or directory), counting every entry including hidden ones. */
 export async function getPathSize(path: string): Promise<number> {
   return walkSize(path, { includeHidden: true, audioOnly: false });
 }
 
-/** Recursively get total size of audio files only (filtered by AUDIO_EXTENSIONS), skipping hidden entries. */
 export async function getAudioPathSize(path: string): Promise<number> {
   return walkSize(path, { includeHidden: false, audioOnly: true });
 }
 
-/**
- * Recursively total the bytes of **visible** (non-hidden) entries — ALL files, not just audio — so a
- * born-hidden transient (`.merge-tmp/`, `.x.tmp.mp3`) never inflates the total (see {@link walkSize}
- * for the hidden/F38/F40 policy). Backs refresh `size` and `checkDiskSpace`'s directory-source
- * estimate; distinct from the hidden-inclusive {@link getPathSize} used by import verification.
- */
 export async function getVisiblePathSize(path: string): Promise<number> {
   return walkSize(path, { includeHidden: false, audioOnly: false });
 }
 
-/** Check if a path contains audio files (recursively). */
 export async function containsAudioFiles(dirPath: string): Promise<boolean> {
   const entries = await readdir(dirPath, { withFileTypes: true });
   for (const entry of entries) {
-    if (isHiddenName(entry.name)) continue; // hidden files aren't audio; dot-dir subtrees are skipped whole
+    if (isHiddenName(entry.name)) continue;
     if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
       return true;
     }
@@ -277,12 +188,7 @@ export async function containsAudioFiles(dirPath: string): Promise<boolean> {
   return false;
 }
 
-/**
- * Audio-bearing check for disc-group reconstruction. Mirrors discovery's `scanDir`, which
- * catches `readdir` failures and treats an unreadable subtree as zero-audio
- * (`book-discovery.ts` scanDir) — so an unreadable sibling is excluded from the member set
- * rather than failing the whole import.
- */
+// Discovery treats unreadable siblings as audio-empty; reconstruction must match.
 async function isAudioBearingDir(dirPath: string): Promise<boolean> {
   try {
     return await containsAudioFiles(dirPath);
@@ -291,64 +197,50 @@ async function isAudioBearingDir(dirPath: string): Promise<boolean> {
   }
 }
 
-/** Recursively collect all audio file paths from a source directory. */
 async function collectAudioFiles(
   dir: string,
 ): Promise<Array<{ srcPath: string; name: string }>> {
-  // locale-numeric so unpadded source filenames (Track1…Track10) order numerically
-  // before collectMultiDiscFiles assigns sequential padded names — 'locale' alone
-  // would mis-order Track10 ahead of Track2 (#1192).
-  // skipHidden so a dot-dir subtree nested under a visible source folder (e.g.
-  // `Visible/.hidden/track.mp3`) is skipped at depth, not just at the source root (F37) —
-  // covers ordinary/multi-disc copyAudioFiles and copyDiscGroup, which all funnel here.
+  // Numeric sort fixes Track10/Track2 order; recursive hidden filtering matches discovery.
   const paths = await collectSortedAudioFiles(dir, { recursive: true, skipHidden: true, sort: 'locale-numeric' });
   return paths.map(p => ({ srcPath: p, name: basename(p) }));
 }
 
 type AudioFile = { srcPath: string; name: string };
 
-/** Extract disc number from a folder name — works for bare, titled, and embedded-marker patterns. */
 function extractDiscNumber(name: string): number {
   const titled = parseTitledDiscFolder(name);
   if (titled) return titled.discNumber;
   const embedded = parseEmbeddedDiscMarker(name);
   if (embedded) return embedded.discNumber;
-  // Bare disc pattern (CD1, Disc 2, etc.) — first digits in name. Guard the no-digit
-  // case so a marker keyword without a number ("Disc of 10") can't crash the sort.
+  // Marker text without digits sorts first instead of throwing.
   const match = name.match(/\d+/);
   return match ? parseInt(match[0], 10) : 0;
 }
 
-/** Collect audio from disc subfolders with sequential renaming, plus non-disc entries. */
 async function collectMultiDiscFiles(
   discFolders: Array<{ name: string; path: string }>,
   otherDirs: Array<{ path: string }>,
   looseFiles: AudioFile[],
 ): Promise<AudioFile[]> {
-  // Sort discs by extracted disc number (handles bare, titled, and mixed patterns)
   discFolders.sort((a, b) => extractDiscNumber(a.name) - extractDiscNumber(b.name));
 
-  // Collect audio files from each disc in order
   const discFiles: AudioFile[] = [];
   for (const disc of discFolders) {
     discFiles.push(...await collectAudioFiles(disc.path));
   }
 
-  // Assign sequential filenames to disc files
   const padWidth = String(discFiles.length).length;
   const sequentialFiles = discFiles.map((file, i) => ({
     srcPath: file.srcPath,
     name: `${String(i + 1).padStart(padWidth, '0')}${extname(file.name)}`,
   }));
 
-  // Collect non-disc entries (loose root files + non-disc subfolders)
   const nonDiscFiles: AudioFile[] = [...looseFiles];
   for (const dir of otherDirs) {
     nonDiscFiles.push(...await collectAudioFiles(dir.path));
   }
   nonDiscFiles.sort((a, b) => a.name.localeCompare(b.name));
 
-  // Check for duplicate basenames within non-disc files
   const seenNonDisc = new Map<string, string>();
   for (const file of nonDiscFiles) {
     const existing = seenNonDisc.get(file.name);
@@ -360,7 +252,6 @@ async function collectMultiDiscFiles(
     seenNonDisc.set(file.name, file.srcPath);
   }
 
-  // Check for collisions between non-disc files and sequential disc files
   const sequentialNames = new Set(sequentialFiles.map(f => f.name));
   for (const file of nonDiscFiles) {
     if (sequentialNames.has(file.name)) {
@@ -373,7 +264,6 @@ async function collectMultiDiscFiles(
   return [...nonDiscFiles, ...sequentialFiles];
 }
 
-/** Collect audio from pre-classified entries with collision check (standard non-disc path). */
 async function collectFlatFiles(
   dirs: Array<{ path: string }>,
   looseFiles: AudioFile[],
@@ -384,7 +274,6 @@ async function collectFlatFiles(
   }
   const files = results.sort((a, b) => a.name.localeCompare(b.name));
 
-  // Check for basename collisions before returning
   const seen = new Map<string, string>();
   for (const file of files) {
     const existing = seen.get(file.name);
@@ -400,14 +289,12 @@ async function collectFlatFiles(
 
 type ProgressFn = (progress: number, byteCounter: { current: number; total: number }) => void;
 
-/** True when a source subfolder is a disc folder — bare, parenthesized, or embedded-marker. */
 function isDiscFolderName(name: string): boolean {
   return DISC_FOLDER_PATTERN.test(name)
     || parseTitledDiscFolder(name) !== null
     || parseEmbeddedDiscMarker(name) !== null;
 }
 
-/** Write a resolved {srcPath, name} file list into target, optionally tracking byte progress. */
 async function writeCollectedFiles(files: AudioFile[], target: string, onProgress?: ProgressFn): Promise<void> {
   await mkdir(target, { recursive: true });
 
@@ -418,7 +305,6 @@ async function writeCollectedFiles(files: AudioFile[], target: string, onProgres
     return;
   }
 
-  // Stream-copy with byte-level progress tracking
   const sizes = await Promise.all(files.map(f => stat(f.srcPath).then(s => s.size)));
   const totalSize = sizes.reduce((sum, n) => sum + n, 0);
   let bytesCopied = 0;
@@ -440,7 +326,6 @@ async function writeCollectedFiles(files: AudioFile[], target: string, onProgres
   }
 }
 
-/** Copy audio files from source to target, flattening all subdirectories. */
 export async function copyAudioFiles(
   source: string,
   target: string,
@@ -453,7 +338,7 @@ export async function copyAudioFiles(
   const looseFiles: AudioFile[] = [];
 
   for (const entry of rootEntries) {
-    if (isHiddenName(entry.name)) continue; // dot-dir subtree / dot-file: never a disc, other, or loose source
+    if (isHiddenName(entry.name)) continue;
     const fullPath = join(source, entry.name);
     if (entry.isDirectory() && isDiscFolderName(entry.name)) {
       discFolders.push({ name: entry.name, path: fullPath });
@@ -476,28 +361,9 @@ export async function copyAudioFiles(
   await writeCollectedFiles(files, target, onProgress);
 }
 
-/**
- * Reconstruct the ordered member-disc folders of a coalesced disc-group row.
- *
- * Discovery stores only the lowest-disc member as the row `path`; at import time the full
- * set is re-derived server-side from `dirname(path)` — siblings whose normalized stem matches
- * and that carry a disc marker, ordered by disc number. Returns `[memberPath]` unchanged when
- * the path is not an embedded-marker disc member (so callers gate on `length >= 2`).
- *
- * Replays discovery's `discGroupGuardsPass` consistency + all-or-nothing guards so a row that
- * discovery intentionally left ungrouped (inconsistent `of M` totals, or a markerless stem-sharing
- * sibling) is NOT flattened/rejected as a coalesced set here.
- *
- * Both the guard input AND the member collection run over **audio-bearing sibling directories
- * only**, exactly mirroring discovery, which groups over `audioChildren` (children with
- * `countAudioFilesDeep > 0`). Without this filter, an audioless stem-sharing sibling — a usenet
- * pack's `<stem> Artwork`/`Sample`/NFO folder — is invisible to discovery's all-or-nothing guard
- * (passes, coalesces) but seen by import's guard (fails, refuses), silently dropping discs 2..N
- * (#1280). Filtering to audio-bearing dirs gives true parity: a markerless-audioless sibling is
- * excluded before the guard, and a marker-carrying audioless sibling (a stray zero-file
- * `<stem> Disc 11 of 10`) is excluded from `memberPaths` so reconstructed members are exactly the
- * audio-bearing disc directories discovery persisted.
- */
+// Discovery stores only the lowest disc; reconstruct matching siblings at import. Reapply
+// its all-or-nothing guards over visible, audio-bearing dirs only, or artwork/empty siblings
+// make discovery and import disagree. Non-groups return the original singleton (#1280).
 export async function reconstructDiscGroup(memberPath: string): Promise<string[]> {
   const marker = parseEmbeddedDiscMarker(basename(memberPath));
   if (!marker || !marker.stem) return [memberPath];
@@ -512,13 +378,8 @@ export async function reconstructDiscGroup(memberPath: string): Promise<string[]
     return [memberPath];
   }
 
-  // Filter siblings to audio-bearing dirs once, before BOTH the guard and the member map,
-  // so the set fed to discGroupGuardsPass matches discovery's audio-bearing `audioChildren`.
   const audioBearingNames: string[] = [];
   for (const entry of entries) {
-    // Skip a leading-dot sibling subtree (F42): a `.Book Disc 2/` born-hidden staging or
-    // orphan is never probed as a coalesced disc member — parity with discovery, which
-    // skips dot-dirs before building `audioChildren`.
     if (isHiddenName(entry.name)) continue;
     if (entry.isDirectory() && await isAudioBearingDir(join(parent, entry.name))) {
       audioBearingNames.push(entry.name);
@@ -535,11 +396,7 @@ export async function reconstructDiscGroup(memberPath: string): Promise<string[]
     .map(e => e.path);
 }
 
-/**
- * Flatten an explicit, ordered set of disc-member folders into one target directory,
- * sequentially renaming across discs. Used by the manual/scan-confirm import path where
- * the reconstructed member discs are siblings (not children of a single source dir).
- */
+// Flatten ordered sibling discs for the manual/scan-confirm path.
 export async function copyDiscGroup(
   memberDiscPaths: string[],
   target: string,
@@ -550,12 +407,11 @@ export async function copyDiscGroup(
   await writeCollectedFiles(files, target, onProgress);
 }
 
-/** Recursively count audio files in a directory. */
 export async function countAudioFiles(dirPath: string): Promise<number> {
   let count = 0;
   const entries = await readdir(dirPath, { withFileTypes: true });
   for (const entry of entries) {
-    if (isHiddenName(entry.name)) continue; // skip hidden files AND dot-dir subtrees at every depth
+    if (isHiddenName(entry.name)) continue;
     if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
       count++;
     } else if (entry.isDirectory()) {

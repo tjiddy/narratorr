@@ -1,22 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mocked-fs error-injection suite (per the #1589 test plan: real tmpdir for FS-truth lives in
-// delete-managed-files.test.ts; this file injects rm failures the real fs can't reliably produce
-// when the test runner is root). Defaults: a directory stat, a flat readdir, rm/rmdir resolve.
+// Mock fs failures that real tmpdirs cannot reliably produce under a privileged runner.
 vi.mock('node:fs/promises', () => ({
-  // #1598: the helper now classifies the top-level bookPath via `lstat` (not `stat`) so a symlinked
-  // source is never followed. Default it to a non-symlink directory; `isSymbolicLink: () => false`
-  // keeps these injection cases on the directory-sweep path.
+  // Default top-level lstat to a non-symlink directory.
   lstat: vi.fn().mockResolvedValue({ isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false }),
   readdir: vi.fn().mockResolvedValue([]),
-  // #1674: the helper now reads a root `metadata.opf` for the narratorr provenance marker. Default to
-  // UNMARKED (foreign) content so a swept OPF is preserved unless a test explicitly stages a marked
-  // body — a blanket "marked" default would silently flip preservation assertions.
+  // Default OPF content to unmarked and foreign.
   readFile: vi.fn().mockResolvedValue('<?xml version="1.0"?><package><metadata><dc:title>foreign</dc:title></metadata></package>'),
   rm: vi.fn().mockResolvedValue(undefined),
   rmdir: vi.fn().mockResolvedValue(undefined),
-  // #1591: guarded mode now runs the symlink-aware realpath containment. Identity realpath (no
-  // symlinks) keeps the lexical-equivalent containment for the in-library paths these tests use.
+  // Identity realpath keeps ordinary fixtures contained.
   realpath: vi.fn().mockImplementation(async (p: unknown) => String(p)),
 }));
 
@@ -49,7 +42,6 @@ describe('deleteManagedBookFiles — error injection', () => {
     vi.mocked(rm).mockImplementation(async (p: unknown) => {
       if (String(p).endsWith('locked.mp3')) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
     });
-    // Folder is non-empty because a managed file remains → rmdir refuses.
     vi.mocked(rmdir).mockRejectedValue(Object.assign(new Error('ENOTEMPTY'), { code: 'ENOTEMPTY' }));
 
     const result = await deleteManagedBookFiles('/lib/Book', '/lib', log);
@@ -58,8 +50,6 @@ describe('deleteManagedBookFiles — error injection', () => {
     expect(base(result.deletedManaged)).toEqual(['free.mp3']);
     expect(result.preservedForeign).toEqual([]);
     expect(log.warn).toHaveBeenCalled();
-    // Folder-retention consequence (#1591): rmdir is attempted but the surviving failed-managed file
-    // makes it ENOTEMPTY, which is swallowed — the folder is NOT removed and the helper never throws.
     expect(rmdir).toHaveBeenCalledWith('/lib/Book');
   });
 });
