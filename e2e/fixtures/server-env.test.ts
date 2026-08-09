@@ -17,9 +17,7 @@ describe('serverEnv', () => {
   });
 
   it('omits AUTH_BYPASS entirely when authBypass is false (forms server)', () => {
-    // The forms server (#1555) must NOT bypass auth, or the login/redirect/logout
-    // assertions go vacuous. The key is omitted, not set falsy, so there is no
-    // stray value that could flip the bypass on.
+    // The key must be omitted, not set falsy, so no stray value can flip the bypass on.
     const env = serverEnv(run, '/', 3102, { authBypass: false });
     expect('AUTH_BYPASS' in env).toBe(false);
     expect(env.AUTH_BYPASS).toBeUndefined();

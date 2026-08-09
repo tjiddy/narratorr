@@ -12,8 +12,6 @@ describe('createRunTempDirs', () => {
   });
 
   afterEach(() => {
-    // Clean up anything this test created so the harness's own tests
-    // don't leak temp dirs into os.tmpdir().
     for (const p of createdPaths) {
       try {
         rmSync(p, { recursive: true, force: true });
@@ -33,22 +31,17 @@ describe('createRunTempDirs', () => {
     expect(statSync(run.downloadsPath).isDirectory()).toBe(true);
     expect(statSync(run.sourcePath).isDirectory()).toBe(true);
 
-    // All five must be distinct — sharing a path would collapse the
-    // hermetic scopes the harness promises.
     const paths = new Set([dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath]);
     expect(paths.size).toBe(5);
   });
 
   it('returns a dbPath that sits inside a dedicated enclosing directory', () => {
-    // The DB path is not the temp dir itself — it's a file named
-    // `narratorr.db` inside a temp dir. This lets teardown remove the
-    // directory and sweep up libSQL's -wal / -shm sidecars in one shot.
+    // A dedicated directory lets teardown remove libSQL's `-wal`/`-shm` sidecars with the DB.
     const run = createRunTempDirs();
     createdPaths.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     expect(run.dbPath.endsWith('narratorr.db')).toBe(true);
     expect(statSync(dirname(run.dbPath)).isDirectory()).toBe(true);
-    // The DB file itself doesn't exist yet — the server creates it on boot.
     expect(existsSync(run.dbPath)).toBe(false);
   });
 
@@ -62,8 +55,7 @@ describe('createRunTempDirs', () => {
   });
 
   it('provisions downloadsPath as a fourth distinct temp directory', () => {
-    // The fake qBit server writes completed torrent payloads here. Must exist
-    // on disk before globalSetup starts the fake, so import can read from it.
+    // qBit completion needs this directory before global setup starts the fake.
     const run = createRunTempDirs();
     createdPaths.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
@@ -120,9 +112,6 @@ describe('createRunTempDirs', () => {
   });
 
   it('stores a named run without clobbering the root run', () => {
-    // The subpath server (#1556) allocates a second named run. Allocating it
-    // must NOT overwrite the root run's handoff — getCurrentRun() still resolves
-    // to the root run, while getRun(name) reaches the isolated subpath set.
     const root = createRunTempDirs();
     const subpath = createRunTempDirs('subpath');
     createdPaths.push(
@@ -133,7 +122,6 @@ describe('createRunTempDirs', () => {
     expect(getCurrentRun()).toEqual(root);
     expect(getRun(ROOT_RUN)).toEqual(root);
     expect(getRun('subpath')).toEqual(subpath);
-    // The two runs are fully isolated — no shared DB/library/config/etc.
     expect(subpath.dbPath).not.toBe(root.dbPath);
     expect(subpath.libraryPath).not.toBe(root.libraryPath);
     expect(subpath.configPath).not.toBe(root.configPath);
