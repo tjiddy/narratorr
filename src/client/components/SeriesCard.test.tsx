@@ -90,16 +90,10 @@ describe('SeriesCard', () => {
 
     const link = await screen.findByRole('link', { name: 'Kings of the Wyld' });
     expect(link).toHaveAttribute('href', '/books/42');
-    // Non-in-library row renders title as text, not a /books/:id link
     expect(screen.queryByRole('link', { name: 'Bloody Rose' })).toBeNull();
     expect(screen.getByText('Bloody Rose')).toBeInTheDocument();
   });
 
-  // #2144: on a Hardcover-canonical card, an owned book Hardcover does not list
-  // arrives with `hardcoverBookId: null` and `inLibrary: true`. It must render
-  // exactly like any other owned member — a link to the book, the In Library
-  // badge, no '+ Add'. The `library-N` key branch it depends on is pinned
-  // separately below, since a React key is not observable in the DOM.
   it('renders an owned member with no hardcoverBookId as an In Library link', async () => {
     vi.mocked(api.getBookSeries).mockResolvedValueOnce({
       series: {
@@ -120,29 +114,12 @@ describe('SeriesCard', () => {
     const link = await screen.findByRole('link', { name: 'Kalimdor' });
     expect(link).toHaveAttribute('href', '/books/77');
     expect(screen.getByText('In Library')).toBeInTheDocument();
-    // Exactly one '+ Add' on the card — the Hardcover member the operator does
-    // NOT own. The owned entry must not have produced a second one.
     expect(screen.getAllByTestId('series-card-add')).toHaveLength(1);
     expect(screen.getAllByTestId('series-card-member')).toHaveLength(2);
   });
 
-  /**
-   * F2 (PR review) — a React key never reaches the DOM, so no query can assert it
-   * directly. What a key IS observable through is reconciliation: a row whose key
-   * is stable across a re-render keeps its DOM node when the list reorders, and a
-   * row whose key changes is unmounted and remounted as a fresh node.
-   *
-   * `memberKeyFor` keys a provider-null owned member on `library-${libraryBookId}`
-   * — stable — and falls through to `t-${title}-${index}` when that is null too,
-   * which is index-dependent and therefore NOT stable across a reorder. Deleting
-   * the `library-` branch makes Kalimdor's key move from `t-Kalimdor-1` to
-   * `t-Kalimdor-0`, React discards the node, and the identity assertion fails.
-   *
-   * The Hardcover row is the CONTROL: its `hardcover-8001` key is stable under
-   * both implementations, so its surviving node proves the reorder itself does
-   * not force a wholesale remount — without it, a framework-level change that
-   * remounted everything would make the real assertion vacuously green.
-   */
+  // React keys are observable only through reconciliation. Preserving the Hardcover
+  // control node proves the reorder did not remount the entire list.
   it('F2: a provider-null owned row keeps its DOM node across a reorder, so its key is not index-derived', async () => {
     const eastern = makeMember({ hardcoverBookId: 8001, title: 'The Eastern Kingdoms', position: 1, inLibrary: false });
     const kalimdor = makeMember({ hardcoverBookId: null, title: 'Kalimdor', position: 2, inLibrary: true, libraryBookId: 77 });
@@ -156,8 +133,6 @@ describe('SeriesCard', () => {
     });
 
     vi.mocked(api.getBookSeries).mockResolvedValueOnce({ series: card([eastern, kalimdor]) });
-    // A refresh reorders the two members — the position-2 owned book now sorts
-    // first. Same two members, same identities, different order.
     vi.mocked(api.refreshBookSeries).mockResolvedValueOnce({ series: card([kalimdor, eastern]) });
 
     const user = userEvent.setup();
@@ -172,9 +147,7 @@ describe('SeriesCard', () => {
       expect(screen.getAllByTestId('series-card-member')[0]).toHaveTextContent('Kalimdor');
     });
 
-    // Control: the Hardcover row keeps its node, so the reorder alone remounts nothing.
     expect(screen.getByText('The Eastern Kingdoms').closest('li')).toBe(hardcoverBefore);
-    // The assertion under test: the owned row's key is stable too.
     expect(screen.getByRole('link', { name: 'Kalimdor' }).closest('li')).toBe(ownedBefore);
   });
 
@@ -320,9 +293,7 @@ describe('SeriesCard', () => {
   });
 
   it('does not render a cover image even when imageUrl is non-null', async () => {
-    // #1139 Bug 5: the card no longer renders thumbnails. The imageUrl field
-    // stays in the data model — backend still populates it from Hardcover —
-    // but the component does not consume it.
+    // imageUrl remains in API data, but SeriesCard intentionally ignores it.
     vi.mocked(api.getBookSeries).mockResolvedValueOnce({
       series: {
         id: 1,

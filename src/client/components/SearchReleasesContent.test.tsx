@@ -126,8 +126,6 @@ describe('SearchReleasesContent', () => {
       expect(onRetry).toHaveBeenCalledOnce();
     });
 
-    // F24: Retry owns its DOM here, so its disabled contract is asserted directly —
-    // rendered (never hidden) and inert when the current query is ineligible.
     it('renders Retry disabled and does not call onRetry when retryDisabled is true', async () => {
       const onRetry = vi.fn();
       renderContent({ phase: 'idle', error: 'Connection refused', retryDisabled: true, onRetry });
@@ -226,10 +224,6 @@ describe('SearchReleasesContent', () => {
     });
   });
 });
-
-// ============================================================================
-// #2104 — relaxed-query handling moved to the query box (UAT feedback 2026-08-04)
-// ============================================================================
 
 describe('SearchReleasesContent — no relaxed-query banner (superseded disclosure)', () => {
   it('renders results with relaxedQuery present and NO disclosure banner — the box owns the winning query now', () => {

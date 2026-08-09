@@ -100,7 +100,6 @@ export function ReleaseCard({
       isInLibrary ? 'border-l-[3px] border-l-green-500 border-green-500/25 bg-gradient-to-r from-green-500/10 via-green-500/[0.03] to-transparent' : ''
     }`}>
       <div className="flex gap-4 overflow-hidden">
-        {/* Cover */}
         <div className="shrink-0">
           <CoverImage
             src={result.coverUrl}
@@ -110,10 +109,8 @@ export function ReleaseCard({
           />
         </div>
 
-        {/* Content */}
         <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
-          {/* Title leads: the line is CSS-truncated, so the author list trails — a
-              multi-author anthology roll must eat the ellipsis, not the title. */}
+          {/* Keep the title first so a long author list is truncated, not the title. */}
           <h4 className="font-medium text-sm leading-tight truncate">
             {result.title}
             {result.author && <span className="text-muted-foreground"> — {result.author}</span>}
@@ -132,7 +129,6 @@ export function ReleaseCard({
           <MetaRow result={result} isInLibrary={isInLibrary} quality={quality} comparison={comparison} />
         </div>
 
-        {/* Actions */}
         <div className="shrink-0 flex flex-col items-end gap-2">
           <button
             type="button"
