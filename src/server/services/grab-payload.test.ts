@@ -80,7 +80,6 @@ describe('buildGrabPayload', () => {
 
       const payload = buildGrabPayload(sparse, 10);
 
-      // Only defined fields should be present (downloadUrl is always included via non-null assertion)
       expect(Object.keys(payload).sort()).toEqual(['bookId', 'downloadUrl', 'protocol', 'title'].sort());
     });
   });
@@ -93,7 +92,6 @@ describe('buildGrabPayload', () => {
         source: 'rss',
       });
 
-      // Strict exact-shape assertion — no extra fields allowed
       expect(payload).toEqual({
         downloadUrl: 'https://example.com/download/123',
         title: 'The Great Gatsby',

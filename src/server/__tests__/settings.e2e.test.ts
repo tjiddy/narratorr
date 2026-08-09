@@ -68,7 +68,6 @@ describe('Settings E2E', () => {
     expect(res.json().general.logLevel).toBe('debug');
   });
 
-  // #318 — minSeedRatio round-trip and validation
   it('PUT /api/settings persists import.minSeedRatio and GET reflects it', async () => {
     const putRes = await e2e.app.inject({
       method: 'PUT',
@@ -86,7 +85,6 @@ describe('Settings E2E', () => {
     expect(getRes.json().import.minSeedRatio).toBe(1.5);
   });
 
-  // #1958 — the companion-ebook feature flag rides the generic settings route.
   it('GET /api/settings returns companionEpub disabled on a fresh DB', async () => {
     const res = await e2e.app.inject({ method: 'GET', url: '/api/settings' });
     expect(res.statusCode).toBe(200);

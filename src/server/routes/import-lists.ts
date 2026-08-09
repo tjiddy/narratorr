@@ -17,9 +17,7 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
     secretEntity: 'importList',
   });
 
-  // POST /api/import-lists/preview — preview items from unsaved config
-  // Sentinel-aware: edit-mode forms send masked apiKey + id so the route can
-  // resolve against the persisted record before dispatching to the provider.
+  // Resolve edit-mode masked secrets before provider dispatch.
   const previewSchema = makeTestSchema(previewImportListSchema, 'importList');
   app.post<{ Body: { type: string; settings: Record<string, unknown>; id?: number } }>(
     '/api/import-lists/preview',

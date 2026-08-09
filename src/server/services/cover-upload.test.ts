@@ -53,7 +53,7 @@ describe('uploadBookCover (#1707 CoverWriteOutcome)', () => {
   it("returns 'written' even when the post-rename DB coverUrl update throws (file materialized)", async () => {
     const mockDb = createMockDb(() => Promise.reject(new Error('DB locked')));
     const outcome = await uploadBookCover(5, '/books/b', PNG, 'image/png', inject<Db>(mockDb), log);
-    expect(outcome).toBe('written'); // the cover file committed; a stale coverUrl self-heals
+    expect(outcome).toBe('written');
     expect(rename).toHaveBeenCalled();
   });
 
@@ -71,7 +71,7 @@ describe('uploadBookCover (#1707 CoverWriteOutcome)', () => {
     await expect(
       uploadBookCover(5, '/books/b', PNG, 'image/png', inject<Db>(mockDb), log),
     ).rejects.toThrow('EACCES');
-    expect(unlink).toHaveBeenCalled(); // temp cleaned
+    expect(unlink).toHaveBeenCalled();
     expect(mockDb.update).not.toHaveBeenCalled();
   });
 });

@@ -58,7 +58,6 @@ describe('cleanupDeferredRejections', () => {
 
     await expect(cleanupDeferredRejections(deps)).resolves.toBeUndefined();
 
-    // Helper must read the 'import' settings category specifically (AC contract)
     expect(settingsGet).toHaveBeenCalledWith('import');
     expect(getDeferredCleanupCandidates).not.toHaveBeenCalled();
     expect(deps.log.warn).toHaveBeenCalledWith(
@@ -83,10 +82,8 @@ describe('cleanupDeferredRejections', () => {
 
     await expect(cleanupDeferredRejections(deps)).resolves.toBeUndefined();
 
-    // Helper must read the 'import' settings category specifically (AC contract)
     expect(settingsService.get).toHaveBeenCalledWith('import');
     expect(getDeferredCleanupCandidates).toHaveBeenCalledTimes(1);
-    // No settings-failure warning was logged on the success path
     const warnCalls = vi.mocked(deps.log.warn).mock.calls;
     const settingsFailureLog = warnCalls.find(c => {
       const msg = c[1];

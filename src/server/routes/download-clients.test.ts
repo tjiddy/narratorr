@@ -92,7 +92,7 @@ describe('download-clients routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/download-clients',
-        payload: { name: 'Bad', type: 'qbittorrent', settings: { port: 8080 } }, // missing host
+        payload: { name: 'Bad', type: 'qbittorrent', settings: { port: 8080 } },
       });
 
       expect(res.statusCode).toBe(400);
@@ -101,7 +101,6 @@ describe('download-clients routes', () => {
     });
   });
 
-  // ===== #263 — create with pathMappings =====
 
   describe('POST /api/download-clients with pathMappings', () => {
     it('creates client with path mappings and returns 201', async () => {
@@ -279,7 +278,6 @@ describe('download-clients routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    // #827 — sentinel-laden body + valid id reaches the service (no schema 400)
     it('accepts sentinel in password with id and forwards to testConfig', async () => {
       (services.downloadClient.testConfig as Mock).mockResolvedValue({ success: true });
 
@@ -354,7 +352,6 @@ describe('download-clients routes', () => {
       expect(body.error).toBe('Connection refused');
     });
 
-    // ===== #844 — sentinel resolution =====
 
     it('resolves sentinel apiKey against persisted client and dispatches plaintext (sabnzbd)', async () => {
       (services.downloadClient.getById as Mock).mockResolvedValue({

@@ -16,7 +16,6 @@ export async function remotePathMappingRoutes(
   app: FastifyInstance,
   remotePathMappingService: RemotePathMappingService,
 ) {
-  // GET /api/remote-path-mappings — list all, optionally filter by downloadClientId
   app.get<{ Querystring: z.infer<typeof listQuerySchema> }>(
     '/api/remote-path-mappings',
     { schema: { querystring: listQuerySchema } },
@@ -29,7 +28,6 @@ export async function remotePathMappingRoutes(
     },
   );
 
-  // GET /api/remote-path-mappings/:id
   app.get<{ Params: IdParam }>(
     '/api/remote-path-mappings/:id',
     { schema: { params: idParamSchema } },
@@ -43,7 +41,6 @@ export async function remotePathMappingRoutes(
     },
   );
 
-  // POST /api/remote-path-mappings
   app.post<{ Body: CreateRemotePathMappingInput }>(
     '/api/remote-path-mappings',
     { schema: { body: createRemotePathMappingSchema } },
@@ -55,7 +52,6 @@ export async function remotePathMappingRoutes(
     },
   );
 
-  // PUT /api/remote-path-mappings/:id
   app.put<{ Params: IdParam; Body: UpdateRemotePathMappingInput }>(
     '/api/remote-path-mappings/:id',
     { schema: { params: idParamSchema, body: updateRemotePathMappingSchema } },
@@ -75,7 +71,6 @@ export async function remotePathMappingRoutes(
     },
   );
 
-  // DELETE /api/remote-path-mappings/:id
   app.delete<{ Params: IdParam }>(
     '/api/remote-path-mappings/:id',
     { schema: { params: idParamSchema } },

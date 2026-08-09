@@ -84,7 +84,7 @@ describe('indexers routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/indexers',
-        payload: { name: '' }, // missing required fields
+        payload: { name: '' },
       });
 
       expect(res.statusCode).toBe(400);
@@ -94,7 +94,7 @@ describe('indexers routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/indexers',
-        payload: { name: 'Bad', type: 'newznab', settings: { apiKey: 'key' } }, // missing apiUrl
+        payload: { name: 'Bad', type: 'newznab', settings: { apiKey: 'key' } },
       });
 
       expect(res.statusCode).toBe(400);
@@ -250,7 +250,6 @@ describe('indexers routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // mamSettingsSchema materializes the useFreeleechWedge default (#1156 F1).
       expect(services.indexer.testConfig).toHaveBeenCalledWith({
         type: 'myanonamouse',
         settings: { mamId: '********', useFreeleechWedge: 'never' },
@@ -274,7 +273,6 @@ describe('indexers routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // mamSettingsSchema materializes the useFreeleechWedge default (#1156 F1).
       expect(services.indexer.testConfig).toHaveBeenCalledWith({
         type: 'myanonamouse',
         settings: { mamId: 'real-id', useFreeleechWedge: 'never' },
@@ -327,7 +325,6 @@ describe('indexers routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    // #827 — sentinel-laden body + valid id reaches the service (no schema 400)
     it('accepts sentinel in mamId with id and forwards to testConfig', async () => {
       (services.indexer.testConfig as Mock).mockResolvedValue({ success: true });
 

@@ -271,7 +271,6 @@ describe('event-history routes', () => {
     });
   });
 
-  // #372 — Default pagination enforcement
   describe('GET /api/event-history — default pagination', () => {
     it('applies default limit=50 when no limit param provided', async () => {
       (services.eventHistory.getAll as Mock).mockResolvedValue({ data: [], total: 0 });

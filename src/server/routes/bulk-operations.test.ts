@@ -24,7 +24,6 @@ function makeBulkService(overrides?: Record<string, unknown>) {
   };
 }
 
-// Wave (#1493) — GET /api/books/bulk/rename/count retired; the modal reads the richer preview.
 describe('GET /api/books/bulk/rename/count (removed)', () => {
   it('returns 404', async () => {
     const services = createMockServices({ bulkOperation: makeBulkService() });
@@ -85,7 +84,6 @@ describe('GET /api/books/bulk/retag/count', () => {
   });
 });
 
-// Wave 11.2 (#755) — GET /api/books/bulk/convert/count retired
 describe('GET /api/books/bulk/convert/count (removed)', () => {
   it('returns 404', async () => {
     const services = createMockServices({ bulkOperation: makeBulkService() });
@@ -187,7 +185,6 @@ describe('POST /api/books/bulk/retag', () => {
   });
 });
 
-// #2056 — POST /api/books/bulk/convert retired along with the UI-unreachable re-encode job.
 describe('POST /api/books/bulk/convert (removed)', () => {
   it('returns 404', async () => {
     const services = createMockServices({ bulkOperation: makeBulkService() });
@@ -258,8 +255,6 @@ describe('GET /api/books/bulk/:jobId', () => {
   });
 });
 
-// #2159 — a bulk job's named failures ride the status payload on BOTH read surfaces, so the
-// question "which book failed?" is answerable from the API rather than from container logs.
 describe('failureDetails on the job-status payloads (#2159)', () => {
   const details = [
     { bookId: 226, title: "Captain's Fury", error: "ENOENT: no such file or directory, open '/audiobooks/x/metadata.opf'" },

@@ -10,7 +10,6 @@ function makeLog(): FastifyBaseLogger {
   } as unknown as FastifyBaseLogger;
 }
 
-/** Start a job over a synthetic `WorkFn` and resolve once it has completed. */
 function runJob(work: WorkFn): Promise<BulkJob> {
   return new Promise((resolve) => {
     const job = new BulkJob('job-1', 'rename', makeLog(), work, () => resolve(job));
@@ -87,7 +86,6 @@ describe('BulkJob — failure-detail accumulation (#2159)', () => {
     expect(status.failureDetails).toHaveLength(MAX_JOB_FAILURE_DETAILS);
     expect(status.failureDetails[0]!.bookId).toBe(1);
     expect(status.failureDetails.at(-1)!.bookId).toBe(50);
-    // The 51st book is dropped — proving the head is retained, not the tail.
     expect(status.failureDetails.map(d => d.bookId)).not.toContain(51);
     expect(status.failureDetails.map(d => d.bookId)).not.toContain(60);
   });
@@ -100,8 +98,7 @@ describe('BulkJob — failure-detail accumulation (#2159)', () => {
     const job = new BulkJob('job-2', 'retag', makeLog(), async (setTotal, tick) => {
       setTotal(2);
       tick(true, failure(1));
-      // Hold the FINAL iteration pending rather than counting calls — an order-blind call count
-      // cannot tell "the list grew as the job ran" from "the list appeared at the end".
+      // Hold the final iteration so ordering, not only call count, is observable.
       await held;
       tick(true, failure(2));
     }, () => {});

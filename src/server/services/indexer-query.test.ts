@@ -73,7 +73,6 @@ describe('cleanIndexerQuery', () => {
     expect(cleanIndexerQuery('Foo  (Bar)  Baz')).toBe('Foo Bar Baz');
   });
 
-  // ── #1904 Query-hostile punctuation (?, !, quotes, apostrophes) ──────────
   it('specimen regression — strips trailing "?" mid-query so MAM can match', () => {
     expect(cleanIndexerQuery('Is She Really Going Out with Him? Sophie Cousens'))
       .toBe('Is She Really Going Out with Him Sophie Cousens');

@@ -15,23 +15,8 @@ export type FetchSseResult = {
 };
 
 /**
- * Parse an SSE response body into ordered events.
- *
- * Walks ALL `\n\n`-delimited frames (CRLF normalised to LF), so callers can
- * assert on every event in the stream rather than the first regex match. Each
- * frame may contribute zero or one entries to the returned array — a frame
- * with no `data:` field (pure `:` comment, lone `event:` line) is skipped.
- *
- * Per the SSE spec, multiple `data:` lines in a single frame are joined with
- * `\n`. The joined string is JSON-parsed when valid; on parse failure (or for
- * non-JSON wire formats) `data` falls back to the raw joined string and the
- * frame is still emitted. `rawData` always holds the raw joined `data:`
- * string so tests can assert on exact wire format when JSON key ordering or
- * whitespace matters. If `event:` is omitted in a frame, `event` defaults to
- * `'message'` per the spec.
- *
- * The trailing frame is emitted even if the body ends without `\n\n` — SSE
- * routes that call `reply.raw.end()` may flush a final frame mid-delimiter.
+ * Parse ordered SSE frames, joining data lines and defaulting unnamed events to `message`.
+ * JSON-decode when possible while retaining rawData; include an unterminated trailing frame.
  */
 export function parseSseFrames(body: string): SseEvent[] {
   const events: SseEvent[] = [];
@@ -71,32 +56,8 @@ export function parseSseFrames(body: string): SseEvent[] {
 }
 
 /**
- * Real-HTTP SSE test helper for hijacked Fastify streams.
- *
- * Fastify's `app.inject()` hangs on routes that call `reply.hijack()` and
- * write to `reply.raw` (the SSE pattern), so each test would otherwise
- * hand-roll: bind on port 0, fetch the path, parse `event:`/`data:` frames.
- * This helper centralises that boilerplate.
- *
- * **Ownership of `app.close()` is the caller's** — typically in `afterEach`
- * or a `try/finally`. The helper does not close the app even on error; doing
- * so would silently swallow misuse (e.g. forgetting to clean up a session
- * manager). The helper WILL call `app.listen({ port: 0, host: '127.0.0.1' })`
- * if the app is not already listening, so callers can drop their own
- * `await app.listen(...)` line.
- *
- * **Finite streams only.** The helper awaits `res.text()` to completion,
- * which never resolves on an unclosed stream. Mock the upstream so the route
- * eventually calls `reply.raw.end()`. Pointing this at a live indexer URL
- * silently hangs the test.
- *
- * The returned `headers` is the Fetch API `Headers` instance directly off the
- * response — not a rebuilt object — so case-insensitive lookups via
- * `headers.get('content-type')` work as expected.
- *
- * Pass `init` (a `RequestInit`) to exercise non-key acceptance over real HTTP —
- * e.g. a Basic `Authorization` header or a session `Cookie` (#1453). Stream-token
- * auth travels as a `?token=` query param in `path` and needs no `init`.
+ * Use real HTTP because inject hangs on hijacked streams. The caller owns app.close(), and the
+ * upstream must close the finite stream because this helper awaits the full response body.
  */
 export async function fetchSseEvents(
   app: FastifyInstance,

@@ -78,7 +78,6 @@ describe('AutoImportAdapter', () => {
       await adapter.process(job, ctx);
 
       expect(setPhase).toHaveBeenCalledWith('analyzing');
-      // setPhase should be called before importDownload
       const setPhaseOrder = setPhase.mock.invocationCallOrder[0];
       const importOrder = mockOrchestrator.importDownload.mock.invocationCallOrder[0];
       expect(setPhaseOrder).toBeLessThan(importOrder!);

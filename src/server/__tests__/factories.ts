@@ -1,7 +1,4 @@
-/**
- * Server-side mock factories for DB row shapes.
- * Timestamps are Date objects (matching Drizzle ORM output).
- */
+/** DB-row factories use Date timestamps to match Drizzle output. */
 
 const now = new Date('2024-01-01T00:00:00Z');
 

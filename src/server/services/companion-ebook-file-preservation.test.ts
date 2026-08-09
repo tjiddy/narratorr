@@ -31,16 +31,6 @@ vi.mock('../config.js', () => ({
 
 const exists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
 
-/**
- * #1960 AC32/AC33 — REGRESSION PINS ONLY, no new behaviour.
- *
- * Every path below already preserves foreign files through the shared classifier in
- * `delete-managed-files.ts` (#1589/#1598), and `planFileRenames` has always been audio-only.
- * What #1960 adds is the companion-ebook *contract*: an owner-placed `.epub` sitting beside the
- * audiobook is the whole feature's substrate, so each cleanup family gets an explicit
- * `.epub`-named pin. A future change that widens the managed-file classifier fails HERE with an
- * unambiguous cause, instead of silently deleting the file the feature is about.
- */
 describe('companion .epub survives every file-cleanup path (#1960 AC32/AC33)', () => {
   let root: string;
   let bookDir: string;
@@ -112,7 +102,6 @@ describe('companion .epub survives every file-cleanup path (#1960 AC32/AC33)', (
 
     expect(await exists(join(bookDir, 'companion.epub'))).toBe(true);
     expect(await exists(join(bookDir, 'chapter1.mp3'))).toBe(false);
-    // The folder is retained precisely BECAUSE the foreign file is still in it.
     expect(await exists(bookDir)).toBe(true);
   });
 
