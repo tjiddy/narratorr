@@ -94,11 +94,7 @@ describe('BookFixMatchModal (#1129)', () => {
     expect(screen.getByText('New Narrator')).toBeInTheDocument();
   });
 
-  // #1226 — the identity comparison must strike through ONLY the field that
-  // actually differs, and grey unchanged fields on BOTH sides. We locate each
-  // comparison row by its label cell (children[0]) and inspect the old (1) and
-  // new (2) value cells directly, avoiding ambiguous text selectors for values
-  // that are intentionally identical on both columns (F2).
+  // Inspect cells directly because unchanged values appear in both columns.
   function getComparisonRow(label: string): HTMLElement {
     const rows = Array.from(document.body.querySelectorAll<HTMLElement>('div')).filter(
       (el) =>
@@ -114,7 +110,6 @@ describe('BookFixMatchModal (#1129)', () => {
     const user = userEvent.setup();
     (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       books: [
-        // Title/Author/Narrator/Year identical to mockBook — only Series differs.
         createMockBookMetadata({
           asin: 'B_NEW',
           title: 'Wrong Match',
@@ -135,7 +130,6 @@ describe('BookFixMatchModal (#1129)', () => {
 
     expect(screen.getByText('Confirm match')).toBeInTheDocument();
 
-    // Changed field (Series): label at normal muted, old value struck through + muted, new value amber.
     const seriesRow = getComparisonRow('Series');
     const seriesLabel = seriesRow.children[0]!;
     const seriesOld = seriesRow.children[1]!;
@@ -147,7 +141,6 @@ describe('BookFixMatchModal (#1129)', () => {
     expect(seriesOld.className).not.toContain('text-muted-foreground/40');
     expect(seriesNew.className).toContain('text-primary');
 
-    // Unchanged fields: label and both value sides greyed (text-muted-foreground/40), no strikethrough.
     for (const label of ['Title', 'Author', 'Narrator', 'Year']) {
       const row = getComparisonRow(label);
       const labelCell = row.children[0]!;
@@ -165,7 +158,6 @@ describe('BookFixMatchModal (#1129)', () => {
     const user = userEvent.setup();
     (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       books: [
-        // Every identity field matches mockBook — the table should fully recede.
         createMockBookMetadata({
           asin: 'B_NEW',
           title: 'Wrong Match',
@@ -402,8 +394,6 @@ describe('BookFixMatchModal (#1129)', () => {
     });
   });
 });
-// ─── modal card overflow (drive-by): the dialog wrapper must join the Modal's
-// height-capped flex column, or the footer renders past the card on short viewports ───
 describe('height-capped card layout', () => {
   it('constrains the dialog wrapper and lets the body scroll within the card', async () => {
     renderModal();
@@ -415,7 +405,6 @@ describe('height-capped card layout', () => {
   });
 
   it('the confirm step body scrolls within the card too', async () => {
-    // Both conditional views changed — the search-step test above never renders this one.
     const user = userEvent.setup();
     (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       books: [createMockBookMetadata({ asin: 'B_NEW', title: 'New Title' })],
