@@ -10,7 +10,6 @@ export function SearchAuthorCard({ author, index }: { author: AuthorMetadata; in
       style={{ animationDelay: `${index * 50}ms` }}
     >
       <div className="flex items-center gap-4">
-        {/* Author Image */}
         <div className="shrink-0">
           <CoverImage
             src={author.imageUrl}
@@ -20,7 +19,6 @@ export function SearchAuthorCard({ author, index }: { author: AuthorMetadata; in
           />
         </div>
 
-        {/* Author Info */}
         <div className="flex-1 min-w-0">
           <h3 className="font-display text-lg font-semibold group-hover:text-primary transition-colors truncate">
             {author.name}
@@ -32,7 +30,6 @@ export function SearchAuthorCard({ author, index }: { author: AuthorMetadata; in
           )}
         </div>
 
-        {/* View Button */}
         {author.asin && (
           <button
             onClick={() => toast.info('Author pages coming soon!')}

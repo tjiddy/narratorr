@@ -22,10 +22,8 @@ export function SearchPage() {
 
   return (
     <div className="space-y-8">
-      {/* Page Header */}
       <PageHeader title="Add Book" subtitle="Search metadata providers to find audiobooks to add" />
 
-      {/* Search Form */}
       <form onSubmit={handleSearch} className="max-w-3xl mx-auto animate-fade-in-up stagger-1">
         <div className="relative group">
           <div className="absolute -inset-0.5 bg-gradient-to-r from-primary to-amber-500 rounded-2xl opacity-20 blur-lg group-hover:opacity-30 transition-opacity" />
@@ -56,7 +54,6 @@ export function SearchPage() {
         </div>
       </form>
 
-      {/* Error */}
       {error && (
         <div className="max-w-3xl mx-auto">
           <div className="flex items-center gap-3 px-4 py-3 bg-destructive/10 text-destructive rounded-xl animate-fade-in">
@@ -65,7 +62,6 @@ export function SearchPage() {
         </div>
       )}
 
-      {/* Results */}
       <SearchResults
         results={metadataResults}
         searchTerm={searchTerm}
