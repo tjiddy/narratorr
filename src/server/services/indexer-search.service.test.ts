@@ -12,7 +12,6 @@ import { initializeKey, _resetKey } from '../utils/secret-codec.js';
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 const mockIndexer = createMockDbIndexer();
 
-/** Wraps a SearchResult[] into the IndexerSearchResponse shape that adapter.search now returns. */
 function searchResponse(results: Partial<SearchResult>[]): {
   results: SearchResult[];
   parseStats: { itemsObserved: number; kept: number; dropped: { emptyTitle: number; noUrl: number; other: number } };
@@ -175,11 +174,8 @@ describe('IndexerSearchService', () => {
         downloadUrl: 'magnet:?xt=urn:btih:abc123',
       };
 
-      // Mock the DB query for enabled indexers
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
 
-      // We need to mock the adapter's search method
-      // Since getAdapter creates a real ABB adapter, we spy on the service
       const mockAdapter = {
         type: 'abb',
         name: 'AudioBookBay',
@@ -187,7 +183,6 @@ describe('IndexerSearchService', () => {
         test: vi.fn(),
       };
 
-      // Override getAdapter to return our mock
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await searchService.searchAll('sanderson');
@@ -348,7 +343,6 @@ describe('IndexerSearchService', () => {
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await searchService.searchAll('random');
-      // Title unchanged by parser, so rawTitle is not set
       expect(results[0]!.title).toBe('Some Random Title');
       expect(results[0]!.author).toBeUndefined();
       expect(results[0]!.rawTitle).toBeUndefined();
@@ -435,7 +429,7 @@ describe('IndexerSearchService', () => {
 
       const results = await searchService.searchAll('books');
       expect(results[0]!.matchScore).toBeUndefined();
-      expect(results[0]!.title).toBe('Book B'); // order preserved
+      expect(results[0]!.title).toBe('Book B');
     });
   });
 
@@ -497,14 +491,12 @@ describe('IndexerSearchService', () => {
         search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Proxied Book', indexer: 'ABB', protocol: 'torrent' }])),
         test: vi.fn(),
       };
-      // Spy on createAdapter to verify proxyUrl is passed, but return our mock adapter
       const createSpy = // eslint-disable-next-line @typescript-eslint/no-explicit-any
       vi.spyOn(proxyService as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const results = await proxySearchService.searchAll('test');
       expect(results).toHaveLength(1);
       expect(results[0]!.title).toBe('Proxied Book');
-      // getAdapter calls getProxyUrl which calls settingsService.get('network')
       expect(mockSettingsService.get).toHaveBeenCalledWith('network');
       expect(createSpy).toHaveBeenCalledWith(proxyIndexer, 'socks5://proxy:1080');
     });
@@ -537,7 +529,6 @@ describe('IndexerSearchService', () => {
     });
   });
 
-  // ── #229 Observability — logging improvements ───────────────────────────
   describe('logging improvements (#229)', () => {
     it('per-indexer search emits the canonical "Indexer search complete" summary with parse stats', async () => {
       const log = createMockLogger();
@@ -616,8 +607,7 @@ describe('IndexerSearchService', () => {
       const indexer2 = { ...mockIndexer, id: 2, name: 'Indexer2' };
       db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));
 
-      // Adapter1 blocks on a deferred promise — if execution is sequential,
-      // adapter2.search will never be called until adapter1 resolves.
+      // Adapter1 blocks on a deferred promise; adapter2.search must run before adapter1 resolves.
       let resolveAdapter1!: (value: unknown) => void;
       const adapter1Promise = new Promise<unknown>((resolve) => { resolveAdapter1 = resolve; });
 
@@ -627,7 +617,6 @@ describe('IndexerSearchService', () => {
       };
       const adapter2 = {
         search: vi.fn().mockImplementation(async () => {
-          // Assert adapter1.search was already called but NOT yet resolved
           expect(adapter1.search).toHaveBeenCalledTimes(1);
           return searchResponse([{ title: 'Book2', indexer: 'Indexer2' }]);
         }),
@@ -640,13 +629,11 @@ describe('IndexerSearchService', () => {
 
       const searchPromise = searchService.searchAll('test');
 
-      // Wait a tick to let both adapter.search calls be initiated
+      // Wait a tick so both adapter.search calls start before adapter1 resolves.
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      // At this point, adapter2 should already have been called (concurrent)
       expect(adapter2.search).toHaveBeenCalledTimes(1);
 
-      // Now resolve adapter1 so searchAll can complete
       resolveAdapter1(searchResponse([{ title: 'Book1', indexer: 'ABB' }]));
       const results = await searchPromise;
       expect(results).toHaveLength(2);
@@ -712,8 +699,7 @@ describe('IndexerSearchService', () => {
       expect(errorCall).toBeDefined();
       const [payload] = errorCall as [Record<string, unknown>, string];
       expect(payload.indexer).toBe(mockIndexer.name);
-      // `error` must be the serialized plain object, NOT the original Error instance —
-      // covers the manual MemberExpression migration that lint cannot enforce.
+      // Must be the serialized object; lint cannot detect the original Error instance here.
       expect(payload.error).not.toBe(failError);
       expect(payload.error).not.toBeInstanceOf(Error);
       expect(payload.error).toEqual(
@@ -743,7 +729,6 @@ describe('IndexerSearchService', () => {
         .mockResolvedValueOnce(adapter2 as never);
 
       const results = await searchService.searchAll('sanderson', { title: 'The Way of Kings', author: 'Sanderson' });
-      // Better match should be sorted first
       expect(results[0]!.title).toBe('The Way of Kings');
     });
 
@@ -820,9 +805,7 @@ describe('IndexerSearchService', () => {
     it('excludes cancelled indexer results and calls onCancelled', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
 
-      // Cancelled IN FLIGHT: the adapter is reached, then the user cancels and
-      // the request rejects. Distinct from the pre-aborted case below, which the
-      // #2104 D11 guard now short-circuits before `getAdapter`.
+      // In-flight cancellation reaches the adapter; pre-aborted requests below must not.
       const controller = new AbortController();
       const adapter = {
         search: vi.fn().mockImplementation(() => {
@@ -843,15 +826,12 @@ describe('IndexerSearchService', () => {
       const results = await searchService.searchAllStreaming('test', undefined, controllers, { onComplete, onError, onCancelled });
 
       expect(onComplete).not.toHaveBeenCalled();
-      expect(onError).not.toHaveBeenCalled(); // Cancelled, not errored
+      expect(onError).not.toHaveBeenCalled();
       expect(onCancelled).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name);
       expect(results).toHaveLength(0);
     });
 
-    // AC27 — the query ladder re-enters `searchAllStreaming` per rung with the
-    // SAME sticky controllers, so an indexer the user cancelled on rung 1 must
-    // not be re-queried on rung 2. The abort classification below lives only in
-    // the catch block, which is reached AFTER `getAdapter` and `adapter.search`.
+    // The query ladder reuses controllers; a pre-aborted indexer must skip the adapter and duplicate frames.
     it('skips an already-cancelled indexer before the adapter, emitting no frame (AC27)', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
 
@@ -869,8 +849,7 @@ describe('IndexerSearchService', () => {
 
       const results = await searchService.searchAllStreaming('test', undefined, controllers, { onComplete, onError, onCancelled });
 
-      // COUNTERFACTUAL: remove the pre-adapter guard and the adapter spy records
-      // a call (and `onCancelled` fires a duplicate frame).
+      // Without the pre-adapter guard this records a call and emits a duplicate cancellation frame.
       expect(getAdapter).not.toHaveBeenCalled();
       expect(adapter.search).not.toHaveBeenCalled();
       expect(onComplete).not.toHaveBeenCalled();
@@ -905,10 +884,7 @@ describe('IndexerSearchService', () => {
     });
   });
 
-  // #2104 D16 — the settlement counts the query ladder needs to tell a real,
-  // answered zero from a total indexer outage. `searchAll` collapses both into
-  // `[]`, so without these counts the ladder would burn its whole rung budget
-  // and a 24-hour cooldown during an outage.
+  // Settlement counts distinguish answered zero from outage; [] alone would burn the ladder budget and cooldown.
   describe('searchAllWithStatus (#2104 D16)', () => {
     const secondIndexer = createMockDbIndexer({ id: 2, name: 'MAM', type: 'myanonamouse' });
 
@@ -959,8 +935,7 @@ describe('IndexerSearchService', () => {
     });
   });
 
-  // AC17 / D8 — `author` is simultaneously the transport filter and the ranking
-  // context, so an author-dropping ladder rung must keep ranking canonical.
+  // An author-dropping transport rung must retain the canonical author for ranking.
   describe('rankingAuthor (#2104 D8)', () => {
     const rank = async (options: Parameters<typeof searchService.searchAll>[1]) => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
@@ -979,9 +954,7 @@ describe('IndexerSearchService', () => {
       const authorOff = await rank({ title: 'The Way of Kings', author: undefined, rankingAuthor: 'Brandon Sanderson' });
 
       expect(rungOne).toEqual(['Brandon Sanderson', 'Someone Else']);
-      // COUNTERFACTUAL: drop `rankingAuthor` from applyMatchScore and this
-      // becomes title-only weight, so the two results tie and the order flips
-      // back to the adapter's.
+      // Dropping rankingAuthor makes these tie and restores adapter order.
       expect(authorOff).toEqual(rungOne);
     });
 
@@ -1361,7 +1334,6 @@ describe('IndexerSearchService', () => {
     });
 
     it('indexer with default priority (50) produces results with indexerPriority: 50', async () => {
-      // mockIndexer uses createMockDbIndexer() which defaults to priority: 50
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       const mockAdapter = {
         type: 'abb',
@@ -1378,7 +1350,6 @@ describe('IndexerSearchService', () => {
     });
   });
 
-  // ── #1015 Centralized indexer-query cleaning at the service seam ──────────
   describe('#1015 — centralized indexer-query cleaning', () => {
     describe('searchAll — transport cleaning', () => {
       it('passes a cleaned transportQuery to adapter.search for parens/colon input', async () => {
@@ -1548,7 +1519,6 @@ describe('IndexerSearchService', () => {
         const mockAdapter = {
           type: 'abb', name: 'AudioBookBay',
           search: vi.fn().mockResolvedValue(searchResponse([
-            // Result side arrives raw from indexer with the original punctuation
             { title: '11.22.63', indexer: 'ABB', protocol: 'torrent' },
           ])),
           test: vi.fn(),
@@ -1584,7 +1554,6 @@ describe('IndexerSearchService', () => {
         const mockAdapter = {
           type: 'abb', name: 'AudioBookBay',
           search: vi.fn().mockResolvedValue(searchResponse([
-            // Result arrives raw from the indexer with the original punctuation
             { title: 'Is She Really Going Out with Him?', indexer: 'ABB', protocol: 'torrent' },
           ])),
           test: vi.fn(),
@@ -1596,7 +1565,7 @@ describe('IndexerSearchService', () => {
           { title: 'Is She Really Going Out with Him?' },
         );
 
-        // Transport query was cleaned, but ranking scored the raw punctuated title → exact match.
+        // Transport is cleaned; ranking retains raw punctuation context.
         expect(mockAdapter.search.mock.calls[0]![0]).toBe(
           'Is She Really Going Out with Him Sophie Cousens',
         );

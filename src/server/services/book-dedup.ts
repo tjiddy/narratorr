@@ -1,11 +1,3 @@
-/**
- * Duplicate-resolution primitives for the three-way `BookService.findDuplicate`
- * (#1711). Extracted from `book.service.ts` to keep that file under the line cap;
- * holds the typed owned-recording error, the candidate/resolution shapes, the
- * create-time ASIN unique-violation matcher, and the adapters that map between
- * service rows and the core recording resolver's plain-primitive shapes.
- */
-
 import { eq, and, sql, notExists } from 'drizzle-orm';
 import { slugify } from '@core/index.js';
 import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording, type RecordingVerdict, type RecordingReviewReason } from '@core/utils/recording-identity.js';
@@ -16,24 +8,12 @@ import type { Db } from '@db/index.js';
 import type { BookWithAuthor } from './book.service.js';
 import type { ForcedImportRefusedReason } from '@shared/schemas/sse-events.js';
 
-/** Hydrate a book row by id — the `BookService.getById` bound method. */
 type GetByIdFn = (id: number) => Promise<BookWithAuthor | null>;
 
-// `books.asin` carries a partial unique index (`idx_books_asin_unique` on the
-// non-null column). A create-time race (two writers inserting the same ASIN
-// between the dedupe check and the insert) still throws a SQLite UNIQUE
-// violation; detect it the way enrichment.ts/book-import.service.ts do — both
-// the index-name and column-message forms, checking `error.cause?.message`
-// first since Drizzle/libSQL nests the SQLite message under `.cause`.
+// Create-time ASIN races surface as index-name or column UNIQUE messages, often under cause.
 export const ASIN_UNIQUE_VIOLATION = /UNIQUE constraint failed.*(?:idx_books_asin_unique|books\.asin)/;
 
-/**
- * Typed fail-closed error for a recording that is already owned (#1711). Mirrors
- * the `RenameError` idiom: a typed throw rather than a silent owner-return so an
- * unmapped caller surfaces a loud error instead of enqueuing import work against
- * an already-owned book. Carries the incumbent's id/title so route handlers can
- * build a 409 body and import callers can log/skip.
- */
+// Fail closed so unmapped callers cannot enqueue against an owned book; fields support 409 responses.
 export class OwnedRecordingError extends Error {
   readonly code = 'OWNED_RECORDING' as const;
   readonly existingBookId: number;
@@ -48,14 +28,7 @@ export class OwnedRecordingError extends Error {
   }
 }
 
-/**
- * Map an `OwnedRecordingError` raised by the copy-time collision fence into the
- * structured `forced-import-refused` discriminator (#1736). The fence's ownerless
- * throw sites (`recording-review-no-disambiguator`, `recording-review-disambiguated-collision`
- * with zero path owners) carry the `-1` sentinel rather than a real incumbent id, so
- * any non-positive/absent id maps to `null` — the user-facing reason never reports
- * "book #-1". Single-/2+-owner throws carry a real `owners[0].id` and keep it.
- */
+// Ownerless collision fences use -1; never expose that sentinel as an incumbent id.
 export function buildForcedImportRefusedReason(error: OwnedRecordingError): ForcedImportRefusedReason {
   return {
     kind: 'forced-import-refused',
@@ -64,51 +37,28 @@ export function buildForcedImportRefusedReason(error: OwnedRecordingError): Forc
   };
 }
 
-/** Candidate identity for the 3-way duplicate resolution (#1711). */
 export interface DuplicateCandidate {
   title: string;
   authors?: { name: string; asin?: string | undefined }[] | undefined;
   asin?: string | undefined;
   narrators?: string[] | undefined;
   duration?: number | null | undefined;
-  /**
-   * Canonical production form (#1728). Forwarded to the resolver's
-   * production-type veto; callers that hold no production-form signal omit it.
-   */
+  /** Canonical form for the resolver's production-type veto. */
   productionType?: string | null | undefined;
 }
 
 export type DuplicateVerdict = RecordingVerdict;
 
-/**
- * Three-way duplicate resolution (#1711). `book` is the owning incumbent for
- * `same-recording`, a representative review incumbent for `review`, or `null`
- * for `different-recording` (a genuinely new recording).
- */
+// book is the owner for same-recording, review representative, or null for different-recording.
 export interface DuplicateResolution {
   verdict: DuplicateVerdict;
   book: BookWithAuthor | null;
-  /**
-   * True iff ≥1 plausible incumbent was gathered in the bibliographic scope
-   * (#1712). Additive and orthogonal to `verdict`/`book`: it disambiguates the two
-   * `different-recording` cases — a genuinely NEW book (no incumbents,
-   * `hasIncumbent: false`) vs. a different recording of an OWNED title (incumbents
-   * existed but none resolved to same/review, `hasIncumbent: true`). `book` keeps
-   * its `different-recording ⇒ null` contract; consumers that read only
-   * `verdict`/`book` are unaffected.
-   */
+  /** Distinguishes a new book from a different recording of an owned title. */
   hasIncumbent: boolean;
-  /**
-   * Machine reason a `review` verdict was reached (#1728) — forwarded verbatim
-   * from the resolver result for the representative review incumbent. Populated
-   * only when `verdict === 'review'`. The single channel callers use to log/record
-   * *why* a review was held; no caller recomputes the production-type comparison.
-   * Distinct from the user-facing display string `reviewReason` (`match-job`).
-   */
+  /** Resolver machine reason for review; distinct from match-job display text. */
   recordingReviewReason?: RecordingReviewReason;
 }
 
-/** Adapt a candidate identity into the core resolver's plain-primitive shape. */
 export function toRecordingCandidate(c: DuplicateCandidate): RecordingCandidate {
   return {
     title: c.title,
@@ -120,7 +70,6 @@ export function toRecordingCandidate(c: DuplicateCandidate): RecordingCandidate 
   };
 }
 
-/** Adapt a hydrated library row into the core resolver's library-recording shape. */
 export function toLibraryRecording(b: BookWithAuthor): LibraryRecording {
   return {
     title: b.title,
@@ -132,38 +81,22 @@ export function toLibraryRecording(b: BookWithAuthor): LibraryRecording {
   };
 }
 
-/**
- * Gather the ids of every plausible incumbent in the bibliographic scope (#1711).
- * Multi-narration (and the non-transitive subtitle relation, #1891) means a
- * title + primary-author slug can legitimately match more than one row, so this
- * returns ALL of them (no `limit(1)`), sorted ascending. The three branches mirror
- * the pre-#1711 ordered identity contract: (1) ASIN case-insensitive, (2) pairwise
- * title-match + position-0 author slug, (3) author-less exact title-only with the
- * #253 notExists guard.
- */
+// Gather all plausible incumbents: canonical ASIN, title+primary author, then authorless exact.
+// Subtitle matching is non-transitive, so retain every hit and return ascending ids.
 async function gatherIncumbentIds(db: Db, candidate: DuplicateCandidate): Promise<number[]> {
   const ids = new Set<number>();
 
-  // Canonicalize the candidate ASIN ONCE (trim + UPPERCASE → null on blank, #1733)
-  // so a padded/case-drifted pre-write candidate (`' B01ABC '`) still finds the
-  // stored canonical row, and so the resolver (which canonicalizes identically,
-  // #1729) and this gather site cannot drift on the padded/blank-ASIN decision.
+  // Canonicalize once so query and resolver share the padded/blank-ASIN decision.
   const canonicalAsin = canonicalizeAsin(candidate.asin);
 
-  // (1) ASIN — canonical compare against the stored upper(asin) (matches the durable
-  // upper(asin) unique index), ALL hits. Same upper(asin) + canonicalizeAsin fold as
-  // findAsinCollision (the aligning sibling). findLibraryStatusByAsins is also
-  // case-insensitive but folds on lower(asin), so it is not the fold-direction precedent.
+  // Compare upper(asin) to match the durable unique index; keep every hit.
   if (canonicalAsin) {
     const byAsin = await db.select({ id: books.id }).from(books)
       .where(eq(sql`upper(${books.asin})`, canonicalAsin));
     for (const r of byAsin) ids.add(r.id);
   }
 
-  // (2) title + position-0 author slug — ALL pairwise-matching hits (#1891). The
-  // subtitle-tolerant relation is non-transitive so we retain EVERY incumbent whose
-  // title pairwise-matches the candidate, not the lowest-id only; the returned array
-  // is sorted ascending below so the `review` representative is deterministic.
+  // Non-transitive title matching requires every pairwise primary-author hit, not limit(1).
   const authorList = candidate.authors;
   if (authorList && authorList.length > 0) {
     const primarySlug = slugify(authorList[0]!.name);
@@ -177,9 +110,7 @@ async function gatherIncumbentIds(db: Db, candidate: DuplicateCandidate): Promis
     }
   }
 
-  // (3) Author-less exact title-only when no authors and no ASIN (#246). Only
-  // zero-author rows so authored "Shogun" doesn't block authorless "Shogun" (#253).
-  // Uses the canonical ASIN so a blank/whitespace candidate ASIN counts as "no ASIN".
+  // Without canonical ASIN/authors, exact title may match only zero-author rows.
   if (!canonicalAsin && (!authorList || authorList.length === 0)) {
     const byTitle = await db.select({ id: books.id }).from(books)
       .where(and(
@@ -189,21 +120,13 @@ async function gatherIncumbentIds(db: Db, candidate: DuplicateCandidate): Promis
     for (const r of byTitle) ids.add(r.id);
   }
 
-  // Ascending books.id so `resolveDuplicate` picks the lowest-id incumbent as the
-  // deterministic `review` representative (#1891). Ordering never affects the
-  // `same-recording` verdict, which wins order-independently.
+  // Ascending ids make the review representative deterministic; same-recording remains order-independent.
   return [...ids].sort((a, b) => a - b);
 }
 
-/**
- * Three-way, multi-incumbent-aware duplicate resolution (#1711). Gathers every
- * plausible incumbent, runs `resolveRecordingIdentity` over each, and applies the
- * precedence ladder: any `same-recording` ⇒ owned (order-independent); else any
- * `review`/no-signal ⇒ review; else all `different-recording` ⇒ a new recording.
- */
+// Precedence across all incumbents: any same-recording, else first review, else different-recording.
 export async function resolveDuplicate(db: Db, getById: GetByIdFn, candidate: DuplicateCandidate): Promise<DuplicateResolution> {
   const ids = await gatherIncumbentIds(db, candidate);
-  // No incumbents at all → a genuinely new book (hasIncumbent: false).
   if (ids.length === 0) return { verdict: 'different-recording', book: null, hasIncumbent: false };
 
   const recordingCandidate = toRecordingCandidate(candidate);
@@ -214,30 +137,19 @@ export async function resolveDuplicate(db: Db, getById: GetByIdFn, candidate: Du
     if (!book) continue;
     const { verdict, recordingReviewReason } = resolveRecordingIdentity(recordingCandidate, toLibraryRecording(book));
     if (verdict === 'same-recording') return { verdict: 'same-recording', book, hasIncumbent: true };
-    // First `review` wins the representative slot; `ids` is ascending (#1891) so this
-    // is the lowest-id matching incumbent — a deterministic representative.
+    // First review is the lowest-id representative because ids are ascending.
     if (verdict === 'review' && !reviewBook) {
       reviewBook = book;
       reviewReason = recordingReviewReason;
     }
   }
   if (reviewBook) return { verdict: 'review', book: reviewBook, hasIncumbent: true, ...(reviewReason && { recordingReviewReason: reviewReason }) };
-  // Incumbents existed but none matched → a different recording of an owned title.
   return { verdict: 'different-recording', book: null, hasIncumbent: true };
 }
 
-/**
- * Return EVERY library row whose stored `path` equals the given normalized path
- * (#1711) — the cardinality input for the occupied-target collision fence.
- * `books.path` is indexed but NOT unique, so callers branch on 0 / 1 / 2+.
- *
- * `books.path` is stored in POSIX form (`buildTargetPath` emits forward slashes so
- * the library DB is portable across the Linux runtime and Windows dev boxes). Callers
- * pass `normalize(resolve(...))`, which is backslash-separated on Windows — so the
- * exact-match `eq` below would MISS the row there (0 owners → a same-recording
- * re-import wrongly disambiguates into a new `(edition)` folder instead of a staged
- * swap). POSIX-fold the key so the comparison is POSIX-vs-POSIX on every platform (#1752).
- */
+// Paths are non-unique, so return all owners for the 0/1/2+ collision fence.
+// Storage is POSIX but Windows normalize returns backslashes; fold them or same-path re-imports
+// miss owners and create an edition folder instead of staging a swap.
 export async function findPathOwners(db: Db, getById: GetByIdFn, normalizedPath: string): Promise<BookWithAuthor[]> {
   const posixPath = normalizedPath.split('\\').join('/');
   const rows = await db.select({ id: books.id }).from(books).where(eq(books.path, posixPath));
