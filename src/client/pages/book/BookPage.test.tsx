@@ -8,18 +8,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMockBook } from '@/__tests__/factories';
 import { BookPage } from './BookPage';
 
-// importOriginal form, NOT a bare replacement factory: BookDetails transitively loads
-// CompanionEbookSection, which imports `formatBytes` and reads `ApiError.status` at RUNTIME
-// (#1963). A replacement factory turns every unlisted named export into `undefined`, and the
-// break surfaces only when those paths execute — never under tsc
-// (`vimock-barrel-replace-drops-named-exports`).
-//
-// The tradeoff to hold onto: preserving the barrel also keeps every API METHOD real unless it
-// is overridden here, and an unstubbed method reaches `fetchApi`, which resolves a relative
-// `/api/...` URL against jsdom's base and issues a genuine `fetch`. Rendering this page fires
-// three such queries beyond the book loaders — the series card, the ffmpeg gate behind the
-// merge/retag buttons, and the search modal's stream-token mint. All three are stubbed below,
-// and the `issues no real network request` test fails if a fourth ever appears.
+// Preserve runtime barrel exports for transitive children; any unstubbed API method remains real.
+// Secondary queries are stubbed below, and the network guard catches new escapees.
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
   return {
@@ -29,10 +19,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       getBookById: vi.fn(),
       getBook: vi.fn(),
       getCompanionEbookState: vi.fn(),
-      // Spread-`actual.api` factories leave every UNSTUBBED method real, and a real method
-      // issues a genuine relative-URL fetch (`vimock-barrel-replace-drops-named-exports`).
-      // The Ebook panel reads `/metadata` on `available` since #2022, so it is stubbed here
-      // rather than left to the fixture never producing that status.
+      // Ebook metadata is reachable only in available state; stub it regardless of fixture status.
       getCompanionEbookMetadata: vi.fn(),
       getBookSeries: vi.fn(),
       getFfmpegStatus: vi.fn(),
@@ -55,8 +42,7 @@ const mockLibraryBook = createMockBook({
   asin: 'B00ABC1234',
   narrators: [{ id: 1, name: 'Michael Kramer', slug: 'michael-kramer' }, { id: 2, name: 'Kate Reading', slug: 'kate-reading' }],
   duration: 872,
-  // subtitle/publisher are now stored columns on the library book (#1614) — they
-  // render on first paint and survive a provider-lookup failure.
+  // Stored columns must survive a provider-lookup failure.
   subtitle: 'Book One of the Stormlight Archive',
   publisher: 'Macmillan Audio',
   authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson', asin: 'A00SAND1234' }],
@@ -102,8 +88,6 @@ describe('BookPage', () => {
     vi.clearAllMocks();
     vi.mocked(api.getBookById).mockResolvedValue(mockLibraryBook);
     vi.mocked(api.getBook).mockResolvedValue(mockMetadataBook);
-    // Deterministic stubs for the three secondary queries this page fires. Rejections are
-    // enough — every one of them degrades silently — but they must not be left real.
     vi.mocked(api.getBookSeries).mockResolvedValue({ series: null });
     vi.mocked(api.getFfmpegStatus).mockResolvedValue({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' });
     vi.mocked(api.mintStreamToken).mockRejectedValue(new Error('no stream token in this suite'));
@@ -114,10 +98,7 @@ describe('BookPage', () => {
     fetchSpy.mockRestore();
   });
 
-  // The guard for the whole file: this suite must never touch the network. A method left real
-  // by the preserved barrel reaches `fetchApi`, which resolves a relative `/api/...` URL
-  // against jsdom's base and issues a genuine request, making results depend on the host's
-  // fetch behaviour. Renders the fully-loaded page so every secondary query has fired.
+  // Render the fully loaded page so the guard catches every unstubbed secondary query.
   it('issues no real network request while rendering the fully-loaded page', async () => {
     renderBookPage();
     await waitFor(() => expect(screen.getByText('The Way of Kings')).toBeInTheDocument());
@@ -130,7 +111,6 @@ describe('BookPage', () => {
     vi.mocked(api.getBookById).mockReturnValue(new Promise(() => {}));
     renderBookPage();
 
-    // Content should not be visible while loading
     expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
     expect(screen.queryByText('Brandon Sanderson')).not.toBeInTheDocument();
     expect(screen.queryByText('Library')).not.toBeInTheDocument();
@@ -143,24 +123,19 @@ describe('BookPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Author, narrator, series, duration
     expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
     expect(screen.getByText(/Michael Kramer, Kate Reading/)).toBeInTheDocument();
     expect(screen.getByText(/The Stormlight Archive #1/)).toBeInTheDocument();
     expect(screen.getByText(/14h 32m/)).toBeInTheDocument();
 
-    // Subtitle + publisher are stored columns now (#1614) — they render from the
-    // library book on first paint, no second query cycle required.
     expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
     expect(screen.getByText(/Macmillan Audio/)).toBeInTheDocument();
 
-    // Metadata enrichment: genres still merge from the provider lookup
     await waitFor(() => {
       expect(screen.getByText('Fantasy')).toBeInTheDocument();
     });
     expect(screen.getByText('Epic')).toBeInTheDocument();
 
-    // Status badge
     expect(screen.getByText('Wanted')).toBeInTheDocument();
   });
 
@@ -200,12 +175,10 @@ describe('BookPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Base data renders fine
     expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
     expect(screen.getByText(/Michael Kramer, Kate Reading/)).toBeInTheDocument();
 
-    // Durability guard (#1614): stored subtitle + publisher still render even
-    // though the provider lookup failed — they no longer depend on the merge.
+    // Stored subtitle and publisher must survive provider failure.
     expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
     expect(screen.getByText(/Macmillan Audio/)).toBeInTheDocument();
   });
@@ -246,7 +219,6 @@ describe('BookPage', () => {
 
     await user.click(screen.getByText('Search Releases'));
 
-    // Modal should open
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
