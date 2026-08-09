@@ -1,7 +1,3 @@
-/**
- * Bulk import pipeline — accepts user-confirmed items and queues them for the
- * import worker. Extracted for consistency with quality-gate helpers.
- */
 import { stat } from 'node:fs/promises';
 import { relative, resolve, isAbsolute, normalize } from 'node:path';
 import { copyToLibrary as stageSourceAudio, stagedAudioReplace } from '../utils/import-steps.js';
@@ -41,11 +37,7 @@ export interface ImportPipelineDeps {
   connectorService?: ConnectorService | undefined;
 }
 
-/**
- * Audio bytes already present at the computed target, treating a non-existent
- * target (ENOENT) as empty. `> 0` routes the manual import through the staged
- * swap (#1287); `0`/missing keeps the simple direct-copy fast path (AC3).
- */
+// Treat ENOENT as empty; positive audio size enters occupied-target handling.
 async function getTargetAudioSize(targetPath: string): Promise<number> {
   try {
     return await getAudioPathSize(targetPath);
@@ -55,43 +47,27 @@ async function getTargetAudioSize(targetPath: string): Promise<number> {
   }
 }
 
-/**
- * Per-site logging contract for the nonfatal post-commit source cleanup. The `context` carries
- * the success log LEVEL and message plus the warn-on-failure message so the four call sites keep
- * their distinct, test-asserted log behavior (#1591) while sharing one cleanup body.
- */
+// Preserve per-site log level/messages while sharing nonfatal cleanup.
 interface SourceCleanupContext {
   successLevel: 'info' | 'debug';
   successMessage: string;
   errorMessage: string;
 }
 
-// Single-source (`copyToLibrary`) sites: success at `info`, the single-source warn message.
 const SINGLE_SOURCE_CLEANUP: SourceCleanupContext = {
   successLevel: 'info',
   successMessage: 'Source managed files removed after move (foreign files preserved)',
   errorMessage: 'Failed to clean source after committed move — import already succeeded, continuing',
 };
 
-// Per-disc (`copyDiscGroupToLibrary`) sites: success at `debug`, the disc-specific warn message.
 const DISC_SOURCE_CLEANUP: SourceCleanupContext = {
   successLevel: 'debug',
   successMessage: 'Disc source managed files removed after move',
   errorMessage: 'Failed to clean disc source after committed move — import already succeeded, continuing',
 };
 
-/**
- * Post-commit cleanup of a single source folder/disc member after a committed move. Deletes only
- * MANAGED files (#1589), preserving co-located foreign files; the source is OUTSIDE the library
- * root so containment is opted out (`{ assertInsideLibrary: false }`) — classification still
- * protects foreign files, and the helper's #1598 `lstat` hardening keeps a top-level symlinked
- * source unfollowed.
- *
- * NONFATAL by contract (#1591): this runs AFTER the commit, so a cleanup throw — a source that
- * vanished between stat and readdir (ENOENT) OR any non-ENOENT failure (EACCES/EPERM/EBUSY) — must
- * not fail the already-committed import. The throw is swallowed into a `log.warn`. At the disc
- * sites this is called per member inside the loop so one failing disc doesn't skip the rest.
- */
+// Post-commit and nonfatal: delete only managed source files, preserving foreign files and symlinks.
+// Sources lie outside the library root, so containment is intentionally disabled; failures become warnings.
 async function cleanupSourceManagedFilesNonfatal(
   sourcePath: string,
   libraryRoot: string,
@@ -106,31 +82,15 @@ async function cleanupSourceManagedFilesNonfatal(
   }
 }
 
-// `recoverInterruptedCommit` (the marker-gated recovery sequence run before the
-// populated-target gate, #1337) now lives in `utils/recover-interrupted-commit.ts` so the
-// rename and merge writers can share the same `assertMarkerPathWritable` +
-// `prepareImportSiblings` sequence (#1418). Imported above.
-
-// ── Cross-row collision fence (#1711) ─────────────────────────────────────
-//
-// The Manual/Library copy path routes an occupied target through the staged swap
-// with NO owner check, so a DIFFERENT recording colliding on the same computed
-// folder would overwrite the incumbent's audio. The fence below resolves the
-// occupied target's owner(s), runs the recording resolver, and gates the swap:
-// a staged swap is permitted ONLY for exactly-one-owner + same-recording; a
-// different recording is disambiguated into a new `(edition)` folder (keep-both);
-// every uncertain case (review / 0 owners with no disambiguator / 2+ owners)
-// throws `OwnedRecordingError` so the import fails LOUDLY rather than overwriting.
-
-/** Decision for an occupied target: either swap in place, or copy into a disambiguated folder. */
+// Occupied audio may be replaced only for exactly one owner of the same recording.
+// Different recordings disambiguate; uncertain ownership or verdicts fail rather than overwrite.
 interface OccupiedResolution {
   targetPath: string;
   editionLabel?: string | undefined;
-  /** true → staged swap permitted (same recording); false → copy into a fresh disambiguated folder. */
+  // swap=true is the sole permission to replace occupied audio.
   swap: boolean;
 }
 
-/** Build the recording candidate (#1711) from the confirm item + accepted provider metadata. */
 function buildRecordingCandidate(item: ImportConfirmItem, meta: BookMetadata | null): RecordingCandidate {
   const narrators = item.narrators?.length ? item.narrators : (meta?.narrators ?? []);
   return {
@@ -139,21 +99,12 @@ function buildRecordingCandidate(item: ImportConfirmItem, meta: BookMetadata | n
     narrators,
     asin: item.asin ?? meta?.asin ?? null,
     duration: meta?.duration ?? null,
-    // Production form (#1728) feeds the resolver's production-type veto on the
-    // occupied-target paths below. Absent formatType normalizes to `'unknown'`,
-    // which the veto treats as no signal — identical to null, no extra branch.
+    // unknown production type is deliberately no signal to the collision veto.
     productionType: normalizeProductionType(meta?.formatType),
   };
 }
 
-/**
- * Disambiguate a different-recording (or unidentifiable) collision into a new
- * `(edition)` folder. Derives a deterministic label from stable recording
- * metadata; throws `OwnedRecordingError` (review disposition) when no label can
- * be derived. The disambiguated path is re-checked: if it is itself occupied by
- * the SAME recording (a re-import) a staged swap is permitted; any other occupied
- * outcome throws rather than overwrite.
- */
+// Build a deterministic safe edition folder; an unusable label or conflicting destination requires review.
 async function disambiguateTarget(
   candidate: RecordingCandidate,
   productionType: string | undefined,
@@ -161,11 +112,7 @@ async function disambiguateTarget(
   deps: ImportPipelineDeps,
   rebuild: (label: string) => string,
 ): Promise<OccupiedResolution> {
-  // Sanitize the derived label into a path-safe discriminator BEFORE the no-disambiguator guard
-  // (#1739, F5): `deriveEditionLabel` returns the raw trimmed narrator name, so a label like `:::`
-  // or control chars is truthy yet path-empty. Gating on the sanitized discriminator makes a
-  // distinct recording whose label sanitizes to nothing deterministically held for review rather
-  // than collapsed onto the occupied base folder.
+  // Gate on sanitized output: a truthy raw label like `:::` can still become path-empty.
   const discriminator = sanitizeEditionDiscriminator(deriveEditionLabel(candidate.narrators, productionType));
   if (!discriminator) {
     throw new OwnedRecordingError({
@@ -178,7 +125,7 @@ async function disambiguateTarget(
   if (await getTargetAudioSize(newTarget) === 0) {
     return { targetPath: newTarget, editionLabel: discriminator, swap: false };
   }
-  // The disambiguated folder is itself occupied — only a same-recording re-import may swap.
+  // An occupied edition folder may swap only for a same-recording re-import.
   const newOwners = await deps.bookService.findPathOwners(normalize(resolve(newTarget)));
   if (newOwners.length === 1 && resolveRecordingIdentity(candidate, toLibraryRecording(newOwners[0]!)).verdict === 'same-recording') {
     return { targetPath: newTarget, editionLabel: discriminator, swap: true };
@@ -190,22 +137,7 @@ async function disambiguateTarget(
   });
 }
 
-/**
- * Resolve how to place a candidate onto an OCCUPIED target (#1711). Branches on
- * path-owner cardinality, then the recording verdict — see the Disposition
- * Contract. Never permits a staged swap except for exactly-one-owner +
- * same-recording.
- *
- * Force contract (#1736), copy-time half: this fence does NOT take `forceImport` and is NOT
- * relaxed by it — `forceImport` only bypasses the confirm-time bibliographic dedup (see
- * `classifyConfirmItem`); the on-disk never-overwrite invariant holds regardless. Every uncertain
- * case still throws `OwnedRecordingError`. The change in #1736 is downstream and FORCE-SCOPED: when
- * the refused import was forced, that typed throw drives a DISTINCT refused terminal disposition in
- * `ImportQueueWorker` (placeholder cleanup + structured `forced-import-refused` reason) instead of an
- * opaque generic failure — so the two halves agree that force never silently overwrites an occupied
- * target. A NON-forced throw from this same fence is an ordinary generic failure (it was never
- * user-forced, so it is not a "force refused" event) — the worker/adapter gate on `forceImport`.
- */
+// forceImport bypasses bibliographic dedup only; it never relaxes occupied-path overwrite protection.
 async function resolveOccupiedTarget(
   baseTargetPath: string,
   candidate: RecordingCandidate,
@@ -220,15 +152,13 @@ async function resolveOccupiedTarget(
     if (verdict === 'different-recording') {
       return disambiguateTarget(candidate, productionType, owners[0]!, deps, rebuild);
     }
-    // review / no-signal → never overwrite.
     throw new OwnedRecordingError({ existingBookId: owners[0]!.id, title: owners[0]!.title, reason: 'recording-review' });
   }
   if (owners.length === 0) {
-    // Audio on disk but no row claims this exact path: cannot identify a recording
-    // to compare — disambiguate to a new folder when possible, else review.
+    // Unowned on-disk audio cannot be compared; disambiguate or fail review.
     return disambiguateTarget(candidate, productionType, null, deps, rebuild);
   }
-  // 2+ owners (data anomaly) → never staged-swap.
+  // Ambiguous ownership never permits a staged swap.
   throw new OwnedRecordingError({ existingBookId: owners[0]!.id, title: owners[0]!.title, reason: 'recording-review-ambiguous-owner' });
 }
 
@@ -244,13 +174,7 @@ export async function copyToLibrary(
 
   const librarySettings = await settingsService.get('library');
   const namingOptions = toNamingOptions(librarySettings);
-  // Item-first, two-state, pair-locked series resolution (#1927) — the SAME shared
-  // resolver `buildBookCreatePayload` uses, so the physical library folder and the
-  // stored DB record resolve the series identically. A user's explicit series edit
-  // wins; an absent (empty/whitespace) item series defers to the matched metadata's
-  // primary (`pickPrimarySeries`: `seriesPrimary` over `series[0]`, #1088/#1097). The
-  // resolver preserves a padded name verbatim; `buildTargetPath`/`sanitizePath` below
-  // is the sole on-disk normalizer, unchanged by this work.
+  // Match DB creation: explicit item series wins, otherwise use metadata primary; only path building normalizes it.
   const series = resolveImportSeries(item, pickPrimarySeries(meta));
   const targetBook = {
     title: item.title,
@@ -261,8 +185,6 @@ export async function copyToLibrary(
       : (meta?.narrators?.length ? meta.narrators.map(n => ({ name: n })) : undefined),
     publishedDate: meta?.publishedDate,
   };
-  // Rebuild closure (#1711): re-render the SAME path with an edition-label suffix
-  // when a different-recording collision needs disambiguating.
   const rebuild = (label: string): string =>
     buildTargetPath(librarySettings.path, librarySettings.folderFormat, targetBook, item.authorName ?? null, namingOptions, label);
   let targetPath = rebuild('');
@@ -278,26 +200,16 @@ export async function copyToLibrary(
     throw new Error('Source path is inside the library root — cannot import a path already managed by the library');
   }
 
-  // Coalesced disc-group row: `item.path` is only the lowest-disc member. Reconstruct the full
-  // member set from disk and flatten every disc into one target (AC7), instead of copying just one.
+  // A coalesced row points only at the lowest disc; reconstruct every member before flattening.
   const memberPaths = await reconstructDiscGroup(item.path);
   if (memberPaths.length >= 2) {
     return copyDiscGroupToLibrary(item, meta, targetPath, memberPaths, mode, deps, librarySettings.path, rebuild, onProgress);
   }
 
-  // Recover any interrupted commit (#1337) BEFORE the populated-target gate: an
-  // audio-empty target with an armed marker must restore its stranded originals
-  // first, so the gate below routes through the staged swap instead of the
-  // fast path orphaning the marker/backup. No-op when no commit was interrupted.
+  // Recover marker-armed commits before occupancy checks, or an audio-empty target takes the orphaning fast path.
   await recoverInterruptedCommit(targetPath, librarySettings.path, log);
 
-  // Populated-target guard (#1287) + cross-row collision fence (#1711): a manual
-  // import whose computed target already contains audio must NOT merge-copy in
-  // place. Resolve the occupied target's owner(s) and the recording verdict — a
-  // staged swap is permitted ONLY for exactly-one-owner + same-recording; a
-  // different recording disambiguates into a new `(edition)` folder (keep-both),
-  // and every uncertain case throws (never overwrite). Empty/missing target keeps
-  // the simple direct-copy fast path below (AC3).
+  // Occupied audio swaps only for one same-recording owner; differences disambiguate and uncertainty throws.
   if (await getTargetAudioSize(targetPath) > 0) {
     const candidate = buildRecordingCandidate(item, meta);
     const productionType = meta?.formatType ? normalizeProductionType(meta.formatType) : undefined;
@@ -314,27 +226,18 @@ export async function copyToLibrary(
         stage: (stagingPath) => stageSourceAudio({ sourcePath: item.path, targetPath: stagingPath, sourceStats, log, onProgress }),
       });
       if (mode === 'move') {
-        // Post-commit cleanup: the staged swap has already committed the new audio to the library.
         await cleanupSourceManagedFilesNonfatal(item.path, librarySettings.path, log, SINGLE_SOURCE_CLEANUP);
       }
       return { targetPath: occ.targetPath };
     }
-    // Different recording (or 0-owner) → keep-both: copy into the disambiguated,
-    // freshly-empty folder; the incumbent's audio is never touched. Fall through
-    // to the empty-target copy on the new path.
+    // Keep both: switch to the empty disambiguated target and fall through.
     log.info({ source: item.path, base: targetPath, disambiguated: occ.targetPath, editionLabel: occ.editionLabel }, 'Different recording on occupied target — copying into a disambiguated folder (keep-both)');
     targetPath = occ.targetPath;
     editionLabel = occ.editionLabel;
     await recoverInterruptedCommit(targetPath, librarySettings.path, log);
   }
 
-  // Empty-target fast path (#1602): import AUDIO ONLY by reusing the SAME copier the populated-target
-  // staged swap uses (`stageSourceAudio`/`copyToLibrary`), so the foreign-file outcome can no longer
-  // diverge between the two paths. It branches directory-vs-file internally: a directory source drops
-  // non-audio members (co-located `.epub`/`.pdf`/`.nfo`/images), an audio single-file source is copied
-  // (file-path manual imports stay supported), and a non-audio single-file source is rejected with
-  // `ContentFailureError`. It also mkdir's the target itself, so the standalone `mkdir` + whole-tree
-  // `cp`/`streamCopyWithProgress` (which copied foreign files verbatim) are gone.
+  // Reuse the audio-only copier: directories drop foreign files, audio files work, and non-audio files fail.
   const sourceStats = await stat(item.path);
   log.info({ source: item.path, target: targetPath, mode }, 'Copying files to library');
   await stageSourceAudio({ sourcePath: item.path, targetPath, sourceStats, log, onProgress });
@@ -345,20 +248,13 @@ export async function copyToLibrary(
   assertCopyVerified(sourceSize, targetSize);
 
   if (mode === 'move') {
-    // Empty-target move cleanup (#1598): route source removal through the managed-file helper
-    // instead of a blanket `rm(item.path, { recursive: true })`, so a co-located foreign file
-    // (e.g. a bundled .epub/.pdf) is preserved (#1589) AND a top-level symlinked source is not
-    // followed. The copy above is already verified, so this matches the populated-target cleanup.
     await cleanupSourceManagedFilesNonfatal(item.path, librarySettings.path, log, SINGLE_SOURCE_CLEANUP);
   }
 
   return { targetPath, ...(editionLabel !== undefined && { editionLabel }) };
 }
 
-/**
- * Flatten a reconstructed multi-disc set into the library target. Aggregates source size across
- * all member discs for copy verification and removes every member folder on `move`.
- */
+// Flatten all disc members and verify against their aggregate source bytes.
 async function copyDiscGroupToLibrary(
   item: ImportConfirmItem,
   meta: BookMetadata | null,
@@ -375,16 +271,10 @@ async function copyDiscGroupToLibrary(
   let editionLabel: string | undefined;
   log.info({ source: item.path, discMembers: memberPaths.length, target: targetPath, mode }, 'Flattening multi-disc group to library');
 
-  // Recover any interrupted commit (#1337) BEFORE the populated-target gate — the
-  // disc-group flatten has the identical marker-orphaning gap as the single-source
-  // path. No-op when no commit was interrupted.
+  // Preserve the single-source path's pre-occupancy recovery ordering.
   await recoverInterruptedCommit(targetPath, libraryRoot, log);
 
-  // Populated-target guard (#1287, AC5) + cross-row collision fence (#1711): the
-  // disc-group flatten has the identical merge-into-target gap as the single-source
-  // path. Resolve the occupied target's owner(s) and verdict — staged swap ONLY for
-  // exactly-one-owner + same-recording; a different recording disambiguates; every
-  // uncertain case throws (never overwrite).
+  // Disc groups use the same collision fence as single-source imports.
   if (await getTargetAudioSize(targetPath) > 0) {
     const candidate = buildRecordingCandidate(item, meta);
     const productionType = meta?.formatType ? normalizeProductionType(meta.formatType) : undefined;
@@ -394,7 +284,6 @@ async function copyDiscGroupToLibrary(
       targetPath = occ.targetPath;
       editionLabel = occ.editionLabel;
       await recoverInterruptedCommit(targetPath, libraryRoot, log);
-      // fall through to the empty-target disc copy on the new path.
     } else {
     let sourceAudioSize = 0;
     for (const memberPath of memberPaths) {
@@ -409,12 +298,7 @@ async function copyDiscGroupToLibrary(
       stage: (stagingPath) => copyDiscGroup(memberPaths, stagingPath, onProgress),
     });
     if (mode === 'move') {
-      // Post-commit cleanup: the staged swap has already committed all discs' audio. Delete only
-      // MANAGED files from each source disc folder (#1589) so a bundled e-book/PDF is preserved.
-      // Sources are OUTSIDE the library root → containment guard opted out. Nonfatal — a vanished
-      // member (ENOENT) is a no-op and a locked managed file is recorded, not thrown.
-      // Per-member (#1591): post-commit cleanup must not fail the already-committed import, and one
-      // failing disc must not skip the rest — `cleanupSourceManagedFilesNonfatal` swallows per call.
+      // Per-member cleanup is nonfatal after commit, so one bad disc cannot skip the rest.
       for (const memberPath of memberPaths) {
         await cleanupSourceManagedFilesNonfatal(memberPath, libraryRoot, log, DISC_SOURCE_CLEANUP);
       }
@@ -435,11 +319,6 @@ async function copyDiscGroupToLibrary(
   assertCopyVerified(sourceSize, targetSize);
 
   if (mode === 'move') {
-    // Empty-target multi-disc move cleanup (#1598): route each member through the managed-file
-    // helper instead of a blanket `rm(memberPath, { recursive: true })`, mirroring the single-source
-    // empty-target path above so the two stay consistent. Per-member nonfatal (matching the
-    // populated-target multi-disc cleanup): one failing disc must not fail the committed import or
-    // skip the remaining members.
     for (const memberPath of memberPaths) {
       await cleanupSourceManagedFilesNonfatal(memberPath, libraryRoot, log, DISC_SOURCE_CLEANUP);
     }
