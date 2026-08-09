@@ -33,26 +33,22 @@ describe('AuthService', () => {
 
   describe('initialize', () => {
     it('creates default auth settings (mode=none, apiKey, sessionSecret) on first run', async () => {
-      // No existing auth settings
       db.select.mockReturnValue(mockDbChain([]));
 
       await service.initialize();
 
       expect(db.insert).toHaveBeenCalled();
-      // Verify the inserted value has the expected shape
       const insertChain = db.insert.mock.results[0]!.value;
       const valuesCall = insertChain.values.mock.calls[0][0];
       expect(valuesCall.key).toBe('auth');
       const config = valuesCall.value;
       expect(config.mode).toBe('none');
-      // Secret fields are encrypted before storage
       expect(isEncrypted(config.apiKey)).toBe(true);
       expect(isEncrypted(config.sessionSecret)).toBe(true);
       expect(config.localBypass).toBe(false);
     });
 
     it('is idempotent (does not overwrite existing settings)', async () => {
-      // Auth settings already exist
       db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: { mode: 'none', apiKey: 'existing' } }]));
 
       await service.initialize();
@@ -63,7 +59,6 @@ describe('AuthService', () => {
 
   describe('createUser', () => {
     it('hashes password with scrypt, stores in users table', async () => {
-      // No existing user
       db.select.mockReturnValue(mockDbChain([]));
 
       await service.createUser('admin', 'password123');
@@ -72,7 +67,6 @@ describe('AuthService', () => {
       const insertChain = db.insert.mock.results[0]!.value;
       const valuesCall = insertChain.values.mock.calls[0][0];
       expect(valuesCall.username).toBe('admin');
-      // Password hash should be salt:hash format
       expect(valuesCall.passwordHash).toMatch(/^[a-f0-9]+:[a-f0-9]+$/);
     });
 
@@ -85,20 +79,17 @@ describe('AuthService', () => {
 
   describe('verifyCredentials', () => {
     it('returns user on valid credentials', async () => {
-      // First create a user to get a real hash
       db.select.mockReturnValueOnce(mockDbChain([])); // createUser check
       await service.createUser('admin', 'password123');
       const insertChain = db.insert.mock.results[0]!.value;
       const storedHash = insertChain.values.mock.calls[0][0].passwordHash;
 
-      // Now verify — return the stored user
       db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedHash }]));
       const result = await service.verifyCredentials('admin', 'password123');
       expect(result).toEqual({ username: 'admin' });
     });
 
     it('returns null on invalid password', async () => {
-      // Create user first to get real hash
       db.select.mockReturnValueOnce(mockDbChain([]));
       await service.createUser('admin', 'password123');
       const insertChain = db.insert.mock.results[0]!.value;
@@ -115,9 +106,7 @@ describe('AuthService', () => {
       expect(result).toBeNull();
     });
 
-    // Timing-oracle mitigation (#1179): the `null`-returning branches that
-    // would otherwise skip scrypt must still run a dummy scrypt so login
-    // timing does not distinguish "username exists" from "wrong password".
+    // Every null path still pays one dummy scrypt so username existence is not timing-visible.
     it('runs scrypt on the user-not-found branch (timing-oracle mitigation)', async () => {
       db.select.mockReturnValue(mockDbChain([]));
       vi.mocked(scrypt).mockClear();
@@ -145,7 +134,6 @@ describe('AuthService', () => {
     });
 
     it('runs scrypt on the malformed-passwordHash branch', async () => {
-      // passwordHash with no `:` separator — fails the parts.length !== 2 check.
       db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: 'notavalidhash' }]));
       vi.mocked(scrypt).mockClear();
 
@@ -167,7 +155,7 @@ describe('AuthService', () => {
       const firstSalt = vi.mocked(scrypt).mock.calls[0]![1] as Buffer;
       const secondSalt = vi.mocked(scrypt).mock.calls[1]![1] as Buffer;
       expect(Buffer.isBuffer(firstSalt)).toBe(true);
-      // AC #3: DUMMY_SALT is a 16-byte Buffer (matches the real createUser salt size).
+      // The dummy salt must match createUser's 16-byte salt size.
       expect(firstSalt.length).toBe(16);
       expect((firstSalt as Buffer).equals(secondSalt)).toBe(true);
     });
@@ -186,7 +174,6 @@ describe('AuthService', () => {
       expect(valuesCall.key).toBe('auth');
       const stored = valuesCall.value as { mode: string; apiKey: string; sessionSecret: string; localBypass: boolean };
       expect(stored.localBypass).toBe(true);
-      // Decrypt and compare to prove the original values were preserved, not regenerated
       const decrypted = decryptFields('auth', { ...stored }, TEST_KEY) as typeof authConfig;
       expect(decrypted.apiKey).toBe('original-key');
       expect(decrypted.sessionSecret).toBe('original-secret');
@@ -203,7 +190,6 @@ describe('AuthService', () => {
       const valuesCall = insertChain.values.mock.calls[0][0];
       const stored = valuesCall.value as { mode: string; apiKey: string; sessionSecret: string; localBypass: boolean };
       expect(stored.localBypass).toBe(false);
-      // Decrypt and compare to prove the original values were preserved, not regenerated
       const decrypted = decryptFields('auth', { ...stored }, TEST_KEY) as typeof authConfig;
       expect(decrypted.apiKey).toBe('original-key');
       expect(decrypted.sessionSecret).toBe('original-secret');
@@ -211,20 +197,18 @@ describe('AuthService', () => {
   });
 
   describe('changePassword', () => {
-    /** Auth config row returned to changePassword's getAuthConfig (rotation read). */
     const rotationConfig = (sessionSecret = 'old-session-secret') => ({
       key: 'auth',
       value: { mode: 'forms' as const, apiKey: 'api-key-123', sessionSecret, localBypass: false },
     });
 
     it('succeeds with correct current password and returns the effective username', async () => {
-      // Create user
       db.select.mockReturnValueOnce(mockDbChain([]));
       await service.createUser('admin', 'oldpassword');
       const insertChain = db.insert.mock.results[0]!.value;
       const storedHash = insertChain.values.mock.calls[0][0].passwordHash;
 
-      // changePassword: verifyCredentials (select user) → update → getAuthConfig (select auth) → setAuthConfig (insert)
+      // verifyCredentials select, then the rotation-config select.
       db.select
         .mockReturnValueOnce(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedHash }]))
         .mockReturnValueOnce(mockDbChain([rotationConfig()]));
@@ -254,7 +238,6 @@ describe('AuthService', () => {
 
       const oldSecret = 'old-session-secret';
       const oldCookie = service.createSessionCookie('admin', oldSecret);
-      // Sanity: the cookie verifies under the pre-rotation secret.
       expect(service.verifySessionCookie(oldCookie, oldSecret)).not.toBeNull();
 
       db.select
@@ -265,19 +248,14 @@ describe('AuthService', () => {
 
       await service.changePassword('admin', 'oldpassword', 'newpassword');
 
-      // setAuthConfig persisted the rotated config (insert...onConflict).
       const storedConfig = db.insert.mock.results[0]!.value.values.mock.calls[0][0].value as { sessionSecret: string; apiKey: string };
-      // AC#2: sessionSecret is persisted encrypted, not just held in memory.
       expect(isEncrypted(storedConfig.sessionSecret)).toBe(true);
       const decrypted = decryptFields('auth', { ...storedConfig }, TEST_KEY) as { sessionSecret: string; apiKey: string };
       const newSecret = decrypted.sessionSecret;
       expect(newSecret).not.toBe(oldSecret);
-      // AC#3: API key untouched by rotation.
       expect(decrypted.apiKey).toBe('api-key-123');
 
-      // AC#1: the old cookie no longer verifies under the rotated secret.
       expect(service.verifySessionCookie(oldCookie, newSecret)).toBeNull();
-      // Reissue path is sound: a fresh cookie under the new secret verifies.
       const newCookie = service.createSessionCookie('admin', newSecret);
       expect(service.verifySessionCookie(newCookie, newSecret)).not.toBeNull();
     });
@@ -294,7 +272,6 @@ describe('AuthService', () => {
       await expect(service.changePassword('admin', 'wrongpassword', 'newpassword'))
         .rejects.toThrow('Current password is incorrect');
 
-      // No credential update and no setAuthConfig write → secret unchanged.
       expect(db.update).not.toHaveBeenCalled();
       expect(db.insert).not.toHaveBeenCalled();
     });
@@ -313,12 +290,10 @@ describe('AuthService', () => {
 
       await expect(service.changePassword('admin', 'oldpassword', 'newpassword'))
         .rejects.toThrow('rotation write failed');
-      // The credential update already landed before the rotation write failed.
       expect(db.update).toHaveBeenCalled();
     });
 
     it('timingSafeEqual is called with stored and derived hash buffers on correct password', async () => {
-      // Create a real user to obtain a valid password hash
       db.select.mockReturnValueOnce(mockDbChain([]));
       await service.createUser('admin', 'correctpass');
       const insertChain = db.insert.mock.results[0]!.value;
@@ -331,12 +306,10 @@ describe('AuthService', () => {
       const result = await service.verifyCredentials('admin', 'correctpass');
 
       expect(result).toEqual({ username: 'admin' });
-      // timingSafeEqual must receive the stored hash buffer as the first argument
       expect(timingSafeEqual).toHaveBeenCalledWith(expectedStoredBuf, expect.any(Buffer));
     });
 
     it('timingSafeEqual is called during verifyCredentials (not short-circuited on wrong password)', async () => {
-      // Create a real user to obtain a valid password hash
       db.select.mockReturnValueOnce(mockDbChain([]));
       await service.createUser('admin', 'correctpass');
       const insertChain = db.insert.mock.results[0]!.value;
@@ -344,17 +317,14 @@ describe('AuthService', () => {
       const [, hashHex] = storedPasswordHash.split(':');
       const expectedStoredBuf = Buffer.from(hashHex!, 'hex');
 
-      // Verify with wrong password — timingSafeEqual must still be called (not short-circuited)
       db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedPasswordHash }]));
       vi.clearAllMocks();
       const result = await service.verifyCredentials('admin', 'wrongpass');
 
       expect(result).toBeNull();
-      // Even on wrong password, timingSafeEqual must be called with the real stored hash buffer
       expect(timingSafeEqual).toHaveBeenCalledWith(expectedStoredBuf, expect.any(Buffer));
     });
     it('rejects with incorrect current password', async () => {
-      // Create user
       db.select.mockReturnValueOnce(mockDbChain([]));
       await service.createUser('admin', 'oldpassword');
       const insertChain = db.insert.mock.results[0]!.value;
@@ -369,7 +339,6 @@ describe('AuthService', () => {
 
   describe('updateMode', () => {
     it('rejects forms/basic when no user exists', async () => {
-      // No users
       db.select
         .mockReturnValueOnce(mockDbChain([])) // user count check
         ;
@@ -379,7 +348,6 @@ describe('AuthService', () => {
     });
 
     it('allows switching to "none" without user', async () => {
-      // Return auth config for getAuthConfig
       const authConfig = { mode: 'forms', apiKey: 'test-key', sessionSecret: 'test-secret', localBypass: false };
       db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: authConfig }]));
 
@@ -390,7 +358,6 @@ describe('AuthService', () => {
 
   describe('decrypted blob validation', () => {
     it('throws when the decrypted blob is missing required fields', async () => {
-      // Persisted blob lacks apiKey/sessionSecret/localBypass — mimics a tampered or migrated DB row
       const malformed = { mode: 'none' };
       db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: malformed }]));
 
@@ -457,7 +424,6 @@ describe('AuthService', () => {
       const result = await service.validateApiKey('short');
 
       expect(result).toBe(false);
-      // SHA-256-then-compare: must invoke timingSafeEqual on every call regardless of input length.
       expect(timingSafeEqual).toHaveBeenCalledTimes(1);
       const expectedHash = createHash('sha256').update('test-key-123').digest();
       const providedHash = createHash('sha256').update('short').digest();
@@ -489,15 +455,14 @@ describe('AuthService', () => {
 
       expect(db.delete).toHaveBeenCalled();
 
-      // Assert setAuthConfig was called with mode: 'none' and preserved apiKey/sessionSecret/localBypass
       const insertChain = db.insert.mock.results[0]!.value;
       const valuesCall = insertChain.values.mock.calls[0][0];
       expect(valuesCall.key).toBe('auth');
       const storedConfig = valuesCall.value as { mode: string; apiKey: string; sessionSecret: string; localBypass: boolean };
       expect(storedConfig.mode).toBe('none');
-      expect(isEncrypted(storedConfig.apiKey)).toBe(true);      // apiKey preserved (re-encrypted)
-      expect(isEncrypted(storedConfig.sessionSecret)).toBe(true); // sessionSecret preserved (re-encrypted)
-      expect(storedConfig.localBypass).toBe(false);              // localBypass preserved
+      expect(isEncrypted(storedConfig.apiKey)).toBe(true);
+      expect(isEncrypted(storedConfig.sessionSecret)).toBe(true);
+      expect(storedConfig.localBypass).toBe(false);
     });
 
     it('throws NoCredentialsError when no user exists', async () => {
@@ -515,7 +480,6 @@ describe('AuthService', () => {
       const parts = cookie.split('.');
       expect(parts).toHaveLength(2);
 
-      // Decode payload
       const payload = JSON.parse(Buffer.from(parts[0]!, 'base64url').toString());
       expect(payload.username).toBe('admin');
       expect(payload.issuedAt).toBeTypeOf('number');
@@ -529,7 +493,7 @@ describe('AuthService', () => {
 
       expect(result).not.toBeNull();
       expect(result!.payload.username).toBe('admin');
-      expect(result!.shouldRenew).toBe(false); // Just created, not past 50%
+      expect(result!.shouldRenew).toBe(false);
     });
 
     it('verifySessionCookie returns null for tampered signature', () => {
@@ -541,7 +505,6 @@ describe('AuthService', () => {
     });
 
     it('verifySessionCookie returns null for expired cookie', () => {
-      // Create a cookie with past expiry by manipulating time
       const now = Date.now();
       vi.spyOn(Date, 'now')
         .mockReturnValueOnce(now - 8 * 24 * 60 * 60 * 1000) // issuedAt: 8 days ago
@@ -560,7 +523,6 @@ describe('AuthService', () => {
     });
 
     it('verifySessionCookie returns null for corrupted base64 payload (valid sig, bad JSON)', () => {
-      // Build a cookie with valid HMAC signature but non-JSON payload
       const corruptedB64 = Buffer.from('not-valid-json!!!').toString('base64url');
       const sig = createHmac('sha256', secret).update(corruptedB64).digest('base64url');
       const cookie = `${corruptedB64}.${sig}`;
@@ -569,7 +531,6 @@ describe('AuthService', () => {
     });
 
     it('getSessionSecret returns sessionSecret from auth config', async () => {
-      // Mock getAuthConfig to return auth settings with a plain sessionSecret
       db.select.mockReturnValue(
         mockDbChain([{ key: 'auth', value: { mode: 'none', apiKey: 'key', sessionSecret: 'my-secret', localBypass: false } }]),
       );
@@ -579,37 +540,31 @@ describe('AuthService', () => {
     });
 
     it('getSessionSecret throws when auth config is missing (not initialized)', async () => {
-      // getAuthConfig returns empty result → throws
       db.select.mockReturnValue(mockDbChain([]));
 
       await expect(service.getSessionSecret()).rejects.toThrow('Auth settings not initialized');
     });
 
     it('verifySessionCookie returns null, invokes timingSafeEqual, and logs generic mismatch for wrong-length signature', () => {
-      // Build a cookie with a valid payload but a signature of wrong length
       const payloadB64 = Buffer.from(JSON.stringify({
         username: 'admin',
         issuedAt: Date.now(),
         expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
       })).toString('base64url');
-      // Real signature would be ~43 chars; use a short one that previously triggered length-leak short-circuit
       const shortSig = 'short';
       const cookie = `${payloadB64}.${shortSig}`;
 
       const log = inject<{ debug: ReturnType<typeof vi.fn> }>(createMockLogger());
       const logService = new AuthService(inject<Db>(db), log as never);
 
-      // Clear timingSafeEqual spy call count before this test
       vi.mocked(timingSafeEqual).mockClear();
 
       const result = logService.verifySessionCookie(cookie, secret);
 
       expect(result).toBeNull();
-      // Generic mismatch message — length-mismatch path is gone after #809
       expect(log.debug).toHaveBeenCalledWith('Auth: cookie signature mismatch');
-      // timingSafeEqual MUST be called even for wrong-length sigs (no length leak)
       expect(timingSafeEqual).toHaveBeenCalledTimes(1);
-      // Both args are SHA-256 digests (32 bytes)
+      // Both arguments are fixed-length SHA-256 digests.
       const expectedSig = createHmac('sha256', secret).update(payloadB64).digest('base64url');
       const expectedHash = createHash('sha256').update(expectedSig).digest();
       const providedHash = createHash('sha256').update(shortSig).digest();
@@ -623,12 +578,10 @@ describe('AuthService', () => {
         expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
       })).toString('base64url');
 
-      // Short bogus sig
       vi.mocked(timingSafeEqual).mockClear();
       expect(service.verifySessionCookie(`${payloadB64}.x`, secret)).toBeNull();
       expect(timingSafeEqual).toHaveBeenCalledTimes(1);
 
-      // Long bogus sig
       vi.mocked(timingSafeEqual).mockClear();
       const longSig = 'a'.repeat(200);
       expect(service.verifySessionCookie(`${payloadB64}.${longSig}`, secret)).toBeNull();
@@ -637,7 +590,6 @@ describe('AuthService', () => {
 
     it('sliding expiry: cookie >50% through TTL flagged for renewal', () => {
       const now = Date.now();
-      // Create cookie issued 4 days ago (>50% of 7-day TTL)
       vi.spyOn(Date, 'now')
         .mockReturnValueOnce(now - 4 * 24 * 60 * 60 * 1000) // creation time
         ;
@@ -650,10 +602,7 @@ describe('AuthService', () => {
     });
   });
 
-  // #1453 — stream token mint/verify with token-type domain separation. The
-  // stream token authenticates the SSE endpoints without exposing the API key or
-  // a long-lived session secret in the URL; it must be non-interchangeable with a
-  // session cookie even under secret reuse.
+  // Domain-separated signing prevents stream tokens and session cookies from interchanging.
   describe('stream token (#1453)', () => {
     const secret = 'test-secret-key-for-hmac';
 
@@ -664,7 +613,6 @@ describe('AuthService', () => {
       const payload = service.verifyStreamToken(token, secret);
       expect(payload).not.toBeNull();
       expect(payload!.kind).toBe('stream');
-      // No username on a stream token.
       expect((payload as unknown as Record<string, unknown>).username).toBeUndefined();
     });
 
@@ -683,7 +631,6 @@ describe('AuthService', () => {
 
     it('verifyStreamToken returns null for an expired token', () => {
       const now = Date.now();
-      // Mint with issuedAt 10 minutes ago → expiresAt (issuedAt + 5min) is in the past.
       vi.spyOn(Date, 'now').mockReturnValueOnce(now - 10 * 60 * 1000);
       const token = service.mintStreamToken(secret);
       vi.restoreAllMocks();
@@ -705,12 +652,9 @@ describe('AuthService', () => {
 
     it('a session renewal between mint and verify does NOT invalidate a still-live stream token', () => {
       const token = service.mintStreamToken(secret);
-      // A session cookie issued (or renewed) after the token does not touch the
-      // token — the secret is the same, so it still verifies and is NOT renewed.
       service.createSessionCookie('admin', secret);
       const payload = service.verifyStreamToken(token, secret);
       expect(payload).not.toBeNull();
-      // Stream tokens have no sliding-renewal signal (unlike SessionVerifyResult).
       expect((payload as unknown as Record<string, unknown>).shouldRenew).toBeUndefined();
     });
 
@@ -726,9 +670,7 @@ describe('AuthService', () => {
       });
 
       it('a hand-crafted {issuedAt,expiresAt} payload signed with the RAW session secret is rejected by verifyStreamToken', () => {
-        // This is the exact pre-#1453 shape that would have verified as a session
-        // cookie. Signed with the raw secret, it fails verifyStreamToken at the
-        // domain-separated-secret signature check.
+        // Reproduce the pre-domain-separation payload and raw-secret signature.
         const payloadB64 = Buffer.from(JSON.stringify({ issuedAt: Date.now(), expiresAt: Date.now() + 10_000 })).toString('base64url');
         const rawSig = createHmac('sha256', secret).update(payloadB64).digest('base64url');
         expect(service.verifyStreamToken(`${payloadB64}.${rawSig}`, secret)).toBeNull();
@@ -765,9 +707,6 @@ describe('AuthService', () => {
   });
 });
 
-// #1404 — AuthService threads `this.log` into decryptFields so a corrupt/wrong-key
-// auth secret (sessionSecret / apiKey) surfaces a diagnostic instead of silently
-// breaking downstream auth.
 describe('AuthService decrypt-failure diagnostic (#1404)', () => {
   let db: ReturnType<typeof createMockDb>;
   let log: ReturnType<typeof createMockLogger>;
@@ -808,7 +747,6 @@ describe('AuthService decrypt-failure diagnostic (#1404)', () => {
     const warns = decryptWarn();
     expect(warns).toHaveLength(1);
     expect(warns[0]![0]).toEqual({ entity: 'auth', failedFields: ['apiKey', 'sessionSecret'] });
-    // Negative-leak: no plaintext or raw blob in the warn args.
     const serialized = JSON.stringify(warns);
     expect(serialized).not.toContain('plaintext-api-key');
     expect(serialized).not.toContain('plaintext-session-secret');
