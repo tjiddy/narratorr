@@ -66,32 +66,30 @@ describe('LastImportPanel (#1894)', () => {
   });
 
   it('uses completedAt for the relative time on a complete run (frozen clock, F24)', async () => {
-    // Freeze ONLY Date so `formatRelativeDate`'s `new Date()` is deterministic while
-    // real timers still drive findBy — no ambient-clock flake on exact "3h ago".
+    // Freeze Date only so relative time is deterministic without stalling findBy.
     vi.useFakeTimers({ toFake: ['Date'] });
     const now = new Date('2026-07-21T12:00:00.000Z');
     vi.setSystemTime(now);
     listImportSubmissions.mockResolvedValue({
       data: [summary({
         status: 'complete',
-        createdAt: new Date(now.getTime() - 60 * 1000).toISOString(), // 1m ago
-        completedAt: new Date(now.getTime() - 3 * 3600 * 1000).toISOString(), // 3h ago
+        createdAt: new Date(now.getTime() - 60 * 1000).toISOString(),
+        completedAt: new Date(now.getTime() - 3 * 3600 * 1000).toISOString(),
       })],
       total: 1,
     });
     renderWithProviders(<LastImportPanel source="library" />);
     await screen.findByTestId('last-import-panel');
     expect(screen.getByText('Completed')).toBeInTheDocument();
-    expect(screen.getByText('3h ago')).toBeInTheDocument(); // completedAt, not createdAt's "1m ago"
+    expect(screen.getByText('3h ago')).toBeInTheDocument();
   });
 
   it('malformed latest DTO → inline error + effect-keyed warn (F2)', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    // `status` is not a valid submission status → summary schema safeParse fails.
     listImportSubmissions.mockResolvedValue({ data: [{ ...summary(), status: 'bogus' }], total: 1 });
     renderWithProviders(<LastImportPanel source="library" />);
     await screen.findByTestId('last-import-malformed');
-    expect(screen.queryByTestId('last-import-panel')).not.toBeInTheDocument(); // never reaches StatusChip
+    expect(screen.queryByTestId('last-import-panel')).not.toBeInTheDocument();
     await waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining('Malformed'), expect.anything()));
     warn.mockRestore();
   });
@@ -117,7 +115,7 @@ describe('LastImportPanel (#1894)', () => {
     expect(screen.getByText('Held One')).toBeInTheDocument();
     expect(screen.getByText('Disk full')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Dune' })).toHaveAttribute('href', '/books/9');
-    expect(screen.queryByText('Accepted One')).not.toBeInTheDocument(); // accepted is count-only
+    expect(screen.queryByText('Accepted One')).not.toBeInTheDocument();
   });
 
   it('shows "Details expired" when the expansion returns a pruned record', async () => {
@@ -133,33 +131,31 @@ describe('LastImportPanel (#1894)', () => {
   it('shows an inline error + retry when the latest read fails with no cached data', async () => {
     listImportSubmissions.mockRejectedValue(new Error('boom'));
     renderWithProviders(<LastImportPanel source="library" />);
-    // The hook uses retry:2 (exponential backoff ~1s+2s) before surfacing the error.
+    // retry:2 requires the extended timeout.
     await screen.findByText('Couldn’t load the last import.', {}, { timeout: 8000 });
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   }, 12000);
 
   it('fresh-on-mount over a cached run: last-good stays visible with "refreshing…" (not a skeleton) while a network refetch runs (F15/F57)', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    // Cache already holds a prior (complete) run for this source.
     qc.setQueryData(queryKeys.importSubmissions.latest('library'), summary({ status: 'complete', completedAt: new Date().toISOString() }));
     let resolveFetch!: () => void;
     listImportSubmissions.mockReturnValue(new Promise((r) => { resolveFetch = () => r({ data: [summary({ status: 'processing' })], total: 1 }); }));
 
     renderWithProviders(<LastImportPanel source="library" />, { queryClient: qc });
 
-    // Mount refetch fires (fresh request) while the last-good content stays visible.
     await waitFor(() => expect(listImportSubmissions).toHaveBeenCalled());
     expect(screen.getByTestId('last-import-panel')).toBeInTheDocument();
-    expect(screen.getByText('Completed')).toBeInTheDocument(); // last-good, not blanked
+    expect(screen.getByText('Completed')).toBeInTheDocument();
     expect(screen.getByTestId('last-import-refreshing')).toBeInTheDocument();
     expect(screen.queryByTestId('last-import-skeleton')).not.toBeInTheDocument();
 
     resolveFetch();
-    await screen.findByText('Processing'); // updates when the fresh fetch resolves
+    await screen.findByText('Processing');
   });
 
   it('cold first load with no cache shows the skeleton', async () => {
-    listImportSubmissions.mockReturnValue(new Promise(() => { /* pending forever */ }));
+    listImportSubmissions.mockReturnValue(new Promise(() => { /* never resolves */ }));
     renderWithProviders(<LastImportPanel source="library" />);
     expect(await screen.findByTestId('last-import-skeleton')).toBeInTheDocument();
   });
@@ -174,16 +170,15 @@ describe('LastImportPanel (#1894)', () => {
     renderWithProviders(<LastImportPanel source="library" />);
     await vi.advanceTimersByTimeAsync(10);
     expect(screen.getByText('Receiving')).toBeInTheDocument();
-    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10); // fast poll while non-complete
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10);
     expect(screen.getByText('Processing')).toBeInTheDocument();
     await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10);
     expect(screen.getByText('Completed')).toBeInTheDocument();
 
     const callsAtComplete = listImportSubmissions.mock.calls.length;
-    // At complete the fast interval must NOT fire — it downshifted to baseline…
+    // Completion suppresses fast polls but retains baseline discovery.
     await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10);
     expect(listImportSubmissions.mock.calls.length).toBe(callsAtComplete);
-    // …but it never fully stops: the baseline poll still fires.
     await vi.advanceTimersByTimeAsync(BASELINE_POLL_MS);
     expect(listImportSubmissions.mock.calls.length).toBe(callsAtComplete + 1);
   });
@@ -191,12 +186,11 @@ describe('LastImportPanel (#1894)', () => {
   it('discovers a run that starts later while mounted with no submission (baseline cadence, F69)', async () => {
     vi.useFakeTimers();
     listImportSubmissions.mockResolvedValue({ data: [summary({ status: 'receiving' })], total: 1 });
-    listImportSubmissions.mockResolvedValueOnce({ data: [], total: 0 }); // initially absent
+    listImportSubmissions.mockResolvedValueOnce({ data: [], total: 0 });
 
     renderWithProviders(<LastImportPanel source="library" />);
     await vi.advanceTimersByTimeAsync(10);
-    expect(screen.queryByTestId('last-import-panel')).not.toBeInTheDocument(); // hidden
-    // A later baseline poll discovers the newly-started run without a remount.
+    expect(screen.queryByTestId('last-import-panel')).not.toBeInTheDocument();
     await vi.advanceTimersByTimeAsync(BASELINE_POLL_MS + 10);
     expect(screen.getByText('Receiving')).toBeInTheDocument();
   });
@@ -204,17 +198,14 @@ describe('LastImportPanel (#1894)', () => {
   it('discovers a NEW run after an already-complete run via a baseline poll (old-complete discovery, F34)', async () => {
     vi.useFakeTimers();
     const completedAt = new Date('2026-07-21T00:00:00.000Z').toISOString();
-    // Starts on an already-complete run (id 1)…
     listImportSubmissions.mockResolvedValueOnce({ data: [summary({ id: 1, status: 'complete', completedAt })], total: 1 });
-    // …then a later run (a DIFFERENT receiving id) appears on a baseline poll.
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 2, status: 'receiving' })], total: 1 });
 
     renderWithProviders(<LastImportPanel source="library" />);
     await vi.advanceTimersByTimeAsync(10);
-    expect(screen.getByText('Completed')).toBeInTheDocument(); // old-complete run shown
-    // A complete run polls at baseline (never stops) → discovers + switches to the new run.
+    expect(screen.getByText('Completed')).toBeInTheDocument();
     await vi.advanceTimersByTimeAsync(BASELINE_POLL_MS + 10);
-    expect(screen.getByText('Receiving')).toBeInTheDocument(); // replaced by the new run
+    expect(screen.getByText('Receiving')).toBeInTheDocument();
     expect(screen.queryByText('Completed')).not.toBeInTheDocument();
   });
 
@@ -232,13 +223,13 @@ describe('LastImportPanel (#1894)', () => {
     await vi.advanceTimersByTimeAsync(10);
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     await vi.advanceTimersByTimeAsync(10);
-    expect(screen.queryByText('Failed Book')).not.toBeInTheDocument(); // pending → no attention rows yet
+    expect(screen.queryByText('Failed Book')).not.toBeInTheDocument();
 
     phase = 'complete';
-    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10); // the detail's OWN poll advances
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10);
     expect(screen.getByText('Failed Book')).toBeInTheDocument();
 
-    phase = 'processing'; // flipping back has no effect — the detail poll stopped at complete
+    phase = 'processing';
     const calls = getImportSubmissionDetail.mock.calls.length;
     await vi.advanceTimersByTimeAsync(FAST_POLL_MS * 3);
     expect(getImportSubmissionDetail.mock.calls.length).toBe(calls);

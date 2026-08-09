@@ -1,11 +1,6 @@
 import { AlertCircleIcon } from '@/components/icons';
 
-/**
- * In-session staged-submit status banner (#1902). Surfaces the recoverable/error copy
- * the staged pipeline pins (create unreachable, digest conflict, poll lost contact,
- * detail load failed, finalize invariant, or a preflight refusal). Renders nothing when
- * there is no message. Distinct from the durable #1894 attention banner.
- */
+/** In-session staged-pipeline errors, distinct from durable import-attention state. */
 export function StagedSubmitBanner({ message, onDismiss }: { message: string | null; onDismiss: () => void }) {
   if (!message) return null;
   return (
