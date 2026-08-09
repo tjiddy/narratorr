@@ -10,9 +10,7 @@ import { blacklist, books } from '@db/schema.js';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 
-// Serialize a Drizzle SQL expression to a raw SQL string + bound params for
-// predicate assertions (mirrors discovery.service.test.ts — assert real SQL,
-// not mocks-asserting-mocks).
+// Serialize real Drizzle SQL so predicate tests do not merely assert mocked combinators.
 const dialect = new SQLiteSyncDialect();
 function toSQL(expr: unknown): string {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -35,7 +33,6 @@ vi.mock('drizzle-orm', async (importOriginal) => {
     inArray: vi.fn(actual.inArray),
   };
 });
-
 const mockEntry = {
   id: 1,
   bookId: null,
@@ -165,7 +162,6 @@ describe('BlacklistService', () => {
   });
 
   describe('isBlacklisted', () => {
-    // Schema validation
     it('returns true when infoHash matches a permanent entry', async () => {
       const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
         blacklistedHashes: new Set(['abc123']),
@@ -216,7 +212,6 @@ describe('BlacklistService', () => {
       spy.mockRestore();
     });
 
-    // Boundary values — guid-only and infoHash-only DB entries
     it('detects guid-only blacklist entry when guid is passed', async () => {
       const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
         blacklistedHashes: new Set(),
@@ -239,7 +234,6 @@ describe('BlacklistService', () => {
       spy.mockRestore();
     });
 
-    // Null/missing data paths
     it('passes only infoHash when guid is undefined', async () => {
       const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
         blacklistedHashes: new Set(),
@@ -260,7 +254,6 @@ describe('BlacklistService', () => {
       spy.mockRestore();
     });
 
-    // Expiry handling — integration tests through getBlacklistedIdentifiers (no spy)
     it('detects permanent infoHash-only entry', async () => {
       const entry = { ...mockEntry, infoHash: 'perm-hash', guid: null, blacklistType: 'permanent', expiresAt: null };
       db.select.mockReturnValue(mockDbChain([entry]));
@@ -303,7 +296,6 @@ describe('BlacklistService', () => {
       expect(result).toBe(false);
     });
 
-    // Delegation verification
     it('delegates to getBlacklistedIdentifiers for dual-field + expiry logic', async () => {
       const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
         blacklistedHashes: new Set(['h1']),
@@ -343,13 +335,11 @@ describe('BlacklistService', () => {
         blacklistType: 'temporary',
         expiresAt: new Date(Date.now() - 1000),
       };
-      // getBlacklistedHashes applies expiry filter, so expired entries won't be returned by DB
       const chain = mockDbChain([]);
       db.select.mockReturnValue(chain);
       const result = await service.getBlacklistedHashes([expiredEntry.infoHash]);
       expect(result.has(expiredEntry.infoHash)).toBe(false);
 
-      // Assert the where predicate was applied (not skipped)
       expect(chain.where).toHaveBeenCalled();
     });
 
@@ -361,11 +351,8 @@ describe('BlacklistService', () => {
       db.select.mockReturnValue(mockDbChain([]));
       await service.getBlacklistedHashes();
 
-      // Assert the predicate checks blacklistType = 'permanent'
       expect(eq).toHaveBeenCalledWith(blacklist.blacklistType, 'permanent');
-      // Assert the predicate checks expiresAt > now (a Date instance)
       expect(gt).toHaveBeenCalledWith(blacklist.expiresAt, expect.any(Date));
-      // Assert or() combines the two conditions
       expect(or).toHaveBeenCalled();
     });
 
@@ -393,7 +380,6 @@ describe('BlacklistService', () => {
       vi.mocked(and).mockClear();
       vi.mocked(inArray).mockClear();
 
-      // Without hash filter — uses or(eq(permanent), gt(expiresAt, now))
       const chain1 = mockDbChain([]);
       db.select.mockReturnValue(chain1);
       await service.getBlacklistedHashes();
@@ -403,7 +389,6 @@ describe('BlacklistService', () => {
       vi.mocked(or).mockClear();
       vi.mocked(and).mockClear();
 
-      // With hash filter — uses and(inArray(hashes), or(permanent, gt(expiresAt, now)))
       const chain2 = mockDbChain([]);
       db.select.mockReturnValue(chain2);
       await service.getBlacklistedHashes(['abc123']);
@@ -432,11 +417,9 @@ describe('BlacklistService', () => {
       expect(result.expiresAt).not.toBeNull();
       expect(settingsService.get).toHaveBeenCalledWith('search');
 
-      // Assert the actual values payload includes computed expiresAt
       const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(valuesPayload.blacklistType).toBe('temporary');
       expect(valuesPayload.expiresAt).toBeInstanceOf(Date);
-      // TTL is 7 days — verify expiresAt is approximately 7 days from now
       const expectedExpiry = Date.now() + 7 * 24 * 60 * 60 * 1000;
       expect(valuesPayload.expiresAt.getTime()).toBeGreaterThan(expectedExpiry - 5000);
       expect(valuesPayload.expiresAt.getTime()).toBeLessThan(expectedExpiry + 5000);
@@ -454,7 +437,6 @@ describe('BlacklistService', () => {
       });
       expect(result).toEqual(expect.objectContaining({ blacklistType: 'permanent', expiresAt: null }));
 
-      // Assert the values payload explicitly nullifies expiresAt for permanent entries
       const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(valuesPayload.blacklistType).toBe('permanent');
       expect(valuesPayload.expiresAt).toBeNull();
@@ -475,7 +457,6 @@ describe('BlacklistService', () => {
         'Added to blacklist',
       );
 
-      // Assert the values payload nullifies expiresAt when no blacklistType specified
       const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(valuesPayload.expiresAt).toBeNull();
     });
@@ -499,7 +480,6 @@ describe('BlacklistService', () => {
         'Blacklist entry type toggled',
       );
 
-      // Assert the actual update payload nullifies expiresAt
       const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(setPayload).toEqual({ blacklistType: 'permanent', expiresAt: null });
     });
@@ -518,7 +498,6 @@ describe('BlacklistService', () => {
       expect(result!.expiresAt).not.toBeNull();
       expect(settingsService.get).toHaveBeenCalledWith('search');
 
-      // Assert the actual update payload includes computed expiresAt from TTL
       const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(setPayload.blacklistType).toBe('temporary');
       expect(setPayload.expiresAt).toBeInstanceOf(Date);
@@ -551,7 +530,6 @@ describe('BlacklistService', () => {
       expect(count).toBe(1);
       expect(db.delete).toHaveBeenCalled();
 
-      // Assert the exact safety predicate: blacklistType = 'temporary' AND expiresAt <= now
       expect(eq).toHaveBeenCalledWith(blacklist.blacklistType, 'temporary');
       expect(lte).toHaveBeenCalledWith(blacklist.expiresAt, expect.any(Date));
       expect(and).toHaveBeenCalled();
@@ -567,9 +545,7 @@ describe('BlacklistService', () => {
       db.delete.mockReturnValue(chain);
       const count = await service.deleteExpired();
       expect(count).toBe(0);
-      // The where clause filters to only temporary + expired, so permanent entries are never touched
       expect(db.delete).toHaveBeenCalled();
-      // Assert the safety predicate is always applied even when result is empty
       expect(eq).toHaveBeenCalledWith(blacklist.blacklistType, 'temporary');
       expect(lte).toHaveBeenCalledWith(blacklist.expiresAt, expect.any(Date));
       expect(and).toHaveBeenCalled();
@@ -592,8 +568,6 @@ describe('BlacklistService', () => {
       expect(log.info).not.toHaveBeenCalled();
     });
   });
-
-  // ===== #248 — GUID blacklisting =====
 
   describe('create — guid support', () => {
     it('creates blacklist entry with guid only (infoHash null)', async () => {
@@ -656,18 +630,13 @@ describe('BlacklistService', () => {
     });
 
     it('runs the expiry-only query and returns all active identifiers for empty input arrays', async () => {
-      // AC3: getBlacklistedIdentifiers([], []) must take the expiry-only branch
-      // (returning every active row's identifiers), NOT short-circuit to empty
-      // Sets. Active-row fixtures with NON-empty expected Sets prove the query
-      // actually ran — a regression that iterated chunkArray([]) and returned
-      // empty Sets without querying would fail here.
+      // Non-empty fixtures prevent an empty-input short-circuit from passing vacuously.
       const activeHash = { ...mockEntry, infoHash: 'active-hash', guid: null };
       const activeGuid = { ...mockEntry2, infoHash: null, guid: 'active-guid' };
       db.select.mockReturnValue(mockDbChain([activeHash, activeGuid]));
 
       const result = await service.getBlacklistedIdentifiers([], []);
 
-      // Exactly one expiry-only query issued (no per-chunk queries for empty input)
       expect(db.select).toHaveBeenCalledTimes(1);
       expect(result.blacklistedHashes.has('active-hash')).toBe(true);
       expect(result.blacklistedGuids.has('active-guid')).toBe(true);
@@ -697,14 +666,10 @@ describe('BlacklistService', () => {
 
       const result = await service.getBlacklistedIdentifiers(['hash1'], ['guid1']);
 
-      // Both identifier columns included in query
       expect(inArray).toHaveBeenCalledWith(blacklist.infoHash, ['hash1']);
       expect(inArray).toHaveBeenCalledWith(blacklist.guid, ['guid1']);
-      // Expiry filter applied (or combines permanent + gt(expiresAt, now))
       expect(or).toHaveBeenCalled();
-      // Combined with and()
       expect(and).toHaveBeenCalled();
-      // Returned sets correctly partitioned
       expect(result.blacklistedHashes).toEqual(new Set(['hash1']));
       expect(result.blacklistedGuids).toEqual(new Set(['guid1']));
     });
@@ -717,13 +682,10 @@ describe('BlacklistService', () => {
       expect(result.blacklistedGuids.size).toBe(0);
     });
 
-    // ===== #1300 — chunked inArray (SQLite 999-bind limit) =====
-
-    // Mirrors the private IDENTIFIER_CHUNK_SIZE constant in blacklist.service.ts.
+    // Mirrors the service's private identifier chunk size.
     const CHUNK = 480;
 
     it('chunks the hash list and unions matches across chunks (> 1 chunk)', async () => {
-      // 1000 hashes spanning 3 chunks (480 + 480 + 40)
       const hashes = Array.from({ length: 1000 }, (_, i) => `hash${i}`);
       vi.mocked(inArray).mockClear();
       db.select
@@ -733,21 +695,17 @@ describe('BlacklistService', () => {
 
       const result = await service.getBlacklistedIdentifiers(hashes, []);
 
-      // One select() per chunk
       expect(db.select).toHaveBeenCalledTimes(3);
-      // Each chunk's inArray receives the exact contiguous slice — no dropped
-      // tail, no overlap, no reordering across the 480/480/40 boundaries.
       const calls = vi.mocked(inArray).mock.calls;
       expect(calls).toHaveLength(3);
       expect(calls[0]).toEqual([blacklist.infoHash, hashes.slice(0, CHUNK)]);
       expect(calls[1]).toEqual([blacklist.infoHash, hashes.slice(CHUNK, 2 * CHUNK)]);
       expect(calls[2]).toEqual([blacklist.infoHash, hashes.slice(2 * CHUNK, 1000)]);
-      // Union of every chunk's matches
       expect(result.blacklistedHashes).toEqual(new Set(['hash0', 'hash500', 'hash999']));
     });
 
     it('chunks the guid list independently of the hash list', async () => {
-      const guids = Array.from({ length: 600 }, (_, i) => `guid${i}`); // 2 chunks (480 + 120)
+      const guids = Array.from({ length: 600 }, (_, i) => `guid${i}`);
       vi.mocked(inArray).mockClear();
       db.select
         .mockReturnValueOnce(mockDbChain([{ ...mockEntry, infoHash: null, guid: 'guid0' }]))
@@ -756,7 +714,6 @@ describe('BlacklistService', () => {
       const result = await service.getBlacklistedIdentifiers([], guids);
 
       expect(db.select).toHaveBeenCalledTimes(2);
-      // Each guid chunk's inArray receives the exact contiguous slice (480 / 120).
       const calls = vi.mocked(inArray).mock.calls;
       expect(calls).toHaveLength(2);
       expect(calls[0]).toEqual([blacklist.guid, guids.slice(0, CHUNK)]);
@@ -765,14 +722,8 @@ describe('BlacklistService', () => {
     });
 
     it('cross-populates both identifiers when a row matched via one list carries both', async () => {
-      // Row carries both identifiers but is matched only through the hash list.
       const bothRow = { ...mockEntry, infoHash: 'hashA', guid: 'guidA' };
-      // Per-query responses: the hash chunk query returns the both-identifier row;
-      // the unrelated-guid chunk query returns nothing. So guidA can ONLY enter
-      // blacklistedGuids via cross-population from the hash query's row — proving
-      // the split per-column implementation preserves the old combined-query
-      // behavior. (A shared mockReturnValue would let the guid query also return
-      // bothRow, making the cross-population assertion vacuous.)
+      // Only the hash query returns this row, so `guidA` proves cross-population rather than a vacuous mock.
       db.select
         .mockReturnValueOnce(mockDbChain([bothRow]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -785,30 +736,22 @@ describe('BlacklistService', () => {
 
     it('applies the expiry predicate (serialized SQL + bound params) on every chunk query', async () => {
       vi.mocked(and).mockClear();
-      const hashes = Array.from({ length: 1000 }, (_, i) => `h${i}`); // 3 chunks
+      const hashes = Array.from({ length: 1000 }, (_, i) => `h${i}`);
       db.select.mockReturnValue(mockDbChain([]));
 
       await service.getBlacklistedIdentifiers(hashes, []);
 
-      // and(inArray(chunk), expiryFilter) built once per chunk
       expect(and).toHaveBeenCalledTimes(3);
 
-      // Mutation-killer: assert the *serialized* WHERE of each chunk query, not just
-      // that and() was called. Dropping expiryFilter from the and() (review's mutation:
-      // `where(and(inArray(column, chunk)))`) leaves and() called 3× but strips the
-      // expiry predicate from the SQL — these assertions then fail.
+      // Mocked `and()` calls stay green if expiry filtering is dropped; assert serialized predicates.
       const composed = vi.mocked(and).mock.results.map((r) => r.value);
       expect(composed).toHaveLength(3);
       for (const whereArg of composed) {
         const sql = toSQL(whereArg);
-        // inArray segment present (the chunk filter)…
         expect(sql).toContain('"info_hash" in (');
-        // …AND the expiry predicate: blacklist_type = 'permanent' OR expires_at > ?
         expect(sql).toContain('"blacklist_type" = ?');
         expect(sql).toContain('"expires_at" > ?');
-        // Bound params carry the expiry comparison values (the 'permanent' literal
-        // and the now() cutoff — mapped to a Unix-epoch number by the timestamp
-        // column), not merely the chunk identifiers (which are strings).
+        // Drizzle binds the timestamp cutoff as a Unix-epoch number.
         const params = toParams(whereArg);
         expect(params).toContain('permanent');
         expect(params.some((p) => typeof p === 'number')).toBe(true);
@@ -835,7 +778,6 @@ describe('BlacklistService', () => {
       );
 
       expect(db.select).toHaveBeenCalledTimes(2);
-      // Remainder (single ID) lands in the second chunk's query
       expect(inArray).toHaveBeenLastCalledWith(blacklist.infoHash, [`h${CHUNK}`]);
       expect(result.blacklistedHashes.has(`h${CHUNK}`)).toBe(true);
     });
@@ -848,12 +790,9 @@ describe('BlacklistService', () => {
       const result = await service.getBlacklistedHashes(['hash1']);
       expect(result).toBeInstanceOf(Set);
       expect(result.has('hash1')).toBe(true);
-      // Should not return guids — only hashes
       expect(result.has('guid1')).toBe(false);
     });
   });
-
-  // ===== #736 — upsert call shape and normalization =====
 
   describe('create — upsert call shape', () => {
     it('dispatches conflict to info_hash when infoHash is populated', async () => {
@@ -866,7 +805,6 @@ describe('BlacklistService', () => {
       const config = onConflict.mock.calls[0]![0];
       expect(config.target).toBe(blacklist.infoHash);
       expect(config.targetWhere).toBeDefined();
-      // set clause includes blacklistedAt refresh and every normalized column
       expect(config.set.blacklistedAt).toBeInstanceOf(Date);
       expect(config.set).toHaveProperty('infoHash', 'abc');
       expect(config.set).toHaveProperty('guid', null);
@@ -924,7 +862,6 @@ describe('BlacklistService', () => {
       await service.create({ infoHash: 'abc', title: 'T', reason: 'spam', bookId: 5 });
 
       const setPayload = (chain.onConflictDoUpdate as ReturnType<typeof vi.fn>).mock.calls[0]![0].set;
-      // Every optional field is explicit in SET so omitted inputs don't leak stale values
       expect(setPayload).toMatchObject({
         bookId: 5,
         infoHash: 'abc',
@@ -938,8 +875,6 @@ describe('BlacklistService', () => {
     });
   });
 });
-
-// ===== #736 — integration tests against real libsql DB =====
 
 describe('BlacklistService — upsert integration (real libsql)', () => {
   let dir: string;
@@ -960,7 +895,7 @@ describe('BlacklistService — upsert integration (real libsql)', () => {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // libsql may keep the file handle on Windows — best effort
+      // libSQL may retain the file handle briefly on Windows.
     }
   });
 
@@ -1007,7 +942,7 @@ describe('BlacklistService — upsert integration (real libsql)', () => {
       .create({ infoHash: 'h2', guid: 'g1', title: 'B', reason: 'spam' })
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Error);
-    // libsql wraps the SQLite error inside `cause` with the constraint name
+    // libSQL wraps the SQLite constraint error in `cause`.
     const cause = (error as Error & { cause?: { message?: string } }).cause;
     expect(cause?.message).toMatch(/UNIQUE constraint failed.*(?:guid|idx_blacklist_guid_unique)/);
 
@@ -1037,7 +972,7 @@ describe('BlacklistService — upsert integration (real libsql)', () => {
     const settingsService = createMockSettingsService();
     const svcWithSettings = new BlacklistService(db, inject(log), settingsService);
 
-    // Seed a book so the bookId FK in the first call is valid
+    // Satisfy the first call's bookId foreign key.
     const [seeded] = await db.insert(books).values({ publicId: generatePublicId('bk'), title: 'Seed Book' }).returning();
 
     await svcWithSettings.create({
@@ -1048,7 +983,6 @@ describe('BlacklistService — upsert integration (real libsql)', () => {
       blacklistType: 'temporary',
       reason: 'spam',
     });
-    // Second call omits bookId, note, blacklistType, guid — should clear them
     await svcWithSettings.create({ infoHash: 'abc', title: 'A2', reason: 'spam' });
 
     const rows = await allRows();
@@ -1097,8 +1031,3 @@ describe('BlacklistService — upsert integration (real libsql)', () => {
     ).rejects.toThrow('Blacklist entry requires at least one identifier');
   });
 });
-
-// Migration-history regression tests for blacklist dedupe (#736) were removed
-// when migrations were flattened to a single 0000 baseline. The dedupe pass
-// they verified is now baked into the baseline schema (partial unique indexes
-// from the start), not a discrete migration step.
