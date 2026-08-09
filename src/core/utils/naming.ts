@@ -20,7 +20,6 @@ export interface NamingOptions {
   case?: NamingCase;
 }
 
-/** Convert library settings shape to NamingOptions. */
 export function toNamingOptions(settings: { namingSeparator: NamingSeparator; namingCase: NamingCase }): NamingOptions {
   return { separator: settings.namingSeparator, case: settings.namingCase };
 }
@@ -39,29 +38,24 @@ const CASE_TRANSFORMS: Record<NamingCase, (s: string) => string> = {
   title: (s) => s.replace(/\S+/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()),
 };
 
-/** Apply separator and case transforms to a resolved token value. */
 function applyTokenTransforms(value: string, options?: NamingOptions): string {
-  // Case transform first (operates on original spacing)
+  // Case transforms run while the original word spacing still exists.
   let result = CASE_TRANSFORMS[options?.case ?? 'default'](value);
 
-  // Separator transform
   const sep = options?.separator ?? 'space';
   if (sep !== 'space') {
     // Collapse ", " → "," before replacing spaces (handles "Last, First" format)
     result = result.replace(/, /g, ',');
     const sepChar = SEPARATOR_CHARS[sep];
     result = result.replace(/ /g, sepChar);
-    // Collapse consecutive separator characters
     const escaped = sepChar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     result = result.replace(new RegExp(`${escaped}{2,}`, 'g'), sepChar);
-    // Trim leading/trailing separator characters
     result = result.replace(new RegExp(`^${escaped}+|${escaped}+$`, 'g'), '');
   }
 
   return result;
 }
 
-/** Check if a numeric token value should skip separator/case transforms. */
 function isNumericFormatted(padSpec: string | undefined, raw: string | number | undefined | null): boolean {
   return padSpec !== undefined && raw !== undefined && raw !== null && !isNaN(Number(raw));
 }
@@ -69,38 +63,30 @@ function isNumericFormatted(padSpec: string | undefined, raw: string | number | 
 export type TokenName = (typeof FOLDER_ALLOWED_TOKENS)[number];
 export type FileTokenName = (typeof FILE_ALLOWED_TOKENS)[number];
 
-/** Leading articles stripped for sort titles (English). */
 const SORT_ARTICLES = /^(?:the|a|an)\s+/i;
 
 /**
- * Flip a name from "First Last" to "Last, First".
- * Handles multi-name values separated by commas or ampersands:
- *   "Brandon Sanderson & Robert Jordan" → "Sanderson, Brandon & Jordan, Robert"
- * Already "Last, First" names (detected by comma) pass through unchanged.
+ * Flips one or more `First Last` names to `Last, First`. Ampersand/`and` always separates
+ * people; comma-separated multiword parts do too. Existing single `Last, First` names pass through.
  */
 export function toLastFirst(name: string): string {
   if (!name.trim()) return name;
 
-  // First try splitting on & or "and"
   const ampParts = name.split(/\s*(?:&|\band\b)\s*/);
   if (ampParts.length > 1) {
     return ampParts.map((p) => flipSingleName(p.trim())).join(' & ');
   }
 
-  // Try comma-separated: "Michael Kramer, Kate Reading"
-  // If all parts are multi-word, treat as separate people in "First Last" format
+  // Multiple multiword comma parts are people, not an already-flipped single name.
   const commaParts = name.split(/,\s*/);
   if (commaParts.length > 1 && commaParts.every((p) => p.trim().split(/\s+/).length >= 2)) {
     return commaParts.map((p) => flipSingleName(p.trim())).join(' & ');
   }
 
-  // Single name or already "Last, First"
   return flipSingleName(name.trim());
 }
 
-/** Flip a single "First Last" → "Last, First". Already-flipped names pass through. */
 function flipSingleName(name: string): string {
-  // Already in "Last, First" format
   if (name.includes(',')) return name;
 
   const words = name.split(/\s+/);
@@ -110,7 +96,6 @@ function flipSingleName(name: string): string {
   return `${last}, ${words.join(' ')}`;
 }
 
-/** Strip leading articles for sort-friendly titles. */
 export function toSortTitle(title: string): string {
   return title.replace(SORT_ARTICLES, '').trim() || title;
 }
@@ -123,14 +108,8 @@ const ILLEGAL_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
 const MAX_SEGMENT_LENGTH = 255;
 
 /**
- * Strip a trailing reserved import-sibling suffix (#1341) so a metadata-derived folder can
- * never end in `.import-bak` / `.import-tmp` / `.import-commit-pending` — names that a
- * library scan would mistake for transient scratch (excluding a real book) or that would
- * collide destructively with the commit-pending marker path. Loops so a doubled suffix
- * (`Foo.import-bak.import-bak`) unwinds fully, re-trimming trailing dots/whitespace exposed
- * by each strip. Case-sensitive against the lowercase constants. A title that merely
- * CONTAINS the substring but does not END in it (`My .import-bak Notes`) is untouched, as
- * is a title ending in a partial token without the `.import` prefix (`Project Backup-bak`).
+ * Removes repeated reserved import-sibling suffixes from segment ends, preventing scan exclusion
+ * and marker collisions. Re-trims exposed dots/spaces after each case-sensitive removal.
  */
 function stripReservedSuffixes(segment: string): string {
   let result = segment;
@@ -147,43 +126,30 @@ function stripReservedSuffixes(segment: string): string {
   return result;
 }
 
-/** Sanitize a string for use as a filesystem path segment. */
 export function sanitizePath(segment: string): string {
   let result = segment
     .replace(ILLEGAL_CHARS, '')
-    .replace(/\s{2,}/g, ' ') // collapse consecutive spaces
-    .replace(/\.+$/, '') // trailing dots (Windows)
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\.+$/, '')
     .trim();
 
-  // Truncate to filesystem limit FIRST — truncation can itself slice a longer title down to
-  // a segment that ends in a reserved suffix (#1341 F1: `'A'.repeat(244) + '.import-bak' + 'x'`
-  // truncates to a 255-char `…A.import-bak`), so the suffix reservation must be the FINAL pass.
+  // Truncation can create a reserved ending, so suffix stripping must be the final pass.
   if (result.length > MAX_SEGMENT_LENGTH) {
     result = result.slice(0, MAX_SEGMENT_LENGTH).trim();
   }
 
-  // Reserve the import-sibling suffixes (#1341): never emit a segment ending in one — whether
-  // the suffix came from the raw title or was produced by the truncation above.
   result = stripReservedSuffixes(result);
 
   return result || 'Unknown';
 }
 
-/** Filesystem path-segment length limit, exposed for the folder builders' leaf budgeting (#1739). */
+/** Filesystem segment limit exposed for folder builders' leaf budgeting. */
 export const PATH_SEGMENT_LIMIT = MAX_SEGMENT_LENGTH;
 
 /**
- * Sanitize an edition label into ONE filesystem-path-safe discriminator segment (#1739).
- *
- * The single shared seam consumed by BOTH folder branches (`buildTargetPath` / `computeFolderTarget`):
- * the in-place `{edition}` token AND the mandatory collision suffix. Co-located with `sanitizePath`
- * so it reuses the private `ILLEGAL_CHARS` + `stripReservedSuffixes` without exporting them — the two
- * paths can never diverge on what is path-safe again.
- *
- * Strips path separators + the full illegal/control-char set (`ILLEGAL_CHARS` covers `/ \ < > : " | ? *`
- * and `\x00-\x1f`), collapses whitespace, drops trailing dots, caps at the segment limit, and reserves
- * the import-sibling suffixes. Returns `null` (NOT `'Unknown'`) when the result is empty so the caller
- * treats it exactly like a null label and renders the unchanged base path.
+ * Shared edition-label sanitizer for the in-place token and mandatory suffix paths. It applies the
+ * same illegal-character, length, and reserved-suffix rules as `sanitizePath`, but returns `null`
+ * rather than `Unknown` when no discriminator remains so callers preserve the base path.
  */
 export function sanitizeEditionDiscriminator(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -200,26 +166,16 @@ export function sanitizeEditionDiscriminator(raw: string | null | undefined): st
 }
 
 /**
- * Compose the suffix-branch leaf `base (discriminator)` (#1739), budgeting the BASE down so the
- * discriminator survives the segment-length cap rather than being silently truncated away. The
- * discriminator is appended VERBATIM (already sanitized by `sanitizeEditionDiscriminator`), so the
- * suffix branch yields a byte-identical discriminator to the verbatim `{edition}` token branch.
- *
- * Budget order (F7): the base title is truncated first; a non-empty discriminator always survives.
- * Only a pathologically long discriminator — whose own ` (…)` wrapper alone exceeds the segment cap —
- * is itself truncated, and never to empty. The composed leaf is re-run through the reserved
- * import-sibling-suffix guard (AC5) so it can never end in `.import-bak` / `.import-tmp` /
- * `.import-commit-pending`.
+ * Composes `base (discriminator)` while preserving the already-sanitized discriminator verbatim.
+ * The base is truncated first; only an over-limit discriminator is shortened, never to empty.
+ * Reserved import suffixes are checked again on the composed leaf.
  */
 export function composeEditionSuffixLeaf(base: string, discriminator: string): string {
   const suffix = ` (${discriminator})`;
   const budget = MAX_SEGMENT_LENGTH - suffix.length;
   let leaf: string;
   if (budget <= 0) {
-    // The discriminator + ` ()` wrapper alone exceed the segment limit. Base-first truncation (F7):
-    // sacrifice the base ENTIRELY before touching the discriminator, then truncate the discriminator
-    // itself only as far as the bare `()` wrapper requires — never to empty — so a pathologically
-    // long discriminator still stays visible rather than being buried behind base text.
+    // Drop the base before shortening the discriminator; preserve at least one discriminator character.
     const discBudget = Math.max(1, MAX_SEGMENT_LENGTH - 2); // reserve the bare "()" wrapper
     const trimmedDisc = discriminator.length > discBudget ? discriminator.slice(0, discBudget).trim() : discriminator;
     leaf = `(${trimmedDisc})`;
@@ -231,15 +187,9 @@ export function composeEditionSuffixLeaf(base: string, discriminator: string): s
 }
 
 /**
- * Suffix-first disambiguation for the token regex.
- *
- * The regex captures: (1) optional prefix text, (2) \w+ candidate, (3) pad, (4) suffix.
- * For `{author?title}`, group 1="author", group 2="title".
- * For `{ - pt?trackNumber:00}`, group 1=" - pt", group 2="trackNumber".
- *
- * Rule: extract the first `\w+` from group 1. If it IS a known token → re-interpret
- * as suffix syntax (group 1's word is the real token, everything after `?` is suffix).
- * If NOT known → keep as prefix syntax.
+ * Resolves the token regex's ambiguity: `{author?title}` initially looks like a prefix plus
+ * `title`, while `{ - pt?trackNumber:00}` is a true prefix. A known token in the prefix is
+ * reinterpreted as suffix syntax; unknown prefix text remains prefix syntax.
  */
 function disambiguateTokenMatch(
   candidatePrefix: string | undefined,
@@ -249,17 +199,13 @@ function disambiguateTokenMatch(
   allowedTokens: ReadonlySet<string>,
 ): { prefix: string | undefined; name: string; padSpec: string | undefined; suffix: string | undefined } {
   if (!candidatePrefix) {
-    // No prefix group → simple token or suffix-only syntax
     return { prefix: undefined, name: candidateName, padSpec, suffix: candidateSuffix };
   }
 
-  // Extract first \w+ from the candidate prefix
   const firstWordMatch = candidatePrefix.match(/\w+/);
   if (firstWordMatch && allowedTokens.has(firstWordMatch[0])) {
-    // The first word is a known token → re-interpret as suffix syntax
-    // The real token is the first word; everything after ? is suffix text
     const realToken = firstWordMatch[0];
-    // Reconstruct the suffix: candidateName + (padSpec if any) + (candidateSuffix if any)
+    // Reconstruct the suffix because the regex parsed everything after `?` as token syntax.
     let reconstructedSuffix = candidateName;
     if (padSpec !== undefined) {
       reconstructedSuffix += ':' + padSpec;
@@ -267,29 +213,18 @@ function disambiguateTokenMatch(
     if (candidateSuffix !== undefined) {
       reconstructedSuffix += '?' + candidateSuffix;
     }
-    // The original candidatePrefix may have had text before the token word — that was literal text
-    // But the regex `([^}?]*?)\?` captures greedily up to the first `?`, so the prefix IS the full first word
-    // Extract padSpec from original prefix if present (e.g., {author:00?title} — unlikely but possible)
-    // For suffix reinterpretation, there's no pad spec from the prefix — the original token format was {name?suffix}
     return { prefix: undefined, name: realToken, padSpec: undefined, suffix: reconstructedSuffix };
   }
 
-  // First word is NOT a known token → keep as prefix syntax
   return { prefix: candidatePrefix, name: candidateName, padSpec, suffix: candidateSuffix };
 }
 
-/** Build a set of all known token names for disambiguation. */
 const ALL_KNOWN_TOKENS = new Set<string>([...FILE_ALLOWED_TOKENS]);
 
-/** Resolve tokens in a template string — shared logic for renderTemplate/renderFilename. */
 function resolveTokens(
   template: string,
   tokens: Record<string, string | number | undefined | null>,
   options?: NamingOptions,
-  // Tokens whose value must render VERBATIM, bypassing separator/case transforms (#1739).
-  // `renderTemplate` (folder paths) passes `edition` so the in-place `{edition}` token matches
-  // the verbatim suffix branch; `renderFilename` leaves it empty so file/audio `{edition}`
-  // rendering is unchanged (it keeps applying namingSeparator/namingCase, F8).
   verbatimTokens?: ReadonlySet<string>,
 ): string {
   return template.replace(
@@ -308,7 +243,6 @@ function resolveTokens(
 
       let value = String(raw);
 
-      // Format specifier: {seriesPosition:00} → zero-pad
       if (padSpec) {
         const num = Number(value);
         if (!isNaN(num)) {
@@ -316,14 +250,10 @@ function resolveTokens(
         }
       }
 
-      // Apply separator/case transforms to non-numeric token values — unless the token is
-      // marked verbatim (#1739: the folder `{edition}` discriminator is metadata identity, not
-      // a stylable title token, so it must render identically to the verbatim suffix branch).
       if (!isNumericFormatted(padSpec, raw) && !verbatimTokens?.has(name)) {
         value = applyTokenTransforms(value, options);
       }
 
-      // Build result: prefix + value + suffix
       let result = value;
       if (prefix !== undefined) {
         result = prefix + result;
@@ -338,10 +268,8 @@ function resolveTokens(
 }
 
 /**
- * Tokens rendered VERBATIM in FOLDER templates (#1739) \u2014 the `{edition}` discriminator bypasses
- * `namingSeparator`/`namingCase` so the token branch and the mandatory suffix branch produce a
- * byte-identical discriminator. Scoped to `renderTemplate` (folders) only; `renderFilename` does
- * NOT pass this set, so file/audio `{edition}` rendering keeps applying the transforms (F8).
+ * Folder editions bypass styling so token and suffix branches produce the same discriminator.
+ * Filename editions remain stylable.
  */
 const FOLDER_VERBATIM_TOKENS: ReadonlySet<string> = new Set(['edition']);
 
@@ -354,7 +282,6 @@ const SENTINEL_REGEX = new RegExp(EMPTY_TOKEN_SENTINEL, 'g');
  * sentinels and whitespace. Literal empty wrappers (not from tokens) are preserved.
  */
 function stripEmptyWrappers(text: string): string {
-  // Only strip wrappers that contain at least one sentinel (i.e., came from an empty token)
   const wrapperPattern = /\(\s*\u200B[\s\u200B]*\)|\[\s*\u200B[\s\u200B]*\]/g;
   let result = text;
   let prev: string;
@@ -362,7 +289,6 @@ function stripEmptyWrappers(text: string): string {
     prev = result;
     result = result.replace(wrapperPattern, '');
   } while (result !== prev);
-  // Remove remaining sentinels and clean up whitespace
   result = result.replace(SENTINEL_REGEX, '');
   return result.replace(/ {2,}/g, ' ').trim();
 }
@@ -372,7 +298,7 @@ function stripEmptyWrappers(text: string): string {
  *
  * Supports:
  * - `{token}` — simple replacement
- * - `{token?text}` — conditional: renders `text` only if token has a value
+ * - `{token?suffix}` / `{prefix?token}` — conditional affixes
  * - `{token:00}` — zero-pad format specifier (digit count = specifier length)
  */
 export function renderTemplate(
@@ -382,7 +308,6 @@ export function renderTemplate(
 ): string {
   const rendered = stripEmptyWrappers(resolveTokens(template, tokens, options, FOLDER_VERBATIM_TOKENS));
 
-  // Split by /, sanitize non-empty segments, filter empties
   return rendered
     .split('/')
     .map((seg) => seg.trim())
@@ -408,11 +333,8 @@ export function renderFilename(
 }
 
 export interface TemplateParseResult {
-  /** Token names found in the template. */
   tokens: string[];
-  /** Errors that must be fixed. */
   errors: string[];
-  /** Warnings (non-blocking). */
   warnings: string[];
 }
 
@@ -433,7 +355,6 @@ export function parseTemplate(
   const tokens: string[] = [];
   const allowedSet = new Set<string>(allowedTokens);
 
-  // Extract all token names from {token}, {token:spec}, {token?text}, {prefix?token}
   const tokenPattern = new RegExp(TOKEN_PATTERN_SOURCE, 'g');
   let match: RegExpExecArray | null;
 
@@ -449,7 +370,6 @@ export function parseTemplate(
     }
   }
 
-  // Only check for required tokens if the template is non-empty
   if (template && !tokens.includes('title') && !tokens.includes('titleSort')) {
     errors.push('Template must include {title} or {titleSort}');
   }
@@ -462,17 +382,13 @@ export function parseTemplate(
 }
 
 /**
- * True when `template` contains the given token (after suffix-first
- * disambiguation). Used by the import/rename target builders to decide whether a
- * user-supplied `{edition}` token already renders the edition label in place — in
- * which case the mandatory collision suffix must NOT also be appended (#1712), or
- * the label would render twice.
+ * Uses suffix-first disambiguation to detect in-place edition rendering. Target builders must
+ * suppress the mandatory collision suffix when the template already contains the token.
  */
 export function templateHasToken(template: string, token: string): boolean {
   return parseTemplate(template, FILE_ALLOWED_TOKENS).tokens.includes(token);
 }
 
-/** Token display groups for the naming token modal. */
 export interface TokenGroup {
   label: string;
   tokens: readonly string[];
