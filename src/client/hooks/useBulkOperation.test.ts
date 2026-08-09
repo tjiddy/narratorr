@@ -78,7 +78,7 @@ describe('useBulkOperation', () => {
 
     const { result } = renderHook(() => useBulkOperation());
 
-    await act(async () => {}); // flush the getActiveBulkJob promise
+    await act(async () => {});
 
     expect(result.current.isRunning).toBe(true);
     expect(result.current.jobType).toBe('rename');
@@ -91,7 +91,7 @@ describe('useBulkOperation', () => {
 
     const { result } = renderHook(() => useBulkOperation());
 
-    await act(async () => {}); // flush mount effect
+    await act(async () => {});
 
     expect(mockGetActiveBulkJob).toHaveBeenCalled();
     expect(result.current.isRunning).toBe(false);
@@ -102,7 +102,7 @@ describe('useBulkOperation', () => {
     mockGetActiveBulkJob.mockResolvedValue(null);
 
     const { result } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => {
       await result.current.startJob('rename');
@@ -117,7 +117,7 @@ describe('useBulkOperation', () => {
     mockGetActiveBulkJob.mockResolvedValue(null);
 
     const { result } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => {
       await result.current.startJob('write_metadata_sidecars');
@@ -130,11 +130,6 @@ describe('useBulkOperation', () => {
     expect(result.current.jobType).toBe('write_metadata_sidecars');
   });
 
-  // #2056 — startJob used to end in an unguarded default arm pointing at the retired re-encode
-  // endpoint, so one surviving type was routed by fallthrough rather than by name. It is now a
-  // Record keyed on BulkOpType. These cases pin every arm to its OWN endpoint AND the silence of
-  // the other two, which is what a misroute (or a re-added default arm) would break; break one
-  // arm of START_FNS and only its case goes red.
   describe('startJob routes every BulkOpType by name', () => {
     const CASES = [
       { type: 'rename', mock: () => mockStartBulkRename },
@@ -145,7 +140,7 @@ describe('useBulkOperation', () => {
     it.each(CASES)('$type calls only its own start function', async ({ type, mock }) => {
       mockGetActiveBulkJob.mockResolvedValue(null);
       const { result } = renderHook(() => useBulkOperation());
-      await act(async () => {}); // flush mount
+      await act(async () => {});
 
       await act(async () => {
         await result.current.startJob(type);
@@ -161,7 +156,7 @@ describe('useBulkOperation', () => {
     it('polls the jobId returned by the type’s own endpoint', async () => {
       mockGetActiveBulkJob.mockResolvedValue(null);
       const { result } = renderHook(() => useBulkOperation());
-      await act(async () => {}); // flush mount
+      await act(async () => {});
 
       await act(async () => {
         await result.current.startJob('retag');
@@ -179,7 +174,7 @@ describe('useBulkOperation', () => {
       .mockResolvedValueOnce(makeRunningJob({ completed: 10, total: 20 }));
 
     const { result } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => {
       await result.current.startJob('rename');
@@ -197,7 +192,7 @@ describe('useBulkOperation', () => {
     mockGetBulkJob.mockResolvedValue(makeCompletedJob({ completed: 10, total: 10 }));
 
     const { result } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => {
       await result.current.startJob('rename');
@@ -206,7 +201,6 @@ describe('useBulkOperation', () => {
     await act(async () => { vi.advanceTimersByTime(2000); });
     expect(result.current.isRunning).toBe(false);
 
-    // Advance again — should not poll anymore
     mockGetBulkJob.mockClear();
     await act(async () => { vi.advanceTimersByTime(2000); });
     expect(mockGetBulkJob).not.toHaveBeenCalled();
@@ -217,7 +211,7 @@ describe('useBulkOperation', () => {
     mockGetBulkJob.mockRejectedValue(make404Error());
 
     const { result } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => {
       await result.current.startJob('rename');
@@ -233,7 +227,7 @@ describe('useBulkOperation', () => {
     mockGetActiveBulkJob.mockResolvedValue(null);
 
     const { result, unmount } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => {
       await result.current.startJob('rename');
@@ -241,17 +235,15 @@ describe('useBulkOperation', () => {
 
     unmount();
 
-    // Verify only startBulkRename was called, no cancel call
     expect(mockStartBulkRename).toHaveBeenCalledTimes(1);
-    // The api object has no cancelBulkJob — this is by design
-    expect(mockGetBulkJob).toHaveBeenCalledTimes(0); // no polls before interval fires
+    expect(mockGetBulkJob).toHaveBeenCalledTimes(0);
   });
 
   it('stops polling interval on unmount (clears interval)', async () => {
     mockGetActiveBulkJob.mockResolvedValue(null);
 
     const { result, unmount } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => {
       await result.current.startJob('rename');
@@ -259,7 +251,6 @@ describe('useBulkOperation', () => {
 
     unmount();
 
-    // After unmount, advancing timers should not trigger more polls
     const callCountBefore = mockGetBulkJob.mock.calls.length;
     await act(async () => { vi.advanceTimersByTime(4000); });
     expect(mockGetBulkJob.mock.calls.length).toBe(callCountBefore);
@@ -270,7 +261,7 @@ describe('useBulkOperation', () => {
     mockGetBulkJob.mockResolvedValue(makeCompletedJob({ completed: 10, total: 10, failures: 3 }));
 
     const { result } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => {
       await result.current.startJob('rename');
@@ -281,7 +272,6 @@ describe('useBulkOperation', () => {
     expect(result.current.progress.failures).toBe(3);
   });
 
-  // AC2: non-404 poll error handling (#141)
   it('resets to idle and shows toast.error when poll returns non-404 error (500)', async () => {
     const err = new Error('Internal server error');
     (err as { status?: number }).status = 500;
@@ -289,7 +279,7 @@ describe('useBulkOperation', () => {
     mockGetBulkJob.mockRejectedValue(err);
 
     const { result } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => { await result.current.startJob('rename'); });
     await act(async () => { vi.advanceTimersByTime(2000); });
@@ -308,13 +298,13 @@ describe('useBulkOperation', () => {
       .mockRejectedValue(err);
 
     const { result } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => { await result.current.startJob('rename'); });
-    await act(async () => { vi.advanceTimersByTime(2000); }); // first poll — success
+    await act(async () => { vi.advanceTimersByTime(2000); });
     expect(result.current.isRunning).toBe(true);
 
-    await act(async () => { vi.advanceTimersByTime(2000); }); // second poll — error
+    await act(async () => { vi.advanceTimersByTime(2000); });
     expect(result.current.isRunning).toBe(false);
     expect(toast.error).toHaveBeenCalledWith('Service unavailable');
   });
@@ -324,7 +314,7 @@ describe('useBulkOperation', () => {
     mockGetBulkJob.mockRejectedValue(make404Error());
 
     const { result } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => { await result.current.startJob('rename'); });
     await act(async () => { vi.advanceTimersByTime(2000); });
@@ -338,7 +328,7 @@ describe('useBulkOperation', () => {
     mockGetBulkJob.mockRejectedValue('string-rejection');
 
     const { result } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => { await result.current.startJob('rename'); });
     await act(async () => { vi.advanceTimersByTime(2000); });
@@ -351,7 +341,7 @@ describe('useBulkOperation', () => {
     mockGetActiveBulkJob.mockResolvedValue(null);
 
     const { result } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     expect(Object.isFrozen(result.current.progress)).toBe(true);
   });
@@ -361,7 +351,7 @@ describe('useBulkOperation', () => {
     mockGetBulkJob.mockRejectedValue(make404Error());
 
     const { result } = renderHook(() => useBulkOperation());
-    await act(async () => {}); // flush mount
+    await act(async () => {});
 
     await act(async () => { await result.current.startJob('rename'); });
     await act(async () => { vi.advanceTimersByTime(2000); });
@@ -370,7 +360,6 @@ describe('useBulkOperation', () => {
     expect(Object.isFrozen(result.current.progress)).toBe(true);
   });
 
-  // #2159 — named failure rows ride the same poll/resume/reset paths as the counts.
   describe('failureDetails (#2159)', () => {
     const details = [
       { bookId: 226, title: "Captain's Fury", error: "ENOENT: no such file or directory, open '/audiobooks/x/metadata.opf'" },
