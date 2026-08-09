@@ -71,7 +71,6 @@ describe('DownloadActivityCard', () => {
     it('hides seeders count when protocol is usenet (#82)', () => {
       renderWithProviders(<DownloadActivityCard download={createMockDownload({ protocol: 'usenet', seeders: 5 })} />);
       expect(screen.queryByText('5 seeders')).not.toBeInTheDocument();
-      // Protocol badge still shows
       expect(screen.getByText('Usenet')).toBeInTheDocument();
     });
   });
@@ -85,7 +84,6 @@ describe('DownloadActivityCard', () => {
     });
 
     it('displays error message on non-failed status when present', () => {
-      // Per reviewer suggestion F4: errorMessage is status-agnostic
       renderWithProviders(
         <DownloadActivityCard download={createMockDownload({ status: 'downloading', errorMessage: 'Tracker warning' })} />,
       );
@@ -130,7 +128,6 @@ describe('DownloadActivityCard', () => {
     });
   });
 
-  // #282 — Pending review expand/collapse
   describe('pending review expand/collapse (#282)', () => {
     const gateData: QualityGateData = {
       action: 'held',
@@ -196,7 +193,6 @@ describe('DownloadActivityCard', () => {
 
     it('approve/reject/reject-and-search buttons render inside expanded panel', async () => {
       const { user } = renderPendingReview();
-      // Before expanding, no approve/reject buttons
       expect(screen.queryByText('Approve')).not.toBeInTheDocument();
       expect(screen.queryByText('Reject')).not.toBeInTheDocument();
 
@@ -213,7 +209,6 @@ describe('DownloadActivityCard', () => {
       const approveBtn = screen.getByText('Approving...');
       expect(approveBtn).toBeInTheDocument();
       expect(approveBtn.closest('button')).toBeDisabled();
-      // Panel remains expanded during the async operation
       expect(screen.getByText('Quality Comparison')).toBeInTheDocument();
     });
 
@@ -224,15 +219,11 @@ describe('DownloadActivityCard', () => {
       const rejectBtn = screen.getByText('Rejecting...');
       expect(rejectBtn).toBeInTheDocument();
       expect(rejectBtn.closest('button')).toBeDisabled();
-      // Reject & Search is also disabled during pending state
       expect(screen.getByText('Reject & Search').closest('button')).toBeDisabled();
-      // Panel remains expanded during the async operation
       expect(screen.getByText('Quality Comparison')).toBeInTheDocument();
     });
 
     it('panel is not rendered when status changes away from pending_review', () => {
-      // When the download status changes (parent re-renders with different status),
-      // PendingReviewDetails is not rendered, effectively "collapsing" the panel
       renderWithProviders(
         <DownloadActivityCard
           download={createMockDownload({ status: 'importing' })}
@@ -252,10 +243,8 @@ describe('DownloadActivityCard', () => {
           onRejectWithSearch={vi.fn()}
         />,
       );
-      // No expand toggle or comparison panel when qualityGate is absent
       expect(screen.queryByRole('button', { name: /expand quality comparison/i })).not.toBeInTheDocument();
       expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
-      // But reject buttons are still shown (#301)
       expect(screen.getByText('Reject')).toBeInTheDocument();
       expect(screen.getByText('Reject & Search')).toBeInTheDocument();
     });
@@ -302,7 +291,6 @@ describe('DownloadActivityCard', () => {
       const { container } = renderWithProviders(
         <DownloadActivityCard download={createMockDownload()} compact />,
       );
-      // Compact mode uses p-4 instead of p-5
       const card = container.firstElementChild as HTMLElement;
       expect(card.className).toContain('p-4');
     });
@@ -330,12 +318,10 @@ describe('DownloadActivityCard', () => {
     it('renders without indexer name when indexerName is undefined', () => {
       const { indexerName: _indexerName, ...download } = createMockDownload({});
       const { container } = renderWithProviders(<DownloadActivityCard download={download as Download} />);
-      // no indexer span — just verify no crash and no extra text
       expect(container).toBeInTheDocument();
     });
   });
 
-  // #301 — Split reject into Reject (dismiss) and Reject & Search
   describe('split reject buttons (#301)', () => {
     const gateData301: QualityGateData = {
       action: 'held',
@@ -380,7 +366,6 @@ describe('DownloadActivityCard', () => {
         />,
       );
 
-      // No expand toggle needed — buttons render directly
       expect(screen.getByText('Reject')).toBeInTheDocument();
       expect(screen.getByText('Reject & Search')).toBeInTheDocument();
     });
@@ -442,7 +427,6 @@ describe('DownloadActivityCard', () => {
       const rejectBtn = screen.getByText('Reject').closest('button')!;
       const rejectSearchBtn = screen.getByText('Reject & Search').closest('button')!;
 
-      // Primary reject has filled background, secondary has border/outline
       expect(rejectBtn.className).toContain('bg-destructive');
       expect(rejectSearchBtn.className).toContain('border');
     });
@@ -507,7 +491,6 @@ describe('DownloadActivityCard', () => {
       );
 
       expect(screen.getByText('Rejecting...')).toBeInTheDocument();
-      // The "Reject" dismiss button should NOT show spinner
       const rejectBtn = screen.getAllByRole('button').find(b => b.textContent === 'Reject');
       expect(rejectBtn).toBeDefined();
       expect(rejectBtn!.textContent).toBe('Reject');
@@ -542,13 +525,11 @@ describe('DownloadActivityCard', () => {
     });
   });
 
-  // #357 — Indexer name pill
   describe('indexer name pill (#357)', () => {
     it('renders indexer name in a pill element alongside protocol badge when indexerName is present', () => {
       renderWithProviders(<DownloadActivityCard download={createMockDownload({ indexerName: 'MAM' })} />);
       const pill = screen.getByTestId('indexer-badge');
       expect(pill).toHaveTextContent('MAM');
-      // Protocol badge also present
       expect(screen.getByTestId('protocol-badge')).toBeInTheDocument();
     });
 
@@ -569,7 +550,6 @@ describe('DownloadActivityCard', () => {
     });
   });
 
-  // #357 — Book title link
   describe('book title link (#357)', () => {
     it('renders title as a link to /books/:id when bookId is present', () => {
       renderWithProviders(<DownloadActivityCard download={createMockDownload({ bookId: 42, title: 'Linked Book' })} />);
@@ -608,10 +588,9 @@ describe('DownloadActivityCard', () => {
     });
   });
 
-  // #357 — Relative timestamp (history cards)
   describe('relative timestamp (#357)', () => {
     it('renders relative timestamp with dot separator on compact cards when completedAt is present', () => {
-      const recentDate = new Date(Date.now() - 3 * 3600000).toISOString(); // 3 hours ago
+      const recentDate = new Date(Date.now() - 3 * 3600000).toISOString();
       renderWithProviders(
         <DownloadActivityCard download={createMockDownload({ completedAt: recentDate })} compact />,
       );
@@ -651,7 +630,6 @@ describe('DownloadActivityCard', () => {
     });
   });
 
-  // #357 — Seeders label visibility (null/zero)
   describe('seeders null/zero hiding (#357)', () => {
     it('hides seeders when seeders is 0', () => {
       renderWithProviders(<DownloadActivityCard download={createMockDownload({ seeders: 0, protocol: 'torrent' })} />);

@@ -26,10 +26,9 @@ describe('DownloadProgress', () => {
   });
 
   it('displays bytes downloaded and total when size is present', () => {
-    const download = createMockDownload({ progress: 0.5, size: 1048576 }); // 1 MB
+    const download = createMockDownload({ progress: 0.5, size: 1048576 });
     render(<DownloadProgress download={download} />);
 
-    // 0.5 * 1048576 = 524288 bytes = 512 KB
     expect(screen.getByText('50%')).toBeInTheDocument();
     expect(screen.getByText(/512 KB/)).toBeInTheDocument();
     expect(screen.getByText(/1 MB/)).toBeInTheDocument();
@@ -40,7 +39,6 @@ describe('DownloadProgress', () => {
     render(<DownloadProgress download={download} />);
 
     expect(screen.getByText('50%')).toBeInTheDocument();
-    // No bytes text — only the percentage should appear
     expect(screen.queryByText(/MB|KB|GB|B/)).not.toBeInTheDocument();
   });
 
@@ -48,7 +46,6 @@ describe('DownloadProgress', () => {
     const download = createMockDownload({ progress: 0.75, size: 1000 });
     const { container } = render(<DownloadProgress download={download} />);
 
-    // The progress fill div has an inline style with width based on progress
     const fills = container.querySelectorAll('[style]');
     const fillStyles = Array.from(fills).map(el => (el as HTMLElement).style.width);
     expect(fillStyles).toContain('75%');

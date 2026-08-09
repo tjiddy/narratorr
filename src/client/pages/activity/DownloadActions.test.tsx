@@ -126,7 +126,6 @@ describe('DownloadActions', () => {
       },
     );
 
-    // #315 — button label change
     it('shows "Cancel & Blacklist" label instead of "Cancel" for active downloads', () => {
       const download = createMockDownload({ status: 'downloading' });
       render(<DownloadActions download={download} onCancel={vi.fn()} />);
