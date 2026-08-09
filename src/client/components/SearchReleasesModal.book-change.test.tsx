@@ -9,13 +9,7 @@ import { createMockBook } from '@/__tests__/factories';
 import { queryKeys } from '@/lib/queryKeys';
 import type { SearchResult } from '@/lib/api';
 
-// ============================================================================
-// Lifecycle integration tests (#1905). Unlike SearchReleasesModal.test.tsx, this
-// file uses the REAL useSearchStream / useReplaceGrab — the keyed remount, the
-// synchronous grab-generation seam, and the token re-mint session contract cannot
-// be modelled by the file-wide hook mock. EventSource / api.mintStreamToken /
-// api.searchGrab are stubbed instead.
-// ============================================================================
+// Real hooks cover keyed-remount and layout-seam races that the unit-test hook mock cannot model.
 
 const { MockApiError } = vi.hoisted(() => {
   class MockApiError extends Error {
@@ -32,12 +26,7 @@ const { MockApiError } = vi.hoisted(() => {
 
 let grabDeferred: { promise: Promise<unknown>; resolve: (v: unknown) => void; reject: (e: unknown) => void };
 
-// Ordering instrumentation for the F4 layout-seam proof. The replace-grab generation
-// advance is `useReplaceGrab.reset()`, invoked by the modal's teardown cleanup. Wrap it
-// (behaviour-preserving — still calls through) to record WHEN it fires, so a test can
-// assert it runs strictly before book B's body is interactive. The grab lifecycle-local
-// suppression is async (react-query awaits the mutationFn), so it always runs post-passive
-// and can't distinguish the seam by itself; this synchronous ordering marker can.
+// Record reset ordering because async mutation suppression cannot distinguish layout from passive cleanup.
 const { orderMarks } = vi.hoisted(() => ({ orderMarks: [] as string[] }));
 
 vi.mock('@/hooks/useReplaceGrab', async (importOriginal) => {
@@ -47,8 +36,7 @@ vi.mock('@/hooks/useReplaceGrab', async (importOriginal) => {
     ...actual,
     useReplaceGrab: (onSuccess: () => void, title: string) => {
       const real = actual.useReplaceGrab(onSuccess, title);
-      // Keep identity stable (real.reset is a stable useCallback) so the modal's
-      // teardown layout-effect does not re-run on every render.
+      // Preserve real.reset identity so teardown does not rerun on ordinary renders.
       const reset = React.useMemo(
         () => () => { orderMarks.push('A-teardown'); real.reset(); },
         // eslint-disable-next-line react-hooks/exhaustive-deps -- key on the stable reset only
@@ -82,7 +70,6 @@ vi.mock('sonner', () => ({
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
-// ---- MockEventSource --------------------------------------------------------
 class MockEventSource {
   static instances: MockEventSource[] = [];
   url: string;
@@ -125,7 +112,6 @@ const resultA: SearchResult = {
   indexerId: 1,
 };
 
-/** Drive an auto-started stream to the results phase with the given results. */
 function driveToResults(es: MockEventSource, results: SearchResult[]) {
   act(() => {
     es.emit('search-start', { sessionId: 's1', indexers: [{ id: 1, name: 'ABB' }] });
@@ -145,14 +131,8 @@ function makeDeferred() {
   return { promise, resolve, reject };
 }
 
-// A SYNCHRONOUS promise-like: `.resolve()` runs registered `.then`/`.catch` callbacks
-// synchronously (no microtask deferral). Used to hold `api.mintStreamToken` for the F1
-// recovery so its continuation fires exactly at the moment we resolve it — i.e. inside
-// book B's layout-effect setup, BEFORE passive effects flush. A real Promise would defer
-// the continuation to a microtask that (under RTL's rerender auto-act) only runs after
-// passive effects have already advanced the session generation, hiding the seam. With the
-// continuation running in the pre-passive window, a passive unmount cleanup would still
-// see `scheduledGen === sessionGenRef.current` and reopen an orphan stream — the exact bug.
+// Run remint continuations during B's layout setup; real Promises defer past this seam
+// under RTL's act(), masking orphan-stream regressions.
 function makeSyncThenable<T>() {
   const queued: Array<() => void> = [];
   let settled: { ok: boolean; value: unknown } | null = null;
@@ -177,15 +157,7 @@ function makeSyncThenable<T>() {
   return thenable;
 }
 
-// A sibling probe that fires `onLayout` during its own layout-effect SETUP. Keyed by
-// book.id alongside the modal, so on an A→B switch React runs it in the layout phase of
-// the SAME commit — strictly after the unmounting A body's layout-effect CLEANUPS (React
-// runs all destroys in the mutation phase before all setups in the layout phase) and
-// strictly before passive effects flush. Settling a held promise from here is what lets
-// the ordering tests observe the A→B transition "before passive effects flush": if a
-// teardown seam (session-gen advance / replace-grab reset) were a passive `useEffect`
-// cleanup instead of layout, A's generation would NOT yet be advanced at this point and
-// the stale settlement would leak a toast/close/orphan-stream — turning these tests red.
+// B's layout setup runs after A's layout cleanup but before passive cleanup, exposing teardown order.
 function LayoutSettler({ onLayout }: { onLayout: () => void }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- fire exactly once at mount (layout phase)
   useLayoutEffect(() => { onLayout(); }, []);
@@ -251,8 +223,6 @@ describe('SearchReleasesModal — book-change lifecycle (#1905)', () => {
     vi.unstubAllGlobals();
   });
 
-  // F7 — a book.id change remounts the keyed body, discarding the previous book's
-  // results synchronously; they are neither rendered nor grab-eligible under B.
   it('keyed remount clears the previous book results', async () => {
     const bookA = createMockBook({ id: 101, title: 'Book A' });
     const bookB = createMockBook({ id: 202, title: 'Book B' });
@@ -264,13 +234,10 @@ describe('SearchReleasesModal — book-change lifecycle (#1905)', () => {
 
     rerenderBook(bookB);
 
-    // A's row is gone synchronously; B has auto-started a fresh (result-less) search.
     expect(screen.queryByText('Result-For-Book-A')).not.toBeInTheDocument();
     await waitFor(() => expect(openInstances().length).toBeGreaterThan(0));
   });
 
-  // F8 / F12 — under StrictMode, switching to B from a results phase converges on
-  // exactly one live stream for B (each start() closes the prior), no reopen loop.
   it('fresh-book auto-start yields exactly one open stream for B under StrictMode (from results)', async () => {
     const bookA = createMockBook({ id: 101, title: 'Book A' });
     const bookB = createMockBook({ id: 202, title: 'Book B' });
@@ -283,7 +250,6 @@ describe('SearchReleasesModal — book-change lifecycle (#1905)', () => {
     rerenderBook(bookB);
 
     await waitFor(() => expect(openInstances('Book').length).toBe(1));
-    // The single live stream is B's; probe/superseded instances are closed.
     expect(openInstances().length).toBe(1);
     expect(openInstances()[0]!.url).toContain('Book+B');
   });
@@ -293,7 +259,6 @@ describe('SearchReleasesModal — book-change lifecycle (#1905)', () => {
     const bookB = createMockBook({ id: 202, title: 'Book B' });
     const { rerenderBook } = renderModal(bookA, vi.fn(), true);
 
-    // Leave A in the searching phase (auto-started, no results emitted).
     await waitFor(() => expect(openInstances().length).toBeGreaterThan(0));
 
     rerenderBook(bookB);
@@ -302,8 +267,6 @@ describe('SearchReleasesModal — book-change lifecycle (#1905)', () => {
     expect(openInstances()[0]!.url).toContain('Book+B');
   });
 
-  // F10 / F16 — an in-flight grab from book A that settles AFTER switching to B must
-  // not toast/confirm/close against B; the cache invalidations still run.
   const settlements = [
     { name: 'success', settle: () => grabDeferred.resolve({ id: 1, title: 'x' }) },
     { name: 'ACTIVE_DOWNLOAD_EXISTS 409', settle: () => grabDeferred.reject(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Other' }, count: 1 })) },
@@ -322,31 +285,23 @@ describe('SearchReleasesModal — book-change lifecycle (#1905)', () => {
       driveToResults(openInstances()[0]!, [resultA]);
       await screen.findByText('Result-For-Book-A');
 
-      // Start a grab for book A (searchGrab promise held).
       await userEvent.click(screen.getAllByText('Grab')[0]!);
       expect(api.searchGrab).toHaveBeenCalledTimes(1);
 
-      // Switch to B — remounts, advancing book A's replace generation synchronously.
       rerenderBook(bookB);
       invalidateSpy.mockClear();
 
-      // Settle the stale grab.
       await act(async () => {
         settle();
         await grabDeferred.promise.catch(() => {});
         await Promise.resolve();
       });
 
-      // No lifecycle-local effects against B — neither a success toast nor an error
-      // toast (F5: a broken stale onError guard for PIPELINE_ACTIVE / the generic
-      // branch would fire toast.error while the no-confirm/no-close assertions still
-      // pass), no confirm dialog, and B's modal is not closed.
       expect(toast.success).not.toHaveBeenCalled();
       expect(toast.error).not.toHaveBeenCalled();
       expect(onClose).not.toHaveBeenCalled();
       expect(screen.queryByText('Replace active download?')).not.toBeInTheDocument();
 
-      // On the success path the caches are still reconciled unconditionally.
       if (name === 'success') {
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
@@ -354,11 +309,6 @@ describe('SearchReleasesModal — book-change lifecycle (#1905)', () => {
     });
   }
 
-  // F2 — trace the EDITED UI value through the real hook into the actual stream
-  // request. The file-wide mock in SearchReleasesModal.test.tsx can only assert a
-  // zero-argument start(); here the real useSearchStream builds the URL, so an
-  // implementation that forwarded the derived prefill instead of local query state
-  // would fail this. Book-derived ranking context must survive the edit.
   it('an edited query reaches the real stream request as q, book context preserved (F2)', async () => {
     const book = createMockBook({
       id: 303,
@@ -368,8 +318,7 @@ describe('SearchReleasesModal — book-change lifecycle (#1905)', () => {
     renderModal(book, vi.fn());
 
     await waitFor(() => expect(openInstances().length).toBeGreaterThan(0));
-    // Drive the auto-started search to results so the phase leaves 'searching' and the
-    // Search control becomes eligible again.
+    // Exit 'searching' so the edited Search action becomes eligible.
     driveToResults(openInstances()[0]!, []);
 
     const input = await screen.findByLabelText('Search query');
@@ -385,9 +334,6 @@ describe('SearchReleasesModal — book-change lifecycle (#1905)', () => {
     });
   });
 
-  // F6 — a raw punctuation-only query (which the SERVER sanitizer would empty) reaches
-  // the request verbatim: no client-side sanitizer rewrites it. The server 400s it
-  // pre-SSE (out of scope here); this proves the client submits it raw.
   it('a raw punctuation-only edited query reaches the request unsanitized as q=?? (F6)', async () => {
     const book = createMockBook({
       id: 404,
@@ -406,18 +352,10 @@ describe('SearchReleasesModal — book-change lifecycle (#1905)', () => {
 
     await waitFor(() => {
       const params = new URLSearchParams(openInstances().at(-1)!.url.split('?')[1]);
-      expect(params.get('q')).toBe('??'); // raw, not client-sanitized
+      expect(params.get('q')).toBe('??');
     });
   });
 
-  // F4 — prove the replace-grab generation is advanced on the SYNCHRONOUS layout seam.
-  // The grab suppression itself is async (react-query awaits the mutationFn), so it can't
-  // distinguish layout from passive on its own. Instead assert the ORDER of two markers in
-  // the A→B commit: A's replace-grab teardown (`reset()`) fires strictly BEFORE book B's
-  // body is interactive (B's layout-effect setup). React runs all layout-effect CLEANUPS
-  // (mutation phase) before all layout-effect SETUPS — so a layout-cleanup seam yields
-  // [A-teardown, B-interactive]; a passive `useEffect` cleanup would run A-teardown in the
-  // passive phase (after B setup), reversing the order and failing this test.
   it('advances the replace-grab generation before book B is interactive — layout-seam ordering (F4)', async () => {
     const bookA = createMockBook({ id: 101, title: 'Book A' });
     const bookB = createMockBook({ id: 202, title: 'Book B' });
@@ -426,51 +364,38 @@ describe('SearchReleasesModal — book-change lifecycle (#1905)', () => {
     });
 
     await waitFor(() => expect(openInstances().length).toBeGreaterThan(0));
-    orderMarks.length = 0; // clear mount-time noise; capture only the transition commit
+    orderMarks.length = 0; // Ignore mount-time reset calls.
 
     armForNext();
-    rerenderBook(bookB); // synchronous A→B commit
+    rerenderBook(bookB);
 
     expect(orderMarks).toEqual(['A-teardown', 'B-interactive']);
   });
 
-  // F1 — prove the search-session generation is advanced on the SYNCHRONOUS (layout)
-  // unmount seam. Hold `api.mintStreamToken` with a SYNCHRONOUS thenable so the recovery
-  // continuation fires exactly when book B's layout setup resolves it — in the pre-passive
-  // window. A layout unmount cleanup has already advanced A's generation by then, so the
-  // continuation opens NO orphan A stream. (A passive cleanup would leave A's session live
-  // in this window and the continuation would synchronously reopen a Book A stream.)
   it('advances the session generation on the layout unmount seam — a remint fulfilling at B layout opens no orphan A stream (F1)', async () => {
     const bookA = createMockBook({ id: 101, title: 'Book A' });
     const bookB = createMockBook({ id: 202, title: 'Book B' });
     const mintThenable = makeSyncThenable<{ token: string; expiresInMs: number }>();
     (api.mintStreamToken as ReturnType<typeof vi.fn>).mockReset();
     (api.mintStreamToken as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({ token: 'stream-token', expiresInMs: 300_000 }) // A useQuery mount
-      .mockReturnValueOnce(mintThenable) // A remint (held, synchronous)
-      .mockResolvedValue({ token: 'stream-token', expiresInMs: 300_000 }); // any later mint
+      .mockResolvedValueOnce({ token: 'stream-token', expiresInMs: 300_000 }) // A mount
+      .mockReturnValueOnce(mintThenable) // Held A remint
+      .mockResolvedValue({ token: 'stream-token', expiresInMs: 300_000 }); // Later mints
 
     const { rerenderBook, armForNext } = renderModalWithSettler(bookA, vi.fn(), () => {
       mintThenable.resolve({ token: 'token-remint', expiresInMs: 300_000 });
     });
 
     await waitFor(() => expect(openInstances('Book+A').length).toBeGreaterThan(0));
-    // Stream error on A schedules the (held) remint continuation.
+    // Schedule the held A remint.
     await act(async () => { openInstances('Book+A')[0]!.onerror?.(new Event('error')); });
 
-    // Count EVERY Book A EventSource ever constructed — not just open ones. A passive
-    // unmount cleanup would let the continuation CONSTRUCT an orphan A stream (then close
-    // it in the same commit's passive phase), so an "open" count would miss the transient
-    // construction; a construction count catches it.
+    // Count constructions: passive cleanup could briefly create then close an orphan.
     const bookAConstructedBefore = MockEventSource.instances.filter(i => i.url.includes('q=Book+A')).length;
 
     armForNext();
-    // Synchronous A→B commit: B's layout setup resolves the mint, firing the recovery
-    // continuation synchronously in the pre-passive window.
     await act(async () => { rerenderBook(bookB); });
 
-    // No orphan A stream was ever constructed — A's session generation was already
-    // advanced at the layout unmount seam. Only B's stream is live.
     await waitFor(() => expect(openInstances('Book+B').length).toBe(1));
     expect(MockEventSource.instances.filter(i => i.url.includes('q=Book+A')).length).toBe(bookAConstructedBefore);
     expect(openInstances().length).toBe(1);
