@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type path from 'node:path';
 
-// Mock node:fs/promises before importing the module under test. Spread the real module so the
-// reconstructDiscGroup import (which statically pulls mkdir/cp from import-helpers.ts) keeps every
-// export present — only readdir/stat are stubbed, the rest stay real but are never called here.
+// Spread the real module so reconstructDiscGroup keeps its statically imported exports.
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   return {
@@ -13,10 +11,7 @@ vi.mock('node:fs/promises', async () => {
   };
 });
 
-// Mock node:path to use posix behavior so tests work on Windows too.
-// The source code uses join() and extname() which produce backslash paths on Windows,
-// breaking the rootPath replacement logic in makeFolderEntry. The actual deployment
-// target is Linux (Docker), so posix behavior is correct.
+// Force Linux/Docker path semantics so Windows does not change discovery paths.
 vi.mock('node:path', async () => {
   const actual = await vi.importActual<typeof path>('node:path');
   return {
@@ -28,9 +23,7 @@ vi.mock('node:path', async () => {
   };
 });
 
-// Bonus-content detection (mixed-content branch, #1031) reads album tags via
-// the audio-scanner helper. Mock at the module boundary so we don't drag
-// music-metadata + node:fs into book-discovery's test universe.
+// Mock album reads at the boundary rather than loading music-metadata and fs.
 vi.mock('./audio-scanner.js', () => ({
   readAlbumTag: vi.fn(),
 }));
@@ -53,8 +46,6 @@ const mockReaddir = vi.mocked(readdir);
 const mockStat = vi.mocked(stat);
 const mockReadAlbumTag = vi.mocked(readAlbumTag);
 
-// --- Helpers ---
-
 function makeDirent(name: string, isFile: boolean) {
   return {
     name,
@@ -70,10 +61,6 @@ function makeDirent(name: string, isFile: boolean) {
   };
 }
 
-/**
- * Build a virtual filesystem tree that mockReaddir and mockStat will serve.
- * Each key is an absolute path (forward slashes). Value is an array of entries.
- */
 function setupFs(tree: Record<string, { name: string; isFile: boolean; size?: number }[]>) {
   mockReaddir.mockImplementation(async (dirPath: unknown) => {
     const key = String(dirPath);
@@ -84,7 +71,6 @@ function setupFs(tree: Record<string, { name: string; isFile: boolean; size?: nu
     return entries.map(e => makeDirent(e.name, e.isFile)) as never;
   });
 
-  // Build a flat map of file path -> size for stat lookups
   const fileSizes: Record<string, number> = {};
   for (const [dirPath, entries] of Object.entries(tree)) {
     for (const entry of entries) {
@@ -103,14 +89,10 @@ function setupFs(tree: Record<string, { name: string; isFile: boolean; size?: nu
   });
 }
 
-// --- Tests ---
-
 describe('discoverBooks', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
-
-  // ---- Empty / no audio ----
 
   it('returns empty array for empty directory', async () => {
     setupFs({ '/audiobooks': [] });
@@ -134,8 +116,6 @@ describe('discoverBooks', () => {
     const result = await discoverBooks('/audiobooks');
     expect(result).toEqual([]);
   });
-
-  // ---- Simple leaf folder with audio ----
 
   it('discovers a single book folder with audio files', async () => {
     setupFs({
@@ -172,8 +152,6 @@ describe('discoverBooks', () => {
     expect(result[0]!.totalSize).toBe(100);
   });
 
-  // ---- All recognized audio extensions ----
-
   it.each(['.m4b', '.mp3', '.m4a', '.flac', '.ogg', '.opus', '.wma', '.aac'])(
     'recognizes %s as an audio extension',
     async (ext) => {
@@ -188,8 +166,6 @@ describe('discoverBooks', () => {
     },
   );
 
-  // ---- Hidden files/dirs (dot-prefixed) ----
-
   it('skips hidden files and directories (dot-prefixed)', async () => {
     setupFs({
       '/audiobooks': [{ name: 'Book', isFile: false }],
@@ -198,7 +174,6 @@ describe('discoverBooks', () => {
         { name: '.hidden_dir', isFile: false },
         { name: 'chapter1.mp3', isFile: true, size: 5000 },
       ],
-      // Even if the hidden dir has audio, it should be skipped
       '/audiobooks/Book/.hidden_dir': [
         { name: 'secret.mp3', isFile: true, size: 1000 },
       ],
@@ -209,8 +184,6 @@ describe('discoverBooks', () => {
     expect(result[0]!.audioFileCount).toBe(1);
     expect(result[0]!.totalSize).toBe(5000);
   });
-
-  // ---- Import-sibling suffix exclusion (#1341) ----
 
   describe('import-sibling suffix exclusion (#1341)', () => {
     it('excludes .import-bak / .import-tmp / .import-commit-pending siblings, discovers only the real book', async () => {
@@ -223,7 +196,6 @@ describe('discoverBooks', () => {
           { name: 'Pending.import-commit-pending', isFile: false },
         ],
         '/audiobooks/Author/Real Book': [{ name: 'ch1.mp3', isFile: true, size: 5000 }],
-        // Each suffixed sibling holds audio — without the exclusion they'd surface as phantom books.
         '/audiobooks/Author/Real Book.import-bak': [{ name: 'old.mp3', isFile: true, size: 4000 }],
         '/audiobooks/Author/Staging.import-tmp': [{ name: 'staged.mp3', isFile: true, size: 3000 }],
         '/audiobooks/Author/Pending.import-commit-pending': [{ name: 'pending.mp3', isFile: true, size: 2000 }],
@@ -240,11 +212,8 @@ describe('discoverBooks', () => {
         '/audiobooks': [{ name: 'Author', isFile: false }],
         '/audiobooks/Author': [
           { name: 'Real Book', isFile: false },
-          // Active born-hidden scratch — dot-led, so skipped by isHiddenName from birth, not
-          // merely via the reserved-suffix endsWith fallback.
           { name: '.Real Book.import-staging', isFile: false },
           { name: '.Real Book.import-backup', isFile: false },
-          // A legacy un-dotted staging still excluded via the reserved-suffix path.
           { name: 'Real Book.import-tmp', isFile: false },
         ],
         '/audiobooks/Author/Real Book': [{ name: 'ch1.mp3', isFile: true, size: 5000 }],
@@ -288,8 +257,6 @@ describe('discoverBooks', () => {
     });
   });
 
-  // ---- Folder structure parsing (folderParts) ----
-
   it('parses Author/Book structure into folderParts', async () => {
     setupFs({
       '/audiobooks': [{ name: 'Brandon Sanderson', isFile: false }],
@@ -330,8 +297,6 @@ describe('discoverBooks', () => {
     expect(result).toHaveLength(1);
     expect(result[0]!.folderParts).toEqual(['audiobooks']);
   });
-
-  // ---- Disc folder merging ----
 
   describe('disc folder merging', () => {
     it('merges CD1/CD2 subfolders into the parent book', async () => {
@@ -467,7 +432,6 @@ describe('discoverBooks', () => {
       });
 
       const result = await discoverBooks('/audiobooks');
-      // Should discover CD1 as a standalone book folder, not merge
       expect(result).toHaveLength(1);
       expect(result[0]!.path).toBe('/audiobooks/Book/CD1');
     });
@@ -520,7 +484,6 @@ describe('discoverBooks', () => {
     });
 
     it('does NOT merge if some children match disc pattern but others do not', async () => {
-      // Mixed: CD1 + CD2 + "Bonus Material" all have audio
       setupFs({
         '/audiobooks': [{ name: 'Book', isFile: false }],
         '/audiobooks/Book': [
@@ -534,31 +497,24 @@ describe('discoverBooks', () => {
       });
 
       const result = await discoverBooks('/audiobooks');
-      // "Bonus Material" is not a disc folder, so disc merge condition fails
-      // (discChildren.length !== immediateAudioChildren.length)
-      // All three are treated as individual books
       expect(result).toHaveLength(3);
     });
   });
 
-  // ---- DISC_FOLDER_PATTERN regex edge cases ----
-
   describe('DISC_FOLDER_PATTERN edge cases', () => {
-    // Helper: check if a folder name triggers disc merging when paired with another disc folder
     async function isDiscMerged(folderName: string): Promise<boolean> {
       vi.clearAllMocks();
       setupFs({
         '/audiobooks': [{ name: 'Book', isFile: false }],
         '/audiobooks/Book': [
           { name: folderName, isFile: false },
-          { name: 'CD2', isFile: false }, // always a valid disc folder as pair
+          { name: 'CD2', isFile: false },
         ],
         [`/audiobooks/Book/${folderName}`]: [{ name: 'a.mp3', isFile: true, size: 100 }],
         '/audiobooks/Book/CD2': [{ name: 'b.mp3', isFile: true, size: 100 }],
       });
 
       const result = await discoverBooks('/audiobooks');
-      // If merged, we get 1 result at parent. If not, we get 2 separate.
       return result.length === 1 && result[0]!.path === '/audiobooks/Book';
     }
 
@@ -597,13 +553,13 @@ describe('discoverBooks', () => {
       'Chapter 1',
       '01',
       '01 - Intro',
-      'CD',          // no number
-      'Disc',        // no number
-      'D',           // no number
+      'CD',
+      'Disc',
+      'D',
       'CD 1234',     // 4 digits (pattern allows 1-3)
-      'CD1 bonus',   // trailing text
-      'my CD1',      // leading text
-      'D major',     // not a disc folder
+      'CD1 bonus',
+      'my CD1',
+      'D major',
     ])(
       'does NOT match "%s" as disc folder',
       async (name) => {
@@ -612,10 +568,7 @@ describe('discoverBooks', () => {
     );
   });
 
-  // ---- Embedded per-disc folder-set coalescing (#1272) ----
-
   describe('embedded disc-marker sibling coalescing', () => {
-    /** Build sibling disc folders under one parent, each with a single audio file. */
     function discSiblings(
       parent: string,
       names: string[],
@@ -639,12 +592,9 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      // path is the lowest-disc member (Disc 1)
       expect(result[0]!.path).toBe(`/audiobooks/${names[0]}`);
-      // counts aggregate across all 10 discs
       expect(result[0]!.audioFileCount).toBe(10);
       expect(result[0]!.totalSize).toBe(1000);
-      // synthesized folderParts parse to the real author/title (year + category stripped)
       const parsed = parseFolderStructure(result[0]!.folderParts);
       expect(parsed.title).toContain('1776');
       expect(parsed.author).toBe('David McCullough');
@@ -710,8 +660,6 @@ describe('discoverBooks', () => {
       expect(result[0]!.audioFileCount).toBe(3);
     });
 
-    // ---- Negatives (must NOT coalesce) ----
-
     it('keeps 8 distinct Dune titles (no markers) as 8 books', async () => {
       const titles = [
         'Dune', 'Dune Messiah', 'Children of Dune', 'God Emperor of Dune',
@@ -767,20 +715,16 @@ describe('discoverBooks', () => {
       ]));
 
       const result = await discoverBooks('/audiobooks');
-      // Two distinct stems → two coalesced books, not one merged blob
       expect(result).toHaveLength(2);
     });
 
-    // ---- Robustness ----
-
     it('does not treat a marker keyword without a digit as a disc member', async () => {
       setupFs(discSiblings('/audiobooks', [
-        'Author - Book Disc of 10',        // malformed — no disc number
-        'Author - Book Disc 1 of 10',      // lone valid disc
+        'Author - Book Disc of 10',
+        'Author - Book Disc 1 of 10',
       ]));
 
       const result = await discoverBooks('/audiobooks');
-      // Malformed excluded, valid disc is a lone (size-1) group → both stay as ordinary rows
       expect(result).toHaveLength(2);
     });
 
@@ -790,11 +734,8 @@ describe('discoverBooks', () => {
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
       expect(result[0]!.path).toBe('/audiobooks/Author - Book Disc 1 of 10');
-      // Ordinary leaf row — parent-relative folderParts, not a synthesized stem
       expect(result[0]!.folderParts).toEqual(['Author - Book Disc 1 of 10']);
     });
-
-    // ---- Discovery/import parity (#1280) ----
 
     it('discovery and reconstruction group the SAME audio-bearing member set (1776 + artwork sibling)', async () => {
       const stem = '2005 Non Fiction David McCullough - 1776';
@@ -806,7 +747,6 @@ describe('discoverBooks', () => {
         ],
       };
       for (const n of discNames) tree[`/audiobooks/${n}`] = [{ name: 'track.mp3', isFile: true, size: 1000 }];
-      // audioless stem-sharing sibling — discovery filters it out, import must too
       tree[`/audiobooks/${stem} Artwork`] = [
         { name: 'cover.jpg', isFile: true, size: 50 },
         { name: 'info.nfo', isFile: true, size: 10 },
@@ -815,19 +755,15 @@ describe('discoverBooks', () => {
 
       const discoveryMembers = discNames.map(n => `/audiobooks/${n}`);
 
-      // Discovery side: one coalesced row anchored at disc 1, aggregating all 10 discs.
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
       expect(result[0]!.path).toBe(discoveryMembers[0]);
       expect(result[0]!.audioFileCount).toBe(10);
 
-      // Import side: reconstruct from the persisted anchor → identical 10-member set.
       const reconstructed = await reconstructDiscGroup(result[0]!.path);
       expect(reconstructed).toEqual(discoveryMembers);
       expect(reconstructed).not.toContain(`/audiobooks/${stem} Artwork`);
     });
-
-    // ---- Bundled polish A: leading-year strip tied to release category (#1280) ----
 
     it('preserves a real leading year-title in synthesized folderParts (2001 A Space Odyssey)', async () => {
       const names = Array.from({ length: 2 }, (_, i) => `2001 A Space Odyssey Disc ${i + 1} of 2`);
@@ -835,12 +771,9 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      // year is part of the real title (no Fiction/Non Fiction category follows) → not stripped
       expect(result[0]!.folderParts[0]).toContain('2001');
       expect(result[0]!.folderParts[0]).toContain('A Space Odyssey');
     });
-
-    // ---- Bundled polish B: lone embedded `D<n>` no longer coalesces distinct siblings (#1280) ----
 
     it('keeps distinct `D<n>`-token siblings sharing a stem prefix separate', async () => {
       setupFs(discSiblings('/audiobooks', [
@@ -850,21 +783,16 @@ describe('discoverBooks', () => {
       ]));
 
       const result = await discoverBooks('/audiobooks');
-      // No embedded marker parsed from a bare `D<n>` token → three standalone books, not one merge
       expect(result).toHaveLength(3);
     });
-
-    // ---- Incomplete-disc-set warning (#1282) ----
 
     it('coalesces an incomplete set AND flags the shortfall on reviewReason', async () => {
       const names = Array.from({ length: 3 }, (_, i) => `Author - Book Disc ${i + 1} of 10`);
       setupFs(discSiblings('/audiobooks', names));
 
       const result = await discoverBooks('/audiobooks');
-      // still coalesces (guards permit incomplete sets) ...
       expect(result).toHaveLength(1);
       expect(result[0]!.audioFileCount).toBe(3);
-      // ... but warns the operator the set is short
       expect(result[0]!.reviewReason).toBe('Incomplete disc set: 3 of 10 discs');
     });
 
@@ -878,9 +806,6 @@ describe('discoverBooks', () => {
     });
 
     it('flags the shortfall when the total lives on a non-lowest member (mixed implicit/explicit)', async () => {
-      // Disc 1 omits "of M" but discs 2 and 3 carry it — the consistency guard filters the
-      // undefined total and still coalesces, so the known total (10) must be recovered from the
-      // later members and the shortfall reported.
       const names = [
         'Author - Book Disc 1',
         'Author - Book Disc 2 of 10',
@@ -900,12 +825,10 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      // total is unknown → cannot assert incompleteness
       expect(result[0]).not.toHaveProperty('reviewReason');
     });
 
     it('emits no incomplete "N of M" string for an over-complete set (count > M)', async () => {
-      // 4 members all marked "of 3" (e.g. a duplicated disc) — must never render N>M.
       const names = [
         'Author - Book Disc 1 of 3',
         'Author - Book Disc 2 of 3',
@@ -920,7 +843,6 @@ describe('discoverBooks', () => {
     });
 
     it('composes incomplete + bonus warnings when a member disc-folder name carries a bonus token', async () => {
-      // Disc-folder name matches BONUS_SUBDIR_RE (name-signal arm) AND the set is short of M.
       const names = [
         'Author - Bonus Disc 1 of 10',
         'Author - Bonus Disc 2 of 10',
@@ -935,8 +857,6 @@ describe('discoverBooks', () => {
       );
     });
   });
-
-  // ---- composeReviewReason unit coverage (#1282) ----
 
   describe('composeReviewReason', () => {
     const incomplete = 'Incomplete disc set: 3 of 10 discs';
@@ -958,8 +878,6 @@ describe('discoverBooks', () => {
       expect(composeReviewReason(undefined, undefined)).toBeUndefined();
     });
   });
-
-  // ---- parseEmbeddedDiscMarker unit coverage ----
 
   describe('parseEmbeddedDiscMarker', () => {
     it('extracts stem, disc number, and total from an embedded "Disc N of M"', () => {
@@ -985,12 +903,9 @@ describe('discoverBooks', () => {
     });
 
     it('does NOT treat a lone embedded `D<n>` token as a disc marker (#1280)', () => {
-      // bare D-tokens are owned by DISC_FOLDER_PATTERN / parseTitledDiscFolder, not the embedded grammar
       expect(parseEmbeddedDiscMarker('Star Wars D2 Adventures')).toBeNull();
     });
   });
-
-  // ---- Parent has audio files (leaf folder behavior) ----
 
   it('treats parent as leaf when it has its own audio and NO audio-containing children', async () => {
     setupFs({
@@ -1005,14 +920,11 @@ describe('discoverBooks', () => {
     });
 
     const result = await discoverBooks('/audiobooks');
-    // Parent has audio, subfolder has no audio -> leaf
     expect(result).toHaveLength(1);
     expect(result[0]!.path).toBe('/audiobooks/Book');
     expect(result[0]!.audioFileCount).toBe(1);
     expect(result[0]!.totalSize).toBe(5000);
   });
-
-  // ---- Multiple books at same level ----
 
   it('discovers multiple books at the same level', async () => {
     setupFs({
@@ -1032,8 +944,6 @@ describe('discoverBooks', () => {
     expect(titles).toEqual(['Book A', 'Book B', 'Book C']);
   });
 
-  // ---- Deeply nested structures ----
-
   it('discovers books in deeply nested Author/Series/Book structure', async () => {
     setupFs({
       '/audiobooks': [{ name: 'Author', isFile: false }],
@@ -1052,8 +962,6 @@ describe('discoverBooks', () => {
     expect(result[1]!.folderParts).toEqual(['Author', 'Series', 'Book 2']);
   });
 
-  // ---- Empty subdirectory (no audio anywhere) ----
-
   it('skips empty subdirectories', async () => {
     setupFs({
       '/audiobooks': [
@@ -1068,8 +976,6 @@ describe('discoverBooks', () => {
     expect(result).toHaveLength(1);
     expect(result[0]!.folderParts).toEqual(['has-audio']);
   });
-
-  // ---- Stat failure on a file ----
 
   it('skips files that fail stat()', async () => {
     mockReaddir.mockImplementation(async (dirPath: unknown) => {
@@ -1100,8 +1006,6 @@ describe('discoverBooks', () => {
     expect(result[0]!.totalSize).toBe(2000);
   });
 
-  // ---- Logger integration ----
-
   it('calls logger.debug when log option is provided', async () => {
     setupFs({
       '/audiobooks': [{ name: 'Book', isFile: false }],
@@ -1119,7 +1023,6 @@ describe('discoverBooks', () => {
       expect.objectContaining({ rootPath: '/audiobooks', discovered: 1 }),
       'Book discovery complete',
     );
-    // Leaf folder classifier decision/reason
     expect(log.debug).toHaveBeenCalledWith(
       expect.objectContaining({ fileCount: 1, decision: 'merge', reason: 'single-file' }),
       'Leaf folder classified',
@@ -1132,7 +1035,6 @@ describe('discoverBooks', () => {
       '/audiobooks/Book': [{ name: 'a.mp3', isFile: true, size: 100 }],
     });
 
-    // Just verifying no crash — no logger passed
     const result = await discoverBooks('/audiobooks');
     expect(result).toHaveLength(1);
   });
@@ -1156,8 +1058,6 @@ describe('discoverBooks', () => {
       'Disc folder merge',
     );
   });
-
-  // ---- Disc merge with nested audio in disc subfolders ----
 
   it('collects audio files recursively from disc subfolders during merge', async () => {
     setupFs({
@@ -1185,15 +1085,13 @@ describe('discoverBooks', () => {
     expect(result[0]!.totalSize).toBe(600);
   });
 
-  // ---- Non-disc children alongside disc merge ----
-
   it('recurses into non-disc children even when disc merge happens', async () => {
     setupFs({
       '/audiobooks': [{ name: 'Collection', isFile: false }],
       '/audiobooks/Collection': [
         { name: 'CD1', isFile: false },
         { name: 'CD2', isFile: false },
-        { name: 'Extra', isFile: false }, // no audio directly, but has a deeper book
+        { name: 'Extra', isFile: false },
       ],
       '/audiobooks/Collection/CD1': [{ name: 'a.mp3', isFile: true, size: 100 }],
       '/audiobooks/Collection/CD2': [{ name: 'b.mp3', isFile: true, size: 100 }],
@@ -1206,8 +1104,6 @@ describe('discoverBooks', () => {
     const paths = result.map(r => r.path).sort();
     expect(paths).toEqual(['/audiobooks/Collection', '/audiobooks/Collection/Extra/Bonus Book']);
   });
-
-  // ---- Mixed: author with separate books, not disc pattern ----
 
   it('handles Author folder with two separate books (not disc folders)', async () => {
     setupFs({
@@ -1230,8 +1126,6 @@ describe('discoverBooks', () => {
     expect(result.find(r => r.folderParts.includes('It'))?.totalSize).toBe(2000);
   });
 
-  // ---- Case-insensitive extension matching ----
-
   it('handles uppercase audio extensions', async () => {
     setupFs({
       '/audiobooks': [{ name: 'Book', isFile: false }],
@@ -1245,8 +1139,6 @@ describe('discoverBooks', () => {
     expect(result).toHaveLength(1);
     expect(result[0]!.audioFileCount).toBe(2);
   });
-
-  // ---- totalSize aggregation ----
 
   it('correctly sums totalSize across all audio files', async () => {
     setupFs({
@@ -1272,24 +1164,11 @@ describe('discoverBooks', () => {
 
     const result = await discoverBooks('/ab');
     expect(result).toHaveLength(1);
-    // path.relative('/ab', '/ab/ab/book') = 'ab/book' — correct
     expect(result[0]!.folderParts).toEqual(['ab', 'book']);
   });
 
-  // ---- Mixed-content folders (loose audio + audio subfolders) ----
-
   describe('mixed-content folders', () => {
     it('root with 2 loose audio files + audio subfolders → 3 rows (no weak-evidence absorption per #1048)', async () => {
-      // Pre-#1048 the leaf classifier's size-guard merge bias drove mixed-content
-      // absorption: 2 distinct-titled loose files (1KB, 2KB) below the 120MB
-      // size threshold returned merge with reason `files-too-small-for-full-books`,
-      // and the entire subtree was absorbed into one parent row.
-      //
-      // Post-#1048 the mixed-content branch requires `hasStrongChapterSetEvidence`
-      // (strict marker-set / numeric-only / all-same-stem rules). Distinct stems
-      // `loose1`/`loose2` carry no markers and don't normalize to a single
-      // value, so absorption is rejected — loose files split per-file and the
-      // child folder is recursed.
       setupFs({
         '/audiobooks': [
           { name: 'loose1.m4b', isFile: true, size: 1000 },
@@ -1311,9 +1190,6 @@ describe('discoverBooks', () => {
     });
 
     it('root with 3 distinct large named loose files + audio subfolder, classifier returns split → 3 per-file rows + 1 child row from recursion', async () => {
-      // AC6: 3 distinct large files (340 MB each) with title-bearing stems
-      // → classifier returns 'split'. Loose audio is per-file emitted, AND
-      // the child folder is recursed into.
       const LARGE_BOOK = 340 * 1024 * 1024;
       setupFs({
         '/audiobooks': [
@@ -1423,25 +1299,13 @@ describe('discoverBooks', () => {
       });
 
       const result = await discoverBooks('/audiobooks');
-      // No audio children, so hasOwnAudio + no audioChildren = leaf
       expect(result).toHaveLength(1);
       expect(result[0]!.path).toBe('/audiobooks');
       expect(result[0]!.audioFileCount).toBe(1);
     });
 
     describe('mixed-content classifier merge + bonus-content review flag (#1031, #1051)', () => {
-      // The Heir fixture (`heirChapters()` below) uses real-world torrent
-      // filenames `NN Heir to the Empire.mp3`, not synthetic `Chapter NN.mp3`.
-      // The original #1031 fixture used the synthetic shape, which silently
-      // matched MERGE_MARKER_RE and passed via the marker-set rule — masking
-      // the fact that real-world torrents overwhelmingly use
-      // `<digits><space><title>` (no "Chapter" keyword), which neither the
-      // marker rule nor the normalizer's `[-_.]`-only separator strip catch.
-      // When a NEW fixture is meant to REPLICATE the Heir bug shape (i.e.
-      // exercise `hasStrongChapterSetEvidence` through the mixed-content
-      // branch), it MUST mirror real-world filename conventions; synthetic
-      // marker-keyword fixtures are only appropriate when the test
-      // specifically targets the leaf-classifier marker path.
+      // Real torrent names use `NN Title`; `Chapter NN` would exercise a different rule and mask this path.
       const SMALL_CHAPTER = 30 * 1024 * 1024;
       const HEIR_PARENT = '/audiobooks/Heir to the Empire';
 
@@ -1473,9 +1337,7 @@ describe('discoverBooks', () => {
 
       it('AC5/AC9: Heir fixture (28 chapters + Excerpt subdir) emits ONE parent-path row with audioFileCount=29 and review reason set', async () => {
         setupFs(heirFixture());
-        // Both signals would fire (subdir name AND album mismatch) — but
-        // subdir-name fires first, so we don't even need the tag mock for
-        // this AC. Configure it anyway for realism.
+        // Name detection fires before the deliberately mismatched album signal.
         mockReadAlbumTag.mockImplementation(async (filePath: string) => {
           if (filePath.includes('Excerpt')) return 'Behind the Scenes';
           return 'Heir to the Empire';
@@ -1517,8 +1379,6 @@ describe('discoverBooks', () => {
       });
 
       it('AC11: non-bonus subdir name + matching album → no review reason', async () => {
-        // Subdir name "Author Notes" doesn't match the bonus regex; both
-        // top-level and absorbed audio share the same album → no signal.
         const chapters = Array.from({ length: 6 }, (_, i) => ({
           name: `Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
           isFile: true,
@@ -1542,9 +1402,6 @@ describe('discoverBooks', () => {
       });
 
       it('AC13: tag-probe failure during album comparison does not throw — falls back to subdir-name signal only', async () => {
-        // Subdir name "Author Notes" — no name signal. All tag reads return
-        // undefined (simulates parseFile rejection). Detection completes
-        // gracefully with no review reason set.
         const chapters = Array.from({ length: 6 }, (_, i) => ({
           name: `Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
           isFile: true,
@@ -1568,8 +1425,6 @@ describe('discoverBooks', () => {
       });
 
       it('AC14: missing album on top-level audio → no album mismatch signal', async () => {
-        // Subdir name "Notes" doesn't match bonus regex; top-level album
-        // empty so we can't detect mismatch — no signal.
         const chapters = Array.from({ length: 6 }, (_, i) => ({
           name: `Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
           isFile: true,
@@ -1622,8 +1477,6 @@ describe('discoverBooks', () => {
       });
 
       it('AC8 (#1051): real-world Heir without bonus subdir → ONE row, no review reason', async () => {
-        // Clean 28-chapter set with no subdir. Exercises the new
-        // leading-numeric-prefix rule end-to-end through discovery.
         setupFs({
           '/audiobooks': [{ name: 'Heir to the Empire', isFile: false }],
           [HEIR_PARENT]: heirChapters(),
@@ -1658,9 +1511,6 @@ describe('discoverBooks', () => {
       });
 
       it('AC10 (#1051) adversarial: "01 Book A"/"01 Book B"/"01 Book C" loose at root → 3 split rows, NOT one merged', async () => {
-        // Each is "track 1" of a different book. Distinct title portions after
-        // prefix strip → no merge. Discovery must emit per-file rows even
-        // though every stem has the leading-numeric prefix.
         setupFs({
           '/audiobooks': [
             { name: '01 Book A.mp3', isFile: true, size: 200 * 1024 * 1024 },
@@ -1672,7 +1522,6 @@ describe('discoverBooks', () => {
         });
 
         const result = await discoverBooks('/audiobooks');
-        // 3 distinct loose books at root + 1 child book in subdir.
         expect(result).toHaveLength(4);
         const looseRows = result.filter(r => r.path.endsWith('.mp3') && r.path.startsWith('/audiobooks/0'));
         expect(looseRows).toHaveLength(3);
@@ -1683,8 +1532,6 @@ describe('discoverBooks', () => {
       });
 
       it('album-mismatch signal alone (subdir name harmless) sets review reason', async () => {
-        // Subdir "Notes" — doesn't match bonus regex. Albums differ →
-        // signal fires via album mismatch.
         const chapters = Array.from({ length: 6 }, (_, i) => ({
           name: `Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
           isFile: true,
@@ -1711,27 +1558,11 @@ describe('discoverBooks', () => {
       });
     });
 
-    // ----- Adversarial import-root fixtures (#1048) -----
-    //
-    // AC14: tests in this block model "user points Manual Import at a messy
-    // real download directory," not just intended book layouts. The shipped
-    // #1031 implementation passed end-to-end review without anyone flagging
-    // that the leaf classifier's merge bias would cause recursive subtree
-    // absorption when the same classifier drove the mixed-content branch.
-    // Future discovery changes MUST include at least one fixture of this
-    // shape — distinct loose top-level audio + many audio-bearing subdirs —
-    // and verify that absorption requires strict structural evidence, not
-    // count caps or size heuristics.
-    //
-    // The invariant: adding a chapter/disc/part token to one loose top-level
-    // file must not cause unrelated sibling files or child directories to be
-    // absorbed into a single discovery row.
+    // A single marker in a messy import root must not absorb unrelated files or subtrees.
     describe('adversarial mixed-content import roots (#1048)', () => {
       const LARGE_BOOK = 200 * 1024 * 1024;
 
-      // Pool of genuinely distinct title stems — chosen to NOT collapse under
-      // `normalizeStemForComparison` (which strips trailing ` \d+`). Trailing
-      // digits would defeat AC10's "distinct stems" premise.
+      // Avoid trailing digits that normalize away and invalidate the distinct-stem premise.
       const DISTINCT_TITLES = [
         'Killing Floor', 'Die Trying', 'Tripwire', 'Running Blind', 'Echo Burning',
         'Without Fail', 'Persuader', 'The Enemy', 'One Shot', 'The Hard Way',
@@ -1770,21 +1601,17 @@ describe('discoverBooks', () => {
         });
 
         const result = await discoverBooks('/audiobooks');
-        expect(result).toHaveLength(39); // 37 loose + 2 child books
+        expect(result).toHaveLength(39);
         const looseRows = result.filter(r => r.path.endsWith('.m4b'));
         expect(looseRows).toHaveLength(37);
         for (const row of looseRows) {
           expect(row.audioFileCount).toBe(1);
           expect(row.path.startsWith('/audiobooks/')).toBe(true);
         }
-        // No row at the parent path absorbing the entire subtree.
         expect(result.find(r => r.path === '/audiobooks')).toBeUndefined();
       });
 
       it('AC11: 37 distinct large loose .m4b files (NO markers) + audio subdirs → splits (count cap NOT consulted)', async () => {
-        // Pins the count-cap-driven absorption regression specifically: the
-        // leaf classifier returns merge with reason `count-exceeds-cap` for
-        // 37 files, but mixed-content must NOT consult that.
         const looseFiles = distinctTitleStems(37, /* withMarkerOnFirst */ false);
         setupFs({
           '/audiobooks': [
@@ -1795,15 +1622,12 @@ describe('discoverBooks', () => {
         });
 
         const result = await discoverBooks('/audiobooks');
-        // 37 split loose + 1 child = 38 rows. No parent absorption.
         expect(result).toHaveLength(38);
         expect(result.find(r => r.path === '/audiobooks')).toBeUndefined();
       });
 
       it('AC12: 25 loose files where exactly one stem contains " Part 1" → splits (`.some()` regression)', async () => {
-        // Pins the `.some()` regression: pre-#1048 a single stray Part-marker
-        // stem caused whole-batch merge. With ALL-stems-must-match plus
-        // shared-prefix, this must split.
+        // Every normalized stem must share the marker prefix; one stray marker is insufficient.
         const looseFiles = distinctTitleStems(25, /* withMarkerOnFirst */ true);
         setupFs({
           '/audiobooks': [
@@ -1814,15 +1638,12 @@ describe('discoverBooks', () => {
         });
 
         const result = await discoverBooks('/audiobooks');
-        expect(result).toHaveLength(26); // 25 loose + 1 child
+        expect(result).toHaveLength(26);
         expect(result.find(r => r.path === '/audiobooks')).toBeUndefined();
       });
 
       it('AC13: Book A Part 1/Part 2 + 20 unrelated full books → splits (subset-duplicate guard)', async () => {
-        // Pins both the prefix-subset false-positive AND the duplicate-
-        // normalized-subset false-positive: the strict `distinct === 1`
-        // rule in hasStrongChapterSetEvidence requires every normalized stem
-        // to match — not the leaf classifier's subset-tolerant `distinct < count`.
+        // Every normalized stem must match; a duplicate subset is insufficient.
         const subsetDup = [
           { name: 'Book A Part 1.m4b', isFile: true as const, size: LARGE_BOOK },
           { name: 'Book A Part 2.m4b', isFile: true as const, size: LARGE_BOOK },
@@ -1838,13 +1659,11 @@ describe('discoverBooks', () => {
         });
 
         const result = await discoverBooks('/audiobooks');
-        expect(result).toHaveLength(23); // 22 loose + 1 child
+        expect(result).toHaveLength(23);
         expect(result.find(r => r.path === '/audiobooks')).toBeUndefined();
       });
 
       it('AC9: shared-prefix multi-disc loose audio + bonus subdir → ONE absorbed parent row', async () => {
-        // Strong-evidence path via marker-set rule (all stems match,
-        // markerless prefix "mistborn" non-empty and shared).
         const SMALL = 30 * 1024 * 1024;
         setupFs({
           '/audiobooks': [{ name: 'Mistborn', isFile: false }],
@@ -1899,8 +1718,8 @@ describe('discoverBooks', () => {
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
       expect(result[0]!.path).toBe('/audiobooks/Book');
-      expect(result[0]!.audioFileCount).toBe(3); // loose + 2 disc tracks
-      expect(result[0]!.totalSize).toBe(600); // 100 + 200 + 300
+      expect(result[0]!.audioFileCount).toBe(3);
+      expect(result[0]!.totalSize).toBe(600);
       expect(result[0]).not.toHaveProperty('reviewReason');
     });
 
@@ -1919,8 +1738,6 @@ describe('discoverBooks', () => {
       });
 
       const result = await discoverBooks('/audiobooks');
-      // Disc merge doesn't trigger (Bonus is non-disc immediateAudioChild).
-      // All three subfolders recursed individually, plus loose file emitted as its own book.
       expect(result).toHaveLength(4);
       const paths = result.map(r => r.path).sort();
       expect(paths).toEqual([
@@ -1938,7 +1755,7 @@ describe('discoverBooks', () => {
           { name: 'loose.mp3', isFile: true, size: 50 },
           { name: 'CD1', isFile: false },
           { name: 'CD2', isFile: false },
-          { name: 'Extra', isFile: false }, // no direct audio, deeper descendant has audio
+          { name: 'Extra', isFile: false },
         ],
         '/audiobooks/Collection/CD1': [{ name: 'a.mp3', isFile: true, size: 100 }],
         '/audiobooks/Collection/CD2': [{ name: 'b.mp3', isFile: true, size: 100 }],
@@ -1947,13 +1764,9 @@ describe('discoverBooks', () => {
       });
 
       const result = await discoverBooks('/audiobooks');
-      // CD1 and CD2 are the only immediateAudioChildren → disc merge triggers
-      // Extra recurses independently; loose files now counted in merged row
       expect(result).toHaveLength(2);
       const paths = result.map(r => r.path).sort();
       expect(paths).toEqual(['/audiobooks/Collection', '/audiobooks/Collection/Extra/Bonus Book']);
-      // Merged row counts loose + 2 disc tracks; the deeper Extra/Bonus Book
-      // file stays in its own row, NOT counted here.
       const merged = result.find(r => r.path === '/audiobooks/Collection')!;
       expect(merged.audioFileCount).toBe(3);
       expect(merged.totalSize).toBe(250);
@@ -1997,15 +1810,13 @@ describe('discoverBooks', () => {
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
       expect(result[0]!.path).toBe('/audiobooks/Book');
-      expect(result[0]!.audioFileCount).toBe(3); // loose + 2 disc tracks
-      expect(result[0]!.totalSize).toBe(600); // 100 + 200 + 300
+      expect(result[0]!.audioFileCount).toBe(3);
+      expect(result[0]!.totalSize).toBe(600);
       expect(result[0]).not.toHaveProperty('reviewReason');
     });
 
     it('AC2 negative — top-level bonus-named loose audio does NOT flag (matching albums)', async () => {
-      // Top-level filename matches BONUS_SUBDIR_RE, but detectBonusContent only
-      // tests segments[0] of relative paths under info.path — top-level paths
-      // are excluded from descendantFiles, so the name signal cannot fire.
+      // Name detection examines descendants, so a matching top-level filename cannot trigger it.
       setupFs({
         '/audiobooks': [{ name: 'Book', isFile: false }],
         '/audiobooks/Book': [
@@ -2047,10 +1858,7 @@ describe('discoverBooks', () => {
     });
 
     it('AC5 negative — nested disc-internal bonus does NOT name-flag (matching albums)', async () => {
-      // CD1 has direct audio (track1.mp3) AND a nested Bonus/ subdir — both
-      // required for disc-merge eligibility. detectBonusContent only tests
-      // segments[0] of paths relative to info.path, which is "CD1" here, so
-      // BONUS_SUBDIR_RE never matches. With matching albums, no signal.
+      // The first relative segment is CD1, so its nested Bonus directory cannot trigger the name signal.
       setupFs({
         '/audiobooks': [{ name: 'Parent', isFile: false }],
         '/audiobooks/Parent': [
@@ -2075,12 +1883,7 @@ describe('discoverBooks', () => {
     });
 
     it('AC5 positive — nested disc-internal bonus + album mismatch on direct disc track DOES flag (album path only)', async () => {
-      // Same fixture as the AC5 negative, but mock album reads so top-level
-      // differs from EVERY disc-child file. readFirstAlbum returns the first
-      // truthy descendant album (CD1/track1.mp3 → "Bonus Disc"), and topAlbum
-      // is "Real Book" — album-mismatch fires. Mocking ONLY the nested
-      // CD1/Bonus/track2.mp3 to differ would NOT fire because readFirstAlbum
-      // short-circuits on CD1/track1.mp3's matching value.
+      // Every descendant differs because readFirstAlbum stops at the first truthy tag.
       setupFs({
         '/audiobooks': [{ name: 'Parent', isFile: false }],
         '/audiobooks/Parent': [
@@ -2231,8 +2034,6 @@ describe('discoverBooks', () => {
     });
   });
 
-  // ---- Root folder IS the book (folderParts from basename) ----
-
   describe('root folder is the book', () => {
     it('uses root folder basename when audio files are directly in the root', async () => {
       setupFs({
@@ -2379,7 +2180,7 @@ describe('discoverBooks', () => {
       });
 
       it('returns null for combined parentheticals — disc + narrator', () => {
-        // Disc paren is not at end of string, so regex $ anchor rejects
+        // The disc marker must end the folder name.
         expect(parseTitledDiscFolder('BookTitle (Disc 01) (Jeff Hays)')).toBeNull();
       });
     });
@@ -2448,7 +2249,6 @@ describe('discoverBooks', () => {
         });
 
         const result = await discoverBooks('/audiobooks');
-        // Should NOT merge — 3 audio children but only 2 match disc pattern
         expect(result).toHaveLength(3);
       });
 
@@ -2477,7 +2277,6 @@ describe('discoverBooks', () => {
 
         const result = await discoverBooks('/audiobooks');
         expect(result).toHaveLength(1);
-        // Should be the child folder, not the parent (no merge)
         expect(result[0]!.path).toBe('/audiobooks/BookTitle (Disc 01)');
       });
 
@@ -2499,8 +2298,6 @@ describe('discoverBooks', () => {
       });
     });
   });
-
-  // ---- Leaf folder classifier merge/split (issue #1016) ----
 
   describe('leaf folder classifier merge/split', () => {
     const LARGE_BOOK = 340 * 1024 * 1024;
@@ -2568,9 +2365,7 @@ describe('discoverBooks', () => {
     });
 
     it('AC19: split classification logs largeCount and largeRatio from sizeEvidence', async () => {
-      // 3 large distinct novels — split path; sizeEvidence must surface in the
-      // "Leaf folder classified" debug log so #1035 metadata can be replayed
-      // from the search-trace without recomputing.
+      // Preserve size evidence in logs so classification can be replayed without recomputing.
       setupFs({
         '/audiobooks': [{ name: 'Sanderson', isFile: false }],
         '/audiobooks/Sanderson': [{ name: 'Mistborn Trilogy', isFile: false }],
@@ -2626,8 +2421,7 @@ describe('discoverBooks', () => {
       expect(result).toHaveLength(1);
       expect(result[0]!.path).toBe('/audiobooks/Mistborn Trilogy');
       expect(result[0]!.audioFileCount).toBe(3);
-      // Pin the specific guard reason — duplicate-normalized-stems fires before
-      // title-content because all three files normalize to 'Mistborn'.
+      // Duplicate-stem detection must win when title-content also applies.
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({
           decision: 'merge',
@@ -2639,9 +2433,6 @@ describe('discoverBooks', () => {
   });
 });
 
-// AC12: album normalization — collapses publisher suffixes that mark
-// "same album, different volume" so the bonus-detection heuristic doesn't
-// false-fire on legitimate multi-volume series.
 describe('normalizeAlbumForComparison (#1031)', () => {
   it.each([
     ['Stormlight (1 of 5)', 'Stormlight (3 of 5)'],
@@ -2676,26 +2467,24 @@ describe('comparePosixPath (#1891)', () => {
   it('is separator-independent — slash and backslash forms of the same pair order identically', () => {
     expect(Math.sign(comparePosixPath('/root/a/b', '/root/a/c')))
       .toBe(Math.sign(comparePosixPath('\\root\\a\\b', '\\root\\a\\c')));
-    // A slash form vs its own backslash twin fold to the SAME primary key, so the
-    // raw tie-break decides — still nonzero because the raw strings differ.
+    // Slash variants share a primary key; raw code units break the tie.
     expect(comparePosixPath('/root/a/b', '\\root\\a\\b')).not.toBe(0);
   });
 
   it('folded-key collision is total: distinct raw paths return nonzero, antisymmetric; only raw equality is 0', () => {
-    const nested = '/root/a/b';     // POSIX nested pair /root/a → b
-    const literal = '/root/a\\b';   // a single folder literally named "a\\b"
-    // Both fold to the same primary key on the Linux/Docker target.
+    const nested = '/root/a/b';
+    const literal = '/root/a\\b'; // A single folder literally named "a\\b".
     expect(nested.split('\\').join('/')).toBe(literal.split('\\').join('/'));
     const fwd = comparePosixPath(nested, literal);
     const rev = comparePosixPath(literal, nested);
     expect(fwd).not.toBe(0);
-    expect(Math.sign(fwd)).toBe(-Math.sign(rev)); // antisymmetric
-    expect(comparePosixPath(nested, nested)).toBe(0); // zero ONLY on exact raw equality
+    expect(Math.sign(fwd)).toBe(-Math.sign(rev));
+    expect(comparePosixPath(nested, nested)).toBe(0);
   });
 
   it('uses code-unit order, NOT localeCompare — a collation-equivalent pair still orders nonzero', () => {
-    const a = '/root/Å';    // precomposed Å
-    const b = '/root/Å';   // A + combining ring: localeCompare ties, code units differ
+    const a = '/root/Å'; // Precomposed Å.
+    const b = '/root/Å'; // A plus combining ring: localeCompare ties, code units differ.
     expect(a.localeCompare(b)).toBe(0);
     expect(comparePosixPath(a, b)).not.toBe(0);
   });
@@ -2727,9 +2516,7 @@ describe('discoverBooks — deterministic ordering (#1891)', () => {
   });
 
   it('orders a folded-key collision pair identically across two readdir permutations (raw paths, pre-normalization)', async () => {
-    // /root/a/b (nested) and /root/a\\b (one literal folder) fold to the same POSIX
-    // key; only the raw code-unit tie-break separates them. Serve the root children in
-    // both orders and assert the EXACT raw .path sequence is identical and stable.
+    // Folded keys collide; the raw code-unit tie-break must survive either input order.
     const build = (rootEntries: { name: string; isFile: boolean }[]) => ({
       '/root': rootEntries,
       '/root/a': [{ name: 'b', isFile: false }],
@@ -2744,7 +2531,7 @@ describe('discoverBooks — deterministic ordering (#1891)', () => {
     setupFs(build(literalFirst));
     const r2 = (await discoverBooks('/root')).map((r) => r.path);
 
-    // '/' (0x2f) sorts before '\\' (0x5c) at the divergence, so nested wins — in BOTH runs.
+    // Raw '/' sorts before '\\' at the first differing code unit.
     expect(r1).toEqual(['/root/a/b', '/root/a\\b']);
     expect(r2).toEqual(r1);
   });
