@@ -7,21 +7,15 @@ const ruleTester = new RuleTester({
 
 ruleTester.run('no-tautological-expect', rule, {
   valid: [
-    // Real assertions comparing against an expression
     { code: `expect(getValue()).toBe(42);` },
-    // Identifier-based reference equality (legitimate)
     { code: `expect(x).toBe(x);` },
-    // Different literal values
     { code: `expect(true).toBe(false);` },
     { code: `expect(1).toBe(2);` },
     { code: `expect('a').toBe('b');` },
-    // Different matchers that aren't equality
     { code: `expect(x).toBeTruthy();` },
     { code: `expect(x).toBeDefined();` },
-    // Object/array literals — not in scope (literalValue returns unknown)
     { code: `expect({}).toEqual({});` },
     { code: `expect([]).toEqual([]);` },
-    // Mixed literal vs identifier
     { code: `expect(true).toBe(value);` },
     { code: `expect(value).toBe(true);` },
   ],

@@ -3,13 +3,11 @@ import { RuleTester } from 'eslint';
 import tseslint from 'typescript-eslint';
 import rule from './no-unstamped-match-generation.cjs';
 
-// ESLint's RuleTester drives its own describe/it. Vitest's are wired in via these
-// static hooks so each case reports as a real test rather than one opaque block.
+// Wire RuleTester into Vitest so each case reports independently.
 RuleTester.describe = describe;
 RuleTester.it = it;
 
-// `typescript-eslint` is the only parser package present at the root under this repo's
-// pnpm layout — `@typescript-eslint/parser` does not resolve from here.
+// Under this pnpm layout only the root `typescript-eslint` parser resolves here.
 const ruleTester = new RuleTester({
   languageOptions: {
     parser: tseslint.parser,
@@ -20,7 +18,6 @@ const ruleTester = new RuleTester({
 const STAMP_IMPORT = "import { stampRow } from '@/lib/repick-corroboration.js';";
 const MERGE_IMPORT = "import { mergeMatchIntoRow } from '@/components/manual-import';";
 
-/** Both canonical trust roots, exactly as the two hooks import them. */
 const withTrustRoots = (code) => `${STAMP_IMPORT}\n${MERGE_IMPORT}\n${code}`;
 
 const LIBRARY_HOOK = 'src/client/pages/library-import/useLibraryImport.ts';
@@ -28,10 +25,7 @@ const MANUAL_HOOK = 'src/client/pages/manual-import/useManualImport.ts';
 const CORROBORATION_FILE = 'src/client/lib/repick-corroboration.ts';
 const MERGE_FILE = 'src/client/components/manual-import/mergeMatchIntoRow.ts';
 
-// `applyCorroboration`'s deliberate terminal unstamped write, and both of
-// `mergeMatchIntoRow`'s real return shapes. Each is paired below with the identical
-// source under a hook filename, so AC6's basename exemption is proven to be the thing
-// doing the work rather than some incidental property of the code.
+// Pair identical producer source under exempt and hook filenames to isolate basename exemption behavior.
 const APPLY_CORROBORATION_WRITE = `
   const next = rows.map((row) => {
     if (row.book.path !== target.path) return row;
@@ -51,7 +45,6 @@ const MERGE_TERMINAL_RETURN = `
 
 ruleTester.run('no-unstamped-match-generation', rule, {
   valid: [
-    // ── The four live library-hook stamping shapes, transcribed from source ──
     {
       name: 'library mergeMatchResults',
       filename: LIBRARY_HOOK,
@@ -100,7 +93,6 @@ ruleTester.run('no-unstamped-match-generation', rule, {
       `),
     },
 
-    // ── The four live manual-hook stamping shapes ──
     {
       name: 'manual mergeMatchResults',
       filename: MANUAL_HOOK,
@@ -125,8 +117,6 @@ ruleTester.run('no-unstamped-match-generation', rule, {
       `),
     },
     {
-      // The shape that differs from the library twin: a SHORTHAND matchResult, so the
-      // outer literal is itself the producer and reaches arg-0 with no wrapper steps.
       name: 'manual handleEdit shorthand matchResult',
       filename: MANUAL_HOOK,
       code: withTrustRoots(`
@@ -144,7 +134,6 @@ ruleTester.run('no-unstamped-match-generation', rule, {
       `),
     },
 
-    // ── AC2 wrapper steps, one case per declared node kind (F6) ──
     {
       name: 'TSAsExpression-wrapped producer in arg-0',
       filename: LIBRARY_HOOK,
@@ -166,30 +155,23 @@ ruleTester.run('no-unstamped-match-generation', rule, {
       code: withTrustRoots('const out = stampRow({ ...r, matchResult: fresh }!, generation);'),
     },
     {
-      // typescript-eslint's parser ERASES parentheses — there is no ParenthesizedExpression
-      // node, so the literal's parent here is the CallExpression itself. The case is kept
-      // because the erasure is a parser property, not a rule property: if the parser ever
-      // started preserving the node, the walk would terminate on it and this would red.
+      // The parser currently erases parentheses; this fails if it starts preserving that node.
       name: 'parenthesized producer in arg-0',
       filename: LIBRARY_HOOK,
       code: withTrustRoots('const out = stampRow(({ ...r, matchResult: fresh }), generation);'),
     },
 
-    // ── AC3 binding resolution ──
     {
       name: 'aliased stampRow import is trusted',
       filename: LIBRARY_HOOK,
       code: `import { stampRow as s } from '@/lib/repick-corroboration.js';\nconst out = s({ ...r, matchResult: fresh }, generation);`,
     },
     {
-      // Neither hook imports the direct module; a same-named import from it is a
-      // different binding, so calling it is not a P2 producer (F7).
       name: 'mergeMatchIntoRow from the direct module is not a P2 producer',
       filename: LIBRARY_HOOK,
       code: `import { mergeMatchIntoRow } from '@/components/manual-import/mergeMatchIntoRow.js';\nsetRows(prev => prev.map(row => mergeMatchIntoRow(row, match)));`,
     },
 
-    // ── Non-reports that must stay clean (live production shapes) ──
     {
       name: 'member read inside an updater (handleDeselectPending)',
       filename: LIBRARY_HOOK,
@@ -211,7 +193,6 @@ ruleTester.run('no-unstamped-match-generation', rule, {
       code: 'function f(row: ImportRow, matchResult: MatchResult) { return row; }',
     },
 
-    // ── Every unrelated setRows shape from the two hooks (AC8) ──
     { name: 'setRows([])', filename: MANUAL_HOOK, code: 'setRows([]);' },
     { name: 'setRows(newRows)', filename: LIBRARY_HOOK, code: 'setRows(newRows);' },
     {
@@ -246,7 +227,6 @@ ruleTester.run('no-unstamped-match-generation', rule, {
       `,
     },
 
-    // ── AC6 producer-file exemption (paired with the invalid twins below) ──
     { name: 'applyCorroboration under its own file', filename: CORROBORATION_FILE, code: APPLY_CORROBORATION_WRITE },
     { name: 'mergeMatchIntoRow wasEdited return under its own file', filename: MERGE_FILE, code: MERGE_EARLY_RETURN },
     { name: 'mergeMatchIntoRow terminal return under its own file', filename: MERGE_FILE, code: MERGE_TERMINAL_RETURN },
@@ -254,7 +234,6 @@ ruleTester.run('no-unstamped-match-generation', rule, {
 
   invalid: [
     {
-      // The exact #2184 mutation: the merge stamp dropped at mergeMatchResults.
       name: 'unstamped mergeMatchIntoRow result',
       filename: LIBRARY_HOOK,
       code: withTrustRoots('setRows(prev => prev.map(row => mergeMatchIntoRow(row, match)));'),
@@ -302,8 +281,6 @@ ruleTester.run('no-unstamped-match-generation', rule, {
       errors: [{ messageId: 'unstamped' }],
     },
     {
-      // Pins that the rule does not depend on `setRows` locality — the live scan site
-      // builds its rows in a `map` outside any setRows call.
       name: 'producer built into a const first, then handed to setRows',
       filename: LIBRARY_HOOK,
       code: withTrustRoots(`
@@ -313,35 +290,27 @@ ruleTester.run('no-unstamped-match-generation', rule, {
       errors: [{ messageId: 'unstamped' }],
     },
     {
-      // Two independent violations: arg-1 is not an Identifier (AC4), and the producer
-      // sits in arg-1's subtree rather than arg-0 (AC2). Reported in source order.
+      // Two independent violations: arg-1 is not an Identifier and its producer does not reach arg-0.
       name: 'producer in the wrong argument position',
       filename: LIBRARY_HOOK,
       code: withTrustRoots('const out = stampRow(row, pickGeneration({ matchResult }));'),
       errors: [{ messageId: 'generationNotIdentifier' }, { messageId: 'unstamped' }],
     },
     {
-      // The AC2 Property-step negative. A permissive walk that allows a free `Property` or
-      // `ObjectExpression` step (rather than only the spread-hoist) passes without this.
+      // AC2 Property-step negative: the nested key does not land on the row.
       name: 'nested under a Property — the key does not land on the row',
       filename: LIBRARY_HOOK,
       code: withTrustRoots('const out = stampRow({ ...r, meta: { matchResult } }, generation);'),
       errors: [{ messageId: 'unstamped' }],
     },
     {
-      // A producer laundered through an ARRAY spread. Synthetic — no production shape looks
-      // like this — but it is the other half of the spread-hoist step: a spread only hoists
-      // keys onto a row when it lands in an object literal. Drop the spread-target check and
-      // this reads as stamped.
+      // Array spread must not count as the object-spread key-hoist exception.
       name: 'spread into an array, not an object literal',
       filename: LIBRARY_HOOK,
       code: withTrustRoots('const out = stampRow([...({ ...r, matchResult: fresh })], generation);'),
       errors: [{ messageId: 'unstamped' }],
     },
     {
-      // Pins the arg-0 POSITION itself, directly on a trusted stampRow call: a producer at
-      // arg-1 is not stamped, and it is also not a valid generation. Item 9's producer sits
-      // under an untrusted callee, so it never exercises this check.
       name: 'producer directly at arg-1 of a trusted stampRow call',
       filename: LIBRARY_HOOK,
       code: withTrustRoots('const out = stampRow(row, { matchResult: fresh });'),
@@ -385,7 +354,6 @@ ruleTester.run('no-unstamped-match-generation', rule, {
       errors: [{ messageId: 'unstamped' }],
     },
 
-    // ── AC4: the generation argument must be a plain Identifier ──
     {
       name: 'generation from a CallExpression',
       filename: LIBRARY_HOOK,
@@ -405,24 +373,20 @@ ruleTester.run('no-unstamped-match-generation', rule, {
       errors: [{ messageId: 'generationNotIdentifier' }],
     },
     {
-      // An ABSENT generation is not a plain Identifier either. TS2554 also catches this
-      // against today's 2-arity signature, but that is redundant coverage, not a
-      // guarantee — see the rule's note at the guard.
+      // TS2554 is redundant coverage, not a guarantee that an absent generation stays invalid.
       name: 'generation omitted entirely',
       filename: LIBRARY_HOOK,
       code: withTrustRoots('const out = stampRow(row);'),
       errors: [{ messageId: 'generationNotIdentifier' }],
     },
     {
-      // The two checks are independent: the producer IS at arg-0 of a trusted stampRow, so
-      // it is stamped and `unstamped` must NOT fire — only the missing generation reports.
+      // Arg zero is stamped; only the independent missing-generation check should fire.
       name: 'stamped producer with the generation omitted',
       filename: LIBRARY_HOOK,
       code: withTrustRoots('const out = stampRow({ ...r, matchResult: fresh });'),
       errors: [{ messageId: 'generationNotIdentifier' }],
     },
 
-    // ── AC6 exemption twins: identical source, hook filename ──
     {
       name: 'applyCorroboration shape under a hook filename',
       filename: LIBRARY_HOOK,
