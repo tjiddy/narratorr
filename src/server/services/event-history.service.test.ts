@@ -35,10 +35,7 @@ describe('EventHistoryService', () => {
     );
   });
 
-  // Helper for tests that need to wire with custom deps. Returns a fresh
-  // (unwired) EventHistoryService backed by the same shared mocks (`db`,
-  // `log`, `blacklistService`, `bookService`) so assertions on those mocks
-  // still work.
+  // Fresh unwired service sharing the assertion mocks.
   function freshService(): EventHistoryService {
     return new EventHistoryService(
       inject<Db>(db),
@@ -73,7 +70,7 @@ describe('EventHistoryService', () => {
   describe('getAll', () => {
     it('returns events in { data, total } envelope', async () => {
       const events = [createMockDbBookEvent({ id: 2 }), createMockDbBookEvent({ id: 1 })];
-      // First call: count query, second call: data query
+      // Count query precedes data query.
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 2 }]))
         .mockReturnValueOnce(mockDbChain(events));
@@ -149,7 +146,6 @@ describe('EventHistoryService', () => {
 
       expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
       const args = (dataChain.orderBy as ReturnType<typeof vi.fn>).mock.calls[0];
-      // Should have two sort columns (createdAt DESC, id DESC)
       expect(args).toHaveLength(2);
     });
   });
@@ -190,9 +186,7 @@ describe('EventHistoryService', () => {
 
   describe('markFailed', () => {
     beforeEach(() => {
-      // Default-wire so the retry-search dispatch (events with bookId) works.
-      // The unwired-contract case is exercised by a dedicated test in the
-      // `markFailed search trigger` block.
+      // Most cases need retry dispatch wired; dedicated tests create fresh unwired services.
       service.wire({ retrySearchDeps: { log: createMockLogger() } as never });
     });
 
@@ -200,8 +194,7 @@ describe('EventHistoryService', () => {
       const event = createMockDbBookEvent({ downloadId: 5 });
       const download = { id: 5, infoHash: 'abc123', title: 'The Way of Kings [MP3]' };
 
-      // First select: getById for the event
-      // Second select: download lookup
+      // markFailed loads the event, then its download.
       db.select
         .mockReturnValueOnce(mockDbChain([event]))
         .mockReturnValueOnce(mockDbChain([download]));
@@ -342,7 +335,6 @@ describe('EventHistoryService', () => {
       const result = await fresh.markFailed(1);
 
       expect(result).toEqual({ success: true });
-      // Verify the retry search was actually triggered (fire-and-forget)
       await vi.waitFor(() => {
         expect(mockSearchAll).toHaveBeenCalled();
       });
@@ -356,7 +348,6 @@ describe('EventHistoryService', () => {
         .mockReturnValueOnce(mockDbChain([event]))
         .mockReturnValueOnce(mockDbChain([download]));
 
-      // Set retrySearchDeps that will cause retrySearch to fail
       const { RetryBudget } = await import('./retry-budget.js');
       const mockSearchAll = vi.fn().mockRejectedValue(new Error('Indexer down'));
       const fresh = freshService();
@@ -371,10 +362,8 @@ describe('EventHistoryService', () => {
         log: createMockLogger(),
       } } as never);
 
-      // markFailed should succeed — search failure is caught inside retrySearch (returns retry_error)
       const result = await fresh.markFailed(1);
       expect(result).toEqual({ success: true });
-      // Verify the search was attempted even though it failed
       await vi.waitFor(() => {
         expect(mockSearchAll).toHaveBeenCalled();
       });
@@ -388,15 +377,11 @@ describe('EventHistoryService', () => {
         .mockReturnValueOnce(mockDbChain([event]))
         .mockReturnValueOnce(mockDbChain([download]));
 
-      // Use a fresh, unwired EventHistoryService — the parent `service` is
-      // not wired in this describe block.
       const unwiredService = freshService();
 
-      // markFailed reaches the retry-search dispatch (event has bookId) and must throw.
       await expect(unwiredService.markFailed(1)).rejects.toThrow(/EventHistoryService used before wire/);
     });
 
-    // ── fail-fast contract: no partial side effects ──
     it('unwired markFailed() with bookId fails BEFORE blacklist or book-status side effects', async () => {
       const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
       const download = { id: 5, infoHash: 'abc123', title: 'Test' };
@@ -409,9 +394,6 @@ describe('EventHistoryService', () => {
 
       await expect(unwiredService.markFailed(1)).rejects.toThrow(/EventHistoryService used before wire/);
 
-      // Critical contract: ServiceWireError must surface BEFORE the mutating
-      // blacklist + book-status calls so an unwired service never leaves a
-      // partial mark-failed operation behind.
       expect(blacklistService.create).not.toHaveBeenCalled();
       expect(bookService.updateStatus).not.toHaveBeenCalled();
     });
@@ -424,7 +406,6 @@ describe('EventHistoryService', () => {
         .mockReturnValueOnce(mockDbChain([event]))
         .mockReturnValueOnce(mockDbChain([download]));
 
-      // Force the catch path in markFailed
       blacklistService.create.mockRejectedValueOnce(
         new Error('UNIQUE constraint failed: idx_blacklist_guid_unique'),
       );
@@ -455,7 +436,6 @@ describe('EventHistoryService', () => {
         }),
         'Mark-failed blacklist creation failed — proceeding with book revert',
       );
-      // Retry-search dispatched despite blacklist failure
       await vi.waitFor(() => {
         expect(mockSearchAll).toHaveBeenCalled();
       });
@@ -469,7 +449,6 @@ describe('EventHistoryService', () => {
         .mockReturnValueOnce(mockDbChain([event]))
         .mockReturnValueOnce(mockDbChain([download]));
 
-      // Force the retrySearch promise itself to reject (bypassing its internal try/catch)
       vi.mocked(retrySearch).mockRejectedValueOnce(new Error('retry search exploded'));
 
       const { RetryBudget } = await import('./retry-budget.js');
@@ -495,9 +474,6 @@ describe('EventHistoryService', () => {
       });
     });
 
-    // #1103 F3 — caller-surface coverage for the imported-book guard inside retrySearch().
-    // markFailed must dispatch retry-search, and the centralized guard must short-circuit
-    // before any indexer search or grab when the linked book has been imported.
     it('imported-book retry guard — no indexer search, no grab, budget unchanged', async () => {
       const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
       const download = { id: 5, infoHash: 'abc123', title: 'Imported Book' };
@@ -527,7 +503,7 @@ describe('EventHistoryService', () => {
       const result = await fresh.markFailed(1);
       expect(result).toEqual({ success: true });
 
-      // Allow fire-and-forget retrySearch to settle
+      // Drain the fire-and-forget retry.
       await new Promise((r) => setTimeout(r, 0));
 
       expect(mockSearchAll).not.toHaveBeenCalled();
@@ -582,26 +558,19 @@ describe('EventHistoryService', () => {
         vi.useRealTimers();
       }
 
-      // Verify where was called with a predicate
       const whereFn = chain.where as ReturnType<typeof vi.fn>;
       expect(whereFn).toHaveBeenCalledTimes(1);
 
-      // The predicate passed to where() is lt(bookEvents.createdAt, cutoff)
-      // Drizzle comparison operators produce SQL objects with queryChunks:
-      //   [StringChunk(''), Column, StringChunk(' < '), Param(value), StringChunk('')]
+      // Drizzle stores the operator at chunk 2 and bound cutoff at chunk 3.
       const predicate = whereFn.mock.calls[0]![0];
       const chunks = predicate.queryChunks;
 
-      // Must use strict less-than (lt), not less-than-or-equal (lte)
       const operatorChunk = chunks[2];
       expect(operatorChunk.value[0]).toBe(' < ');
 
-      // The right-hand value should be a Date (matching Drizzle { mode: 'timestamp' } contract)
-      // Drizzle wraps the value in a Param — extract it
       const paramChunk = chunks[3];
       expect(paramChunk.value).toBeInstanceOf(Date);
 
-      // Cutoff should be Date(2026-03-10 - 30 days) = 2026-02-08T00:00:00Z
       const expectedCutoff = new Date(fakeNow - 30 * 86_400_000);
       expect(paramChunk.value.getTime()).toBe(expectedCutoff.getTime());
     });
@@ -641,7 +610,6 @@ describe('EventHistoryService', () => {
 
       expect(result).toBe(3);
       expect(db.delete).toHaveBeenCalled();
-      // Without a filter, where() should receive undefined (no predicate)
       const whereFn = chain.where as ReturnType<typeof vi.fn>;
       expect(whereFn).toHaveBeenCalledWith(undefined);
     });
@@ -657,12 +625,10 @@ describe('EventHistoryService', () => {
       expect(result).toBe(1);
       expect(db.delete).toHaveBeenCalled();
 
-      // Verify the where predicate targets bookEvents.eventType with eq()
       const whereFn = chain.where as ReturnType<typeof vi.fn>;
       expect(whereFn).toHaveBeenCalledTimes(1);
       const predicate = whereFn.mock.calls[0]![0];
       const chunks = predicate.queryChunks;
-      // Drizzle eq() produces: [StringChunk(''), Column, StringChunk(' = '), Param(value), StringChunk('')]
       const operatorChunk = chunks[2];
       expect(operatorChunk.value[0]).toBe(' = ');
       const paramChunk = chunks[3];
@@ -687,7 +653,6 @@ describe('EventHistoryService', () => {
       const result = await service.getAll({ eventType: ['grabbed'] });
       expect(result.data).toHaveLength(1);
 
-      // Verify eq() was used (= operator)
       const whereFn = db.select.mock.results[1]!.value.from.mock.results[0].value.where as ReturnType<typeof vi.fn>;
       const predicate = whereFn.mock.calls[0]![0];
       const operatorChunk = predicate.queryChunks[2];
@@ -705,7 +670,6 @@ describe('EventHistoryService', () => {
       const result = await service.getAll({ eventType: ['download_failed', 'import_failed'] });
       expect(result.data).toHaveLength(2);
 
-      // Verify inArray() was used (IN operator)
       const whereFn = db.select.mock.results[1]!.value.from.mock.results[0].value.where as ReturnType<typeof vi.fn>;
       const predicate = whereFn.mock.calls[0]![0];
       const operatorChunk = predicate.queryChunks[2];
@@ -739,7 +703,6 @@ describe('EventHistoryService', () => {
       const result = await service.deleteAll({ eventType: ['download_failed'] });
       expect(result).toBe(1);
 
-      // Verify eq() was used (= operator)
       const whereFn = chain.where as ReturnType<typeof vi.fn>;
       const predicate = whereFn.mock.calls[0]![0];
       const operatorChunk = predicate.queryChunks[2];
@@ -756,7 +719,6 @@ describe('EventHistoryService', () => {
       const result = await service.deleteAll({ eventType: ['download_failed', 'import_failed'] });
       expect(result).toBe(2);
 
-      // Verify inArray() was used (IN operator)
       const whereFn = chain.where as ReturnType<typeof vi.fn>;
       const predicate = whereFn.mock.calls[0]![0];
       const operatorChunk = predicate.queryChunks[2];

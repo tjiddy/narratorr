@@ -94,10 +94,7 @@ import { v1SystemRoutes } from './v1/system.js';
 import { v1CapabilitiesRoutes } from './v1/capabilities.js';
 import { v1CompanionEbookRoutes } from './v1/companion-ebook.js';
 
-// The `Services` DI container type and `SERVICE_KEYS` list live in services/di.ts
-// (the correct layer — routes depend on services, not the reverse). Imported for
-// local use here and re-exported so existing route consumers (health-routes.ts,
-// system.ts) keep importing `Services` from the routes barrel.
+// DI types live below routes; re-export them here for existing route consumers.
 import type { Services } from '../services/di.js';
 export { type Services, SERVICE_KEYS } from '../services/di.js';
 
@@ -108,7 +105,6 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const indexerSearch = new IndexerSearchService(db, log, indexer, settings);
   const downloadClient = new DownloadClientService(db, log);
 
-  // Load metadata settings for Audible region
   const metadataSettings = await settings.get('metadata');
   const metadata = new MetadataService(log, {
     audibleRegion: metadataSettings?.audibleRegion,
@@ -118,19 +114,12 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const connector = new ConnectorService(db, log);
   const blacklistService = new BlacklistService(db, log, settings);
 
-  // EventBroadcaster and EventHistoryService created early so they can be injected into lifecycle services
   const eventBroadcaster = new EventBroadcasterService(log);
   const book = new BookService(db, log, metadata);
   const bookImport = new BookImportService(db, log);
   const bookList = new BookListService(db);
   const referenceRead = new ReferenceReadService(db);
-  // Triggered from every seam that creates, moves, rescans, or reads a book (#1960): the
-  // import worker, the rescan wrapper (route + 6h cron), Refresh & Scan, the three rename
-  // callers, wrong-release, `PUT /api/settings`, and each companion opener's read-unavailable
-  // arm. Those read arms are only PARTLY stored/live disagreements since #2038: the owner gate
-  // admits a stored `drm_protected` row, so a genuinely DRM'd file reaches the owner arm while
-  // the row and the file AGREE. The v1 stream's arm stays a true mismatch — its gate is still
-  // `available`-only, so any live failure there IS a disagreement.
+  // One reconciler is triggered from every seam that creates, moves, rescans, or reads a book.
   const companionEbook = new CompanionEbookReconciler(db, settings, log);
   const eventHistory = new EventHistoryService(db, log, blacklistService, book);
 
@@ -139,11 +128,8 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const remotePathMapping = new RemotePathMappingService(db, log);
   const taggingService = new TaggingService(db, settings, log, book);
   const importService = new ImportService(db, downloadClient, settings, log, remotePathMapping, book);
-  // MergeService is constructed before the orchestrator so the download-import path can enqueue
-  // opt-in auto-merges (#1836) into the same bounded merge queue as the manual Merge button.
-  // taggingService is the 8th argument (#2078): with Tag Embedding on, the merge re-tags its
-  // own output from canonical DB state after committing, so an auto-merged file is not left
-  // carrying only the source parts' tags.
+  // Construct merge first so automatic and manual merges share its bounded queue.
+  // Tag committed output from canonical DB state, not the source parts' tags.
   const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster, connector, taggingService);
   const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster, connector, book, mergeService);
   const seriesCard = new SeriesCardService(db, log, settings);
@@ -168,21 +154,15 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const discovery = new DiscoveryService(db, log, metadata, settings);
   const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log, connector, companionEbook);
 
-  // Migrate quality.preferredLanguage → metadata.languages (one-time, idempotent)
   await settings.migrateLanguageSettings();
 
-  // Replace legacy empty rejectWords with packaged defaults (one-time, idempotent)
   await settings.migrateRejectWordsDefault();
 
-  // Append `Abridged` to legacy packaged rejectWords default (one-time, idempotent)
   await settings.migrateRejectWordsAbridgedDefault();
 
-  // Reset legacy stored maxConcurrentProcessing=2 to 1, clamp >8 (one-time, idempotent).
-  // Must run before any read of settings.get('processing') so a >8 value is rescued
-  // before parseCategory's parse-failure fallback wipes the whole category.
+  // Run before any processing read; >8 otherwise triggers whole-category parse fallback.
   await settings.migrateMaxConcurrentProcessingDefaults();
 
-  // Health check service with system deps
   const { resolveProxyIp } = await import('@core/indexers/proxy.js');
   const { probeFfmpeg } = await import('@core/utils/audio-processor.js');
   const healthCheck = new HealthCheckService(
@@ -190,20 +170,15 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     { fsAccess: fsp.access, fsStatfs: fsp.statfs, probeFfmpeg, resolveProxyIp },
   );
 
-  // Build retry-search deps bag now that all required services exist
   const retrySearchDeps = createRetrySearchDeps(
     { indexerSearch, indexer, downloadOrchestrator, blacklist: blacklistService, book, settings, retryBudget, eventHistory },
     log,
   );
 
-  // Construct remaining cyclic-dep services (worker created before QGO/wire phase)
   const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster, async () => (await settings.get('library')).path, eventHistory, companionEbook);
   const nudgeImportWorker = (): void => importQueueWorker.nudge();
-  // Staged import submission (#1893): server-owned processing runner + the inert
-  // upload/finalize/query state-machine service that nudges it on the winning CAS.
   const importSubmissionRunner = new ImportSubmissionRunner({ db, log, bookService: book, bookImportService: bookImport, eventHistory, notifier, nudgeImportWorker });
   const importStaging = new ImportStagingService(db, log, () => importSubmissionRunner.nudge());
-  // Read-side over the staged substrate (#1894): list / attention / report-detail.
   const importSubmissionReport = new ImportSubmissionReportService(db);
   const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, {
     eventHistory,
@@ -216,15 +191,13 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps, companionEbook);
   const bookDeletion = new BookDeletionService(book, download, downloadOrchestrator, settings, log, eventHistory);
 
-  // Phase 2: wire required cyclic deps now that every instance exists.
-  // Each service throws ServiceWireError if methods using these deps are
-  // invoked before wire(), or if wire() is called more than once.
+  // Wire after every instance exists; WireOnce rejects use-before-wire and duplicate wiring.
   download.wire({ retrySearchDeps, indexerService: indexer });
   eventHistory.wire({ retrySearchDeps });
   importOrchestrator.wire({ bookImportService: bookImport, blacklistService, retrySearchDeps, nudgeImportWorker });
   qualityGateOrchestrator.wire({ nudgeImportWorker, bookImportService: bookImport });
 
-  // Register import adapters after libraryScan/importOrchestrator are fully wired
+  // Register adapters only after their services are fully wired.
   registerImportAdapter(new ManualImportAdapter(libraryScan.importDeps));
   registerImportAdapter(new AutoImportAdapter(importOrchestrator));
 
@@ -258,11 +231,6 @@ const routeRegistry: RouteFactory[] = [
   }),
   (app, s) => bookFilesRoute(app, s.book, s.settings, s.connector),
   (app, s) => bookPreviewRoute(app, s.book),
-  // Companion ebooks (#1974) — its own module, not `books.ts` (360/400 lines). `db` carries
-  // the observation read: the routes call `findCompanionEbook(db, bookId)` directly, a free
-  // function over `DbOrTx`, so no `BookService` join and no new `Services` member is needed.
-  // `reconciler` is #1976's: the selection PUT delegates the whole mutation to the instance
-  // already constructed above and already on the `Services` object — no new registry entry.
   (app, s, db) => companionEbookRoutes(app, {
     bookService: s.book,
     settingsService: s.settings,
@@ -329,12 +297,8 @@ const routeRegistry: RouteFactory[] = [
   }),
   (app) => v1SystemRoutes(app),
   (app, s) => v1CapabilitiesRoutes(app, { settingsService: s.settings }),
-  // The public companion-ebook stream (#1975). `db` carries the observation read — the route
-  // calls `findCompanionEbook(db, bookId)` directly, so no new `Services` member is needed.
-  // `maxConcurrentStreams` is deliberately ABSENT: it is a test-only seam, and production
-  // takes `MAX_CONCURRENT_COMPANION_STREAMS`. `reconciler` is #1960's read-path mismatch
-  // hook — required, not optional, so a wiring omission is a compile error rather than a
-  // silently missing self-heal.
+  // Production uses the fixed stream cap; maxConcurrentStreams remains a test-only seam.
+  // Require the reconciler so read-path failures cannot silently lose self-heal.
   (app, s, db) => v1CompanionEbookRoutes(app, {
     bookService: s.book,
     settingsService: s.settings,

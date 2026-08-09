@@ -20,17 +20,11 @@ import { toNamingOptions } from '@core/utils/naming.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
-// ============ Types ============
-
-// Declared ONCE in `src/shared` (#2063) — previously this file and the client each carried a
-// byte-identical copy, so #2159's failureDetails addition had to be written twice. Re-exported so
-// `bulk-job.ts` and every other server consumer keep importing from here; the local `import type`
-// is what the method signatures below bind to.
+// Canonical shared type; re-export preserves the existing server import path.
 import type { BulkJobStatus } from '@shared/bulk-operation-types.js';
 
 export type { BulkOpType, BulkJobStatus } from '@shared/bulk-operation-types.js';
 
-/** A single mismatched-folder row in the bulk rename preview (library-relative from→to). */
 export interface BulkRenamePreviewItem {
   bookId: number;
   title: string;
@@ -38,16 +32,8 @@ export interface BulkRenamePreviewItem {
   to: string;
 }
 
-/**
- * Capped mismatch list + global patterns + true totals for the Rename All preview.
- *
- * `folderMatching` means "folder already matches the format" — NOT "book is fully
- * organized". A folder-matching book can still have file-level work when `fileFormat`
- * is set, which is why the job visits all imported books in that case. `importedTotal`
- * is the full imported-book set; `jobTotal` is how many books the run will actually
- * call `renameBook` on (= `importedTotal` when `fileFormat` is set, else the folder
- * mismatch count) — it's the honest progress denominator the modal shows up front.
- */
+// folderMatching covers only folders; file rules may still require work.
+// jobTotal is all imported books with a file rule, otherwise only folder mismatches.
 export interface BulkRenamePreview {
   libraryRoot: string;
   folderFormat: string;
@@ -62,7 +48,6 @@ export interface BulkRenamePreview {
 /** Max preview rows returned by `previewRenameEligible` — totals still reflect the full count. */
 export const BULK_RENAME_PREVIEW_CAP = 100;
 
-/** Deduped, narrator-enriched book row used for folder-target computation across count/preview/job. */
 interface RenameEligibleRow {
   id: number;
   path: string | null;
@@ -85,9 +70,7 @@ export class BulkOpError extends Error {
   }
 }
 
-const TTL_MS = 10 * 60 * 1000; // 10 minutes after completion
-
-// ============ Service ============
+const TTL_MS = 10 * 60 * 1000;
 
 export class BulkOperationService {
   private jobs = new Map<string, BulkJob>();
@@ -101,21 +84,11 @@ export class BulkOperationService {
     private bookService: BookService,
     private log: FastifyBaseLogger,
     private connectorService?: ConnectorService,
-    /** #1960 AC21 — optional so unit suites that do not exercise the sweep can omit it. */
     private companionEbook?: CompanionSweepTrigger,
   ) {}
 
-  /**
-   * Rename preview: the capped from→to folder-mismatch list plus true totals.
-   * Pure DB + string work — never touches the filesystem (per-book file diffs and
-   * conflict checks stay on the lazy `GET /api/books/:id/rename/preview` path).
-   *
-   * `jobTotal` is the honest progress denominator: when `fileFormat` is set the job
-   * visits every imported book (file-level renames can apply even to folder-matching
-   * books), so `jobTotal === importedTotal`; otherwise only folder mismatches are
-   * visited and `jobTotal === mismatchedTotal`. Kept in lockstep with the job's
-   * `setTotal` in `startRenameJob`.
-   */
+  // Preview is DB/string-only; per-book filesystem conflicts stay on the lazy route.
+  // Keep jobTotal in lockstep with startRenameJob's setTotal.
   async previewRenameEligible(cap = BULK_RENAME_PREVIEW_CAP): Promise<BulkRenamePreview> {
     const librarySettings = await this.settingsService.get('library');
     const namingOptions = toNamingOptions(librarySettings);
@@ -127,7 +100,7 @@ export class BulkOperationService {
     let mismatchedTotal = 0;
     let folderMatching = 0;
     for (const row of rows) {
-      if (!row.path) continue; // mirror job NO_PATH skip — never a broken row
+      if (!row.path) continue;
       importedTotal++;
       const { targetPath, changed } = computeFolderTarget(
         { ...row, path: row.path },
@@ -162,12 +135,7 @@ export class BulkOperationService {
     };
   }
 
-  /**
-   * Load imported books (deduped by bookId, first author) enriched with ordered
-   * narrators — the exact metadata `buildTargetPath` needs to render every allowed
-   * folder token. Shared by the rename preview and job so both compute targets from
-   * the same inputs as `planRename`.
-   */
+  // Preview and job must compute targets from the same first-author/ordered-narrator rows.
   private async loadRenameRows(): Promise<RenameEligibleRow[]> {
     const rows = await this.db
       .select({
@@ -185,7 +153,7 @@ export class BulkOperationService {
       .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
       .where(and(eq(books.status, 'imported'), isNotNull(books.path)));
 
-    // Deduplicate by bookId — take first author per book (same as renameBook)
+    // Match renameBook's first-author choice.
     const seen = new Set<number>();
     const deduped: typeof rows = [];
     for (const row of rows) {
@@ -199,7 +167,6 @@ export class BulkOperationService {
     return deduped.map(row => ({ ...row, narrators: narratorsByBook.get(row.id) ?? [] }));
   }
 
-  /** Ordered narrators (primary first) per imported book, keyed by bookId. */
   private async loadNarratorsByBook(): Promise<Map<number, Array<{ name: string }>>> {
     const rows = await this.db
       .select({
@@ -222,14 +189,8 @@ export class BulkOperationService {
     return map;
   }
 
-  /**
-   * The single source of truth for "which books qualify for bulk re-tag":
-   * imported books that have a path on disk. Consumed by both `countRetagEligible`
-   * (the preview denominator) and `startRetagJob` (the job's `setTotal` / row set)
-   * so the modal's "re-tag N books" can never drift from what the job actually
-   * touches. Intentionally kept separate from the rename eligibility predicate
-   * (`loadRenameRows` / `computeFolderTarget`) — same WHERE today, different question.
-   */
+  // Shared retag predicate keeps preview count and job rows aligned.
+  // Keep it separate from rename eligibility even while their SQL happens to match.
   private retagEligibleWhere(): SQL | undefined {
     return and(eq(books.status, 'imported'), isNotNull(books.path));
   }
@@ -252,15 +213,10 @@ export class BulkOperationService {
     const id = randomUUID();
     const hasFileRule = Boolean(librarySettings.fileFormat);
     const job = new BulkJob(id, 'rename', this.log, async (setTotal, tick) => {
-      // Same rows/dedup/target math as the preview — keeps the job's eligibility
-      // decision in lockstep with what the modal showed. When a `fileFormat` rule
-      // exists, visit EVERY imported book: a folder-matching book can still have
-      // file-level renames, and `renameBook` is idempotent ("Already organized"
-      // ticks as a silent skip). Without a file rule, file work is impossible, so
-      // fall back to the folder-mismatch-only filter.
+      // With a file rule visit every imported book; otherwise only folder mismatches.
+      // This selection must match preview jobTotal.
       const rows = await this.loadRenameRows();
-      // Carries the title alongside the id (rather than collapsing to `number[]`) so a failed
-      // rename can NAME the book on the job record — `loadRenameRows` already loaded it (#2159).
+      // Retain titles so failure records can name books.
       const targets: Array<{ id: number; title: string }> = [];
       for (const row of rows) {
         if (!row.path) continue;
@@ -284,21 +240,18 @@ export class BulkOperationService {
           await this.renameService.renameBook(bookId);
         } catch (error: unknown) {
           if (error instanceof RenameError && error.code === 'NO_PATH') {
-            tick(false); // skip silently
+            tick(false);
             continue;
           }
           this.log.warn({ bookId, jobId: id, error: serializeError(error) }, 'Bulk rename: book failed');
-          tick(true, { bookId, title, error: toShortErrorText(error) }); // named failure
+          tick(true, { bookId, title, error: toShortErrorText(error) });
           continue;
         }
-        tick(false); // success
+        tick(false);
       }
 
-      // #1960 AC21 — caller 3 of three: ONE coalesced sweep after the whole loop, never a
-      // per-book `reconcileBook` inside it. A whole-library rename would otherwise fan out N
-      // direct runs, and direct runs do not coalesce — only `reconcileAll()` does. Fires even
-      // when some books failed (their folders may still have moved) and is skipped entirely
-      // for an empty target set.
+      // Run one coalesced sweep after the loop, even with failures; per-book runs would fan out.
+      // Skip an empty target set.
       if (targets.length > 0) {
         triggerCompanionSweep(this.companionEbook, this.log, 'Companion ebook sweep failed after bulk rename');
       }
@@ -311,7 +264,7 @@ export class BulkOperationService {
     this.assertNoActiveJob();
     const id = randomUUID();
     const job = new BulkJob(id, 'retag', this.log, async (setTotal, tick) => {
-      // `title` rides the projection purely so a failure row can name the book (#2159).
+      // Retain titles so failure records can name books.
       const rows = await this.db
         .select({ id: books.id, title: books.title })
         .from(books)
@@ -322,31 +275,25 @@ export class BulkOperationService {
       for (const { id: bookId, title } of rows) {
         try {
           const result = await this.taggingService.retagBook(bookId);
-          // Fire from the result's pre-mutation refresh item (built before the in-place tag rewrite)
-          // via the shared single-home helper — see the standalone route at books.ts.
+          // Refresh from the pre-mutation item captured before in-place tag rewriting.
           enqueueRetagRefresh(this.connectorService, this.log, result);
         } catch (error: unknown) {
           if (error instanceof RetagError && error.code === 'NO_PATH') {
-            tick(false); // skip silently
+            tick(false);
             continue;
           }
           this.log.warn({ bookId, jobId: id, error: serializeError(error) }, 'Bulk re-tag: book failed');
-          tick(true, { bookId, title, error: toShortErrorText(error) }); // named failure
+          tick(true, { bookId, title, error: toShortErrorText(error) });
           continue;
         }
-        tick(false); // success
+        tick(false);
       }
     }, () => this.onJobComplete(id));
 
     return this.launch(id, job, 'Bulk re-tag job started');
   }
 
-  /**
-   * Library reconcile: (re)write the `metadata.opf` + folder cover sidecar for every imported book
-   * with a path, backfilling existing libraries and backstopping any drift. The per-book body and
-   * row loop live in `bulk-sidecar-reconcile.ts` (one reason to change per file). No cancel — the
-   * bulk infra is start+poll only. Writes regardless of `tagging.writeOpf` (the button is the opt-in).
-   */
+  // Explicit bulk opt-in rewrites sidecars regardless of tagging.writeOpf; the helper owns the loop.
   startWriteMetadataSidecarsJob(): string {
     this.assertNoActiveJob();
     const id = randomUUID();
@@ -378,11 +325,10 @@ export class BulkOperationService {
     if (job && job.getStatus().status === 'running') {
       throw new BulkOpError('A bulk operation is already running', 'BULK_OP_IN_PROGRESS');
     }
-    // Completed but not cleared yet (race) — clear it
+    // Completion callback may not have cleared this race yet.
     this.activeJobId = null;
   }
 
-  /** Register a freshly-built job as the active one, start it, log, and return its id. */
   private launch(id: string, job: BulkJob, startedMsg: string): string {
     this.jobs.set(id, job);
     this.activeJobId = id;

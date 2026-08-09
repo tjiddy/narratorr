@@ -50,9 +50,7 @@ describe('DownloadClientService', () => {
     });
   });
 
-  // #1404 — decryptRow threads the injected service logger into decryptFields so a
-  // corrupt/wrong-key secret surfaces a diagnostic. Asserts the warn reaches THIS
-  // caller's injected logger (would fail if `this.log` were dropped from the call).
+  // The injected logger assertion catches dropping this.log from decryptFields.
   describe('#1404 decrypt-failure diagnostic threading', () => {
     const CORRUPT = '$ENC$not-valid-base64!!'; // $ENC$-prefixed, fails decrypt → passthrough
 
@@ -106,22 +104,19 @@ describe('DownloadClientService', () => {
     });
   });
 
-  // ===== #263 — createWithMappings =====
-
   describe('createWithMappings', () => {
     it('inserts client and all mappings in a transaction with correct row payload', async () => {
       const mappingValuesArg = vi.fn();
       const clientChain = mockDbChain([mockClient]);
       const mappingChain = mockDbChain([]);
-      // Override values() on the mapping chain to capture the payload
       mappingChain.values = vi.fn().mockImplementation((rows: unknown) => {
         mappingValuesArg(rows);
         return mappingChain;
       });
 
       const txInsert = vi.fn()
-        .mockReturnValueOnce(clientChain)   // first insert: client
-        .mockReturnValueOnce(mappingChain); // second insert: mappings
+        .mockReturnValueOnce(clientChain)
+        .mockReturnValueOnce(mappingChain);
       db.transaction.mockImplementation(async (fn: (tx: Record<string, unknown>) => Promise<unknown>) => {
         return fn({ insert: txInsert });
       });
@@ -143,7 +138,6 @@ describe('DownloadClientService', () => {
       expect(db.transaction).toHaveBeenCalled();
       expect(txInsert).toHaveBeenCalledTimes(2);
 
-      // Verify mapping rows contain the created client's ID and exact path pairs
       expect(mappingValuesArg).toHaveBeenCalledWith([
         { downloadClientId: mockClient.id, remotePath: '/remote/a', localPath: '/local/a' },
         { downloadClientId: mockClient.id, remotePath: '/remote/b', localPath: '/local/b' },
@@ -162,15 +156,14 @@ describe('DownloadClientService', () => {
       }, []);
 
       expect(result.name).toBe('qBittorrent');
-      // No transaction needed for empty mappings
       expect(db.transaction).not.toHaveBeenCalled();
       expect(db.insert).toHaveBeenCalled();
     });
 
     it('rolls back client insert when mapping insert fails', async () => {
       const txInsert = vi.fn()
-        .mockReturnValueOnce(mockDbChain([mockClient])) // client insert succeeds
-        .mockReturnValueOnce({ values: vi.fn().mockImplementation(() => { throw new Error('mapping insert failed'); }) }); // mapping insert fails
+        .mockReturnValueOnce(mockDbChain([mockClient]))
+        .mockReturnValueOnce({ values: vi.fn().mockImplementation(() => { throw new Error('mapping insert failed'); }) });
       db.transaction.mockImplementation(async (fn: (tx: Record<string, unknown>) => Promise<unknown>) => {
         return fn({ insert: txInsert });
       });
@@ -187,15 +180,12 @@ describe('DownloadClientService', () => {
 
   describe('update', () => {
     it('updates and clears adapter cache', async () => {
-      // Populate cache
       db.select.mockReturnValue(mockDbChain([mockClient]));
       const adapter1 = await service.getAdapter(1);
 
-      // Update clears cache
       db.update.mockReturnValue(mockDbChain([mockClient]));
       await service.update(1, { name: 'Renamed' });
 
-      // Next getAdapter creates new adapter
       db.select.mockReturnValue(mockDbChain([mockClient]));
       const adapter2 = await service.getAdapter(1);
       expect(adapter2).not.toBe(adapter1);
@@ -209,9 +199,7 @@ describe('DownloadClientService', () => {
         settings: { host: 'old-host', port: 8080, password: encryptedPassword, apiKey: encryptedApiKey },
       };
 
-      // Sentinel lookup returns existing row
       db.select.mockReturnValue(mockDbChain([existingRow]));
-      // Update returns the row
       const updateChain = mockDbChain([existingRow]);
       db.update.mockReturnValue(updateChain);
 
@@ -219,7 +207,6 @@ describe('DownloadClientService', () => {
         settings: { host: 'new-host', port: 9090, password: '********', apiKey: '********' },
       });
 
-      // The .set() call should have preserved the exact stored encrypted values
       const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(setArg.settings.host).toBe('new-host');
       expect(setArg.settings.port).toBe(9090);
@@ -227,7 +214,6 @@ describe('DownloadClientService', () => {
       expect(setArg.settings.apiKey).toBe(encryptedApiKey);
     });
 
-    // #844 — entity-aware allowlist on resolveSentinelFields
     it('rejects sentinel on a non-secret field rather than silently substituting it', async () => {
       const existingRow = {
         ...mockClient,
@@ -236,8 +222,6 @@ describe('DownloadClientService', () => {
       db.select.mockReturnValue(mockDbChain([existingRow]));
       db.update.mockReturnValue(mockDbChain([existingRow]));
 
-      // host is NOT in the downloadClient secret allowlist — must throw, not
-      // be silently overwritten with the persisted value.
       await expect(
         service.update(1, {
           settings: { host: '********', port: 8080, password: 'still-real' },
@@ -351,8 +335,6 @@ describe('DownloadClientService', () => {
     });
 
     it('respects priority ordering', async () => {
-      // transmission (priority 100) comes after qbit (priority 50) in the DB results
-      // since the DB query orders by priority, qbit should be found first
       db.select.mockReturnValue(mockDbChain([qbitClient, transmissionClient]));
 
       const result = await service.getFirstEnabledForProtocol('torrent');
@@ -422,7 +404,7 @@ describe('DownloadClientService', () => {
         type: 'qbittorrent',
         settings: { host: 'localhost', port: 8080, username: 'admin', password: 'pass', useSsl: false },
       });
-      // Will fail since no real network, but should return a result (not throw)
+      // No server is listening; the contract is result-not-throw.
       expect(result).toHaveProperty('success');
     });
 
@@ -438,14 +420,12 @@ describe('DownloadClientService', () => {
 
   describe('test edge cases', () => {
     it('catches adapter.test() throwing and returns failure', async () => {
-      // Create a client that exists but whose adapter.test() throws
       const throwingClient = {
         ...mockClient,
         type: 'qbittorrent' as const,
       };
       db.select.mockReturnValue(mockDbChain([throwingClient]));
 
-      // Spy on createAdapter to return an adapter that throws on test
       const mockAdapter = { test: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
@@ -523,9 +503,6 @@ describe('DownloadClientService', () => {
     });
 
     it('#1180 propagates the Zod error for a malformed saved row (construction precedes the try, no catch-and-return)', async () => {
-      // Valid type, but settings omit the required `host`. Adapter construction in
-      // getCategories(id) happens before the try, so the ZodError propagates rather
-      // than being converted to { categories: [], error } — unlike getCategoriesFromConfig.
       const badClient = { ...mockClient, id: 12, settings: { port: 8080 } };
       db.select.mockReturnValue(mockDbChain([badClient]));
 
@@ -708,8 +685,8 @@ describe('DownloadClientService', () => {
 
     it('returns adapter for first enabled client', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([mockClient]))  // getFirstEnabled
-        .mockReturnValueOnce(mockDbChain([mockClient]));  // getById inside getAdapter
+        .mockReturnValueOnce(mockDbChain([mockClient]))
+        .mockReturnValueOnce(mockDbChain([mockClient]));
 
       const adapter = await service.getFirstEnabledAdapter();
       expect(adapter).not.toBeNull();
@@ -795,7 +772,6 @@ describe('DownloadClientService', () => {
     });
 
     it('#1180 throws a Zod-flavored error naming the missing field when persisted settings are malformed', async () => {
-      // Valid type 'qbittorrent', but settings omit the required `host` — a drifted/hand-edited row.
       const badClient = { ...mockClient, id: 11, settings: { port: 8080 } };
       db.select.mockReturnValue(mockDbChain([badClient]));
 
