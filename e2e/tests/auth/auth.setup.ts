@@ -4,23 +4,8 @@ import { dirname } from 'node:path';
 import { FORMS_USERNAME, FORMS_PASSWORD, AUTH_FILE } from '../../fixtures/auth.js';
 
 /**
- * Forms-auth bootstrap — runs as the `auth-setup` project (the `chromium-forms`
- * project depends on it) against the forms server booted WITHOUT `AUTH_BYPASS`.
- *
- * The order is load-bearing (`AuthService.updateMode` throws 400 if you flip to
- * a non-`none` mode while zero users exist):
- *   1. create the user (public while mode is `none` and no user exists),
- *   2. flip mode to `forms` (allowed while still effectively in `none`),
- *   3. login (establishes the `narratorr_session` cookie),
- *   4. persist that context's storageState for the forms project to reuse.
- *
- * All three HTTP calls MUST go through `page.request` (the page's browser-context
- * request) — NOT the standalone `{ request }` fixture. Only the browser-context
- * request shares its cookie jar with the page, so the login `Set-Cookie` lands in
- * the same jar that `page.context().storageState()` then captures. The isolated
- * `{ request }` fixture would receive the cookie into a separate jar and the
- * saved state would be unauthenticated (login still reports 200, but the forms
- * project would start logged out).
+ * Order is load-bearing: create a user in `none`, switch to `forms`, then login and save state.
+ * Use `page.request`, not standalone `request`, so `Set-Cookie` reaches the captured browser context.
  */
 setup('bootstrap forms auth and persist storageState', async ({ page }) => {
   const created = await page.request.post('/api/auth/setup', {
@@ -38,7 +23,6 @@ setup('bootstrap forms auth and persist storageState', async ({ page }) => {
   });
   expect(loggedIn.status()).toBe(200);
 
-  // Ensure the gitignored auth directory exists before Playwright writes to it.
   mkdirSync(dirname(AUTH_FILE), { recursive: true });
   await page.context().storageState({ path: AUTH_FILE });
 });
