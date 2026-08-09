@@ -5,14 +5,7 @@ import { ThirdPartyNotices } from './ThirdPartyNotices';
 import { systemApi } from '@/lib/api/system';
 import { ApiError } from '@/lib/api/client';
 
-/**
- * F6 — exercises the REAL client error boundary for GET /api/system/notices. Unlike the
- * co-located ThirdPartyNotices.test.tsx (which mocks `api.getThirdPartyNotices`), this file
- * mocks only `globalThis.fetch` and drives the genuine `systemApi` → `fetchApi` → `ApiError`
- * path, so the exact 500 status/body envelope is actually observed — not merely supplied on a
- * rejected object the component ignores. Removing the status/body from the endpoint contract,
- * or changing the endpoint path, now fails these assertions (deletion heuristic).
- */
+/** Mocks only fetch to exercise the real systemApi → fetchApi → ApiError path and 500 envelope. */
 describe('ThirdPartyNotices — real 500 client contract (#1862 F6)', () => {
   const originalFetch = globalThis.fetch;
   const ERROR_BODY = { error: 'Failed to load third-party notices' };
@@ -36,13 +29,12 @@ describe('ThirdPartyNotices — real 500 client contract (#1862 F6)', () => {
       body: ERROR_BODY,
     });
 
-    // The wrapper hits the internal /system/notices path (URL_BASE + /api prefix applied).
+    // URL_BASE adds the /api prefix.
     expect(globalThis.fetch).toHaveBeenCalledWith(
       '/api/system/notices',
       expect.objectContaining({ credentials: 'include' }),
     );
 
-    // And the thrown value is a genuine ApiError carrying the contract fields.
     const err = await systemApi.getThirdPartyNotices().catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(500);

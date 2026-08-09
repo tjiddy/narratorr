@@ -191,10 +191,6 @@ describe('MetadataSettingsSection', () => {
     resolveTest({ success: true, message: 'Connected.' });
   });
 
-  // The Test button's onClick handler wraps the api call in try/catch — a rejected
-  // promise (network error, 5xx, ApiError thrown by fetchApi) routes to toast.error
-  // with getErrorMessage(error). Resolved {success: false} responses don't exercise
-  // this catch arm, so we need an explicit rejection test.
   it('rejected api.testHardcoverApiKey shows error toast and exits the pending state', async () => {
     mockApi.testHardcoverApiKey.mockRejectedValue(new Error('Network unreachable'));
     const user = userEvent.setup();
@@ -212,8 +208,6 @@ describe('MetadataSettingsSection', () => {
     });
     expect(mockToast.success).not.toHaveBeenCalled();
 
-    // Button has left the pending state — back to "Test" (not "Testing...") and enabled
-    // because the input still has a non-empty value.
     const finalButton = await screen.findByRole('button', { name: /^test$/i });
     expect(finalButton).not.toBeDisabled();
     expect(screen.queryByRole('button', { name: /testing/i })).not.toBeInTheDocument();

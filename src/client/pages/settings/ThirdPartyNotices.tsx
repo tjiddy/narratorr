@@ -4,15 +4,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { LoadingSpinner, ShieldIcon } from '@/components/icons';
 import { SettingsSection } from './SettingsSection';
 
-/**
- * System-tab licenses section (#1862). Renders the SAME `THIRD_PARTY_NOTICES.md` that ships
- * in the runtime image (fetched via `GET /api/system/notices`), so there is one source of
- * truth for the FFmpeg GPL/LGPL attribution and license texts (simplified 2026-07-15:
- * single FFmpeg notice + pointers, no per-component enumeration).
- *
- * The notice is trusted, static, first-party content, so it renders as a whitespace-preserving
- * <pre> block — no HTML interpretation, no sanitization question.
- */
+/** Renders the runtime image's bundled notice as trusted text in a pre, without HTML interpretation. */
 export function ThirdPartyNotices() {
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.thirdPartyNotices(),

@@ -98,7 +98,7 @@ describe('FilteringSettingsSection', () => {
       expect(screen.getByLabelText('Reject words')).toHaveValue('German');
     });
 
-    // 45, not the packaged default 30 the factory hydrates — the form must go dirty
+    // Use 45 instead of the hydrated 30 so the form becomes dirty.
     const durationInput = screen.getByLabelText('Minimum duration');
     await user.tripleClick(durationInput);
     await user.keyboard('45');
@@ -114,13 +114,9 @@ describe('FilteringSettingsSection', () => {
   });
 
   it('blocks submit and shows the validation error when minimum duration is negative', async () => {
-    // Previously the section never read formState.errors — a schema-invalid duration failed the
-    // Save SILENTLY (nothing rendered, nothing sent). The row-table conversion wires the error
-    // display; this is the template rule: every schema-validatable number input renders its error.
     const user = userEvent.setup();
     renderWithProviders(<FilteringSettingsSection />);
 
-    // Wait for the server reset to land before typing (matches the Quality section's pattern).
     await waitFor(() => {
       expect(screen.getByLabelText('Reject words')).toHaveValue('German');
     });

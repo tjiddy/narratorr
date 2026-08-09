@@ -8,7 +8,6 @@ import { SettingsSection } from './SettingsSection';
 
 type NewBookDefaultsFormData = z.infer<typeof newBookDefaultsFormSchema>;
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
 const CARD_LABEL = 'When a New Book Is Added';
 
 export function NewBookDefaultsSection() {

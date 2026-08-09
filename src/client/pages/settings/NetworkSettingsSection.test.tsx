@@ -78,7 +78,6 @@ describe('NetworkSettingsSection', () => {
       expect(screen.getByLabelText('Proxy URL')).toHaveValue('http://gluetun:8888');
     });
 
-    // Make form dirty
     const input = screen.getByLabelText('Proxy URL');
     await user.clear(input);
     await user.type(input, 'socks5://localhost:1080');
@@ -268,22 +267,17 @@ describe('NetworkSettingsSection', () => {
     });
 
     it('round-trips server-hydrated masked sentinel value through save', async () => {
-      // When server returns a masked proxy URL (sentinel), saving the section
-      // must pass it through unchanged without validation blocking it
       const SENTINEL = '********';
       const settings = createMockSettings({ network: { proxyUrl: SENTINEL } });
       mockApi.getSettings.mockResolvedValue(settings);
       mockApi.updateSettings.mockResolvedValue(settings);
       renderWithProviders(<NetworkSettingsSection />);
 
-      // Wait for server-hydrated sentinel to populate the field
       await waitFor(() => {
         expect(screen.getByLabelText('Proxy URL')).toHaveValue(SENTINEL);
       });
 
-      // Submit the form directly — the sentinel must pass validation
-      // We can't use the save button (only visible when isDirty) since retyping
-      // the same value doesn't make RHF dirty. Submit the form element directly.
+      // Submit directly because the unchanged sentinel never makes RHF dirty enough to render Save.
       const input = screen.getByLabelText('Proxy URL');
       fireEvent.submit(input.closest('form')!);
 

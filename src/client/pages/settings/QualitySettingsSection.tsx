@@ -10,7 +10,6 @@ const qualityGateFormSchema = qualityFormSchema.pick({ grabFloor: true, minSeede
 
 type QualityGateFormData = z.infer<typeof qualityGateFormSchema>;
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
 const CARD_LABEL = 'Quality';
 
 export function QualitySettingsSection() {

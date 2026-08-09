@@ -44,7 +44,6 @@ function toPayload(data: MetadataFormData) {
   };
 }
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
 const CARD_LABEL = 'Metadata';
 
 export function MetadataSettingsSection() {

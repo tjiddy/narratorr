@@ -55,7 +55,6 @@ describe('SearchSettingsSection', () => {
 
     const checkbox = () => screen.getByLabelText('Scheduled search') as HTMLInputElement;
 
-    // Wait for settings to load and reset form
     await waitFor(() => {
       expect(checkbox().checked).toBe(false);
     });
@@ -137,13 +136,11 @@ describe('SearchSettingsSection', () => {
     const user = userEvent.setup();
     renderWithProviders(<SearchSettingsSection />);
 
-    // Wait for settings to load and form to reset
     const checkbox = () => screen.getByLabelText('Scheduled search') as HTMLInputElement;
     await waitFor(() => {
       expect(checkbox().checked).toBe(false);
     });
 
-    // Toggle checkbox on to dirty the form so Save button appears
     await user.click(checkbox());
 
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -176,13 +173,11 @@ describe('SearchSettingsSection', () => {
     const user = userEvent.setup();
     renderWithProviders(<SearchSettingsSection />);
 
-    // Wait for settings to load
     const checkbox = () => screen.getByLabelText('Scheduled search') as HTMLInputElement;
     await waitFor(() => {
       expect(checkbox()).toBeInTheDocument();
     });
 
-    // Toggle checkbox on to dirty the form so Save button appears
     await user.click(checkbox());
 
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -288,12 +283,10 @@ describe('SearchSettingsSection', () => {
     const user = userEvent.setup();
     renderWithProviders(<SearchSettingsSection />);
 
-    // Wait for server value to load
     await waitFor(() => {
       expect(screen.getByLabelText('Protocol preference')).toHaveValue('torrent');
     });
 
-    // Change to usenet
     await user.selectOptions(screen.getByLabelText('Protocol preference'), 'usenet');
     await user.click(screen.getByRole('button', { name: /save/i }));
 
@@ -338,7 +331,6 @@ describe('SearchSettingsSection', () => {
       expect(options[0]).toHaveTextContent('Audio Quality');
       expect(options[1]).toHaveTextContent('Narrator Accuracy');
 
-      // The per-option explainer moved behind the row's InfoTip — open it, then assert both lines.
       expect(screen.queryByText(/Prioritize higher bitrate releases/)).not.toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Search priority options' }));
       const tip = screen.getByRole('tooltip');
@@ -355,7 +347,7 @@ describe('SearchSettingsSection', () => {
         expect(screen.getByLabelText('Search priority')).toBeInTheDocument();
       });
 
-      // 'accuracy' is the default, so select 'quality' to dirty the form
+      // Select non-default quality so Save renders.
       await user.selectOptions(screen.getByLabelText('Search priority'), 'quality');
 
       await user.click(screen.getByRole('button', { name: /save/i }));
