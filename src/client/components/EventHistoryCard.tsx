@@ -25,9 +25,7 @@ interface EventTypeConfig {
   bgColor: string;
 }
 
-// Keyed by EventType, not string: a new member of the shared enum is a compile error here
-// until it gets a presentation entry. The runtime fallback below still covers legacy or
-// corrupt eventType values read back from the DB, which the wire type cannot rule out.
+// Exhaustive for wire EventType; the fallback below preserves legacy or corrupt DB values.
 const EVENT_CONFIG: Record<EventType, EventTypeConfig> = {
   grabbed: { icon: ArrowDownIcon, label: 'Grabbed', color: 'text-blue-400', bgColor: 'bg-blue-500/10' },
   download_completed: { icon: CheckCircleIcon, label: 'Download Completed', color: 'text-success', bgColor: 'bg-success/10' },
@@ -46,9 +44,6 @@ const EVENT_CONFIG: Record<EventType, EventTypeConfig> = {
   book_added: { icon: BookOpenIcon, label: 'Book Added', color: 'text-emerald-400', bgColor: 'bg-emerald-500/10' },
   metadata_fixed: { icon: AlertTriangleIcon, label: 'Metadata Fixed', color: 'text-amber-400', bgColor: 'bg-amber-500/10' },
   grab_failed: { icon: XCircleIcon, label: 'Grab Failed', color: 'text-destructive', bgColor: 'bg-destructive/10' },
-  // #2104 — a relaxed-query rung found candidates but none corroborated the
-  // book's title segments, so nothing was grabbed. Shares the yellow
-  // needs-a-human styling of the other two Needs Review types.
   search_relaxed_held: { icon: AlertTriangleIcon, label: 'Relaxed Match Held', color: 'text-yellow-400', bgColor: 'bg-yellow-500/10' },
 };
 
@@ -56,7 +51,6 @@ const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', col
 
 const isKnownEventType = (value: string): value is EventType => value in EVENT_CONFIG;
 
-/** An eventType the DB holds but the enum doesn't know keeps its raw string as the label. */
 function resolveEventPresentation(eventType: string): { config: EventTypeConfig; actionable: boolean } {
   if (!isKnownEventType(eventType)) {
     return { config: { ...DEFAULT_CONFIG, label: eventType }, actionable: false };
@@ -64,9 +58,7 @@ function resolveEventPresentation(eventType: string): { config: EventTypeConfig;
   return { config: EVENT_CONFIG[eventType], actionable: actionableEventTypes.includes(eventType) };
 }
 
-// Import-list events carry the synced list's name in `reason.importListName`; surface that
-// instead of the generic `import_list` source chip. Fall back to "Import list" for older
-// events recorded before the name was captured (reason null / missing the key).
+// Older import-list events lack importListName; preserve their generic source label.
 function getSourceLabel(source: string, reason: Record<string, unknown> | null): string {
   if (source === 'import_list') {
     const importListName = reason?.importListName;

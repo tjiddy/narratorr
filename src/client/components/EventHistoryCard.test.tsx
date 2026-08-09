@@ -154,8 +154,7 @@ describe('EventHistoryCard', () => {
     expect(screen.getByText('unknown_type')).toBeInTheDocument();
   });
 
-  // #2118 — EVENT_CONFIG is keyed by EventType, so a new enum member is a compile error until
-  // it gets an entry. Asserted at runtime too, so a revert to Record<string, …> still trips.
+  // Runtime coverage guards against weakening EVENT_CONFIG back to Record<string, …>.
   it('renders a label, never the raw type, for every shared EventType', () => {
     for (const eventType of eventTypeSchema.options) {
       const { unmount } = renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType })} />);
@@ -164,7 +163,6 @@ describe('EventHistoryCard', () => {
     }
   });
 
-  // #1157 — grab_failed event rendering
   it('grab_failed renders with label "Grab Failed" (not raw event type)', () => {
     renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'grab_failed' })} />);
     expect(screen.getByText('Grab Failed')).toBeInTheDocument();
@@ -185,9 +183,6 @@ describe('EventHistoryCard', () => {
   });
 });
 
-// ============================================================================
-// #257 — Merge observability: EventHistoryCard rendering for merge events
-// ============================================================================
 
 describe('#257 merge observability — EventHistoryCard', () => {
   it('merge_started renders with label "Merge Started" (not fallback)', () => {
@@ -225,7 +220,6 @@ describe('#257 merge observability — EventHistoryCard', () => {
     expect(screen.queryByText('wrong_release')).not.toBeInTheDocument();
   });
 
-  // #341 — book_added event display
   it('book_added renders with label "Book Added" (not fallback)', () => {
     renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'book_added' })} />);
     expect(screen.getByText('Book Added')).toBeInTheDocument();
@@ -233,8 +227,6 @@ describe('#257 merge observability — EventHistoryCard', () => {
     expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
   });
 
-  // #1735 — import-list review verdict: recording_review_skipped gets a configured
-  // label/icon so it renders instead of falling through to the raw event type.
   it('recording_review_skipped renders with label "Recording Review" (not fallback)', () => {
     renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'recording_review_skipped' })} />);
     expect(screen.getByText('Recording Review')).toBeInTheDocument();
@@ -242,7 +234,6 @@ describe('#257 merge observability — EventHistoryCard', () => {
     expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
   });
 
-  // #1633 — import-list activity: book_added + specific list-name chip
   it('renders the specific list name from reason.importListName (not raw "import_list")', () => {
     renderWithProviders(<EventHistoryCard event={createMockEvent({
       eventType: 'book_added',
@@ -288,9 +279,6 @@ describe('#257 merge observability — EventHistoryCard', () => {
   });
 });
 
-// ============================================================================
-// #455 — Event history timeline polish: per-event-type reason rendering
-// ============================================================================
 
 describe('#455 event reason rendering', () => {
   describe('details toggle with empty/null reason', () => {
@@ -304,7 +292,6 @@ describe('#455 event reason rendering', () => {
       expect(screen.queryByText('View details')).not.toBeInTheDocument();
     });
 
-    // #464 — all-null reason should not show toggle (reviewer suggestion F1)
     it('hides details toggle when all reason values are null/undefined', () => {
       renderWithProviders(<EventHistoryCard event={createMockEvent({
         eventType: 'grabbed',
@@ -321,8 +308,6 @@ describe('#455 event reason rendering', () => {
         reason: { indexerId: 3, size: 2000000000, protocol: 'usenet' },
       })} />);
 
-      // Summary should be visible without expanding — uses getEventSummary
-      // Before indexer data loads, falls back to ID
       expect(await screen.findByText(/DrunkenSlug/)).toBeInTheDocument();
       expect(screen.getByText(/Usenet/)).toBeInTheDocument();
       expect(screen.getByText(/1\.86 GB/)).toBeInTheDocument();
@@ -359,7 +344,6 @@ describe('#455 event reason rendering', () => {
       expect(screen.getByText('Indexer:')).toBeInTheDocument();
       expect(screen.getByText('Protocol:')).toBeInTheDocument();
       expect(screen.getByText('Size:')).toBeInTheDocument();
-      // Should NOT contain raw JSON
       expect(screen.queryByText(/"indexerId"/)).not.toBeInTheDocument();
     });
   });
@@ -401,7 +385,6 @@ describe('#455 event reason rendering', () => {
 
       await user.click(screen.getByText('View details'));
       expect(screen.getByText('ffmpeg exited with code 1')).toBeInTheDocument();
-      // Not wrapped in JSON
       expect(screen.queryByText(/"error"/)).not.toBeInTheDocument();
     });
 
@@ -417,11 +400,6 @@ describe('#455 event reason rendering', () => {
     });
   });
 
-  // AC37 — the registry entry must exist. `EVENT_CONFIG[type] ?? { ...DEFAULT_CONFIG, label: event.eventType }`
-  // means an UNREGISTERED type does not render "Unknown": it renders the RAW
-  // literal `search_relaxed_held` with DEFAULT_CONFIG's clock icon and muted
-  // styling. An assertion phrased as "the label is not Unknown" would pass
-  // against that fallback and prove nothing.
   describe('search_relaxed_held registration (#2104 AC37)', () => {
     const relaxedHeldEvent = () => createMockEvent({
       eventType: 'search_relaxed_held',
@@ -448,9 +426,7 @@ describe('#455 event reason rendering', () => {
 
       const svg = container.querySelector('svg');
       expect(svg?.getAttribute('class')).toContain('text-yellow-400');
-      // AlertTriangleIcon's outline path — present only for the registered
-      // icon. COUNTERFACTUAL: drop the EVENT_CONFIG entry and DEFAULT_CONFIG's
-      // ClockIcon renders `<circle r="10">` instead.
+      // The outline path distinguishes registered AlertTriangleIcon from fallback ClockIcon.
       expect(svg?.querySelector('path[d^="m21.73 18-8-14"]')).not.toBeNull();
       expect(svg?.querySelector('circle[r="10"]')).toBeNull();
     });
@@ -529,7 +505,6 @@ describe('#455 event reason rendering', () => {
       expect(screen.getByText('Foo:')).toBeInTheDocument();
       expect(screen.getByText('bar')).toBeInTheDocument();
       expect(screen.getByText('42')).toBeInTheDocument();
-      // Not raw JSON dump
       expect(screen.queryByText(/"foo"/)).not.toBeInTheDocument();
     });
   });
@@ -563,9 +538,6 @@ describe('#455 event reason rendering', () => {
   });
 });
 
-// ============================================================================
-// #537 — Retry button for download_failed events
-// ============================================================================
 
 describe('#537 retry button on download_failed events', () => {
   it('shows Retry button for download_failed event with downloadId AND bookId', () => {
@@ -621,9 +593,7 @@ describe('#537 retry button on download_failed events', () => {
       renderWithProviders(<EventHistoryCard event={event} />);
 
       expect(screen.getByText('Metadata Fixed')).toBeInTheDocument();
-      // Falls back through the registry — not the placeholder 'Unknown' label.
       expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
-      // Raw event type string must not leak through as a label.
       expect(screen.queryByText('metadata_fixed')).not.toBeInTheDocument();
     });
 
