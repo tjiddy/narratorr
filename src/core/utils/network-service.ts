@@ -1,35 +1,7 @@
 /**
- * Canonical home for outbound-network helpers. Consolidates timeout/redirect
- * detection (fetchWithTimeout) and SSRF-block enforcement (block-policy
- * predicates + DNS-rebinding-resistant dispatcher) plus the single undici
- * `fetch` export used by callers that attach a `dispatcher` option.
- *
- * Why the dual-undici export matters:
- * Node 24's bundled fetch and the `undici` npm package both expose a
- * `Dispatcher` class, but they are *different classes* — a dispatcher built
- * with `import { ProxyAgent } from 'undici'` does NOT pass the bundled
- * fetch's instanceof/shape checks (undici 8 tightened this). Passing such
- * a dispatcher to `globalThis.fetch` fails with `UND_ERR_INVALID_ARG`
- * (`invalid onRequestStart method`). The fix: import `fetch` from `undici`
- * and use that whenever a `dispatcher` is in play, so both sides come from
- * the same package version.
- *
- * SSRF block policy (resolveAndValidate / validatingLookup / createSsrfSafeDispatcher)
- * is the SSRF-block contract used by attacker-influenced fetches (cover art,
- * indexer-supplied URLs). Rules:
- *   - RFC 1918 (10/8, 172.16/12, 192.168/16)
- *   - CGNAT (100.64/10 — RFC 6598; AWS Lambda VPC NAT)
- *   - Loopback (127/8, ::1)
- *   - Link-local (169.254/16 — covers AWS/Alibaba metadata; fe80::/10)
- *   - Unspecified (0.0.0.0, ::)
- *   - IPv6 unique-local (fc00::/7, covers fd00::/8)
- *   - IPv6 multicast (ff00::/8)
- *   - IPv4-mapped IPv6 forms of any blocked IPv4 address (e.g., ::ffff:169.254.169.254)
- *   - Hostname allowlist for known cloud-metadata names (belt-and-suspenders).
- *
- * Distinct from auth's `isPrivateIp` — that helper answers "is this client
- * on the LAN, allow auth bypass?", which is intentionally narrower than
- * "is this destination unsafe to fetch?".
+ * Outbound fetch and SSRF policy. npm undici dispatchers must use npm undici's fetch; Node 24's
+ * bundled fetch has a different Dispatcher class and rejects them with `UND_ERR_INVALID_ARG`.
+ * This destination policy is intentionally broader than auth's LAN-client policy.
  */
 
 import { lookup as dnsLookup } from 'node:dns/promises';
@@ -37,39 +9,20 @@ import { Agent, fetch as undiciFetchImpl } from 'undici';
 import type { LookupFunction } from 'node:net';
 import { mapNetworkError } from './map-network-error.js';
 
-// Re-export so callers have a single import surface for outbound-network helpers
-// (the implementation stays in map-network-error.ts to keep its dedicated tests isolated).
 export { mapNetworkError, redactUrlsFromMessage } from './map-network-error.js';
 import { HTTP_DOWNLOAD_TIMEOUT_MS } from './constants.js';
 
 /**
- * Re-export of undici's `fetch`. Callers attaching a `dispatcher` MUST use
- * this binding (not `globalThis.fetch`) so both fetch and dispatcher come
- * from the same `undici` package instance.
+ * npm undici fetch; mandatory whenever a dispatcher comes from that package.
  */
 export const undiciFetch = undiciFetchImpl;
 
-/**
- * RequestInit + the npm-undici-only `dispatcher` slot. Production callers use
- * this shape so the dispatcher is part of the contract (not bag-of-unknowns).
- */
 export type DispatcherFetchInit = RequestInit & { dispatcher?: unknown };
 
 /**
- * Single fetch entry point that picks the right `fetch` for the dispatcher
- * shape and isolates the npm-undici ↔ globalThis Response type juggling to
- * one well-commented line, instead of forcing `as unknown as Response` casts
- * at every call site (TS-2).
- *
- * - With `dispatcher`: routes through `undiciFetch` so the Dispatcher class
- *   identity matches (Node 24 + undici 8 reject mismatches with
- *   `UND_ERR_INVALID_ARG`).
- * - Without `dispatcher`: routes through `globalThis.fetch` so MSW-based test
- *   interception keeps working.
- *
- * The unavoidable cross-package `Response` type bridge lives here because the
- * runtime shapes (status, headers, body) are identical — only the TS type
- * declarations diverge between the dom lib and undici's package types.
+ * Uses npm undici with a dispatcher so class identity matches; otherwise uses global fetch so MSW
+ * interception works. The Response cast bridges equivalent runtime shapes with divergent DOM and
+ * package declarations.
  */
 export async function fetchWithOptionalDispatcher(
   url: string | URL,
@@ -79,25 +32,12 @@ export async function fetchWithOptionalDispatcher(
     const undiciResponse = await undiciFetch(url, options as Parameters<typeof undiciFetch>[1]);
     return undiciResponse as unknown as Response;
   }
-  // No dispatcher: undefined dispatcher slot is OK to pass through to fetch.
   return fetch(url, options);
 }
 
 /**
- * Fetch with an automatic timeout via AbortSignal.timeout().
- * Replaces manual AbortController + setTimeout boilerplate.
- *
- * 3xx responses are detected and thrown as descriptive Errors before returning
- * to callers. All download-client and notifier test() paths surface error.message
- * via their existing try/catch, so no caller changes are needed.
- *
- * Network-level errors (ECONNREFUSED, ENOTFOUND, timeouts) are mapped to
- * actionable messages via mapNetworkError.
- *
- * An optional caller `signal` is composed with the internal timeout signal via
- * `AbortSignal.any`, so the request aborts when EITHER the per-request timeout
- * elapses OR the caller aborts (e.g. the connector flush's outer timeout). The
- * caller signal does not replace the timeout — both stay in force.
+ * Fetches with a mandatory timeout, manual redirect diagnostics, and actionable network errors.
+ * A caller signal is composed with—not substituted for—the timeout, so either can abort.
  */
 export async function fetchWithTimeout(
   url: string | URL,
@@ -187,21 +127,13 @@ function isBlockedIpv6(ip: string): boolean {
   return false;
 }
 
-/**
- * Default port for a URL scheme. Used by `normalizedHostPortFromUrl` so the
- * pre-flight allowlist key matches whether the apiUrl literal carried an
- * explicit port or relied on the scheme default.
- */
 function defaultPortForScheme(protocol: string): string {
   return protocol === 'https:' ? '443' : '80';
 }
 
 /**
- * Derive a canonical `host:port` key from a parsed URL. Lowercased hostname,
- * scheme-default port when omitted, IPv6 brackets stripped from `URL.hostname`.
- *
- * Consumes a parsed URL (never a string) so unbracketed-IPv6 split-on-colon
- * ambiguity (e.g. `::1:8080`) is impossible.
+ * Canonical host:port allowlist key: lowercase, default port, no IPv6 brackets. Accepting a parsed
+ * URL avoids unbracketed-IPv6 split ambiguity.
  */
 export function normalizedHostPortFromUrl(parsed: URL): string {
   const hostname = normalizeHostname(parsed.hostname).toLowerCase();
@@ -209,20 +141,12 @@ export function normalizedHostPortFromUrl(parsed: URL): string {
   return `${hostname}:${port}`;
 }
 
-/**
- * Derive a canonical hostname key from a parsed URL — lowercased, with IPv6
- * brackets stripped. The companion to `normalizedHostPortFromUrl` for the
- * socket-time hostname-only allowlist used by `validatingLookup`.
- */
 export function normalizedHostnameFromUrl(parsed: URL): string {
   return normalizeHostname(parsed.hostname).toLowerCase();
 }
 
 /**
- * Options for `resolveAndValidate`. When both `lanAllowlist` and
- * `normalizedHostPort` are present, a private/loopback DNS answer is permitted
- * iff `lanAllowlist.has(normalizedHostPort)` — the host:port literal must match
- * a configured indexer's apiUrl host:port.
+ * Private answers require an exact configured host:port match; both fields must be supplied.
  */
 export interface ResolveAndValidateOptions {
   lanAllowlist?: Set<string>;
@@ -230,17 +154,9 @@ export interface ResolveAndValidateOptions {
 }
 
 /**
- * Resolve a hostname (or accept an IP literal) and validate every answer
- * against the SSRF block policy. Throws if the hostname is in the cloud-metadata
- * allowlist, the IP literal is blocked, or any DNS answer is blocked.
- *
- * When `opts.lanAllowlist` and `opts.normalizedHostPort` are both supplied and
- * the host:port is in the allowlist, private/loopback addresses are permitted
- * (used by the Prowlarr-on-LAN download-fetch path; see #966).
- *
- * Used both as a pre-flight check before invoking fetch (early refusal +
- * testability via `vi.mock('node:dns/promises')`) and inside the dispatcher's
- * `connect.lookup` hook (defense against DNS rebinding).
+ * Validates literals and every DNS answer against SSRF policy. An exact LAN host:port allowlist
+ * match permits private answers. Preflight gives early refusal; socket lookup repeats validation
+ * to resist DNS rebinding.
  */
 export async function resolveAndValidate(
   hostname: string,
@@ -274,23 +190,13 @@ export async function resolveAndValidate(
 }
 
 /**
- * Build a socket-bound DNS validator for the undici Agent's connect path.
- * Resolves every A/AAAA answer for the destination hostname, refuses if any
- * answer fails the block policy, and returns one of the validated answers to
- * the connecting socket. This binds validation to the same resolution the
- * socket connects to, defeating DNS rebinding.
- *
- * The optional `hostnameAllowlist` permits private/loopback addresses for
- * hostnames in the closed-over set. Port-level specificity is enforced
- * upstream by `fetchWithSsrfRedirect`'s pre-flight — Node's `LookupFunction`
- * API gives this hook only the hostname (no URL, no port).
+ * Socket-bound validator resolves every address and connects only after all pass, defeating DNS
+ * rebinding. Its allowlist is hostname-only because LookupFunction receives no port; preflight
+ * enforces exact host:port matching.
  */
 export function makeValidatingLookup(hostnameAllowlist?: Set<string>): LookupFunction {
   return (hostname, options, callback) => {
-    // Node 24 + undici 8's `net.connect` dispatcher invokes lookup with
-    // `{ all: true }` and expects an array-form callback `(err, addresses[])`.
-    // The standalone `LookupFunction` form is `(err, address, family)`. Support
-    // both because callers in Node core and our own tests use both shapes.
+    // Undici requests `{all:true}` and an address array; Node's standalone form expects one address.
     const wantAll = (options as { all?: boolean } | undefined)?.all === true;
     const cbAll = callback as unknown as (
       err: NodeJS.ErrnoException | null,
@@ -348,21 +254,11 @@ export function makeValidatingLookup(hostnameAllowlist?: Set<string>): LookupFun
   };
 }
 
-/**
- * Default validator with no hostname allowlist — exported so its
- * rebinding-protection behavior is directly testable (fetch-stubbed service
- * tests can't exercise the dispatcher path).
- */
 export const validatingLookup: LookupFunction = makeValidatingLookup();
 
 /**
- * Create an undici Agent whose socket lookup re-runs the SSRF block policy
- * for every connect. Reused across redirect hops — every hop gets re-validated
- * because each hop opens a new socket.
- *
- * `hostnameAllowlist` permits private/loopback addresses for hostnames in the
- * set. Used by the torrent-download path for LAN-hosted indexer apiUrls; cover
- * art and Usenet language enrichment continue to call without an argument.
+ * Creates an undici Agent whose socket lookup re-runs the SSRF block policy on every connect.
+ * Callers own its lifecycle; the optional hostname allowlist supports LAN indexers.
  */
 export function createSsrfSafeDispatcher(hostnameAllowlist?: Set<string>): Agent {
   return new Agent({
@@ -372,14 +268,11 @@ export function createSsrfSafeDispatcher(hostnameAllowlist?: Set<string>): Agent
   });
 }
 
-/** Default redirect-walk hop cap shared by all SSRF-aware redirect callers. */
 export const MAX_REDIRECTS = 5;
 
 /**
- * Thrown by fetchWithSsrfRedirect when a 3xx Location header points at a scheme
- * other than http(s). Carries the resolved location and the URL whose response
- * carried it so call sites that want to handle a particular scheme (e.g. magnet:
- * from a torrent indexer) can `instanceof`-check and react.
+ * Carries an unsupported resolved redirect and its source URL so callers can handle artifacts such
+ * as indexer `magnet:` redirects explicitly.
  */
 export class UnsupportedRedirectSchemeError extends Error {
   readonly location: string;
@@ -398,49 +291,17 @@ export interface FetchWithSsrfRedirectOptions {
   timeoutMs?: number;
   maxHops?: number;
   /**
-   * Request headers forwarded into each `fetch` call so callers can identify
-   * themselves to indexers without reaching into the redirect loop. Intended
-   * for identity headers only (`User-Agent`, `Accept`).
-   *
-   * Credential-bearing headers (`Authorization`, `Cookie`, `Proxy-Authorization`,
-   * any casing) are stripped on cross-origin redirect hops — mirroring WHATWG
-   * fetch / undici / browser behavior — so a malicious or compromised indexer
-   * cannot 302 to a collector host and harvest a forwarded credential. They are
-   * preserved on same-origin hops (origin compared via `URL.origin`).
+   * Identity headers are forwarded on every hop. Credential headers are stripped case-insensitively
+   * on cross-origin redirects and restored on same-origin hops relative to the start URL.
    */
   headers?: Record<string, string>;
   /**
-   * Pre-flight host:port allowlist. When set, a hop whose canonical
-   * `host:port` (lowercased hostname, scheme-default port if absent, IPv6
-   * brackets stripped) is in the set may resolve to a private/loopback
-   * address without being refused. Hops not in the set are refused as today.
-   *
-   * Authoritative for host:port-exact matching. Pair with the hostname-only
-   * allowlist on the dispatcher (defense-in-depth at socket time; see
-   * `createSsrfSafeDispatcher`).
+   * Exact canonical host:port preflight allowlist for LAN targets. Pair with the dispatcher's
+   * hostname-only allowlist for socket-time defense in depth.
    */
   lanAllowlist?: Set<string>;
 }
 
-/**
- * Walk redirects with per-hop SSRF revalidation, returning the final non-redirect
- * Response. The helper does not create or close dispatchers — that lifecycle is
- * the caller's responsibility (so the same dispatcher gets reused across hops
- * and is closed after the response body is consumed).
- *
- * - Pre-flight DNS validation on every hop (resolveAndValidate); when a dispatcher
- *   is supplied it re-validates at socket time too (validatingLookup).
- * - Redirect-response bodies are cancelled so undici sockets release.
- * - Throws UnsupportedRedirectSchemeError when a 3xx Location is not http(s);
- *   the helper does not interpret per-site artifacts (e.g. magnet:).
- */
-/**
- * Resolve the next hop URL from a 3xx response: cancel the redirect body (so
- * undici sockets release), validate the Location header is present and points
- * at http(s), and return the absolute next URL. Throws on a missing Location or
- * an unsupported scheme. Extracted so the redirect walker stays under the
- * cyclomatic-complexity cap.
- */
 async function resolveRedirectTarget(response: Response, currentUrl: string, parsed: URL): Promise<string> {
   const location = response.headers.get('location');
   if (!location) {
@@ -455,20 +316,11 @@ async function resolveRedirectTarget(response: Response, currentUrl: string, par
   return nextHref;
 }
 
-/** Request headers stripped on cross-origin redirect hops (lower-cased keys). */
 const CREDENTIAL_HEADER_KEYS = new Set(['authorization', 'cookie', 'proxy-authorization']);
 
 /**
- * Per-hop request-header filter for the SSRF redirect walker. On a cross-origin
- * hop, drops credential-class headers (`Authorization`, `Cookie`,
- * `Proxy-Authorization`, matched case-insensitively) so they are not forwarded
- * to a host chosen by an indexer-supplied `Location` — mirroring WHATWG fetch /
- * undici / browser behavior. Identity headers (`User-Agent`, `Accept`) always
- * survive.
- *
- * Returns a fresh object (never mutates the caller's `headers`) and preserves
- * the original casing of surviving keys. On a same-origin hop, returns a copy
- * with every header intact.
+ * Drops credential headers from cross-origin hops without mutating caller input. Surviving key
+ * casing and all same-origin headers are preserved.
  */
 export function stripCrossOriginCredentialHeaders(
   headers: Record<string, string>,

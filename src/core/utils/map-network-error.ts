@@ -1,8 +1,5 @@
 /**
- * Maps low-level network errors (fetch failures, DNS, timeouts) to
- * actionable user-facing messages.
- *
- * Returns the original error unchanged if it's not a network-level failure.
+ * Maps fetch, DNS, and timeout failures to actionable messages; unrelated errors pass through.
  */
 
 type CauseMapper = (causeMsg: string) => string;
@@ -32,34 +29,27 @@ function mapFetchFailedCause(cause: Error & { code?: string }): Error {
 }
 
 /**
- * Strip any `http(s)://…` substring from an error message so a raw URL (and its
- * passkey/apikey/token query params) can never reach a user-facing error or log.
- * Single source of truth for the redaction regex — both the torrent HTTP path
- * (`download-url.ts` `sanitizeNetworkError`) and the Blackhole NZB path
- * (`blackhole.ts`) call this before embedding a mapped message in an error.
+ * Redacts HTTP URLs before user-facing errors or logs can expose credential query parameters.
+ * Torrent and Blackhole paths share this regex.
  */
 export function redactUrlsFromMessage(message: string): string {
   return message.replace(/https?:\/\/\S+/gi, '[redacted-url]');
 }
 
 export function mapNetworkError(error: unknown): Error {
-  // AbortError from manual AbortController.abort()
-  // TimeoutError from AbortSignal.timeout() (Node 18+)
   if (error instanceof DOMException && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
     return new Error('Request timed out');
   }
 
-  // TypeError: fetch failed — Node wraps network errors as TypeError with a cause
+  // Node fetch wraps network failures in `TypeError: fetch failed` with the real cause.
   if (error instanceof TypeError && error.message === 'fetch failed' && error.cause instanceof Error) {
     return mapFetchFailedCause(error.cause as Error & { code?: string });
   }
 
-  // Direct Error with .code — DNS/connection failures that bypass undici (e.g., SSRF DNS preflight
-  // throws raw Errno-style Error from node:dns/promises before any fetch wrapping)
+  // DNS preflight can throw a raw Errno-style error before undici wraps it.
   if (error instanceof Error && typeof (error as Error & { code?: unknown }).code === 'string') {
     return mapFetchFailedCause(error as Error & { code: string });
   }
 
-  // Not a network error — return as-is
   return error instanceof Error ? error : new Error(String(error));
 }
