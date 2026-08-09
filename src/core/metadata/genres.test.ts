@@ -58,8 +58,7 @@ describe('normalizeGenres', () => {
   });
 
   describe('Audible taxonomy harvest (#1322)', () => {
-    // Every harvested DROP_GENRES key — a sole dropped entry yields undefined,
-    // so deleting any key from the set fails its row.
+    // Exhaustive pins make every harvested drop key mutation-visible.
     const DROPPED = [
       'Genre Fiction',
       'Movie, TV & Video Game Tie-Ins',
@@ -78,8 +77,7 @@ describe('normalizeGenres', () => {
     });
 
     describe('synonym additions', () => {
-      // Every harvested SYNONYM_MAP entry: raw key (case-insensitive) → canonical
-      // single-genre output. Deleting any entry fails its row.
+      // Exhaustive pins make every harvested synonym mutation-visible.
       const SYNONYMS: [string, string][] = [
         ['Teen & Young Adult', 'Young Adult'],
         ['Epic', 'Epic Fantasy'],
@@ -101,10 +99,7 @@ describe('normalizeGenres', () => {
     });
 
     describe("contextual 'historical' remap (#1383)", () => {
-      // Bare 'Historical' is fiction-side ONLY when no non-fiction marker
-      // co-occurs. Audible files non-fiction "Historical" under these markers,
-      // where remapping fabricates a wrong fiction label (live-verified on
-      // Endurance B002V9ZA6C — narrative non-fiction acquiring Historical Fiction).
+      // Each marker must block the otherwise valid Historical Fiction remap.
       const NONFICTION_MARKERS = ['Biographies & Memoirs', 'History', 'Computers & Technology'];
 
       it.each(NONFICTION_MARKERS)(
@@ -144,9 +139,7 @@ describe('normalizeGenres', () => {
         ).toEqual(['Crime Thrillers']);
       });
 
-      // Lone-parent survival pinned for ALL three new Audible parents: each
-      // survives unchanged when no child is present AND is not tracked as an
-      // unmatched genre (it's a known GENERIC_PARENTS member). (#1383)
+      // Generic parents survive alone but are still known to unmatched tracking.
       const NEW_PARENTS = [
         'Science Fiction & Fantasy',
         'Literature & Fiction',
@@ -160,9 +153,7 @@ describe('normalizeGenres', () => {
     });
 
     describe('GENERIC_PARENTS BISAC dual-consumer pins (#1383)', () => {
-      // splitBisacPath collapses a parent-prefixed path to its leaf — pin exact
-      // output for all three new parents so a future parent-batch edit can't
-      // silently alter BISAC output (the unpinned change from #1322).
+      // Pin the generic-parent set's second consumer: BISAC leaf extraction.
       const BISAC_PINS: [string, string[]][] = [
         ['Science Fiction & Fantasy / Space Opera', ['Space Opera']],
         ['Literature & Fiction / Classics', ['Classics']],
@@ -255,18 +246,15 @@ describe('normalizeGenres', () => {
       ];
       const result = normalizeGenres(raw);
 
-      // Should keep meaningful genres
       expect(result).toContain('Fantasy');
       expect(result).toContain('Science Fiction');
       expect(result).toContain('Adventure');
       expect(result).toContain('Historical Fantasy');
       expect(result).toContain('Epic Fantasy');
 
-      // Should remove
       expect(result).not.toContain('Fiction');
       expect(result).not.toContain('Science Fiction & Fantasy');
 
-      // Should not have duplicates
       const lowerSet = result!.map((g) => g.toLowerCase());
       expect(new Set(lowerSet).size).toBe(lowerSet.length);
     });
@@ -277,9 +265,7 @@ describe('findUnmatchedGenres', () => {
   it('identifies genres not in any known list', () => {
     const unmatched = findUnmatchedGenres(['Fantasy', 'Cozy Mystery', 'Progression Fantasy']);
 
-    // Fantasy is a known fiction child, so it's matched
     expect(unmatched).not.toContain('Fantasy');
-    // These are unknown
     expect(unmatched).toContain('Cozy Mystery');
     expect(unmatched).toContain('Progression Fantasy');
   });
@@ -294,8 +280,6 @@ describe('findUnmatchedGenres', () => {
   });
 
   it('does not flag synonym keys or BISAC paths once normalized', () => {
-    // Raw provider genres the normalizer fully handles: a synonym key,
-    // a BISAC path, and a generic parent removed alongside its child.
     const raw = ['Sci-Fi', 'Fiction / Fantasy / Epic', 'Fiction'];
     const result = findUnmatchedGenres(normalizeGenres(raw));
     expect(result).toEqual([]);
@@ -307,8 +291,7 @@ describe('findUnmatchedGenres', () => {
     expect(result).toEqual(['Weird Western']);
   });
 
-  // Every harvested GENRE_CHILDREN entry must register as "known" so it stops
-  // polluting the tracking table. Deleting any entry from the set fails its row.
+  // Exhaustive pins keep every harvested child out of unmatched tracking.
   const HARVESTED_CHILDREN = [
     'Space Opera', 'Hard Science Fiction', 'Sword & Sorcery', 'Military',
     'Classics', "Women's Fiction", 'Family Life', 'Psychological',
@@ -321,8 +304,7 @@ describe('findUnmatchedGenres', () => {
     expect(findUnmatchedGenres([child])).toEqual([]);
   });
 
-  // Every harvested DROP_GENRES key is "known" for defense in depth — a raw
-  // dropped genre passed directly to tracking returns []. Deleting any key fails.
+  // Exhaustive pins keep every dropped key out of unmatched tracking.
   const DROPPED_KEYS = [
     'genre fiction',
     'movie, tv & video game tie-ins',
@@ -336,8 +318,6 @@ describe('findUnmatchedGenres', () => {
 
   describe("context-gated 'historical' tracking defense (#1383, #1405)", () => {
     it('does not track gated historical alongside History (AC1)', () => {
-      // 'historical' is dropped by the new guard; 'history' is dropped as a
-      // known GENRE_CHILDREN member — so the gated pair tracks nothing.
       expect(findUnmatchedGenres(normalizeGenres(['Historical', 'History']))).toEqual([]);
     });
 
@@ -347,16 +327,13 @@ describe('findUnmatchedGenres', () => {
     });
 
     it('keeps the two non-child markers tracked by design (AC3)', () => {
-      // Biographies & Memoirs and Computers & Technology are load-bearing gate
-      // inputs but remain tracked — real Audible categories carrying signal.
+      // These gate inputs intentionally remain unmatched provider signals.
       expect(findUnmatchedGenres(['Biographies & Memoirs'])).toEqual(['Biographies & Memoirs']);
       expect(findUnmatchedGenres(['Computers & Technology'])).toEqual(['Computers & Technology']);
-      // History is already an untracked known child, NOT a result of this change.
       expect(findUnmatchedGenres(['History'])).toEqual([]);
     });
 
     it('leaves the remap path unchanged — tracking-only defense (AC2)', () => {
-      // Bare-fiction case still maps (no non-fiction marker present).
       expect(normalizeGenres(['Historical'])).toEqual(['Historical Fiction']);
       expect(normalizeGenres(['Historical', 'Fantasy'])).toContain('Historical Fiction');
     });
@@ -369,9 +346,7 @@ describe('findUnmatchedGenres', () => {
       'Teen & Young Adult', 'Epic', 'Fantasy',
       'Genre Fiction', 'Thriller & Suspense',
     ];
-    // Pin the EXACT normalized output, not just tracking emptiness — the
-    // tracking-only check passes even if the pipeline regresses (e.g. parent
-    // removal disabled entirely). (#1383)
+    // Exact output catches pipeline regressions that tracking emptiness cannot.
     expect(normalizeGenres(raw)).toEqual([
       'Space Opera', 'Crime Thrillers', 'Young Adult', 'Epic Fantasy', 'Fantasy', 'Thriller',
     ]);
