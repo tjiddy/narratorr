@@ -20,14 +20,12 @@ const FILTER_LABELS: Record<StatusFilter, string> = {
   missing: 'Missing',
 };
 
-/** Dropdown tabs derived from the canonical filter vocabulary — order and
- *  membership track `LIBRARY_FILTER_VALUES`, so the client can never offer a
- *  bucket the server doesn't count. */
+/** Derive tab order and membership from the server's canonical filter vocabulary. */
 export const filterTabs: { key: StatusFilter; label: string }[] = LIBRARY_FILTER_VALUES.map(
   (key) => ({ key, label: FILTER_LABELS[key] }),
 );
 
-/** Compute MB per hour from size (bytes) and duration. Delegates unit handling to resolveBookQualityInputs (audioDuration in seconds, duration in minutes). */
+/** Compute MB/hour after normalizing byte and duration units. */
 export function computeMbPerHour(book: LibraryBookListItem): number | null {
   const { sizeBytes, durationSeconds } = resolveBookQualityInputs(book);
   if (!sizeBytes || !durationSeconds) return null;
