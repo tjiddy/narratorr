@@ -17,19 +17,10 @@ import { handleSearchEvent } from './useSearchProgress.js';
 import { safeParseSseEvent } from '@/lib/sse/safe-parse-event';
 import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_EVENT } from '@shared/sse-constants.js';
 
-// Silence threshold for the liveness watchdog (#1798). A deaf (half-open) stream
-// delivers no frames at all — not even heartbeats — yet EventSource keeps
-// `readyState` OPEN and never fires `error`. If more than ~3 heartbeat intervals
-// pass with no frame of any kind, the stream is treated as dead and force-reopened.
-// Derived from the shared cadence (DRY) so tightening the heartbeat also tightens
-// detection without a second constant to keep in sync.
+// Half-open streams stay OPEN without errors; three missed heartbeat intervals force a reopen.
+// Derive the threshold from the shared cadence so server and client cannot drift (#1798).
 const SSE_SILENCE_THRESHOLD_MS = HEARTBEAT_INTERVAL_MS * 3;
 
-// ============================================================================
-// Reactive SSE connection state (F3)
-// ============================================================================
-
-/** Module-level SSE connection state with subscribe/notify for useSyncExternalStore. */
 let sseConnected = false;
 const sseListeners = new Set<() => void>();
 
@@ -50,14 +41,11 @@ function getSseConnected(): boolean {
   return sseConnected;
 }
 
-/** Reactive hook — triggers re-render when SSE connection state changes. */
 export function useSSEConnected(): boolean {
   return useSyncExternalStore(subscribeSseConnected, getSseConnected, getSseConnected);
 }
 
-/** Patch download progress in-place across cached activity pages; returns true if found.
- *  Skips non-page queries (e.g. activityCounts) that share the ['activity'] prefix
- *  but have a different data shape ({ active, completed } instead of { data[], total }). */
+/** Skip non-page data such as activityCounts that shares the activity prefix but has another shape. */
 function patchActivityProgress(queryClient: ReturnType<typeof useQueryClient>, progressData: SSEEventPayloads['download_progress']): { found: boolean; hasPageQueries: boolean } {
   const cachedQueries = queryClient.getQueryCache().findAll({ queryKey: ['activity'] });
   let found = false;
@@ -81,7 +69,6 @@ function patchActivityProgress(queryClient: ReturnType<typeof useQueryClient>, p
   return { found, hasPageQueries };
 }
 
-/** Patch import job progress in-place across cached import-jobs queries. */
 function patchImportJobProgress(queryClient: ReturnType<typeof useQueryClient>, data: SSEEventPayloads['import_progress']): void {
   const cachedQueries = queryClient.getQueryCache().findAll({ queryKey: ['importJobs'] });
   let found = false;
@@ -105,7 +92,6 @@ function patchImportJobProgress(queryClient: ReturnType<typeof useQueryClient>, 
   }
 }
 
-/** Apply cache invalidation rules for an SSE event. */
 function invalidateFromRule(
   queryClient: ReturnType<typeof useQueryClient>,
   rule: CacheInvalidationRule,
@@ -116,8 +102,7 @@ function invalidateFromRule(
     queryClient.invalidateQueries({ queryKey: ['activity'] });
   } else if (rule.activity === 'patch') {
     const { found, hasPageQueries } = patchActivityProgress(queryClient, data as SSEEventPayloads['download_progress']);
-    // Cache miss — download not in any cached page. Fall back to full invalidation.
-    // Skip when no page queries are cached (only activityCounts) — can't miss from a page that isn't loaded.
+    // Invalidate only a real page miss; an unloaded page cannot miss the download.
     if (!found && hasPageQueries) {
       queryClient.invalidateQueries({ queryKey: ['activity'] });
       queryClient.invalidateQueries({ queryKey: queryKeys.activityCounts() });
@@ -142,36 +127,21 @@ function invalidateFromRule(
   }
 }
 
-/** Narrow an SSE payload to a specific event type. Single cast point for type safety. */
 function asPayload<T extends SSEEventType>(data: SSEEventPayloads[SSEEventType]): SSEEventPayloads[T] {
   return data as SSEEventPayloads[T];
 }
 
 /**
- * Connects to the SSE endpoint and handles cache invalidation + toast notifications.
- * Should be mounted once at the app root.
- *
- * `streamToken` is the short-lived, session-scoped token (#1453) passed as the
- * `?token=` query param — EventSource cannot set headers. A null token means
- * "not ready yet" and no connection is opened. `onStreamError` (optional) fires
- * on the EventSource `error` event so the caller can re-mint an expired token.
- *
- * Reconnect model (#1776): the connection effect is keyed on a `reconnectKey`
- * generation, NOT on `streamToken`, so a routine 4-minute token refresh does not
- * churn a healthy stream. The freshest token is held in a ref and read at open
- * time. A token change only forces a reopen when there is no live stream yet
- * (first connect) or the current stream has errored (post-remint recovery) — so
- * a genuinely expired token still reaches the reopen path. The reconnect catch-up
- * (`invalidateQueries()`) is gated on a ref-backed error flag that survives the
- * effect rebuild, firing exactly once on the reopen and never on the first connect.
+ * EventSource cannot set headers, so the short-lived token travels in the query string; null
+ * opens nothing (#1453). A ref plus reconnect generation avoids churning healthy token refreshes
+ * while still reopening after errors. The ref-backed error flag triggers one cache catch-up only
+ * after a reconnect (#1776).
  */
 export function useEventSource(streamToken: string | null, onStreamError?: () => void) {
   const queryClient = useQueryClient();
   const esRef = useRef<EventSource | null>(null);
   const hadErrorRef = useRef(false);
-  // Wall-clock timestamp of the last frame received on the current stream (any
-  // event, including the `hb` heartbeat). The watchdog compares it against
-  // `Date.now()` to detect a silent stream (#1798).
+  // Any frame, including heartbeat, resets this wall-clock liveness timestamp (#1798).
   const lastFrameAtRef = useRef(0);
   const tokenRef = useRef<string | null>(streamToken);
   const onStreamErrorRef = useRef(onStreamError);
@@ -182,10 +152,8 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
     const rule = CACHE_INVALIDATION_MATRIX[type];
     invalidateFromRule(queryClient, rule, type, data);
 
-    // Merge progress tracking — update the reactive store
     updateMergeProgressFromEvent(type, data);
 
-    // Search progress tracking — update the reactive store
     if (type.startsWith('search_')) {
       handleSearchEvent(type as Extract<SSEEventType, `search_${string}`>, asPayload<Extract<SSEEventType, `search_${string}`>>(data));
     }
@@ -193,9 +161,8 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
     dispatchToasts(type, data);
   }, [queryClient]);
 
-  // Opens the stream on the current `reconnectKey`, reading the freshest token
-  // from the ref. Declared before the token effect so that on mount `esRef` is
-  // populated by the time the token effect runs (avoids a spurious reopen).
+  // Keep this effect before the token effect so `esRef` is populated before token reconciliation;
+  // otherwise mount spuriously bumps the reconnect generation.
   useEffect(() => {
     const token = tokenRef.current;
     if (!token) return;
@@ -203,18 +170,13 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
     const url = `${URL_BASE}/api/events?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     esRef.current = es;
-    // Seed liveness at open time so a slow first frame doesn't trip the watchdog
-    // before the stream has had a chance to deliver anything.
+    // Give the first frame a full silence window.
     lastFrameAtRef.current = Date.now();
 
-    // Any frame — domain event or `hb` heartbeat — proves the stream is live.
     const refreshLiveness = () => { lastFrameAtRef.current = Date.now(); };
 
-    // Proactively tear down and reopen a stream the browser still believes is
-    // OPEN (#1798). Guarded so a watchdog tick and an `online`/`visibilitychange`
-    // fire in the same frame can't double-bump the reconnect generation. Mirrors
-    // the `onerror` path: set the ref-backed error flag BEFORE closing so the
-    // reopen's `onopen` fires the single catch-up invalidation.
+    // Coalesce watchdog/browser signals into one generation bump. Mark the error before closing
+    // so the replacement stream performs the catch-up invalidation (#1798).
     let reconnecting = false;
     const forceReconnect = () => {
       if (reconnecting) return;
@@ -232,8 +194,7 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
       refreshLiveness();
       setSseConnected(true);
       if (hadErrorRef.current) {
-        // Reconnected after a drop — invalidate everything to catch up on any
-        // events missed while disconnected. Fires exactly once per reopen.
+        // Catch up once for events missed during the disconnected interval.
         queryClient.invalidateQueries();
         hadErrorRef.current = false;
       }
@@ -242,14 +203,11 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
     es.onerror = () => {
       setSseConnected(false);
       hadErrorRef.current = true;
-      // Browser auto-reconnects the same instance; if the token has expired that
-      // reconnect keeps failing, so ask the caller to re-mint (#1453). The fresh
-      // token drives a reopen via the token effect above (which sees the error).
+      // Browser retries the same expired token, so ask the caller to mint one that can reopen (#1453).
       onStreamErrorRef.current?.();
     };
 
-    // Listen for each event type — derived from schema (single source of truth).
-    // Every domain listener refreshes liveness so any real traffic counts (AC #2).
+    // Schema options are the domain listener registry; every valid frame also proves liveness.
     const eventTypes: SSEEventType[] = [...sseEventTypeSchema.options];
 
     for (const type of eventTypes) {
@@ -261,23 +219,14 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
       });
     }
 
-    // The named heartbeat (#1798) is not a domain event — it carries no payload and
-    // is absent from `sseEventTypeSchema`, and EventSource routes named events by
-    // name (not to `onmessage`), so it needs its own listener. It exists purely to
-    // refresh liveness on an otherwise idle stream.
+    // Named heartbeats bypass domain listeners and carry no payload, so register one explicitly.
     es.addEventListener(SSE_HEARTBEAT_EVENT, refreshLiveness);
 
-    // Watchdog: a deaf stream (NAT flush, proxy restart, laptop sleep/wake with no
-    // RST) delivers no frames while `readyState` stays OPEN and `onerror` never
-    // fires. Poll on the heartbeat cadence; once silence exceeds the threshold,
-    // force the reopen so the recovery + catch-up path runs (AC #1).
     const watchdog = setInterval(() => {
       if (isStale()) forceReconnect();
     }, HEARTBEAT_INTERVAL_MS);
 
-    // Cheap adjunct (#1798): a sleep/wake or network flap often surfaces as an
-    // `online` or `visibilitychange` before the watchdog's next tick — check
-    // liveness immediately so recovery isn't delayed by up to a full interval.
+    // Browser wake/network signals can recover a stale stream before the next watchdog tick.
     const onOnline = () => { if (isStale()) forceReconnect(); };
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible' && isStale()) forceReconnect();
@@ -295,15 +244,8 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
     };
   }, [reconnectKey, handleEvent, queryClient]);
 
-  // Keep the freshest token in a ref and decide whether it warrants a reconnect
-  // by bumping the generation (which re-runs the connection effect above).
-  //  - (Re)open when there is a token but no live stream (first connect after a
-  //    null token) or the current one has errored (post-remint recovery). Never
-  //    on a healthy refresh, which would churn the connection.
-  //  - Close when the token is cleared to null while a stream is still open
-  //    (e.g. logout / token revocation) — the connection effect re-runs, its
-  //    cleanup closes the old EventSource, and the null token short-circuits the
-  //    reopen, leaving no dangling connection on the revoked token.
+  // Healthy token refreshes update only the ref. Missing/errored streams reopen; clearing the
+  // token bumps the generation so cleanup closes the revoked stream without replacement.
   useEffect(() => {
     tokenRef.current = streamToken;
     const hasStream = esRef.current !== null;
@@ -317,9 +259,7 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
 
 function dispatchToasts(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
   const record = data as Record<string, unknown>;
-  // Inline dispatch: search_complete + outcome:grab_error → error toast.
-  // The book cache may be empty for scheduled/background searches, so use
-  // payload.book_title and payload.error_message directly instead of a cache lookup.
+  // Scheduled searches may have no cached book; grab failures must use payload copy directly.
   if (type === 'search_complete' && record.outcome === 'grab_error') {
     const p = asPayload<'search_complete'>(data);
     const title = p.book_title ?? 'Grab failed';
@@ -342,7 +282,6 @@ function dispatchToasts(type: SSEEventType, data: SSEEventPayloads[typeof type])
     }
   }
 
-  // Enrichment warning on merge_complete
   if (type === 'merge_complete') {
     const warning = asPayload<'merge_complete'>(data).enrichmentWarning;
     if (warning) {
@@ -352,15 +291,9 @@ function dispatchToasts(type: SSEEventType, data: SSEEventPayloads[typeof type])
 }
 
 /**
- * Merge store writes (#2129). Non-terminal state — queued, starting, and every in-flight phase —
- * comes exclusively from the `merge_state` snapshot, which is authoritative and complete.
- * `merge_started` is the ONLY surviving incremental merge event, and it survives for its toast
- * and event-history invalidation alone — it must never write the store (a second writer is
- * exactly the dual-source fight #2129 eliminated; the other incrementals were retired in #2142).
- *
- * The terminal events keep writing it: they carry `message` / `error` / `enrichmentWarning` /
- * `outcome`, none of which the snapshot has, and the snapshot that follows deliberately omits
- * the book (the store retains it for its dismiss window).
+ * `merge_state` is the sole non-terminal store writer; `merge_started` exists only for toast and
+ * history invalidation (#2129/#2142). Terminal events still write details absent from snapshots,
+ * which omit completed books so the store can retain them through the dismiss window.
  */
 function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
   if (type === 'merge_state') {
@@ -394,7 +327,7 @@ function formatToastMessage(type: SSEEventType, title: string): string {
     case 'review_needed': return `"${title}" needs review`;
     case 'merge_started': return `Merging "${title}"...`;
     case 'merge_failed': return `"${title}" merge failed`;
-    case 'merge_complete': return title; // title is the message field (includes filename)
+    case 'merge_complete': return title;
     default: return title;
   }
 }
