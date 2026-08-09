@@ -3,7 +3,7 @@ import { api, type MatchCandidate, type MatchResult } from '@/lib/api';
 import { MatchEngine, type MatchEngineSnapshot } from './match-engine.js';
 import type { PausedReason } from './match-recovery.js';
 
-// Re-exported so existing importers (and the chunking tests) keep their entry point.
+// Preserve the existing entry point for importers and chunking tests.
 export { packMatchCandidates, MATCH_CHUNK_BYTE_BUDGET } from './match-packing.js';
 export type { PausedReason } from './match-recovery.js';
 
@@ -23,28 +23,23 @@ export interface UseMatchJobReturn {
   results: MatchResult[];
   progress: { matched: number; total: number };
   isMatching: boolean;
-  /** True while a Restart-all / Resume-remaining attempt is in flight (fail-closed CTA). */
+  /** Locks the fail-closed CTA while recovery is in flight. */
   recovering: boolean;
   paused: boolean;
   reason: PausedReason | null;
   remaining: number;
   matchedCount: number;
   total: number;
-  /** Initial automatic run after a scan. Fresh logical run; allowance reset. */
+  /** Start a fresh automatic run and reset its allowance. */
   startMatching: (candidates: MatchCandidate[]) => void;
-  /** Restart all — a new logical run over the CALLER's current candidate values. */
+  /** Restart over the caller's current candidate values. */
   restart: (candidates: MatchCandidate[]) => void;
-  /** Resume remaining — one authorized recovery attempt for the result-less remainder. */
+  /** Authorize one attempt over the result-less remainder. */
   resume: () => void;
   cancel: () => void;
 }
 
-/**
- * Chunked match engine with bounded failure recovery (#1864). Wires the
- * framework-agnostic {@link MatchEngine} — single-flight polling, bounded retry,
- * 404 auto-resume, probe-before-replace, rechunked remainder — to React state.
- * Serves the library initial scan, library Restart, and manual import scan.
- */
+/** React state wrapper for the shared library/manual-import match engine (#1864). */
 export function useMatchJob(): UseMatchJobReturn {
   const [snap, setSnap] = useState<MatchEngineSnapshot>(INITIAL_SNAPSHOT);
   const engineRef = useRef<MatchEngine | null>(null);
