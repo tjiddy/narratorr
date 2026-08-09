@@ -38,7 +38,6 @@ const MOCK_SCAN_RESULT = {
   hasCoverArt: false,
 };
 
-// Default webhook sink
 const mswServer = setupServer(
   http.post(WEBHOOK_URL, () => new HttpResponse(null, { status: 200 })),
 );
@@ -46,8 +45,7 @@ const mswServer = setupServer(
 const INDEXER_2_BASE = 'http://indexer2.test';
 const MAGNET_URI = `magnet:?xt=urn:btih:${TORRENT_HASH}&dn=Test+Book`;
 
-// Torznab XML that uses magnet URIs (no .torrent links) — needed because
-// qBittorrent adapter extracts infohash from magnet URI, not .torrent URLs
+// qBittorrent derives infohash from magnets, so this fixture cannot use .torrent links.
 const MAGNET_SEARCH_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
   <channel>
@@ -126,10 +124,7 @@ describe('Multi-entity E2E', () => {
     await rm(libraryDir, { recursive: true, force: true });
   });
 
-  // ── Multi-indexer search aggregation ──────────────────────────────────
-
   it('multi-indexer search aggregates results from all enabled indexers', async () => {
-    // Seed two indexers
     await e2e.app.inject({
       method: 'POST',
       url: '/api/indexers',
@@ -162,23 +157,16 @@ describe('Multi-entity E2E', () => {
       }),
     );
 
-    // GET /api/search retired in Wave 11.2 (#755). SSE /api/search/stream is
-    // the active surface; aggregation across indexers is covered at the
-    // service layer via indexer.service. Exercise the service directly here.
+    // Search is SSE-only; exercise cross-indexer aggregation at the service layer.
     const results = await e2e.services.indexerSearch.searchAll('Brandon Sanderson');
-    // Should have results from both indexers
     expect(results.length).toBeGreaterThanOrEqual(2);
 
     const titles = results.map((r: { title: string }) => r.title);
-    // At minimum, one result from each indexer (titles get parsed so check loosely)
     expect(titles.length).toBeGreaterThanOrEqual(2);
   });
 
-  // ── Multi-download-client: grab uses highest priority ─────────────────
-
   it('grab uses the highest-priority enabled download client matching the protocol', async () => {
 
-    // Seed two torrent clients — priority 10 (high) and priority 90 (low)
     const highRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/download-clients',
@@ -206,13 +194,12 @@ describe('Multi-entity E2E', () => {
     });
     expect(lowRes.statusCode).toBe(201);
 
-    // Only wire up MSW handlers for the high-priority client (port 8080)
+    // Only the high-priority endpoint exists; choosing the other client must fail the test.
     mswServer.use(
       qbLoginHandler(QB_BASE),
       qbAddTorrentHandler(QB_BASE),
     );
 
-    // Seed a book and seed an indexer for grab
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
@@ -233,7 +220,6 @@ describe('Multi-entity E2E', () => {
     });
 
     expect(grabRes.statusCode).toBe(201);
-    // The download should use the high-priority client
     expect(grabRes.json().downloadClientId).toBe(highClientId);
   });
 });
@@ -256,7 +242,6 @@ describe('Job lifecycle E2E', () => {
     await writeFile(join(downloadSource, 'book.m4b'), Buffer.alloc(1024));
     await writeFile(join(downloadSource, 'chapter2.m4b'), Buffer.alloc(2048));
 
-    // Seed download client
     const clientRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/download-clients',
@@ -271,7 +256,6 @@ describe('Job lifecycle E2E', () => {
     expect(clientRes.statusCode).toBe(201);
     downloadClientId = clientRes.json().id;
 
-    // Seed indexer
     const idxRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/indexers',
@@ -321,10 +305,7 @@ describe('Job lifecycle E2E', () => {
     await rm(libraryDir, { recursive: true, force: true });
   });
 
-  // ── Search job E2E ──────────────────────────────────────────────────
-
   it('search job executes end-to-end: finds wanted books, searches indexers, saves results', async () => {
-    // Create a wanted book
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
@@ -332,7 +313,6 @@ describe('Job lifecycle E2E', () => {
     });
     expect(bookRes.statusCode).toBe(201);
 
-    // Use magnet-only XML so qBittorrent adapter can extract infohash
     mswServer.use(
       torznabSearchHandler(INDEXER_BASE, MAGNET_SEARCH_XML),
       qbLoginHandler(),
@@ -352,19 +332,14 @@ describe('Job lifecycle E2E', () => {
     );
 
     expect(result.searched).toBeGreaterThanOrEqual(1);
-    // Search always grabs — qBit mock accepts any add
     expect(result.grabbed).toBeGreaterThanOrEqual(1);
 
-    // Verify download was created
     const activityRes = await e2e.app.inject({ method: 'GET', url: '/api/activity' });
     const activity = (activityRes.json() as { data: { status: string }[] }).data;
     expect(activity.some((d) => d.status === 'downloading')).toBe(true);
   });
 
-  // ── Monitor job: marks completed with completedAt ─────────────────
-
   it('monitor job marks download as completed with completedAt (does NOT trigger import)', async () => {
-    // Create a book + download in 'downloading' state
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
@@ -383,7 +358,6 @@ describe('Job lifecycle E2E', () => {
       clientStatus: 'downloading' as const,
     }).returning();
 
-    // qBittorrent reports download as complete (progress 100%)
     mswServer.use(
       qbLoginHandler(),
       http.get(`${QB_BASE}/api/v2/torrents/info`, ({ request }) => {
@@ -406,24 +380,19 @@ describe('Job lifecycle E2E', () => {
       }),
     );
 
-    // Run the real monitor logic (exported from monitor job) — no QG orchestrator = no inline import trigger
+    // Omit the quality-gate orchestrator so this run cannot trigger inline import.
     const { monitorDownloads } = await import('../jobs/monitor.js');
     await monitorDownloads(e2e.db, e2e.services.downloadClient, e2e.services.notifier, e2e.app.log);
 
-    // Verify download is completed with timestamp
     const [updated] = await e2e.db.select().from(downloads).where(eq(downloads.id, dl!.id));
     expect(updated!.clientStatus).toBe('completed');
     expect(updated!.pipelineStage).toBe('idle');
     expect(updated!.completedAt).toBeTruthy();
 
-    // Book stays 'downloading' — promotion to 'importing' now happens in processOneDownload
-    // (fire-and-forget from monitor), not directly in the monitor. Without a QG orchestrator
-    // passed, the inline import path is not triggered.
+    // Promotion to importing belongs to processOneDownload; without its orchestrator this stays downloading.
     const bookCheck = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
     expect(bookCheck.json().status).toBe('downloading');
   });
-
-  // ── Import job: picks up completed downloads ──────────────────────
 
   it('import job picks up completed downloads and runs import flow', async () => {
     const { bookId, downloadId } = await seedBookAndDownload(e2e, downloadClientId, 'Import Job Book', 'Import Author');
@@ -435,15 +404,12 @@ describe('Job lifecycle E2E', () => {
       qbGetTorrentHandler(TORRENT_HASH, downloadParent),
     );
 
-    // #636: processCompletedDownloads now enqueues to import_jobs (returns count).
-    // For E2E, call importDownload directly to verify the full import pipeline.
+    // processCompletedDownloads only enqueues; call importDownload to exercise the full pipeline here.
     await e2e.services.importOrchestrator.importDownload(downloadId);
 
-    // Book should now be imported
     const bookRes = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
     expect(bookRes.json().status).toBe('imported');
 
-    // Download should be imported too
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
     expect(dl!.pipelineStage).toBe('imported');
   });

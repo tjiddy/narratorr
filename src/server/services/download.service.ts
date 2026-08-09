@@ -30,17 +30,9 @@ import { serializeError } from '../utils/serialize-error.js';
 import { DownloadError, DuplicateDownloadError } from './download-errors.js';
 
 export interface DownloadWithBook extends DownloadRow {
-  /** Derived legacy display status — the REST/SSE/client compatibility seam (#1445). */
+  /** Derived REST/SSE/client compatibility status. */
   status: DownloadStatus;
-  /**
-   * `BookRowPublic`, not `BookRow` (#2069 AC16). Every builder below copies the
-   * joined row wholesale into a response that has NO response schema to strip
-   * extra keys — `GET /api/activity`, `/activity/active`, `/activity/:id`, the
-   * `retried` arm of `POST /api/activity/:id/retry`, and `POST /api/search/grab`
-   * (which serializes `grabInternal`'s `DownloadWithBook` directly). Stripping the
-   * raw `user_cleared_fields` text once in the shared row mapping is what keeps it
-   * out of all five.
-   */
+  /** BookRowPublic, not BookRow: unschematized responses copy joined rows wholesale, so strip raw user_cleared_fields here. */
   book?: BookRowPublic;
   indexerName: string | null;
 }
@@ -51,10 +43,7 @@ export type RetryResult =
   | { status: 'already_active' }
   | { status: 'retry_error'; error: string };
 
-// Back-compat: these error classes now live in the dependency-free leaf module
-// `download-errors.js` (#1551), imported above for local use. Re-exported here so
-// importers resolving them from `download.service.js` keep working and `instanceof`
-// identity is preserved.
+// Compatibility re-export preserves existing import paths and instanceof identity.
 export { DownloadError, DuplicateDownloadError };
 
 export interface DownloadServiceWireDeps {
@@ -71,7 +60,7 @@ export class DownloadService {
     private log: FastifyBaseLogger,
   ) {}
 
-  /** Wire cyclic / late-bound deps after construction. Call once during composition. */
+  /** Wire cyclic dependencies once during composition. */
   wire(deps: DownloadServiceWireDeps): void {
     this.wired.set(deps);
   }
@@ -87,18 +76,15 @@ export class DownloadService {
     } else if (section === 'history') {
       where = terminalDownloadCondition();
     } else if (status) {
-      // The `?status=` filter speaks the derived display status — translate it
-      // into the equivalent two-axis predicate.
+      // Translate display status into its two-axis predicate.
       where = displayStatusCondition(status as DownloadStatus);
     }
 
-    // Get total count (with filters, before pagination)
     const [{ value: total } = { value: 0 }] = await this.db
       .select({ value: count() })
       .from(downloads)
       .where(where);
 
-    // Get data with optional pagination
     let query = this.db
       .select({
         download: downloads,
@@ -221,14 +207,11 @@ export class DownloadService {
     }));
   }
 
-  /** Delegate the apiUrl-derived LAN allowlist build to IndexerService so the
-   *  torrent-download (#966) and Usenet NZB-enrichment (#1149) paths share one
-   *  implementation and one set of parse/normalize semantics. */
+  /** Share private-indexer URL parsing with Usenet enrichment. */
   private buildLanAllowlist() {
     return this.wired.require().indexerService.getLanAllowlist();
   }
 
-  /** Send a pre-resolved artifact to the client and return the external ID. */
   private async sendToClient(artifact: DownloadArtifact, protocol: DownloadProtocol): Promise<{ externalId: string | null; clientId: number; clientType: string; clientName: string }> {
     const client = await this.downloadClientService.getFirstEnabledForProtocol(protocol);
     if (!client) throw new Error('No download client configured');
@@ -242,14 +225,8 @@ export class DownloadService {
   }
 
   /**
-   * The ONE grab-time duplicate/blocker guard (#1861 consolidated the legacy
-   * classification away — every caller, v1 included, now runs this single path).
-   * Gather ALL blockers, give `PIPELINE_ACTIVE` precedence over
-   * `ACTIVE_DOWNLOAD_EXISTS` (mixed blockers never report replaceable), and
-   * populate the code-discriminated structured `details` the grab routes shape
-   * into their 409 bodies without re-querying. "Safely replaceable" is
-   * client-stage only; a QG-eligible completed row and a pending auto import job
-   * both block (see `download-blockers.ts`).
+   * Shared grab blocker guard. PIPELINE_ACTIVE outranks replaceable blockers; completed rows
+   * eligible for quality-gate and pending auto-import jobs also count as pipeline blockers.
    */
   private async checkDuplicateDownloads(bookId: number): Promise<void> {
     const classification = classifyBlockers(await gatherBookBlockers(this.db, bookId));
@@ -309,8 +286,7 @@ export class DownloadService {
     const { externalId, clientId, clientType, clientName } = await this.sendToClient(artifact, protocol);
     this.log.debug({ externalId, clientName, bookId: params.bookId }, 'Download sent to client');
 
-    // On insert failure after a successful client-add, best-effort compensate the
-    // orphaned tracked download (delete-files) or log it for recovery (#1857 F1/F5/F18).
+    // If DB insert fails after client-add, remove the orphan best-effort or log it for recovery.
     const result = await insertDownloadRecordOrCompensate(
       this.db, this.log, params,
       { effectiveDownloadUrl, protocol, infoHash, clientId, clientType, externalId },
@@ -321,11 +297,11 @@ export class DownloadService {
   }
 
   async updateProgress(id: number, progress: number, _bookId?: number): Promise<void> {
-    // Progress is pure client truth — write only the `clientStatus` axis.
+    // Progress is client truth; never infer or overwrite pipelineStage here.
     const clientStatus: ClientStatus = progress >= 1 ? 'completed' : 'downloading';
     const completedAt = progress >= 1 ? new Date() : null;
 
-    // Only update progressUpdatedAt when progress actually changes (for stuck download detection)
+    // Preserve progressUpdatedAt unless progress changes; stuck detection depends on it.
     const existing = await this.db.select({ progress: downloads.progress }).from(downloads).where(eq(downloads.id, id));
     const progressChanged = !existing[0] || existing[0].progress !== progress;
 
@@ -342,19 +318,12 @@ export class DownloadService {
   }
 
   async setError(id: number, errorMessage: string, _meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
-    // Failure: write the sanctioned failure tuple atomically so the row derives
-    // as `failed` even if the pipeline stage was non-idle (correct by
-    // construction regardless of caller). See `download-state.ts` contract.
+    // Reset both state axes atomically so a non-idle pipeline row derives as failed.
     await transitionDownloadState(this.db, id, { clientStatus: 'failed', pipelineStage: 'idle', errorMessage });
     this.log.warn({ id, error: errorMessage }, 'Download error recorded');
   }
 
-  /**
-   * Best-effort removal of a download's external client item (delete files),
-   * matching the cancel path's `removeDownload(externalId, true)`. Failure is
-   * logged, never thrown. Used by the replace claim-first cleanup, whose DB row
-   * transition has ALREADY committed (so removal cannot be destructive-first).
-   */
+  /** Best-effort delete-files cleanup; replace calls this only after its DB claim commits. */
   async removeExternalItem(download: Pick<DownloadRow, 'id' | 'downloadClientId' | 'externalId'>): Promise<void> {
     if (!download.downloadClientId || !download.externalId) return;
     try {
@@ -369,14 +338,10 @@ export class DownloadService {
     const download = await this.getById(id);
     if (!download) return false;
 
-    // Remove from download client if possible (destructive-first for the plain
-    // cancel path — the guarded-claim replace path inverts this ordering).
+    // Plain cancel is destructive-first; guarded replacement commits its claim first.
     await this.removeExternalItem(download);
 
-    // Cancellation → write the sanctioned failure tuple atomically. Resetting
-    // `pipelineStage` to 'idle' is required so a row cancelled mid-pipeline
-    // (checking/pending_review/importing) derives as `failed`, not its stale
-    // stage (see `download-state.ts` contract).
+    // Reset pipelineStage with clientStatus so mid-pipeline cancellation derives as failed.
     await transitionDownloadState(this.db, id, { clientStatus: 'failed', pipelineStage: 'idle', errorMessage: reason });
 
     this.log.info({ id }, 'Download cancelled');
@@ -389,9 +354,7 @@ export class DownloadService {
     if (download.status !== 'failed') throw new DownloadError(`Download ${id} is not in failed state`, 'INVALID_STATUS');
     if (!download.bookId) throw new DownloadError(`Download ${id} has no book linked`, 'NO_BOOK_LINKED');
 
-    // Imported-book guard (F5): manual retry on a download whose linked book has
-    // been imported must not auto-search a replacement and must not reset the
-    // retry budget. The user has to use Search Releases instead.
+    // Imported books require manual Search Releases; do not search or reset retry budget here.
     const bookRow = await this.db
       .select({ path: books.path })
       .from(books)
@@ -406,14 +369,13 @@ export class DownloadService {
 
     const { retrySearchDeps } = this.wired.require();
 
-    // Reset retry counter for this book (manual retry = new cycle)
+    // A manual retry starts a new budget cycle.
     retrySearchDeps.retryBudget.reset(download.bookId);
 
     const result = await retrySearch(download.bookId, retrySearchDeps);
 
     switch (result.outcome) {
       case 'retried': {
-        // Delete the old failed download record
         try {
           await this.db.delete(downloads).where(eq(downloads.id, id));
         } catch (error: unknown) {
@@ -429,10 +391,7 @@ export class DownloadService {
         return { status: 'no_candidates' };
       }
       case 'already_active': {
-        // The book is already served by a grab blocker — a live download (a
-        // replacement's winner), a QG-eligible completed row, or a pending auto import
-        // job (#1861). Leave the old failed row + its errorMessage UNTOUCHED and do NOT
-        // delete it (#1857 AC17).
+        // A blocker serves the book; preserve the old failed row and its errorMessage.
         this.log.info({ id }, 'Manual retry: book already has a blocking download or import — not retrying');
         return { status: 'already_active' };
       }

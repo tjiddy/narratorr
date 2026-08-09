@@ -10,16 +10,9 @@ import type { CompanionObserveInput, CompanionRevalidateInput } from './companio
 import type { CompanionEbookRow } from './types.js';
 
 /**
- * Mocked at the OS boundary and at the `core/epub` module boundary, exactly as #1959's test
- * plan fixes it — no `__internal` seam is added to production code to make this reachable
- * (esm-same-module-vi-mock-bypass). `readdir`/`lstat` are the only `node:fs/promises` members
- * anywhere in this module's import graph (`companion-ebook-observe.ts` +
- * `companion-ebook-discovery.ts`), so the factory can be exact rather than a spread of the
- * real module.
- *
- * Discovery runs for REAL against those two spies. That is deliberate: `gone` and
- * `undetermined` are `readdir` errnos, the candidate ordering is discovery's comparator, and
- * a mocked discovery would assert this module against a fiction of its collaborator.
+ * Mock only OS and EPUB validation boundaries; no production test seam. The fs mock is exact
+ * because this import graph uses only readdir/lstat. Discovery stays real so errno and ordering
+ * behavior come from the actual collaborator.
  */
 vi.mock('node:fs/promises', () => ({ readdir: vi.fn(), lstat: vi.fn() }));
 vi.mock('@core/epub/validate.js', () => ({ validateEpub: vi.fn() }));
@@ -46,11 +39,8 @@ function errno(code: string): NodeJS.ErrnoException {
 }
 
 /**
- * Assert a logged `error` value is the output of `serializeError`, not the caught `Error`.
- *
- * The own-ENUMERABLE key set is what makes this discriminating: on a real `Error`, `message`
- * and `stack` are non-enumerable, so a `toMatchObject` matcher reads through to them and
- * passes on a raw `Error` too. Mirrors `companion-ebook-open.test.ts`.
+ * Discriminate serializeError via enumerable keys. toMatchObject reads non-enumerable message/stack
+ * from raw Error too, so it would pass the broken shape.
  */
 function expectSerializedError(logged: unknown, original: Error, expected: { code?: string }): void {
   expect(logged).not.toBe(original);
@@ -66,7 +56,6 @@ function expectSerializedError(logged: unknown, original: Error, expected: { cod
   });
 }
 
-/** Every `debug` record that carries an `error` key — the AC2 absorb-and-log sites. */
 function errorDebugRecords(spies: { debug: ReturnType<typeof vi.fn> }): Array<Record<string, unknown>> {
   return spies.debug.mock.calls
     .map((call) => call[0] as Record<string, unknown>)
@@ -84,11 +73,7 @@ function fileStats(overrides: Partial<typeof DEFAULT_FINGERPRINT> & { regular?: 
   } as unknown as Stats;
 }
 
-/**
- * Queue `lstat` results in call order. Discovery probes each lexical candidate first (one call
- * per candidate, code-point order), then the observer's pre-validation stat, then its
- * post-validation re-check — so the sequence is total and readable.
- */
+/** Queue discovery probes, pre-validation stat, then post-validation re-check in exact call order. */
 function queueLstat(...results: Array<Stats | Error>): void {
   for (const result of results) {
     if (result instanceof Error) lstatMock.mockRejectedValueOnce(result);
@@ -96,7 +81,6 @@ function queueLstat(...results: Array<Stats | Error>): void {
   }
 }
 
-/** A stored row, defaulting to a short-circuitable `available` observation of `book.epub`. */
 function priorRow(overrides: Partial<CompanionEbookRow> = {}): CompanionEbookRow {
   return {
     bookId: BOOK_ID,
@@ -121,15 +105,13 @@ function observe(prior: CompanionEbookRow | null, log: FastifyBaseLogger, force 
   );
 }
 
-/** Every path `lstat` was called with, in call order — the AC3 syscall-order observable. */
 function lstatPaths(): string[] {
   return lstatMock.mock.calls.map((call) => String(call[0]));
 }
 
 describe('observeCompanionEbook (#1959)', () => {
   beforeEach(() => {
-    // resetAllMocks, never clearAllMocks: this suite leans on `*Once()` queues throughout and
-    // clearAllMocks does not drain them (vitest-clearallmocks-once-queue).
+    // clearAllMocks does not drain the *Once queues this suite relies on.
     vi.resetAllMocks();
     validateEpubMock.mockResolvedValue({ status: 'available' });
   });
@@ -236,17 +218,11 @@ describe('observeCompanionEbook (#1959)', () => {
       });
     });
 
-    /**
-     * One row per term of AC9's conjunction that the surrounding cases do not already move, so
-     * deleting ANY single comparison in `isUnchanged` fails a named case. `filename`, `size`,
-     * and `mtime` were the three that had no mismatch case at all: a short-circuit that ignored
-     * them would let genuinely different bytes inherit the stored verdict.
-     */
+    // One case per isUnchanged term so deleting any comparison fails a named test.
     it.each([
       {
         term: 'filename',
         prior: { filename: 'a-different.epub' } as const,
-        // A prior recorded against another basename cannot vouch for this one's bytes.
       },
       { term: 'sizeBytes', prior: { sizeBytes: DEFAULT_FINGERPRINT.size - 1 } as const },
       { term: 'mtimeMs', prior: { mtimeMs: DEFAULT_FINGERPRINT.mtimeMs - 1 } as const },
@@ -292,8 +268,6 @@ describe('observeCompanionEbook (#1959)', () => {
       readdirMock.mockResolvedValue(['book.epub'] as never);
       queueLstat(fileStats(), fileStats(), fileStats());
 
-      // prior.selectedFilename is non-null while the live resolution selects nothing:
-      // `(prior.selectedFilename !== null) === selected` fails, so the pass revalidates.
       const result = await observe(priorRow({ selectedFilename: 'gone.epub' }), log);
 
       expect(validateEpubMock).toHaveBeenCalledTimes(1);
@@ -313,19 +287,10 @@ describe('observeCompanionEbook (#1959)', () => {
       expect(validateEpubMock).toHaveBeenCalledTimes(1);
     });
 
-    /**
-     * #2034 AC2 — the bypass is at the CALL SITE, so `isUnchanged` keeps its full conjunction
-     * and the sweep keeps the optimisation. Every case in this block pairs a forced run with the
-     * unforced run of the SAME fixture, because the whole claim is a difference between the two:
-     * a forced-only assertion would also pass against an `isUnchanged` that had simply been
-     * deleted.
-     */
+    // Pair forced and unforced runs of each fixture; a forced-only assertion also passes if
+    // isUnchanged is deleted and therefore cannot prove the bypass.
     describe('the forced bypass (#2034 AC2/AC3)', () => {
-      /**
-       * The live UAT case at unit scale: a stale `drm_protected` verdict on a file whose bytes
-       * never moved. Every term of AC9's conjunction matches, so the sweep would short-circuit
-       * forever and the corrected validator would never be consulted.
-       */
+      // Unchanged bytes with a stale DRM verdict prove only the forced run consults the fixed validator.
       it('revalidates a fully-matching `drm_protected` row when forced', async () => {
         const { log } = createMockLogger();
         readdirMock.mockResolvedValue(['book.epub'] as never);
@@ -377,12 +342,7 @@ describe('observeCompanionEbook (#1959)', () => {
         },
       );
 
-      /**
-       * AC3 — force is inert on every arm that runs BEFORE the short-circuit. Each row asserts
-       * the forced result equals the documented unforced one, so a bypass that had been sited
-       * one step too early (skipping the discovery guard or the pre-validation stat) fails here
-       * rather than silently writing a verdict derived from a file that moved.
-       */
+      // Force is inert before the short-circuit; paired results catch a bypass before discovery/stat.
       it.each([
         {
           arm: 'discovery `gone`',
@@ -431,7 +391,6 @@ describe('observeCompanionEbook (#1959)', () => {
           const { log } = createMockLogger();
 
           await expect(observe(priorRow(), log, force)).resolves.toEqual(expected);
-          // None of these arms reaches validation, so force cannot have moved the bypass up.
           expect(validateEpubMock).not.toHaveBeenCalled();
         }
       });
@@ -456,16 +415,8 @@ describe('observeCompanionEbook (#1959)', () => {
         expect(results[1]!.result).toMatchObject({ outcome: 'observed' });
       });
 
-      /**
-       * AC3's syscall claim, in the only two forms that are actually falsifiable.
-       *
-       * Where `isUnchanged` returns false anyway, forced and unforced must issue the IDENTICAL
-       * `lstat` sequence — no call added, none reordered. Where it returns true, the forced
-       * sequence must be the unforced one plus exactly the post-validation re-check appended:
-       * that pins the bypass to the one step between the pre-validation stat and
-       * `revalidateCompanionFile`, and it is the assertion that goes red if a syscall is added
-       * ahead of the short-circuit to decide whether to take it.
-       */
+      // Mismatched fingerprints require identical forced/unforced stat sequences. For unchanged
+      // fingerprints, forced adds only the post-stat, pinning the bypass after the pre-stat.
       it('issues an identical lstat sequence when the fingerprint mismatches anyway', async () => {
         const sequences: string[][] = [];
         for (const force of [false, true]) {
@@ -475,7 +426,6 @@ describe('observeCompanionEbook (#1959)', () => {
           queueLstat(fileStats(), fileStats(), fileStats());
           const { log } = createMockLogger();
 
-          // `sizeBytes` differs, so both runs revalidate and take the same steps.
           await observe(priorRow({ sizeBytes: DEFAULT_FINGERPRINT.size - 1 }), log, force);
           sequences.push(lstatPaths());
         }
@@ -504,8 +454,6 @@ describe('observeCompanionEbook (#1959)', () => {
 
         const [unforced, forced] = sequences as [string[], string[]];
         expect(unforced).toEqual([join(BOOK_PATH, 'book.epub'), join(BOOK_PATH, 'book.epub')]);
-        // The unforced sequence is a strict PREFIX of the forced one: nothing was added before
-        // the bypass point, and the only extra call is the re-check `revalidateCompanionFile` owns.
         expect(forced.slice(0, unforced.length)).toEqual(unforced);
         expect(forced).toHaveLength(unforced.length + 1);
         expect(forced.at(-1)).toBe(join(BOOK_PATH, 'book.epub'));
@@ -623,12 +571,8 @@ describe('observeCompanionEbook (#1959)', () => {
       await expect(observe(null, log)).resolves.toEqual({ outcome: 'retain' });
     });
 
-    /**
-     * One row per component of the post-validation fingerprint re-check, so deleting ANY of the
-     * three comparisons in `sameFingerprint` fails a named case. The file is replaced WHILE
-     * `validateEpub` is reading it: persisting the verdict against the new bytes is exactly the
-     * state AC12 exists to prevent, and `size` and `ctime` had no case before (F6).
-     */
+    // One case per post-validation fingerprint term; replacement during validation must never
+    // persist a verdict against different bytes.
     it.each([
       { component: 'mtimeMs', after: { mtimeMs: DEFAULT_FINGERPRINT.mtimeMs + 1 } },
       { component: 'sizeBytes', after: { size: DEFAULT_FINGERPRINT.size + 1 } },
@@ -659,7 +603,7 @@ describe('observeCompanionEbook (#1959)', () => {
     it('retains when the pre-validation lstat reports a non-regular file (case 19)', async () => {
       const { log } = createMockLogger();
       readdirMock.mockResolvedValue(['book.epub'] as never);
-      // Discovery proved it regular; the directory changed under the pass.
+      // Discovery proved regularity, then the directory changed under the pass.
       queueLstat(fileStats(), fileStats({ regular: false }));
 
       await expect(observe(null, log)).resolves.toEqual({ outcome: 'retain' });
@@ -684,7 +628,6 @@ describe('observeCompanionEbook (#1959)', () => {
     it('retains when a same-fingerprint non-regular entry replaced the file (case 20)', async () => {
       const { log } = createMockLogger();
       readdirMock.mockResolvedValue(['book.epub'] as never);
-      // Identical normalised size/mtime/ctime — only `isFile()` differs, which is the whole point.
       queueLstat(fileStats(), fileStats(), fileStats({ regular: false }));
 
       await expect(observe(null, log)).resolves.toEqual({ outcome: 'retain' });
@@ -693,8 +636,7 @@ describe('observeCompanionEbook (#1959)', () => {
 
     it('never throws — an unforeseen failure reaches the backstop and still retains (AC2)', async () => {
       const { log, spies } = createMockLogger();
-      // A resolved-but-wrong `readdir` value throws OUTSIDE discovery's own try/catch (it wraps
-      // the await only), so this is the one shape that actually reaches the outer backstop.
+      // A malformed resolved readdir escapes discovery's await-only catch and reaches the backstop.
       readdirMock.mockResolvedValue(null as never);
 
       await expect(observe(null, log)).resolves.toEqual({ outcome: 'retain' });
@@ -707,14 +649,7 @@ describe('observeCompanionEbook (#1959)', () => {
   });
 });
 
-/**
- * `revalidateCompanionFile` (#1976 AC22) driven directly — the shared tail the sweep reaches
- * through `runObserve` and the owner's selection pass reaches on its own.
- *
- * Only ONE `lstat` is queued per case here: the pre-validation stat belongs to the CALLER
- * (AC23), so the sole syscall this function issues is the post-validation re-check. A case
- * that had to queue two would itself be the regression.
- */
+// Direct shared-tail tests queue one lstat: the caller owns the pre-stat, this function only re-checks.
 describe('revalidateCompanionFile (#1976 AC22)', () => {
   const PATH = join(BOOK_PATH, 'book.epub');
   const BEFORE = {
@@ -737,8 +672,7 @@ describe('revalidateCompanionFile (#1976 AC22)', () => {
 
   it('observes with the fingerprint that was passed IN, never a freshly taken one', async () => {
     const { log } = createMockLogger();
-    // The post-validation re-check reports the SAME normalised values, so the two are
-    // indistinguishable by value — the discriminator is the fractional millisecond below.
+    // Normalized values match; only the fractional millisecond distinguishes the raw stats.
     queueLstat(fileStats({ mtimeMs: DEFAULT_FINGERPRINT.mtimeMs + 0.75 }));
 
     await expect(revalidate(log)).resolves.toEqual({
@@ -795,7 +729,6 @@ describe('revalidateCompanionFile (#1976 AC22)', () => {
 
     await expect(revalidate(log)).resolves.toEqual({ outcome: 'retain' });
 
-    // The re-check never runs: there is no verdict to confirm.
     expect(lstatMock).not.toHaveBeenCalled();
     const records = errorDebugRecords(spies);
     expect(records).toHaveLength(1);
@@ -821,7 +754,6 @@ describe('revalidateCompanionFile (#1976 AC22)', () => {
     queueLstat(fileStats({ regular: false }));
 
     await expect(revalidate(log)).resolves.toEqual({ outcome: 'retain' });
-    // Nothing was caught — this is a disagreement with the caller's stat, not a failure.
     expect(errorDebugRecords(spies)).toHaveLength(0);
     expect(spies.debug).toHaveBeenCalledTimes(1);
   });
@@ -848,18 +780,8 @@ describe('revalidateCompanionFile (#1976 AC22)', () => {
     expect(spies.error).not.toHaveBeenCalled();
   });
 
-  /**
-   * The withdrawn design threaded the owner's pick into the SWEEP as a `selection` parameter
-   * and added a fourth precedence rule inside `resolveCandidate`. AC26 withdraws it. These are
-   * compile-level assertions: `CompanionObserveInput`'s key set is exact, so an added
-   * `selection` field fails typecheck here rather than in review.
-   *
-   * #2034 added `force` as the fifth field, and the distinction from the withdrawn `selection`
-   * is the whole reason this guard keeps its value: `force` carries no candidate identity and
-   * `resolveCandidate` still cannot see it, so the precedence rules are untouched and the
-   * observer still cannot be told WHICH file to pick — only whether to re-judge the one it
-   * resolves on its own.
-   */
+  // Exact-key assertions prevent selection identity from re-entering the sweep API. force may request
+  // revalidation but cannot tell the private resolver which file to choose.
   it('pins CompanionObserveInput to its five fields — no selection field survived (AC26)', () => {
     type Extra = Exclude<
       keyof CompanionObserveInput,
@@ -868,8 +790,6 @@ describe('revalidateCompanionFile (#1976 AC22)', () => {
     const noExtraKeys: Extra extends never ? true : false = true;
     expect(noExtraKeys).toBe(true);
 
-    // `resolveCandidate` stays module-private and two-argument: it is exported by nothing, so
-    // the selector structurally cannot reach it and cannot have grown a third parameter for one.
     const observeExports = Object.keys(observeModule).sort();
     expect(observeExports).toEqual(['observeCompanionEbook', 'revalidateCompanionFile', 'statRegularFile']);
   });
