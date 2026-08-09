@@ -1,21 +1,10 @@
-/**
- * MAM-specific parsing helpers extracted from myanonamouse.ts to keep the
- * adapter file under the 400-line limit.
- */
-
-/**
- * Parse a double-encoded JSON field from MAM responses.
- * Fields like author_info are JSON strings containing JSON objects.
- * e.g. "{\"123\": \"Brandon Sanderson\"}" → "Brandon Sanderson"
- * Returns undefined on any parse failure.
- */
+/** Parse MAM's JSON or double-encoded name maps, returning their joined values. */
 export function parseDoubleEncodedNames(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
 
   try {
     const firstParse: unknown = JSON.parse(raw);
     if (typeof firstParse !== 'string') {
-      // Already an object from single parse — extract values
       if (firstParse && typeof firstParse === 'object') {
         const values = Object.values(firstParse as Record<string, string>);
         return values.length > 0 ? values.join(', ') : undefined;
@@ -23,7 +12,6 @@ export function parseDoubleEncodedNames(raw: string | undefined): string | undef
       return undefined;
     }
 
-    // Second parse: the string should be a JSON object
     const secondParse: unknown = JSON.parse(firstParse);
     if (secondParse && typeof secondParse === 'object') {
       const values = Object.values(secondParse as Record<string, string>);
@@ -35,10 +23,7 @@ export function parseDoubleEncodedNames(raw: string | undefined): string | undef
   }
 }
 
-/**
- * Freeleech if the torrent is site-wide free, personally free, or VIP-free while this account is
- * VIP. `isVip` is undefined until a status refresh lands — unknown must not claim VIP freeleech.
- */
+/** Unknown VIP status must not qualify a VIP-only torrent as freeleech. */
 export function isMamFreeleech(
   item: {
     free?: boolean | null | undefined;
@@ -56,12 +41,7 @@ export function normalizeMamFormat(raw: string | null | undefined): string | und
   return trimmed ? trimmed : undefined;
 }
 
-/**
- * Parse a MAM size field (e.g. "881.8 MiB", "1.1 GiB") into bytes.
- * Returns undefined for zero, unparseable strings, or unknown units.
- * Numeric values pass through unchanged (future-proofing).
- * Illustrative captured MAM values: "881.8 MiB", "1.1 GiB", "830.0 MiB".
- */
+/** Parse MAM binary-unit sizes; numbers pass through and invalid or zero values are absent. */
 export function parseMamSize(raw: string | number | undefined): number | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw === 'number') return raw || undefined;

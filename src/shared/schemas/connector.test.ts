@@ -10,12 +10,6 @@ import {
   CONNECTOR_SELECTOR_FIELDS,
 } from './connector.js';
 
-// #1499 — connector baseUrl gained a shared http(s) URL refinement applied to
-// BOTH the ABS and Plex settings schemas. It rejects malformed/schemeless/
-// non-http(s)/query/hash values and normalizes valid ones (origin + path, no
-// trailing slash) at the schema layer, before persistence. No SSRF blocking:
-// private/LAN/Docker hosts and IPs are accepted — only scheme/shape constrained.
-
 const absSettings = (baseUrl: string) => ({ baseUrl, apiKey: 'key', libraryId: 'lib-1' });
 const plexSettings = (baseUrl: string) => ({ baseUrl, token: 'tok', sectionId: '1' });
 
@@ -110,10 +104,6 @@ describe('createConnectorSchema baseUrl wiring (#1499)', () => {
   });
 });
 
-// #1523 — the targets-fetch path validates connect fields only. The selector
-// field (ABS libraryId / Plex sectionId) is the very thing Fetch populates, so
-// the targets-scoped settings schema makes it optional (defaulting to '') while
-// the strict create/update/test schema still requires it.
 describe('connectorTargetsSettingsSchemas selector optionality (#1523)', () => {
   const connectFields = {
     audiobookshelf: { baseUrl: 'http://abs.local', apiKey: 'key' },
@@ -156,11 +146,6 @@ describe('connectorTargetsSettingsSchemas selector optionality (#1523)', () => {
   });
 });
 
-// #1507 — the client form schema now enforces .trim().min(1) on path-mapping
-// fields so zodResolver produces per-row errors that map to
-// settings.pathMappings.${i}.{localPath,serverPath}, matching the server's
-// plexPathMappingSchema. Fully-blank rows are pruned before the resolver runs
-// (ConnectorCardForm); partial/whitespace-only rows are rejected here.
 describe('createConnectorFormSchema path-mapping validation (#1507)', () => {
   const plexForm = (pathMappings: Array<{ localPath: string; serverPath: string }>) => ({
     name: 'My Plex',
@@ -206,7 +191,6 @@ describe('createConnectorFormSchema path-mapping validation (#1507)', () => {
   });
 
   it('agrees with the server plexPathMappingSchema on min-length semantics', () => {
-    // Both reject an empty / whitespace-only field; both accept a filled row.
     for (const bad of [{ localPath: '', serverPath: '/data' }, { localPath: '   ', serverPath: '/data' }]) {
       expect(plexPathMappingSchema.safeParse(bad).success).toBe(false);
       expect(findRowIssue(createConnectorFormSchema.safeParse(plexForm([bad])), 'localPath')).toBeDefined();

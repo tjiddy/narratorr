@@ -73,9 +73,6 @@ describe('searchResultSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  // AC5: the torznab adapter drops non-numeric seeders/leechers to absent
-  // rather than emitting NaN. Absent must pass the search-complete payload
-  // schema (both fields z.number().optional()); NaN must not.
   it('accepts a result with seeders/leechers absent', () => {
     const result = searchResultSchema.safeParse({
       title: 'Book',
@@ -125,18 +122,7 @@ describe('searchResponseSchema', () => {
   });
 });
 
-/**
- * AC1 — compile-time compatibility assertions between the Zod-inferred types
- * and the existing TS interfaces that describe the same shapes today. If the
- * Zod schemas drift from the canonical interfaces, these assertions fail at
- * `pnpm typecheck` so silent skew can't ship.
- *
- * Zod's `.optional()` infers `?: T | undefined`, but the canonical DTOs use
- * `?: T` (strict optional, no explicit-undefined) — under `exactOptionalPropertyTypes`
- * those are different types. `TightenOptional<T>` strips the `| undefined`
- * representation artifact so the assertion catches real key/value drift,
- * not the Zod inference shape.
- */
+// Normalize Zod's ?: T | undefined before comparing exact-optional DTOs.
 type TightenOptional<T> = {
   [K in keyof T as undefined extends T[K] ? never : K]: T[K];
 } & {

@@ -1,14 +1,10 @@
 import type { ResolveDownloadContext } from './types.js';
 
-/** Sentinel prefix used as `SearchResult.downloadUrl` for MAM results — the real torrent is fetched at grab time. */
+/** Sentinel prefix for MAM results; real torrent bytes are fetched at grab time. */
 export const MAM_TORRENT_SENTINEL_PREFIX = 'mam-torrent://';
 export const MAM_SENTINEL_PATTERN = /^mam-torrent:\/\/(\d+)$/;
 
-/**
- * Derive the MAM torrent id from the resolve context. Prefers `guid` (when
- * the dispatch path supplied it), else parses the `mam-torrent://{tid}`
- * sentinel emitted by `search()`.
- */
+/** Prefer the dispatched guid, then fall back to the mam-torrent sentinel. */
 export function parseTorrentIdFromContext(ctx: ResolveDownloadContext): number | undefined {
   if (ctx.guid !== undefined) {
     const n = Number(ctx.guid);

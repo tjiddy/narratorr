@@ -1,9 +1,5 @@
 import { z } from 'zod';
 
-// ============================================================================
-// Blacklist schemas
-// ============================================================================
-
 export const BLACKLIST_REASONS = [
   'wrong_content', 'bad_quality', 'wrong_narrator', 'spam',
   'other', 'download_failed', 'infrastructure_error', 'user_cancelled',

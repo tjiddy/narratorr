@@ -1,9 +1,5 @@
 import { z } from 'zod';
 
-// ============================================================================
-// Metadata schemas
-// ============================================================================
-
 export const metadataSearchQuerySchema = z.object({
   q: z.string().trim().min(1, 'Query is required').max(500),
 });

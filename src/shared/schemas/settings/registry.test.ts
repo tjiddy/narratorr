@@ -23,16 +23,7 @@ import { rssSettingsSchema } from './rss.js';
 import { metadataSettingsSchema, metadataFormSchema, filteringFormSchema } from './metadata.js';
 import { networkSettingsSchema, networkFormSchema } from './network.js';
 
-// Single documented source of truth for fields a pick-based / page form schema
-// intentionally omits from its category schema. The sibling invariant below
-// subtracts these before comparing keys, so an *unintentional* omission fails
-// while an intentional hidden field is explicit and auditable.
-//   general → welcomeSeen      (managed by Layout.tsx onboarding; see general.ts:13-16)
-// INVARIANT: a key-omitting form schema must NEVER be registered as a registry
-// `formSchema` override. Overrides are key-aligned by the #1308 guard above and
-// would fail on the omitted key; a "consistency" fix that re-adds welcomeSeen to
-// satisfy the guard would clobber onboarding state. Hidden fields belong here,
-// in the allowlist, not in a registry override.
+// Explicit omissions apply only to directly consumed page schemas, never registry overrides.
 const HIDDEN_FIELD_ALLOWLIST: Record<string, readonly string[]> = {
   general: ['welcomeSeen'],
 };
@@ -71,22 +62,7 @@ describe('settingsRegistry', () => {
       expect(SETTINGS_CATEGORIES.sort()).toEqual(Object.keys(settingsRegistry).sort());
     });
 
-    // Guards against silent settings-form drift: a field added to a category
-    // schema but not to its formSchema override vanishes from the settings form.
-    // Categories without an explicit override derive their form schema via
-    // stripDefaults() and therefore cannot drift, so they are skipped.
-    // Scope is top-level keys only — validator internals (e.g. processing's
-    // .optional() timeout) differ intentionally and are out of scope by design.
-    //
-    // The override read is plain `entry.formSchema` (NOT an `as` cast):
-    // defineCategory's return type already declares `formSchema?`, so the cast
-    // was dead. The cast also opened a rename-vacuity hole — renaming the
-    // property would have left every read `undefined`, skipping every category
-    // and passing the guard vacuously at the exact moment getFormSchema falls
-    // back to stripDefaults. The non-vacuity backstop below closes that hole:
-    // we collect every category actually checked and assert the list contains
-    // the only two registered overrides. A rename now empties that list and
-    // trips the assertion instead of silently skipping everything.
+    // Track exercised overrides so renaming `formSchema` cannot make this loop pass vacuously.
     it('every formSchema override has the same top-level keys as its category schema', () => {
       const checkedCategories: string[] = [];
       for (const key of SETTINGS_CATEGORIES) {
@@ -103,21 +79,12 @@ describe('settingsRegistry', () => {
           `Category '${key}' formSchema override drifted from its schema — missing from formSchema: [${missingFromForm.join(', ')}], extra in formSchema: [${extraInForm.join(', ')}]`,
         ).toEqual(schemaKeys);
       }
-      // Non-vacuity backstop (encodes #1308 AC3): the guard above must have
-      // actually exercised the two registered overrides, not skipped every
-      // category. If the `formSchema` property were renamed, this list would be
-      // empty and the assertion would fail rather than passing vacuously.
       expect(checkedCategories.sort()).toContain('library');
       expect(checkedCategories.sort()).toContain('processing');
       expect(checkedCategories.length).toBeGreaterThanOrEqual(2);
     });
 
-    // Sibling invariant: pick-based / page form schemas (generalFormSchema,
-    // discoveryFormSchema) bypass the registry override path entirely — they are
-    // consumed directly by client pages and never registered. They are the same
-    // drift class on a different surface. Assert each one's keys equal its
-    // category schema's keys minus the documented HIDDEN_FIELD_ALLOWLIST, so an
-    // unintentional omission fails while an intentional hidden field is explicit.
+    // Direct page schemas bypass registry overrides, so compare them against explicit omissions.
     const siblingSchemas = [
       { category: 'general', categorySchema: generalSettingsSchema, formSchema: generalFormSchema },
       { category: 'discovery', categorySchema: discoverySettingsSchema, formSchema: discoveryFormSchema },
@@ -138,7 +105,6 @@ describe('settingsRegistry', () => {
       });
 
       it(`${category}FormSchema sibling invariant fails on a non-allowlisted omission`, () => {
-        // Simulate dropping a real, non-allowlisted field from the form schema.
         const allKeys = Object.keys(formSchema.shape);
         const droppable = allKeys.find((k) => !(HIDDEN_FIELD_ALLOWLIST[category] ?? []).includes(k));
         expect(droppable, `${category}FormSchema should have at least one non-allowlisted key`).toBeDefined();
@@ -157,10 +123,6 @@ describe('settingsRegistry', () => {
       }
     });
 
-    // No-registration rider: the intentionally key-omitting form schemas must NOT
-    // be registered as registry `formSchema` overrides — they belong to the
-    // allowlist pattern. A "consistency" registration would fail the override
-    // guard on the omitted key and tempt a fix that re-adds the hidden field.
     it('intentionally key-omitting form schemas are not registered as registry overrides', () => {
       expect(settingsRegistry.general.formSchema).toBeUndefined();
       expect(settingsRegistry.discovery.formSchema).toBeUndefined();
@@ -314,8 +276,6 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(false);
     });
 
-    // The form-validation path is a separate schema from the settings schema above — without
-    // these, deleting `.max(8)` from processingFormSchema would leave the suite green (F1).
     it('form schema accepts maxConcurrentProcessing=8 (maximum)', () => {
       const result = processingFormSchema.safeParse({ ...DEFAULT_SETTINGS.processing, maxConcurrentProcessing: 8 });
       expect(result.success).toBe(true);
@@ -591,14 +551,12 @@ describe('settingsRegistry', () => {
     });
 
     it('category with formSchema override uses override for form validation', () => {
-      // Library has a formSchema override — verify it has min(1) on folderFormat
       const data = { ...DEFAULT_SETTINGS, library: { ...DEFAULT_SETTINGS.library, folderFormat: '' } };
       const result = updateSettingsFormSchema.safeParse(data);
       expect(result.success).toBe(false);
     });
 
     it('category without formSchema override uses mechanically derived schema', () => {
-      // Search has no formSchema override — verify defaults are stripped (empty object fails)
       const data = { ...DEFAULT_SETTINGS, search: {} as never };
       const result = updateSettingsFormSchema.safeParse(data);
       expect(result.success).toBe(false);
@@ -630,7 +588,7 @@ describe('settingsRegistry', () => {
     });
 
     it('categories with all-defaulted fields: Zod defaults match runtime defaults', () => {
-      // Library has required fields (path) with no .default(), so schema.parse({}) fails — skip it
+      // library.path has no default.
       const defaultableCategories = SETTINGS_CATEGORIES.filter(k => k !== 'library');
       for (const key of defaultableCategories) {
         const { schema, defaults } = settingsRegistry[key];
@@ -648,22 +606,18 @@ describe('settingsRegistry', () => {
 
   describe('stripDefaults behavior (via form schema)', () => {
     it('form schema rejects missing fields that have .default() in base schema', () => {
-      // search.intervalMinutes has .default(360) in the base schema, so parse({}) works.
-      // But the form schema strips defaults, so omitting it should fail.
       const data = { ...DEFAULT_SETTINGS, search: {} as never };
       const result = updateSettingsFormSchema.safeParse(data);
       expect(result.success).toBe(false);
     });
 
     it('form schema requires fields even when base schema provides defaults', () => {
-      // processing has multiple .default() fields. Form schema should require all of them.
       const data = { ...DEFAULT_SETTINGS, processing: { postProcessingScript: '/x/script.sh' } as never };
       const result = updateSettingsFormSchema.safeParse(data);
       expect(result.success).toBe(false);
     });
 
     it('form schema accepts fields when all values are explicitly provided', () => {
-      // Proving that stripDefaults didn't break the schema — full values still pass
       const result = updateSettingsFormSchema.safeParse(DEFAULT_SETTINGS);
       expect(result.success).toBe(true);
     });
@@ -717,13 +671,11 @@ describe('settingsRegistry', () => {
     });
 
     it('falls back to defaults for missing category properties', () => {
-      // Simulate a partial settings object where a category has undefined fields
       const settings = {
         ...DEFAULT_SETTINGS,
         search: {} as AppSettings['search'],
       };
       const result = settingsToFormData(settings);
-      // Spread of empty object over defaults = defaults win
       expect(result.search).toEqual(DEFAULT_SETTINGS.search);
     });
   });
@@ -732,10 +684,8 @@ describe('settingsRegistry', () => {
     it('strips .default() from fields — output schema requires values (no longer optional)', () => {
       const schema = z.object({ name: z.string().default('hi'), age: z.number().default(0) });
       const stripped = stripDefaults(schema);
-      // Without defaults, missing fields should fail
       const result = stripped.safeParse({});
       expect(result.success).toBe(false);
-      // With values, should pass
       const result2 = stripped.safeParse({ name: 'test', age: 5 });
       expect(result2.success).toBe(true);
     });
@@ -748,15 +698,13 @@ describe('settingsRegistry', () => {
     });
 
     it('does not preserve .refine() chains on defaulted+refined fields (Zod v4 limitation)', () => {
-      // This documents the known Zod v4 limitation: removeDefault() on ZodDefault<ZodRefine<...>>
-      // loses the refine. Library uses an explicit form schema to work around this.
+      // `removeDefault` drops refinements in Zod v4; library uses an explicit form schema.
       const schema = z.object({
         name: z.string().default('x').refine((v) => v.length > 2, { message: 'too short' }),
       });
       const stripped = stripDefaults(schema);
-      // The refine should reject 'ab' but after stripDefaults it's lost
       const result = stripped.safeParse({ name: 'ab' });
-      expect(result.success).toBe(true); // refine is lost — this is the known limitation
+      expect(result.success).toBe(true);
     });
 
     it('handles ZodEnum with .default() — enum constraints preserved, default removed', () => {
@@ -766,7 +714,6 @@ describe('settingsRegistry', () => {
       expect(valid.success).toBe(true);
       const invalid = stripped.safeParse({ level: 'x' });
       expect(invalid.success).toBe(false);
-      // Without value, should fail (no default)
       const missing = stripped.safeParse({});
       expect(missing.success).toBe(false);
     });
@@ -821,7 +768,6 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(true);
     });
 
-    // ===== #386 — preferredLanguage removed from quality schema =====
     it('qualitySettingsSchema strips unknown preferredLanguage field from output', () => {
       const input = {
         grabFloor: 0,
@@ -841,7 +787,7 @@ describe('settingsRegistry', () => {
 
     it('qualityFormSchema rejects out-of-range values', () => {
       const result = qualityFormSchema.safeParse({
-        grabFloor: -1, // nonnegative
+        grabFloor: -1,
         protocolPreference: 'none',
         minSeeders: 1,
         searchImmediately: false,
@@ -874,7 +820,6 @@ describe('settingsRegistry', () => {
     });
   });
 
-  // Finding 4: Partial update must not inject defaults (#227)
   describe('updateSettingsSchema partial update default preservation (#227)', () => {
     it('parsing { general: { logLevel: "error" } } does NOT produce a welcomeSeen key in the output', () => {
       const result = updateSettingsSchema.safeParse({ general: { logLevel: 'error' } });
@@ -940,37 +885,22 @@ describe('settingsRegistry', () => {
     });
   });
 
-  // ===== #1388 — page form-schema drift guards (Search, Filtering, Metadata, Network) =====
-  // Four page-level form schemas are client-local merges/renames/partials of one
-  // or more category schemas. Like generalFormSchema / discoveryFormSchema (guarded
-  // above) and the registered formSchema overrides (#1308/#1350), a field added to
-  // a category schema but not surfaced on the page silently vanishes from the form.
-  // These guards import the ACTUAL relocated schemas from their shared modules and
-  // assert each form key maps to a real category field, and each unsurfaced category
-  // field is an explicitly-documented omission — so undocumented drift fails.
+  // Mappings and omission lists make every category field in these page-only schemas explicit.
   describe('page form-schema drift guards (#1388)', () => {
     type Shape = { shape: Record<string, unknown> };
 
-    // 'category.field' identifiers for every field across the given category schemas.
     function categoryFieldIds(categories: Record<string, Shape>): string[] {
       return Object.entries(categories).flatMap(([cat, schema]) =>
         Object.keys(schema.shape).map((field) => `${cat}.${field}`),
       );
     }
 
-    // Category-field ids NOT consumed by the form mapping (the unsurfaced set),
-    // sorted — compared against the documented omission allowlist.
     function unmappedFieldIds(ids: string[], mapping: Record<string, string>): string[] {
       const mapped = new Set(Object.values(mapping));
       return ids.filter((id) => !mapped.has(id)).sort();
     }
 
-    // Load-bearing renamed-key check: true iff every mapping target 'category.field'
-    // resolves to a real field on the named category schema. The positive guard and
-    // the renamed-key negative backstop BOTH route through this, so the backstop
-    // exercises the exact validation it protects — inject a typoed target and this
-    // returns false. If this predicate were weakened to always return true, the
-    // negative backstop (which asserts false) would fail rather than pass vacuously.
+    // Positive and typo-backstop assertions share this predicate to prevent a vacuous guard.
     function everyMappedTargetExists(mapping: Record<string, string>, categories: Record<string, Shape>): boolean {
       return Object.values(mapping).every((target) => {
         const [cat, field] = target.split('.') as [string?, string?];
@@ -979,12 +909,7 @@ describe('settingsRegistry', () => {
       });
     }
 
-    // ---- Cross-category pages: Search and Filtering ----
-    // Mappings are typed `Record<keyof <FormData>, string>` so renaming a form
-    // field (without updating the mapping) is a COMPILE error, not just a runtime
-    // miss — covering the renamed-key hazard at the type layer (AC, test plan #7).
-
-    // Search merges `search` + `quality.protocolPreference` + `rss` with renamed keys.
+    // `keyof`-typed mappings turn form-field renames into compile errors.
     const SEARCH_CATEGORY_SCHEMAS: Record<string, Shape> = {
       search: searchSettingsSchema,
       quality: qualitySettingsSchema,
@@ -999,7 +924,6 @@ describe('settingsRegistry', () => {
       rssEnabled: 'rss.enabled',
       rssIntervalMinutes: 'rss.intervalMinutes',
     };
-    // quality + rss fields intentionally not surfaced on the Search page.
     const SEARCH_OMISSION_ALLOWLIST = [
       'quality.grabFloor',
       'quality.minSeeders',
@@ -1010,8 +934,6 @@ describe('settingsRegistry', () => {
       'quality.requiredWords',
     ];
 
-    // Filtering merges `metadata.languages` + `metadata.minDurationMinutes` with
-    // `quality.rejectWords` + `quality.requiredWords`.
     const FILTERING_CATEGORY_SCHEMAS: Record<string, Shape> = {
       metadata: metadataSettingsSchema,
       quality: qualitySettingsSchema,
@@ -1022,7 +944,6 @@ describe('settingsRegistry', () => {
       rejectWords: 'quality.rejectWords',
       requiredWords: 'quality.requiredWords',
     };
-    // metadata + quality fields intentionally not surfaced on the Filtering page.
     const FILTERING_OMISSION_ALLOWLIST = [
       'metadata.audibleRegion',
       'metadata.hardcoverApiKey',
@@ -1067,8 +988,6 @@ describe('settingsRegistry', () => {
               `mapping '${formKey}' → '${target}' references a non-existent category field (renamed-key drift)`,
             ).toContain(field);
           }
-          // Same predicate the renamed-key negative backstop exercises — keeps the
-          // guard and its non-vacuity proof anchored to one validation.
           expect(everyMappedTargetExists(mapping, categories)).toBe(true);
         });
 
@@ -1085,36 +1004,21 @@ describe('settingsRegistry', () => {
           const [firstCat] = Object.keys(categories);
           const injected = [...categoryFieldIds(categories), `${firstCat}.__injectedDriftField`];
           const omitted = unmappedFieldIds(injected, mapping);
-          // The injected field is neither mapped nor in the allowlist, so the
-          // omission set no longer matches — the guard above would fail.
           expect(omitted).not.toEqual([...omissionAllowlist].sort());
         });
 
         it('renamed-key typo backstop: a mapping target pointing at a non-existent category field fails the guard', () => {
           const [firstKey] = Object.keys(mapping) as [string];
           const [cat] = mapping[firstKey]!.split('.') as [string];
-          // Inject a renamed-key typo: keep a valid category but point at a field
-          // that does not exist on it (e.g. 'search.enabled' → 'search.enabledd').
           const brokenMapping = { ...mapping, [firstKey]: `${cat}.__renamed_typo` };
-          // Sanity: the typoed field really is absent from the category schema.
           expect(Object.keys(categories[cat]!.shape)).not.toContain('__renamed_typo');
-          // The real validation the positive guard runs MUST reject the broken
-          // mapping. This is the non-vacuity proof: deleting/weakening
-          // everyMappedTargetExists flips this to true and fails the test.
           expect(everyMappedTargetExists(brokenMapping, categories)).toBe(false);
-          // Control: the un-typoed mapping still passes, so the failure above is
-          // attributable to the injected typo, not an unrelated defect.
           expect(everyMappedTargetExists(mapping, categories)).toBe(true);
         });
       });
     }
 
-    // ---- Single-category pages: Metadata (intentional partial) and Network (1:1) ----
-    // Metadata intentionally omits `languages`/`minDurationMinutes` (edited on the
-    // Filtering page — see the inline note at metadataFormSchema in metadata.ts).
     const METADATA_OMISSION_ALLOWLIST = ['languages', 'minDurationMinutes'];
-    // Network is currently 1:1 with the `network` category (empty omission list);
-    // guarded anyway so a future-added `network` field that isn't surfaced fails.
     const NETWORK_OMISSION_ALLOWLIST: string[] = [];
 
     const singleCategoryPages = [
@@ -1151,7 +1055,6 @@ describe('settingsRegistry', () => {
         it('negative backstop: a newly added, un-allowlisted category field fails the guard', () => {
           const augmentedKeys = [...Object.keys(categorySchema.shape), '__injectedDriftField'];
           const expected = augmentedKeys.filter((k) => !omissionAllowlist.includes(k)).sort();
-          // The form schema (unchanged) no longer matches the augmented expectation.
           expect(Object.keys(formSchema.shape).sort()).not.toEqual(expected);
         });
       });

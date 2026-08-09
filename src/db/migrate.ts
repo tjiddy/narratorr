@@ -12,24 +12,20 @@ export async function runMigrations(dbPath: string) {
   });
   const db = drizzle(client);
 
-  // In dev (tsx): __dirname = src/db/, migrations at ../../drizzle/
-  // In prod (bundled): __dirname = dist/server/, migrations at ../../drizzle/
+  // Both src/db and dist/server resolve ../../drizzle to the repository migrations.
   try {
     await migrate(db, {
       migrationsFolder: path.join(__dirname, '../../drizzle'),
     });
   } finally {
-    // Release the DB file handle. Without this, Windows keeps the file locked
-    // and any subsequent cleanup (rmSync) fails with EPERM. No-op on Linux.
+    // Windows keeps the DB file locked until the client closes.
     client.close();
   }
 
   return db;
 }
 
-// CLI entry point — only when run directly via `tsx src/db/migrate.ts`,
-// not when bundled into the server (tsup inlines this file so argv[1]
-// would match the bundle and process.exit would kill the server).
+// tsup inlines this module; never let its CLI process.exit path run in the server bundle.
 const isBundled = !import.meta.url.includes('/src/');
 if (!isBundled && process.argv[1] === fileURLToPath(import.meta.url)) {
   const dbPath = process.env.DATABASE_PATH || './narratorr.db';

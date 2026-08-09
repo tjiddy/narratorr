@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { libraryBookListItemSchema } from './library-book.js';
 
-// #1712 — the slim list DTO carries editionLabel as `z.string().nullable().optional()`
-// so existing fixtures/factories that omit the key need no churn: absent, null, and a
-// string are all accepted, and absent === null at the call site (render nothing).
 describe('libraryBookListItemSchema editionLabel optionality (#1712)', () => {
   const base = {
     id: 1,

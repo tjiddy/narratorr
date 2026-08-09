@@ -9,10 +9,6 @@ import {
 import * as barrel from '../../schemas.js';
 
 describe('shared schemas barrel re-export', () => {
-  // Guards the downstream consumer contract: the v1 building blocks must be
-  // reachable through `src/shared/schemas.ts`, not only via the local module.
-  // Deleting the `export * from './schemas/v1/common.js'` barrel line would
-  // fail these assertions.
   it('exposes the v1 building blocks through the shared barrel as the same objects', () => {
     expect(barrel.v1ErrorEnvelopeSchema).toBe(v1ErrorEnvelopeSchema);
     expect(barrel.v1PaginationParamsSchema).toBe(v1PaginationParamsSchema);
@@ -57,10 +53,6 @@ describe('v1ErrorEnvelopeSchema', () => {
 });
 
 describe('v1PaginationParamsSchema', () => {
-  // Behavioral contract (not object identity): the building block enforces
-  // limit/offset bounds and, per the v1 ADR (common.ts:36-40), stays a
-  // NON-strict building block so it can be composed with filter/sort params
-  // before strictness is applied at the composed level.
   it('honors limit min/max bounds (1–500)', () => {
     expect(v1PaginationParamsSchema.safeParse({ limit: 1 }).success).toBe(true);
     expect(v1PaginationParamsSchema.safeParse({ limit: 500 }).success).toBe(true);
@@ -86,9 +78,6 @@ describe('v1PaginationParamsSchema', () => {
   });
 
   it('rejects unknown keys once composed-and-strict (the pattern v1 list validators use)', () => {
-    // Mirrors how `bookV1ListQuerySchema` is built: extend the non-strict
-    // pagination block with filter/sort params, then `.strict()` the union so
-    // unknown params (e.g. a snake_case `sort_by`) are rejected, not stripped.
     const composed = v1PaginationParamsSchema
       .extend({ author: z.string().optional() })
       .strict();
@@ -138,9 +127,6 @@ describe('v1PublicIdParamSchema', () => {
     expect(result.data).toEqual({ publicId: 'bk_kQ8vT2nS' });
   });
 
-  // The ZOD-1 trim-before-min rule (#1983 F1). Without `.trim()` these reach
-  // `resolveByPublicId` and answer with a route's not-found body instead of the
-  // v1 `400 BAD_REQUEST` the contract promises for malformed input.
   it.each(['', ' ', '   ', '\t', '\n', ' \t\n '])('rejects the blank publicId %j', (publicId) => {
     expect(v1PublicIdParamSchema.safeParse({ publicId }).success).toBe(false);
   });
@@ -155,8 +141,6 @@ describe('v1PublicIdParamSchema', () => {
     expect(v1PublicIdParamSchema.safeParse({}).success).toBe(false);
   });
 
-  // `.strict()` per the v1 owned-schema convention — an extra path key is a
-  // 400, never silently stripped.
   it('rejects an unknown extra key', () => {
     expect(v1PublicIdParamSchema.safeParse({ publicId: 'bk_a', extra: 'x' }).success).toBe(false);
   });

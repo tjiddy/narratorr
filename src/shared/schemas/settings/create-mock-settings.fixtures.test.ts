@@ -11,8 +11,6 @@ describe('createMockSettings', () => {
       }
     });
 
-    // Deliberately count-free: the title used to name a category count that went stale
-    // the moment a category was added. SETTINGS_CATEGORIES is the assertion's own source.
     it('no-arg call returns every registered category with all fields populated from DEFAULT_SETTINGS', () => {
       const settings = createMockSettings();
       expect(Object.keys(settings).sort()).toEqual(SETTINGS_CATEGORIES.slice().sort());
@@ -24,7 +22,6 @@ describe('createMockSettings', () => {
     it('single-field override preserves all sibling defaults in the same category', () => {
       const settings = createMockSettings({ processing: { postProcessingScript: '/x/script.sh' } });
       expect(settings.processing.postProcessingScript).toBe('/x/script.sh');
-      // All other processing fields should remain at defaults
       expect(settings.processing.outputFormat).toBe(DEFAULT_SETTINGS.processing.outputFormat);
       expect(settings.processing.bitrate).toBe(DEFAULT_SETTINGS.processing.bitrate);
       expect(settings.processing.keepOriginalBitrate).toBe(DEFAULT_SETTINGS.processing.keepOriginalBitrate);
@@ -41,7 +38,6 @@ describe('createMockSettings', () => {
       expect(settings.search.intervalMinutes).toBe(DEFAULT_SETTINGS.search.intervalMinutes);
       expect(settings.quality.minSeeders).toBe(5);
       expect(settings.quality.grabFloor).toBe(DEFAULT_SETTINGS.quality.grabFloor);
-      // Unmentioned categories untouched
       expect(settings.library).toEqual(DEFAULT_SETTINGS.library);
       expect(settings.general).toEqual(DEFAULT_SETTINGS.general);
       expect(settings.processing).toEqual(DEFAULT_SETTINGS.processing);
@@ -55,19 +51,14 @@ describe('createMockSettings', () => {
     });
 
     it('DeepPartial accepts explicit-undefined at every nesting level (compile-time)', () => {
-      // Category-level undefined
       const a = createMockSettings({ processing: undefined });
-      // Nested-leaf undefined (siblings to the existing postProcessingScript case)
       const b = createMockSettings({ processing: { maxConcurrentProcessing: undefined } });
       const c = createMockSettings({ search: { enabled: undefined } });
-      // Runtime sanity: each call returns full defaults (undefined doesn't strip)
       expect(a.processing).toEqual(DEFAULT_SETTINGS.processing);
       expect(b.processing.maxConcurrentProcessing).toBe(DEFAULT_SETTINGS.processing.maxConcurrentProcessing);
       expect(c.search.enabled).toBe(DEFAULT_SETTINGS.search.enabled);
     });
 
-    // #1958 — the category is registry-derived, so the factory picks it up with no
-    // edit to create-mock-settings.fixtures.ts itself.
     it('exposes companionEpub disabled by default', () => {
       expect(createMockSettings().companionEpub.enabled).toBe(false);
     });
@@ -124,7 +115,6 @@ describe('createMockSettings', () => {
 
   describe('type safety', () => {
     it('DeepPartial allows partial overrides at every nesting level', () => {
-      // This test validates compile-time type safety by exercising the override API
       const settings = createMockSettings({
         general: { logLevel: 'debug' },
         library: { path: '/custom' },
@@ -141,7 +131,6 @@ describe('createMockSettings', () => {
       expect(settings.general.logLevel).toBe('debug');
       expect(settings.library.path).toBe('/custom');
       expect(settings.system.backupRetention).toBe(3);
-      // Non-overridden fields keep defaults
       expect(settings.general.housekeepingRetentionDays).toBe(DEFAULT_SETTINGS.general.housekeepingRetentionDays);
     });
   });

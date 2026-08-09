@@ -25,21 +25,13 @@ import type {
 
 const SABNZBD_LIST_LIMIT = '1000';
 
-/**
- * SABnzbd's `storage` is the full destination path (e.g., `/downloads/complete/BookTitle`).
- * The import pipeline expects `savePath` (parent) + `name` (child) joined together.
- * Split storage into parent/base to match that contract.
- */
+// storage is the full destination folder; split it into the import contract's parent/name.
 function splitStorage(storage: string | undefined, fallbackName: string): { parent: string; base: string } {
   if (!storage) return { parent: '', base: fallbackName };
   return { parent: dirname(storage), base: basename(storage) };
 }
 
-/**
- * Parse SABnzbd's queue `kbpersec` string into bytes/sec.
- * SABnzbd computes it as `bytes_per_sec / 1024` (binary KiB), so we reverse with `* 1024`.
- * Returns `undefined` if the field is absent or unparseable; preserves `0` (stalled).
- */
+// SABnzbd reports binary KiB/s. Preserve zero as stalled; invalid values are unreported.
 function parseKbpersec(raw: string | undefined): number | undefined {
   if (raw === undefined || raw === null || raw === '') return undefined;
   const kib = parseFloat(raw);
@@ -157,7 +149,6 @@ export class SABnzbdClient implements DownloadClientAdapter {
   }
 
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
-    // Check queue first
     const queueResponse = this.parseQueueResponse(await this.request<unknown>({
       mode: 'queue',
       limit: SABNZBD_LIST_LIMIT,
@@ -170,7 +161,6 @@ export class SABnzbdClient implements DownloadClientAdapter {
       return this.mapQueueSlot(queueSlot);
     }
 
-    // Check history
     const historyResponse = this.parseHistoryResponse(await this.request<unknown>({
       mode: 'history',
       limit: SABNZBD_LIST_LIMIT,
@@ -255,7 +245,6 @@ export class SABnzbdClient implements DownloadClientAdapter {
   }
 
   async removeDownload(id: string, deleteFiles = false): Promise<void> {
-    // Try removing from queue first
     await this.request({
       mode: 'queue',
       name: 'delete',
@@ -263,7 +252,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
       del_files: deleteFiles ? '1' : '0',
     });
 
-    // Also try removing from history (SABnzbd doesn't error if not found)
+    // SABnzbd tolerates deleting a missing history item.
     await this.request({
       mode: 'history',
       name: 'delete',
@@ -351,8 +340,6 @@ export class SABnzbdClient implements DownloadClientAdapter {
     const size = Math.round(totalMb * 1024 * 1024);
     const downloaded = Math.round((totalMb - leftMb) * 1024 * 1024);
 
-    // SABnzbd's `storage` is the full destination path — split into parent + name
-    // to match the contract expected by import (join(savePath, name))
     const { parent, base } = splitStorage(slot.storage ?? undefined, slot.filename);
 
     return {
@@ -375,7 +362,6 @@ export class SABnzbdClient implements DownloadClientAdapter {
   }
 
   private mapHistorySlot(slot: SABnzbdHistorySlot): DownloadItemInfo {
-    // SABnzbd's `storage` is the full destination path — split into parent + name
     const { parent, base } = splitStorage(slot.storage, slot.name);
     const status = this.mapHistoryStatus(slot.status);
 
@@ -405,7 +391,6 @@ export class SABnzbdClient implements DownloadClientAdapter {
     const lower = status.toLowerCase();
     if (lower === 'downloading' || lower === 'fetching') return 'downloading';
     if (lower === 'paused') return 'paused';
-    // Queued and other states map to downloading (waiting to start)
     return 'downloading';
   }
 
@@ -417,7 +402,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
   }
 
   private parseTimeleft(timeleft: string): number | undefined {
-    // SABnzbd timeleft format: "HH:MM:SS" or "0:00:00"
+    // SABnzbd uses HH:MM:SS.
     const parts = timeleft.split(':').map(Number);
     if (parts.length !== 3) return undefined;
     const seconds = parts[0]! * 3600 + parts[1]! * 60 + parts[2]!;

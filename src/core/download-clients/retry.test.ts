@@ -37,7 +37,7 @@ describe('requestWithRetry', () => {
         shouldRetry: () => true,
       }),
     ).rejects.toThrow(DownloadClientError);
-    expect(fn).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
+    expect(fn).toHaveBeenCalledTimes(4);
   });
 
   it('does NOT retry when condition does not match — throws immediately', async () => {
@@ -141,7 +141,7 @@ describe('requestWithRetry', () => {
         shouldRetry: () => true,
       }),
     ).rejects.toThrow();
-    expect(fn).toHaveBeenCalledTimes(2); // 1 initial + 1 retry (default)
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 
   describe('.cause preservation', () => {

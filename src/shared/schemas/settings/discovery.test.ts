@@ -41,8 +41,6 @@ describe('Discovery Settings Schema', () => {
   });
 
   it('strips a legacy persisted weightMultipliers key without throwing (#1565)', () => {
-    // weightMultipliers was removed as a persisted setting in #1565. Stored
-    // settings rows may still carry it; parsing must tolerate and drop it.
     const result = discoverySettingsSchema.parse({ enabled: true, weightMultipliers: { author: 0.5 } });
     expect(result).not.toHaveProperty('weightMultipliers');
     expect(result.enabled).toBe(true);
@@ -68,16 +66,12 @@ describe('Discovery Settings Schema', () => {
   });
 
   it('strips a legacy persisted discovery setting key without throwing (#1303)', () => {
-    // A discovery duration setting removed in #1303 may still exist in stored
-    // settings rows. Parsing must tolerate and strip the unknown key rather than
-    // fail load. The key is built indirectly so the AC audit grep stays clean.
+    // Build the key indirectly so the source-audit grep stays clean.
     const legacyKey = ['snooze', 'Days'].join('');
     const result = discoverySettingsSchema.parse({ [legacyKey]: 30, expiryDays: 60 });
     expect(result).not.toHaveProperty(legacyKey);
     expect(result.expiryDays).toBe(60);
   });
-
-  // --- #408: Expiry settings ---
 
   describe('expiryDays', () => {
     it('defaults to 90 when omitted', () => {

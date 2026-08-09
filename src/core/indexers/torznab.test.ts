@@ -5,8 +5,7 @@ import { resolve } from 'node:path';
 import { useMswServer } from '../__tests__/msw/server.js';
 import type * as NetworkServiceModule from '../utils/network-service.js';
 
-// Route fetchWithOptionalDispatcher through globalThis.fetch so MSW handlers
-// and `vi.spyOn(globalThis, 'fetch')` continue to intercept the proxy path.
+// Keep MSW/fetch spies on this test path while production retains dispatcher routing.
 vi.mock('../utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   return {
@@ -33,7 +32,6 @@ describe('TorznabIndexer', () => {
   });
 
   afterEach(() => {
-    // Restore GIT_TAG so the User-Agent test's env stub never leaks.
     vi.unstubAllEnvs();
   });
 
@@ -54,11 +52,7 @@ describe('TorznabIndexer', () => {
 
   describe('search', () => {
     it('sends a User-Agent: Narratorr/<version> header on the API request (#1315)', async () => {
-      // Pin GIT_TAG so the assertion is deterministic regardless of the runner's
-      // ambient env (a CI/release env that exports GIT_TAG would otherwise flip
-      // the expected value) AND so deleting getUserAgent()'s tagged-version
-      // branch makes this fail. The unset/unknown fallbacks are covered in
-      // src/shared/user-agent.test.ts.
+      // Pin the version independently of the runner's environment.
       vi.stubEnv('GIT_TAG', 'v9.9.9');
       let userAgent: string | null = null;
       server.use(
@@ -181,7 +175,7 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      // Third item has no enclosure or link, only infoHash
+      // Fixture item 3 has only an infoHash.
       expect(results[2]!.downloadUrl).toContain('magnet:?');
       expect(results[2]!.downloadUrl).toContain('da4b9237bacccdf19c0760cab7aec4a8359010b0');
       expect(results[2]!.infoHash).toBe('da4b9237bacccdf19c0760cab7aec4a8359010b0');
@@ -571,7 +565,6 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
-      // Number('notanumber') = NaN, size || undefined = undefined
       expect(results[0]!.size).toBeUndefined();
     });
 
@@ -597,7 +590,6 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
-      // Number('abc') = NaN — seeders/leechers/grabs are all NaN-guarded and drop to undefined
       expect(results[0]!.seeders).toBeUndefined();
       expect(results[0]!.leechers).toBeUndefined();
       expect(results[0]!.grabs).toBeUndefined();
@@ -623,7 +615,6 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
-      // '' || undefined → undefined
       expect(results[0]!.infoHash).toBeUndefined();
     });
 
@@ -707,7 +698,6 @@ describe('TorznabIndexer', () => {
 
       expect(results).toHaveLength(3);
       expect(results[0]!.title).toBe('The Way of Kings - Brandon Sanderson (Unabridged)');
-      // Verify fetch was called with a dispatcher (proxy agent)
       expect(fetchSpy).toHaveBeenCalledOnce();
       const callArgs = fetchSpy.mock.calls[0];
       expect((callArgs![1] as Record<string, unknown>).dispatcher).toBeDefined();
@@ -726,7 +716,6 @@ describe('TorznabIndexer', () => {
     });
 
     it('search throws non-proxy errors (not swallowed)', async () => {
-      // Create a non-proxied indexer so errors are NOT wrapped as ProxyError
       const directIndexer = new TorznabIndexer({
         apiUrl: API_BASE,
         apiKey: 'testapikey',

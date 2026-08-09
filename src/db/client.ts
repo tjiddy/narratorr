@@ -9,14 +9,9 @@ export function createDb(dbPath: string) {
   });
   const db = drizzle(client, { schema });
 
-  // Every transaction on this connection is serialized here, at the connection itself, rather
-  // than by each caller opting into a helper — see `serial-transactions.ts` for why. Shadowing
-  // the instance method keeps `db.transaction(fn)` the one and only entry point, so all
-  // twenty-two existing call sites are covered without touching any of them, and a new one
-  // cannot be written that bypasses it.
+  // Shadow at the connection boundary so no db.transaction caller can bypass serialization.
   const openTransaction = db.transaction.bind(db);
-  // The cast restores the generic signature the bound reference erased. It is confined to this
-  // assignment and reaches no exported type — `Db` below is still exactly drizzle's.
+  // bind erases the generic signature; keep the restoring cast local.
   db.transaction = ((...args: Parameters<typeof openTransaction>) =>
     runSerializedTransaction(db, () => openTransaction(...args))) as typeof db.transaction;
 
@@ -25,8 +20,6 @@ export function createDb(dbPath: string) {
 
 export type Db = ReturnType<typeof createDb>;
 
-/** Transaction-scoped DB handle passed to db.transaction() callbacks. */
 export type Transaction = Parameters<Parameters<Db['transaction']>[0]>[0];
 
-/** Accepts either the full Db instance or a transaction-scoped handle. */
 export type DbOrTx = Db | Transaction;

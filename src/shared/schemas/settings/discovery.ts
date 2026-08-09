@@ -8,9 +8,6 @@ export const discoverySettingsSchema = z.object({
   expiryDays: z.number().int().min(1).default(90),
 });
 
-// Form schema derived from discoverySettingsSchema via stripDefaults().
-// Cast to typed ZodObject for zodResolver/z.infer compatibility (Zod v4 limitation:
-// stripDefaults returns untyped shape; runtime behavior is correct).
 export const discoveryFormSchema = stripDefaults(discoverySettingsSchema).pick({
   enabled: true,
   intervalHours: true,

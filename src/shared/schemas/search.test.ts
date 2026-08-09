@@ -131,7 +131,6 @@ describe('grabSchema', () => {
       title: 'Test',
       replaceExisting: true,
     });
-    // .strict() rejects unknown keys with a Zod issue rather than silently stripping them.
     expect(result.success).toBe(false);
   });
 
@@ -222,7 +221,6 @@ describe('grabSchema — replace + infoHash (#1857)', () => {
   });
 
   it('exposes .shape (base object schema, not a ZodEffects) for the client picker', () => {
-    // The client's pickGrabFields reads grabSchema.shape — guard that .shape survives.
     expect(Object.keys(grabSchema.shape)).toContain('replace');
     expect(Object.keys(grabSchema.shape)).toContain('infoHash');
   });

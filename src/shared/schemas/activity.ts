@@ -1,9 +1,5 @@
 import { z } from 'zod';
 
-// ============================================================================
-// Activity schemas
-// ============================================================================
-
 export const DOWNLOAD_STATUSES = [
   'queued',
   'downloading',
@@ -19,26 +15,9 @@ export const DOWNLOAD_STATUSES = [
 export const downloadStatusSchema = z.enum(DOWNLOAD_STATUSES);
 export type DownloadStatus = z.infer<typeof downloadStatusSchema>;
 
-// ============================================================================
-// Two-axis download state (#1445)
-//
-// The legacy single `DownloadStatus` enum conflated pure download-client truth
-// with narratorr's internal processing overlay. It is split into two clean axes:
-//
-//  - `clientStatus`  — what the download client reports (queued → downloading →
-//                      completed/paused/failed). Written ONLY by the client poller.
-//  - `pipelineStage` — narratorr's processing overlay on a completed download
-//                      (idle → checking → pending_review → importing → imported).
-//                      Written ONLY by the quality-gate / import pipeline.
-//
-// `DownloadStatus` is RETAINED as the derived display status (see
-// `deriveDisplayStatus` in download-status-registry.ts): the REST/SSE/client
-// contract continues to speak the 9-value display enum, computed from the tuple.
-//
-// NOTE there is deliberately NO `pipelineStage='failed'` — pipeline failure is
-// expressed on the `clientStatus` axis as the canonical failure tuple
-// (`clientStatus='failed'`, `pipelineStage='idle'`).
-// ============================================================================
+// REST/SSE expose a derived DownloadStatus. Only the poller writes clientStatus;
+// only the quality/import pipeline writes pipelineStage.
+// Pipeline failures use { clientStatus: 'failed', pipelineStage: 'idle' }.
 
 export const CLIENT_STATUSES = [
   'queued',

@@ -31,8 +31,7 @@ function renderBody(template: string, event: NotificationEvent, payload: EventPa
     'health.previousState': payload.health?.previousState ?? '',
     'health.currentState': payload.health?.currentState ?? '',
     'health.message': payload.health?.message ?? '',
-    // `import_run_finished` tokens. Optional chaining stops at `submission?`, so a
-    // required count of `0` still renders "0" (not dropped) — F79.
+    // import_run_finished tokens use optional chaining, so a required zero still renders.
     'submission.source': payload.submission?.source ?? '',
     'submission.status': payload.submission?.status ?? '',
     'submission.counts.accepted': payload.submission?.counts.accepted?.toString() ?? '',

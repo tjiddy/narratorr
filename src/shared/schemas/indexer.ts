@@ -2,13 +2,7 @@ import { z } from 'zod';
 import { INDEXER_REGISTRY, INDEXER_TYPES, type IndexerType, type MamSearchType } from '../indexer-registry';
 import { normalizeBaseUrl } from '../normalize-base-url.js';
 
-// ============================================================================
-// Indexer schemas
-// ============================================================================
-
 export const indexerTypeSchema = z.enum(INDEXER_TYPES);
-
-// ── Per-adapter settings schemas (strict — rejects unknown fields) ──────────
 
 const apiKeySettingsFields = {
   apiUrl: z.string().trim().min(1),
@@ -51,14 +45,9 @@ export const abbSettingsSchema = z.object({
   useProxy: z.boolean().optional(),
 }).strict();
 
-// ── Settings types and dispatch map ─────────────────────────────────────────
-
 export type NewznabSettings = z.infer<typeof newznabSettingsSchema>;
 export type TorznabSettings = z.infer<typeof torznabSettingsSchema>;
-// Use z.input so callers (factory, legacy persisted rows, tests) can pass
-// settings with the new wedge fields omitted. Schema `.default()` materializes
-// them on parse; factory `??` applies the same defaults at runtime when settings
-// bypass validation. Other adapters use z.infer because none of their fields use `.default()`.
+// z.input keeps defaulted wedge settings optional to callers; parsing materializes them.
 export type MamSettings = z.input<typeof mamSettingsSchema>;
 export type AbbSettings = z.infer<typeof abbSettingsSchema>;
 
@@ -77,8 +66,6 @@ export const indexerSettingsSchemas: Record<IndexerType, z.ZodTypeAny> = {
   myanonamouse: mamSettingsSchema,
   abb: abbSettingsSchema,
 };
-
-// ── Server-side schemas ─────────────────────────────────────────────────────
 
 function validateSettingsPerType(
   data: { type: string; settings: Record<string, unknown> },
@@ -120,8 +107,6 @@ export const updateIndexerSchema = z.object({
   }
 });
 
-// ── Form schema (unchanged — uses superRefine + registry.requiredFields for zodResolver compat) ──
-
 export const createIndexerFormSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(100),
   type: indexerTypeSchema,
@@ -154,20 +139,17 @@ export const createIndexerFormSchema = z.object({
     }
   }
 
-  // Validate FlareSolverr URL if provided (applies to all types)
   const proxyUrl = normalizeBaseUrl(data.settings.flareSolverrUrl)?.trim();
   if (proxyUrl === '********') {
-    // Sentinel passthrough — persisted secret, skip validation
+    // Preserve the masked secret sentinel.
   } else if (proxyUrl) {
     try {
       new URL(proxyUrl);
     } catch {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'flareSolverrUrl'], message: 'Must be a valid URL' });
     }
-    // Normalize: store the trimmed/stripped version
     data.settings.flareSolverrUrl = proxyUrl;
   } else {
-    // Normalize empty strings to undefined
     data.settings.flareSolverrUrl = undefined;
   }
 });

@@ -130,7 +130,6 @@ describe('TelegramNotifier', () => {
     expect(result.success).toBe(true);
   });
 
-  // --- #199 error-handling and edge-case tests ---
 
   it('returns stringified value for non-Error thrown value', async () => {
     const spy = vi.spyOn(fetchModule, 'fetchWithTimeout').mockRejectedValueOnce('string-error');

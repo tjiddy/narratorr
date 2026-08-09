@@ -8,10 +8,6 @@ import {
   importSkipReasonSchema,
 } from './library-scan.js';
 
-// The direct-confirm result contracts (importResultSchema / importSkippedItemSchema /
-// importFailedItemSchema) were removed with the direct-commit path (#1902) — the staged
-// DTO carries its own disposition rows. heldReviewItemSchema, importConfirmItemSchema, and
-// importSkipReasonSchema stay live (held panel / staged DTO / manual job payload).
 describe('heldReviewItemSchema (#1711, retained)', () => {
   it('round-trips a held-review item with an optional existingBookId', () => {
     const item = { path: '/lib/Author/Title', title: 'Title', reason: 'recording-review-required' as const, existingBookId: 42 };
@@ -111,8 +107,6 @@ describe('matchCandidateSchema — trim behavior', () => {
     }
   });
 
-  // #1849 — the wanted series position must survive the Zod boundary (object
-  // schemas strip unknown keys), including a genuine position 0 (#1028).
   it('retains seriesPosition through the parse', () => {
     const result = matchCandidateSchema.safeParse({ ...validCandidate, seriesPosition: 3 });
     expect(result.success).toBe(true);
@@ -138,10 +132,6 @@ describe('jobIdParamSchema — trim behavior', () => {
     if (result.success) expect(result.data.jobId).toBe('job-123');
   });
 });
-
-// ============================================================================
-// Within-scan duplicate detection schema (#342)
-// ============================================================================
 
 import {
   duplicateReasonSchema,
@@ -284,10 +274,6 @@ describe('discoveredBookSchema — duplicateFirstPath removed (#1925)', () => {
 });
 
 describe('scanDebugTraceSchema — parsing.raw.seriesPosition contract (#1042)', () => {
-  // Pins the scan-debug API contract directly at the schema layer.
-  // Route tests assert response shape, but Zod object parsing strips unknown
-  // keys by default — without these direct assertions, deleting the field
-  // from scanDebugTraceSchema would silently regress the typed contract.
   const validTrace = {
     input: 'Author/Title',
     parts: ['Author', 'Title'],

@@ -1,8 +1,5 @@
-/**
- * Notification event constants — leaf module.
- * INVARIANT: This file must NOT import from src/shared/schemas/ or src/shared/notifier-registry.
- * Both of those modules consume this file downstream.
- */
+// Leaf module: schemas and notifier-registry depend on this file, so it must not
+// import either of them.
 
 export const NOTIFICATION_EVENTS = [
   'on_grab',
@@ -24,7 +21,6 @@ export const EVENT_LABELS: Record<string, string> = {
   import_run_finished: 'Import Run Finished',
 } satisfies Record<NotificationEvent, string>;
 
-/** Descriptive event titles for notification adapters. */
 export const EVENT_TITLES: Record<NotificationEvent, string> = {
   on_grab: 'Release Grabbed',
   on_download_complete: 'Download Complete',
@@ -64,7 +60,6 @@ export interface EventPayload {
     currentState: 'healthy' | 'warning' | 'error';
     message?: string | undefined;
   };
-  /** Terminal outcome of a staged import run (#1894, `import_run_finished`). */
   submission?: {
     source: 'library' | 'manual';
     status: 'complete';
@@ -100,7 +95,6 @@ const EVENT_FORMATTERS: Record<NotificationEvent, EventFormatter> = {
   },
 };
 
-/** Format a human-readable message from an event payload. */
 export function formatEventMessage(event: NotificationEvent, payload: EventPayload): string {
   const bookInfo = payload.book
     ? `${payload.book.title}${payload.book.author ? ` by ${payload.book.author}` : ''}`

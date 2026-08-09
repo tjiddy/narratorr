@@ -6,13 +6,8 @@ import {
 } from './books.js';
 import type { CompanionEbookV1 } from './companion-ebook.js';
 
-/** The already-mapped companion value the projector receives (#1961 AC 20). */
 const COMPANION: CompanionEbookV1 = { format: 'epub', sizeBytes: 42 };
 
-// A fully-hydrated, leaky source row: numeric rowid, grab ids, FK columns,
-// enrichment internals, and authors/narrators carrying id/publicId/slug/asin/
-// timestamps. Typed wide (no explicit annotation) so the extra internal fields
-// model what the real `BookWithAuthor` row carries — `toBookV1` must strip them.
 function makeLeakyRow() {
   return {
     id: 42,
@@ -106,8 +101,6 @@ describe('toBookV1 projection (zero-leak)', () => {
     });
   });
 
-  // #1961 AC 20 — the already-mapped companion value is passed IN. The projector
-  // never looks it up, never re-derives it, and cannot be widened by it.
   describe('companionEbook second argument (#1961)', () => {
     it('copies the supplied companion object through unchanged', () => {
       const dto = toBookV1(makeLeakyRow(), COMPANION);
@@ -131,13 +124,9 @@ describe('toBookV1 projection (zero-leak)', () => {
     it('cannot inject extra keys — the DTO key set is unchanged by a companion argument', () => {
       const dto = toBookV1(makeLeakyRow(), { ...COMPANION, path: '/leak.epub' } as never);
       expect(Object.keys(dto).sort()).toEqual(['authors', 'companionEbook', 'id', 'narrators', 'series', 'status', 'title']);
-      // The extra nested key is caught by the strict schema, not silently shipped.
       expect(bookV1Schema.safeParse(dto).success).toBe(false);
     });
 
-    // The runtime half of `data.map(toBookV1)` — `Array.map` passes the INDEX as
-    // the second argument, so the DTO would carry a numeric `companionEbook`.
-    // The route-level guard is in `src/server/routes/v1/books.test.ts`.
     it('index-argument regression guard: [row].map(toBookV1) produces a numeric companionEbook that the schema rejects', () => {
       const dtos = [makeLeakyRow()].map(toBookV1 as never) as { companionEbook: unknown }[];
       expect(typeof dtos[0]!.companionEbook).toBe('number');
@@ -178,9 +167,6 @@ describe('bookV1Schema (fail-closed, .strict())', () => {
     expect(bookV1Schema.safeParse({ ...valid, status: 'downloading-ish' }).success).toBe(false);
   });
 
-  // #1961 AC 19/30 — `companionEbook` is REQUIRED and nullable. `.strict()` cuts
-  // both ways: a producer that forgets the key fails serialization (a 500), it
-  // does NOT ship a partial DTO.
   describe('companionEbook member (#1961)', () => {
     it('accepts an exposed companion object', () => {
       expect(bookV1Schema.safeParse({ ...valid, companionEbook: { format: 'epub', sizeBytes: 0 } }).success).toBe(true);
@@ -225,7 +211,6 @@ describe('bookV1ListQuerySchema (composed, strict)', () => {
   });
 
   it('rejects a non-canonical status (library bucket-only / unknown value)', () => {
-    // `all` is a client-only library sentinel, never a canonical BOOK_STATUSES literal.
     expect(bookV1ListQuerySchema.safeParse({ status: 'all' }).success).toBe(false);
     expect(bookV1ListQuerySchema.safeParse({ status: 'bogus' }).success).toBe(false);
   });

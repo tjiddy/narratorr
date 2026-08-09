@@ -373,7 +373,6 @@ describe('createNotifierFormSchema — settings trim (#284)', () => {
   });
 });
 
-// #557 — Typed adapter settings schemas (discriminated unions)
 describe('createNotifierSchema — typed settings validation', () => {
   const base = { name: 'Test', enabled: true, events: ['on_grab' as const] };
 

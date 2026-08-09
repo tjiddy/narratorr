@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
-// MAM (and many PHP-backend APIs) emit boolean flag fields as 0/1 integers
-// rather than JSON booleans. Accept both shapes and normalize to boolean.
+// MAM emits boolean flags as both JSON booleans and 0/1 integers.
 const numericBoolean = z.union([z.boolean(), z.number()])
   .transform((v) => (typeof v === 'number' ? v !== 0 : v));
 
@@ -22,10 +21,7 @@ export const mamSearchResultSchema = z.object({
   personal_freeleech: numericBoolean.nullish(),
 }).passthrough();
 
-// MAM search responses always carry either `data` (results array, possibly empty)
-// or `error` (a message). A response with neither is malformed (e.g. HTML
-// interstitial, rate-limit page, upstream API change) and must fail validation
-// rather than silently producing an empty result list.
+// A valid MAM response has data or error; reject interstitials and shape changes.
 export const mamSearchResponseSchema = z.object({
   error: z.string().nullish(),
   data: z.array(mamSearchResultSchema).nullish(),

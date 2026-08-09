@@ -1,9 +1,5 @@
-/**
- * Canonical list of supported languages for the multi-select settings picker
- * and metadata schema validation. Hand-authored `as const` tuple required for
- * `z.enum()` compatibility. Alphabetically sorted lowercase full names matching
- * the unique values from `KNOWN_NAMES` in `language-codes.ts`.
- */
+// Alphabetical lowercase names shared by settings and metadata validation; keep
+// aligned with KNOWN_NAMES in core/utils/language-codes.ts.
 export const CANONICAL_LANGUAGES = [
   'arabic',
   'bulgarian',

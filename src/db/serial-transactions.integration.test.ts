@@ -7,16 +7,8 @@ import { books } from './schema.js';
 import { NestedTransactionError } from './serial-transactions.js';
 import { generatePublicId } from '../server/utils/public-id.js';
 
-/**
- * Real migrated libSQL, never a double: the constraint under test is the DRIVER's — one
- * transaction per connection — and only a real connection can exhibit it. Before #1959 F12 the
- * first case here produced one fulfilled promise and three `SQLITE_BUSY` rejections.
- *
- * Every case calls `db.transaction(...)` the plain way, exactly as the twenty-two existing
- * production call sites do. That is the point of the finding: the guarantee has to hold for
- * callers that know nothing about serialization, not only for the two that once opted into a
- * helper.
- */
+// Real libSQL is required because one-active-transaction is a driver constraint.
+// Use plain db.transaction calls so coverage does not depend on caller opt-in.
 describe('per-connection transaction serialization (#1959 F12)', () => {
   let dir: string;
   let dbFile: string;
@@ -30,10 +22,7 @@ describe('per-connection transaction serialization (#1959 F12)', () => {
   });
 
   afterAll(() => {
-    // Tolerant on Windows only: the libSQL handle keeps the dir undeletable
-    // (EPERM) even after close — see src/server/__tests__/e2e-helpers.ts:38 and
-    // the `windows-hostile-test-primitives` learning. Inlined rather than using
-    // src/server/__tests__/windows-fs.ts because src/db does not import server.
+    // libSQL may retain the directory handle on Windows.
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch (error) {
@@ -54,8 +43,7 @@ describe('per-connection transaction serialization (#1959 F12)', () => {
       [1, 2, 3, 4].map((n) =>
         db.transaction(async (tx) => {
           await tx.select().from(books).limit(1);
-          // Yield inside the transaction: without serialization this is where the next
-          // BEGIN lands on the same connection and the driver refuses it.
+          // Yield so, without serialization, the next BEGIN lands on this connection.
           await new Promise((resolve) => setTimeout(resolve, 5));
           await tx.insert(books).values(insert(`concurrent ${n}`));
           return n;
@@ -81,13 +69,10 @@ describe('per-connection transaction serialization (#1959 F12)', () => {
       ),
     );
 
-    // Strict begin/commit pairing — any overlap shows up as two consecutive `begin:` entries.
     expect(events).toEqual(['begin:1', 'commit:1', 'begin:2', 'commit:2', 'begin:3', 'commit:3']);
   });
 
   it('covers a caller that never heard of the lane, racing one that queues behind it', async () => {
-    // The reconciler's guarded-write shape (read, decide, write) run concurrently with a bare
-    // insert transaction — two independent call sites, neither aware of the other.
     const [a, b] = await Promise.all([
       db.transaction(async (tx) => {
         const rows = await tx.select().from(books);
@@ -114,8 +99,7 @@ describe('per-connection transaction serialization (#1959 F12)', () => {
       }),
     ).rejects.toThrow('rollback');
 
-    // A tail advanced with a bare `.then(fn)` would have inherited the rejection and refused
-    // every later transaction on this connection, permanently.
+    // A bare .then(open) would let this rejection poison every later transaction.
     await expect(db.transaction(async (tx) => {
       await tx.insert(books).values(insert('after rollback'));
       return 'ok';
@@ -124,8 +108,7 @@ describe('per-connection transaction serialization (#1959 F12)', () => {
   });
 
   it('rejects a nested transaction on the same connection instead of deadlocking', async () => {
-    // Re-entering `db.transaction` from inside its own callback would queue behind a tail its
-    // own caller is holding — a silent hang. The guard turns that into a named error.
+    // Re-entry would wait forever on the tail held by its own outer transaction.
     await expect(
       db.transaction(async () => {
         await db.transaction(async () => 'inner');
@@ -133,23 +116,19 @@ describe('per-connection transaction serialization (#1959 F12)', () => {
       }),
     ).rejects.toBeInstanceOf(NestedTransactionError);
 
-    // …and the connection is still usable afterwards.
     await expect(db.transaction(async () => 'fine')).resolves.toBe('fine');
   });
 
   it('lets a continuation born inside the callback open a transaction AFTER the outer settles (#2008)', async () => {
-    // AsyncLocalStorage context is captured at async-resource creation and kept forever, so
-    // this `.then` continuation holds the transaction's store long after the commit. The
-    // deadlock the guard prevents is only possible while the outer is PENDING — a descendant
-    // invoked post-settle must queue like any other caller, not reject. Before #2008 the
-    // marker was immortal set-membership and this rejected with NestedTransactionError.
+    // ALS stores survive with async resources; inherited membership must expire when the
+    // outer settles or this descendant would be falsely treated as nested.
     let releaseGate!: () => void;
     const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
     let descendant!: Promise<string>;
 
     await db.transaction(async (tx) => {
       await tx.insert(books).values(insert('outer write'));
-      // Created INSIDE the transaction's context; invoked only when the gate opens.
+      // Created inside the transaction context but invoked after the gate opens.
       descendant = gate.then(() =>
         db.transaction(async (tx2) => {
           await tx2.insert(books).values(insert('descendant write'));
@@ -165,9 +144,7 @@ describe('per-connection transaction serialization (#1959 F12)', () => {
   });
 
   it('still rejects a created-inside continuation that calls while the outer is PENDING (#2008)', async () => {
-    // The twin that pins the flip did not over-relax: same async-resource shape, but the
-    // outer awaits it, so the outer is still pending when the inner call happens — that is
-    // the real deadlock case and it must keep rejecting.
+    // The same inherited context remains nested while the outer is pending.
     await expect(
       db.transaction(async () => {
         return Promise.resolve().then(() => db.transaction(async () => 'inner'));
@@ -186,7 +163,6 @@ describe('per-connection transaction serialization (#1959 F12)', () => {
     const held = new Promise<void>((resolve) => { release = resolve; });
 
     const blocking = db.transaction(async () => { await held; return 'first'; });
-    // Runs to completion while the first connection's transaction is still open.
     await expect(other.transaction(async (tx) => {
       await tx.insert(books).values(insert('other connection'));
       return 'second';

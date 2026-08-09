@@ -11,25 +11,13 @@ export const metadataSettingsSchema = z.object({
   hardcoverApiKey: z.string().default(''),
 });
 
-// Page form schema for MetadataSettingsSection. Intentionally surfaces only
-// `audibleRegion` and `hardcoverApiKey` — the category's `languages` and
-// `minDurationMinutes` are edited on the Filtering page (see filteringFormSchema
-// below), not here. Do NOT "restore" those two fields to this form: they would
-// then be double-edited across two pages. This intentional omission is recorded
-// in registry.test.ts's METADATA_OMISSION_ALLOWLIST so the drift guard accepts
-// it today but fails if a *new, undocumented* metadata field is later dropped.
-// Relocated from the page module so the test can guard it (#1388). Shape unchanged.
+// Filtering owns languages and minDurationMinutes; exposing them here would make two pages edit them.
 export const metadataFormSchema = z.object({
   audibleRegion: audibleRegionSchema,
   hardcoverApiKey: z.string(),
 });
 
-// Page form schema for FilteringSettingsSection — a cross-category UI merge of
-// `metadata.languages` + `metadata.minDurationMinutes` with `quality.rejectWords`
-// + `quality.requiredWords`. There is no `filtering` category (Filtering is a
-// UI-only page); the schema is homed here on its metadata root. Relocated from
-// the page module so registry.test.ts can guard it (#1388). Shape unchanged — this
-// is NOT a refactor onto registered category schemas via .extend().
+// Filtering is a UI-only merge of metadata and quality fields, not a settings category.
 export const filteringFormSchema = z.object({
   languages: z.array(z.string()),
   minDurationMinutes: z.number().int().nonnegative(),

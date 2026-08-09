@@ -6,8 +6,6 @@ import {
 } from './authors.js';
 import * as barrel from '../../schemas.js';
 
-// A leaky source row carrying every internal author column: numeric rowid,
-// slug, asin, timestamps. `toAuthorV1` must strip all of them.
 function makeLeakyRow() {
   return {
     id: 42,
@@ -72,8 +70,6 @@ describe('authorV1ListQuerySchema (composed, strict)', () => {
   });
 });
 
-// F5 — the AC requires the new schema modules to be re-exported from the
-// `src/shared/schemas.ts` barrel; consumers import from there, not the domain file.
 describe('barrel re-export', () => {
   it('exposes authorV1Schema and toAuthorV1 from the schemas barrel', () => {
     expect(barrel.authorV1Schema).toBe(authorV1Schema);

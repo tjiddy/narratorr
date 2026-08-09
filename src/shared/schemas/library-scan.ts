@@ -1,10 +1,6 @@
 import { z } from 'zod';
 import { recordingVerdictSchema } from './recording-verdict.js';
 
-// ============================================================================
-// Library scan / import schemas
-// ============================================================================
-
 export const importModeSchema = z.enum(['copy', 'move']);
 export type ImportMode = z.infer<typeof importModeSchema>;
 
@@ -27,18 +23,9 @@ export const discoveredBookSchema = z.object({
   existingBookId: z.number().optional(),
   duplicateReason: duplicateReasonSchema.optional(),
   previewUrl: z.string().optional(),
-  /**
-   * Surfaces a discovery-time heuristic warning to the import UI when content
-   * was absorbed but might warrant a second look (e.g. bonus subdirectory
-   * swept into a chapter book). Display-only — does not block import.
-   */
+  // Display-only discovery warning; it does not block import.
   reviewReason: z.string().optional(),
-  /**
-   * Recording-identity verdict for a library hit (#1712), threaded from the match
-   * job onto the row via `mergeMatchIntoRow`. Drives the three-way import-review
-   * badge in `ImportCard` (Already owned / New version of an owned title / Possible
-   * duplicate). Absent for a genuinely new book and for scan-time DB duplicates.
-   */
+  // Absent for new books and scan-time DB duplicates; library matches use it for review.
   recordingVerdict: recordingVerdictSchema.optional(),
 });
 
@@ -58,19 +45,13 @@ export const importConfirmItemSchema = z.object({
   seriesPosition: z.number().optional(),
   coverUrl: z.string().optional(),
   asin: z.string().optional(),
-  // BookMetadata pass-through — validated upstream by the metadata provider, not here
+  // BookMetadata is validated by the provider before this pass-through boundary.
   metadata: z.unknown().optional(),
-  // When true, bypasses the title+author safety-net duplicate check in confirmImport()
+  // Bypasses the title-and-author duplicate safety check.
   forceImport: z.boolean().optional(),
 });
 
-/**
- * A confirm/import item held back for recording review (#1711). The recording
- * resolver returned `review`/no-signal (or an ambiguous path-owner cardinality),
- * so the item is NOT copied/overwritten and NOT enqueued — it is reported to the
- * UI so the user can re-confirm it with `forceImport=true`. `path` is the item
- * identity (equals `importConfirmItemSchema.path`).
- */
+// Review-held items are neither copied nor enqueued; clients may resubmit with forceImport.
 export const heldReviewItemSchema = z.object({
   path: z.string(),
   title: z.string(),
@@ -79,14 +60,8 @@ export const heldReviewItemSchema = z.object({
 });
 export type HeldReviewItem = z.infer<typeof heldReviewItemSchema>;
 
-/**
- * A confirm/import item that was NOT accepted because it is already accounted for
- * (#1822). `already-in-library` = the recording is already owned (same-recording
- * dedup or an ASIN-race create collision); `already-importing` = an active import
- * job already exists for the incumbent. Reported to the UI so a no-op import is
- * surfaced as an amber "already in your library" outcome, not a green success.
- * `path` is the item identity (equals `importConfirmItemSchema.path`).
- */
+// already-in-library includes recording dedup and ASIN-race collisions;
+// already-importing means an active job owns the item.
 export const importSkipReasonSchema = z.enum(['already-in-library', 'already-importing']);
 export type ImportSkipReason = z.infer<typeof importSkipReasonSchema>;
 
@@ -94,9 +69,6 @@ export const matchCandidateSchema = z.object({
   path: z.string().trim().min(1),
   title: z.string().trim().min(1),
   author: z.string().optional(),
-  // Wanted series position parsed from the folder name (#1849). Zod strips
-  // unknown keys by default, so without this the client-sent position is
-  // silently discarded before it reaches MatchJobService's ranker.
   seriesPosition: z.number().optional(),
 });
 
@@ -108,10 +80,6 @@ export const jobIdParamSchema = z.object({
   jobId: z.string().trim().min(1),
 });
 
-// ============================================================================
-// Scan debug schemas
-// ============================================================================
-
 export const scanDebugBodySchema = z.object({
   folderName: z
     .string()
@@ -121,36 +89,15 @@ export const scanDebugBodySchema = z.object({
 });
 export type ScanDebugBody = z.infer<typeof scanDebugBodySchema>;
 
-// ============================================================================
-// Duration corroboration (#2055)
-// ============================================================================
-
-/**
- * Body of the import editor's re-pick second-opinion request (#2055): the picked
- * edition's ASIN plus the RAW unrounded scanner runtime in SECONDS.
- *
- * `z.number().positive()` already rejects BOTH `NaN` and `Infinity` on this repo's zod
- * 4.4.3 (verified empirically), so no redundant `.finite()` and no bespoke NaN guard
- * belong here — the blanket Zod-NaN sweep was proposed as #1940 and closed not-planned
- * (see the scope note on `rate-limit-gate-fails-open-on-nan-window`).
- */
+// scannedSeconds is the raw, unrounded scanner runtime.
 export const durationCorroborationBodySchema = z.object({
   asin: z.string().trim().min(1, 'asin is required'),
   scannedSeconds: z.number().positive('scannedSeconds must be a positive number of seconds'),
 });
 export type DurationCorroborationBody = z.infer<typeof durationCorroborationBodySchema>;
 
-/** Response of the duration-corroboration route. `chapterSeconds` is the FULL chapter-table
- *  runtime and is ABSENT — never `undefined` — when there is no usable one (a truthful "no
- *  second opinion available", not a mismatch claim).
- *
- *  `trimmedChapterSeconds` (#2168) is the same table with its trailing promotional run
- *  (`Excerpt:` / `Preview` / `Bonus` / `End Credits`) removed. `corroborated` is true when
- *  the scanned runtime is in band against EITHER reference. The field is present only when
- *  a usable trimmed reference exists AND its value DIFFERS from `chapterSeconds` — it
- *  answers "what other number did the band get checked against", so a removal that leaves
- *  the runtime unchanged (a trusted zero-length tail) has nothing distinct to report. The
- *  trimmed chapter COUNT is deliberately never on the wire; it is a log-only diagnostic. */
+// chapterSeconds is omitted without a usable full runtime. trimmedChapterSeconds
+// appears only for a distinct promotional-tail-trimmed runtime; either may corroborate.
 export interface DurationCorroborationResult {
   corroborated: boolean;
   chapterSeconds?: number;

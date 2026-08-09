@@ -3,33 +3,7 @@ import { bookStatusSchema } from '../book.js';
 import { pickPrimarySeries } from '../../pick-primary-series.js';
 import { companionEbookV1Schema } from './companion-ebook.js';
 
-// ============================================================================
-// Public API v1 — Metadata search (v1.1 — #1519)
-// ============================================================================
-//
-// The public projection of a provider metadata-search *book* result. This is a
-// thin public wrapper over the internal `MetadataService.search()` — it exposes
-// ONLY the per-book result shape (the top-level `authors`/`series`/`warnings`
-// arrays of `MetadataSearchResults` are intentionally dropped; the consumer
-// needs books). These are PRE-LIBRARY results: they carry `asin`, NOT a
-// `publicId`, and people are `{ name, asin? }` — deliberately different from
-// `BookV1`'s `{ id, name }`, because they are not library entities yet.
-//
-// Strictness is deliberate and load-bearing, exactly as in `books.ts`: native
-// v1 schemas are a contract narratorr OWNS, so they use `.strict()` (reject
-// unknown keys). This is the OPPOSITE of the prowlarr-compat surface, which must
-// stay `.strip()` (learning `compat-surface-zod-strip-not-strict`, #1198). On
-// the response side `.strict()` is what makes the boundary FAIL CLOSED: a future
-// projector regression that leaks an internal `BookMetadata` field (e.g.
-// `providerId`, `isbn`, `description`) is rejected at serialization rather than
-// silently stripped and shipped.
-
-// ----------------------------------------------------------------------------
-// Item schema (response DTO) — strict, fail-closed
-// ----------------------------------------------------------------------------
-
-/** A result author: `{ name, asin? }`. `.strict()` so a leaked provider field
- *  fails serialization. `asin` is optional — providers don't always supply it. */
+// Provider results are pre-library data: they use ASINs and names, not library public IDs.
 export const metadataSearchResultV1AuthorSchema = z
   .object({
     name: z.string(),
@@ -37,16 +11,12 @@ export const metadataSearchResultV1AuthorSchema = z
   })
   .strict();
 
-/** A result narrator: `{ name }` ONLY. The provider gives narrators as plain
- *  strings (no asin), so the DTO never carries an `asin` field for narrators. */
 export const metadataSearchResultV1NarratorSchema = z
   .object({
     name: z.string(),
   })
   .strict();
 
-/** A result series: `{ name, position? }`. `position` is optional (the source
- *  `SeriesRefSchema.position` is optional). `.strict()` to fail closed. */
 export const metadataSearchResultV1SeriesSchema = z
   .object({
     name: z.string(),
@@ -54,25 +24,7 @@ export const metadataSearchResultV1SeriesSchema = z
   })
   .strict();
 
-/**
- * The public metadata-search result DTO. Exposes ONLY
- * `{ asin?, title, authors, narrators, series?, cover?, publishedDate? }`.
- * `.strict()` (here and on every nested object) is load-bearing: it makes
- * Fastify response-schema enforcement fail closed on any internal `BookMetadata`
- * field a projector regression might leak. `narrators` is a REQUIRED array
- * (defaults to `[]` when the source omits narrators) so consumers always get an
- * array, never `undefined`.
- *
- * `library` is the narratorr-only cross-reference (#1537): when the result's
- * ASIN matches a book already in the library it carries
- * `{ bookId, status, companionEbook }` — the `bk_` publicId, the raw canonical
- * `BookStatus`, and (#1961) the companion-ebook availability. It is additive,
- * optional, and best-effort: the route fills it AFTER projection (the projector
- * keeps reading only public provider fields), so a library-lookup failure leaves
- * it absent rather than failing the search. `status` reuses `bookStatusSchema`
- * (NOT a parallel enum) so the consumer's vocabulary equals `BookV1`'s with zero
- * translation; the consumer owns the tri-state collapse, narratorr emits facts.
- */
+// `library` is a best-effort route annotation added after projection; lookup failures leave it absent.
 export const metadataSearchResultV1Schema = z
   .object({
     asin: z.string().optional(),
@@ -86,14 +38,7 @@ export const metadataSearchResultV1Schema = z
       .object({
         bookId: z.string(),
         status: bookStatusSchema,
-        /**
-         * Companion ebook availability (#1961). REQUIRED inside `library` and
-         * nullable — a result that is in the library always carries the key, so
-         * a consumer never has to distinguish "no ebook" from "old server". Note
-         * `library` ITSELF stays `.optional()`: a result not in the library still
-         * carries no `library` key at all. This nested annotation is the LIVE
-         * consumer surface for the whole companion feature.
-         */
+        // Required when library exists; null means no exposed ebook, not an old server.
         companionEbook: companionEbookV1Schema,
       })
       .strict()
@@ -103,16 +48,7 @@ export const metadataSearchResultV1Schema = z
 
 export type MetadataSearchResultV1 = z.infer<typeof metadataSearchResultV1Schema>;
 
-// ----------------------------------------------------------------------------
-// Query validator — strict, same bound as the internal metadata search
-// ----------------------------------------------------------------------------
-
-/**
- * Validator for `GET /api/v1/metadata/search` query params. `q` is required,
- * trimmed, `min(1)` / `max(500)` — the SAME bound as the internal
- * `metadataSearchQuerySchema` (`src/shared/schemas/metadata.ts`); the public
- * wrapper must not relax it. `.strict()` rejects unknown params with a 400.
- */
+// Keep the 500-character bound aligned with internal metadataSearchQuerySchema.
 export const metadataSearchV1QuerySchema = z
   .object({
     q: z.string().trim().min(1, 'Query is required').max(500),
@@ -121,26 +57,7 @@ export const metadataSearchV1QuerySchema = z
 
 export type MetadataSearchV1Query = z.infer<typeof metadataSearchV1QuerySchema>;
 
-// ----------------------------------------------------------------------------
-// Projector — provider book result -> public DTO
-// ----------------------------------------------------------------------------
-
-/**
- * Minimal STRUCTURAL shape `toMetadataSearchResultV1` reads. The core
- * `BookMetadata` (`src/core/metadata/schemas.ts`) is structurally assignable to
- * this — declaring it here keeps the shared schema layer free of `src/core`
- * imports (forbidden by the `no-restricted-imports` guard in `eslint.config.js`
- * for `src/shared/**`), while the route's projector call still accepts the real
- * metadata result. Mirrors the `ReleaseV1Source` interface in `actions.ts`.
- *
- * Only the fields the projector reads are listed. Note the source-shape
- * reconciliation vs a naive reading of the spec:
- *   - `narrators` are plain strings (no asin) — projected to `{ name }`.
- *   - the cover field is `coverUrl` — projected to the public `cover`.
- *   - series is a plural `series[]` plus an optional singular `seriesPrimary` —
- *     the DTO exposes a single `series` projected via the shared
- *     `pickPrimarySeries` helper (primary ref, else first plural element).
- */
+// Structural input avoids core imports; coverUrl is renamed and pickPrimarySeries selects one series.
 export interface MetadataSearchResultV1Source {
   asin?: string | undefined;
   title: string;
@@ -152,18 +69,7 @@ export interface MetadataSearchResultV1Source {
   publishedDate?: string | undefined;
 }
 
-/**
- * Project a provider book result to the public `MetadataSearchResultV1` DTO.
- * Field-by-field — copies ONLY the public fields, so every other `BookMetadata`
- * field (`subtitle`, `isbn`, `goodreadsId`, `providerId`, `description`,
- * `publisher`, `language`, `duration`, `genres`, `relevance`, `formatType`,
- * `contentDeliveryType`, `alternateAsins`) is left out of the projection.
- *
- * Optional fields use conditional spreads (not explicit `undefined`) to satisfy
- * `exactOptionalPropertyTypes` and the `.strict()` schema. `narrators` always
- * emits an array (coalesced to `[]`). `series` is `pickPrimarySeries(source)`.
- * An asin-less book is returned anyway (asin omitted) — NOT filtered out.
- */
+// Conditional spreads satisfy exactOptionalPropertyTypes; the narrators field always emits an array.
 export function toMetadataSearchResultV1(
   source: MetadataSearchResultV1Source,
 ): MetadataSearchResultV1 {

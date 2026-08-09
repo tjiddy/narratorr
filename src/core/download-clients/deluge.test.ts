@@ -36,15 +36,13 @@ function torrentBytesArtifact(data?: Buffer): DownloadArtifact {
 }
 
 function rpcHandler(methodHandlers: Record<string, (params: unknown[]) => unknown>) {
-  // Default the daemon handshake to "already connected" so the web.connect path
-  // short-circuits; tests that exercise the handshake override web.connected.
+  // Assume an existing daemon connection unless a test overrides web.connected.
   const handlers: Record<string, (params: unknown[]) => unknown> = { 'web.connected': () => true, ...methodHandlers };
   return http.post(`${BASE_URL}/json`, async ({ request }) => {
     const body = await request.json() as { method: string; params: unknown[]; id: number };
     const handler = handlers[body.method];
     if (handler) {
       const headers: Record<string, string> = {};
-      // Login responses set session cookie
       if (body.method === 'auth.login') {
         headers['Set-Cookie'] = `${SESSION_COOKIE}; Path=/; HttpOnly`;
       }
@@ -119,10 +117,8 @@ describe('DelugeClient', () => {
         }
         callCount++;
         if (callCount === 1) {
-          // First call: session expired
           return HttpResponse.json({ id: body.id, result: null, error: { message: 'Not authenticated', code: 1 } });
         }
-        // After re-auth
         return HttpResponse.json({ id: body.id, result: '2.1.1', error: null });
       }));
 
@@ -177,8 +173,7 @@ describe('DelugeClient', () => {
   });
 
   describe('daemon handshake (web.connect)', () => {
-    // Builds a handler that auths, answers the handshake methods per the supplied
-    // config, then answers daemon.get_version. Records every method seen + connect params.
+    // Simulate configurable daemon handshake responses and record each call.
     function handshakeHandler(opts: {
       connected: boolean;
       hosts?: unknown;
@@ -303,9 +298,6 @@ describe('DelugeClient', () => {
     });
 
     it('surfaces a rawRpc() data.error as a plain DownloadClientError without re-login/retry', async () => {
-      // A `data.error` (even code 1) reached through rawRpc() during the handshake
-      // must NOT trigger the auth-retry path — rawRpc keeps its own plain-throw
-      // policy at the helper boundary, so no inner re-login loop occurs.
       const methods: string[] = [];
       server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
         const body = await request.json() as { method: string; params: unknown[]; id: number };
@@ -316,7 +308,6 @@ describe('DelugeClient', () => {
             { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
           );
         }
-        // web.connected goes through rawRpc(); return an RPC error with code 1.
         if (body.method === 'web.connected') {
           return HttpResponse.json({ id: body.id, result: null, error: { message: 'Not authenticated', code: 1 } });
         }
@@ -327,16 +318,11 @@ describe('DelugeClient', () => {
       expect(error).toBeInstanceOf(DownloadClientError);
       expect(error).not.toBeInstanceOf(DownloadClientAuthError);
       expect((error as DownloadClientError).message).toContain('Deluge RPC error');
-      // No retry: auth.login ran exactly once, web.connected was not re-attempted.
       expect(methods.filter((m) => m === 'auth.login')).toHaveLength(1);
       expect(methods.filter((m) => m === 'web.connected')).toHaveLength(1);
     });
 
     it('surfaces a rawRpc() non-401/403 transport failure as a plain DownloadClientError without re-login/retry', async () => {
-      // A generic HTTP failure (e.g. 500) reached through rawRpc()'s shared parse
-      // path must surface as a plain DownloadClientError and NOT set wasAuthFailure
-      // or trigger the auth re-login/retry — locking the divergence at the helper
-      // boundary (the 401/403 auth pre-check lives in rpc(), not in the helper).
       const methods: string[] = [];
       server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
         const body = await request.json() as { method: string; params: unknown[]; id: number };
@@ -347,7 +333,6 @@ describe('DelugeClient', () => {
             { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
           );
         }
-        // web.connected goes through rawRpc(); fail it with a non-401/403 HTTP status.
         if (body.method === 'web.connected') {
           return new HttpResponse(null, { status: 500 });
         }
@@ -358,7 +343,6 @@ describe('DelugeClient', () => {
       expect(error).toBeInstanceOf(DownloadClientError);
       expect(error).not.toBeInstanceOf(DownloadClientAuthError);
       expect((error as DownloadClientError).message).toContain('HTTP 500');
-      // No retry: auth.login ran exactly once, web.connected was not re-attempted.
       expect(methods.filter((m) => m === 'auth.login')).toHaveLength(1);
       expect(methods.filter((m) => m === 'web.connected')).toHaveLength(1);
     });
@@ -378,7 +362,6 @@ describe('DelugeClient', () => {
         if (body.method === 'web.connected') return HttpResponse.json({ id: body.id, result: false, error: null });
         if (body.method === 'web.get_hosts') return HttpResponse.json({ id: body.id, result: [['host-id-1', '127.0.0.1', 58846, 'localhost']], error: null });
         if (body.method === 'web.connect') return HttpResponse.json({ id: body.id, result: [], error: null });
-        // daemon.get_version: first call reports an expired session (code 1) → forces re-login.
         daemonInfoCalls++;
         if (daemonInfoCalls === 1) {
           return HttpResponse.json({ id: body.id, result: null, error: { message: 'Not authenticated', code: 1 } });
@@ -388,7 +371,6 @@ describe('DelugeClient', () => {
 
       const result = await client.test();
       expect(result.success).toBe(true);
-      // Handshake ran on both the initial login and the retry re-login.
       expect(methods.filter((m) => m === 'web.connected')).toHaveLength(2);
       expect(methods.filter((m) => m === 'web.connect')).toHaveLength(2);
     });
@@ -640,7 +622,6 @@ describe('DelugeClient', () => {
       expect(result!.downloadSpeed).toBeUndefined();
     });
 
-    // #1778 — nullish response fields must parse and map like absence.
     it('parses null nullable fields and maps them identically to omitting them', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
@@ -655,7 +636,7 @@ describe('DelugeClient', () => {
 
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => mockTorrentStatus, // fields omitted
+        'core.get_torrent_status': () => mockTorrentStatus,
       }));
       const omitted = await client.getDownload('abc123def456');
 
@@ -672,10 +653,7 @@ describe('DelugeClient', () => {
       expect(result!.downloadSpeed).toBeUndefined();
     });
 
-    // #1778 F1 — the RPC envelope `id` is nullish (schemas.ts:125). Deluge can
-    // return `id: null`; the envelope must parse (not throw) and map identically
-    // to a numeric-id envelope. rpcHandler hardcodes a numeric id, so this needs
-    // a bespoke handler that forces `id: null` at the envelope level.
+    // rpcHandler always mirrors a numeric request id; force Deluge's valid id:null response here.
     it('accepts an RPC envelope with id:null and maps like a numeric-id envelope', async () => {
       const nullIdHandler = http.post(`${BASE_URL}/json`, async ({ request }) => {
         const body = await request.json() as { method: string };
@@ -851,7 +829,6 @@ describe('DelugeClient', () => {
         if (body.method === 'web.connected') {
           return HttpResponse.json({ id: body.id, result: true, error: null });
         }
-        // Return HTML instead of JSON (e.g., reverse proxy error page)
         return new HttpResponse('<html>Bad Gateway</html>', { headers: { 'Content-Type': 'text/html' } });
       }));
 
@@ -880,7 +857,6 @@ describe('DelugeClient', () => {
       server.use(rpcHandler({
         'auth.login': () => true,
       }));
-      // Default rpcHandler returns error for unknown methods
       await expect(client.getDownload('abc123')).rejects.toThrow('Deluge RPC error');
     });
   });
@@ -1001,7 +977,6 @@ describe('DelugeClient', () => {
         if (body.method === 'web.connected') {
           return HttpResponse.json({ id: 3, result: true, error: null });
         }
-        // Malformed envelope: no `result` property at all and no error
         return HttpResponse.json({ id: 2 });
       }));
 

@@ -5,12 +5,6 @@ import {
   toMetadataSearchResultV1,
 } from './metadata.js';
 
-// A fully-populated, leaky `BookMetadata`-shaped source: every internal field
-// the provider can carry (subtitle, isbn, goodreadsId, providerId, description,
-// publisher, language, duration, genres, relevance, formatType,
-// contentDeliveryType, alternateAsins, seriesPrimary's asin). Typed wide (no
-// annotation) so the extra internal fields model the real source —
-// `toMetadataSearchResultV1` must not copy them into the DTO.
 function makeLeakySource() {
   return {
     asin: 'B00ASIN',
@@ -183,8 +177,6 @@ describe('metadataSearchResultV1Schema (fail-closed, .strict())', () => {
   });
 
   describe('library cross-reference (#1537)', () => {
-    // #1961 — every valid `library` object now carries the REQUIRED (nullable)
-    // `companionEbook` member.
     const library = { bookId: 'bk_abc123', status: 'imported', companionEbook: null };
 
     it('accepts a result carrying a valid library { bookId, status, companionEbook }', () => {

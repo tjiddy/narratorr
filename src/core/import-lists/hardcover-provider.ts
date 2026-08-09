@@ -18,9 +18,7 @@ export interface HardcoverConfig {
 
 const GRAPHQL_URL = 'https://api.hardcover.app/v1/graphql';
 
-// #1879 — custom-list ('all') pagination bounds. `PAGE_SIZE` is the per-request
-// window; `MAX_LIST_PAGES` is an absolute cap on FULL data pages (≤ 5000 rows)
-// that even a large/corrupt `books_count` cannot exceed (AC5).
+// Cap full custom-list pages independently of untrusted books_count.
 const PAGE_SIZE = 100;
 const MAX_LIST_PAGES = 50;
 
@@ -32,17 +30,13 @@ const REPEATED_PAGE_MSG = 'Hardcover returned a repeated page (offset appears to
 const RUNAWAY_MSG = 'Hardcover list exceeds the supported size (pagination runaway guard)';
 const BAD_URL_MSG = 'Not a Hardcover list URL';
 
-// Trending window: `books_trending` ranks books over a [from, to] date range.
-// `from = today − TRENDING_WINDOW_DAYS`, `to = today`. No settings field — these
-// are module constants by design (see #1617 AC2).
+// books_trending ranks over the fixed window ending today.
 const TRENDING_WINDOW_DAYS = 7;
 const TRENDING_LIMIT = 50;
 const SHELF_LIMIT = 100;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Shared book→ImportListItem projection. Both trending (`books`) and shelf
-// (`user_books[].book`) resolve to the GraphQL `books` type, so a single
-// fragment + single `mapBook` keeps the two paths from drifting apart (#1617 AC6).
+// Trending and shelf both resolve GraphQL books; share one projection with mapBook.
 const BOOK_FRAGMENT = `
   fragment BookFields on books {
     id
@@ -56,8 +50,7 @@ const BOOK_FRAGMENT = `
   }
 `;
 
-// Trending is a two-step fetch: `books_trending` returns only ranked `ids`,
-// then `books(where: { id: { _in } })` resolves those ids to book objects.
+// books_trending returns ranked IDs; a second query resolves book objects.
 const TRENDING_IDS_QUERY = `
   query Trending($from: date!, $to: date!, $limit: Int!, $offset: Int!) {
     books_trending(from: $from, to: $to, limit: $limit, offset: $offset) {
@@ -86,11 +79,8 @@ const SHELF_QUERY = `
   ${BOOK_FRAGMENT}
 `;
 
-// #1879 — resolve one public list by `@username` + slug, then page its ordered
-// rows. `public: { _eq: true }` gates a private list out at the query level (an
-// unresolved list comes back as `lists: []`). Multi-column ordering MUST use the
-// array-of-single-key-objects form — Hasura's `order_by` is a list and does not
-// preserve key order inside one input object (matches src/core/metadata/hardcover.ts).
+// Private/unresolved lists return lists: []. Hasura multi-column order must use an
+// array of single-key objects; key order inside one object is not preserved.
 const CUSTOM_LIST_QUERY = `
   query CustomList($username: citext!, $slug: String!, $limit: Int!, $offset: Int!) {
     lists(
@@ -121,8 +111,7 @@ const editionSchema = z.object({
   asin: z.string().nullish(),
   isbn_13: z.string().nullish(),
   isbn_10: z.string().nullish(),
-  // External-API field — must accept null, not just undefined (zod-nullish-external-api).
-  // Only `default_audio_edition` requests this in the query; print `editions` omit it.
+  // External fields may be null or omitted; print editions omit image.
   image: z.object({ url: z.string().nullish() }).passthrough().nullish(),
 }).passthrough();
 
@@ -142,10 +131,7 @@ const hardcoverBookSchema = z.object({
 type HardcoverBook = z.infer<typeof hardcoverBookSchema>;
 type HardcoverEdition = z.infer<typeof editionSchema>;
 
-// #1879 — custom list rows. Every externally-parsed field is `.nullish()`
-// (zod-nullish-external-api); the algorithm's post-parse dispositions (AC8) are
-// what guard the fields it depends on (`id` must be numeric; `list_books` must
-// be a real array, not null/missing).
+// Parse external fields as nullish; resolution below enforces required IDs and rows.
 const hardcoverListBookSchema = z.object({
   id: z.number().nullish(),
   position: z.number().nullish(),
@@ -175,9 +161,7 @@ const hardcoverResponseSchema = z.object({
 
 type HardcoverResponse = z.infer<typeof hardcoverResponseSchema>;
 
-// Freeze the FULL-page budget from the first response's `books_count`: the ceil
-// of pages the count implies, clamped to the absolute MAX_LIST_PAGES cap. A
-// missing/null/non-positive/non-finite count falls back to the cap (AC5).
+// Derive the full-page budget once, capped; invalid counts fall back to the cap.
 function customPageBudget(booksCount: number | null | undefined): number {
   const base = (typeof booksCount === 'number' && Number.isFinite(booksCount) && booksCount > 0)
     ? Math.ceil(booksCount / PAGE_SIZE)
@@ -193,8 +177,7 @@ function editionIsbn(edition: HardcoverEdition | null | undefined): string | und
   return edition?.isbn_13 || edition?.isbn_10 || undefined;
 }
 
-// ASIN/ISBN prefer the audiobook edition (narratorr matches on Audible ASINs),
-// then fall back to the first print edition carrying the identifier (#1617 AC5).
+// Prefer audiobook identifiers because narratorr matches Audible ASINs.
 function pickAsin(book: HardcoverBook): string | undefined {
   return editionAsin(book.default_audio_edition)
     ?? (book.editions ?? []).map(editionAsin).find((v) => v !== undefined);
@@ -212,10 +195,7 @@ function mapBook(book: HardcoverBook): ImportListItem | null {
     author: book.contributions?.[0]?.author?.name || undefined,
     asin: pickAsin(book),
     isbn: pickIsbn(book),
-    // Prefer the audiobook edition's cover over the book's default (print) image
-    // so the at-add cover is the audiobook one when Hardcover exposes it (#1634
-    // Layer 1). Falls back to the print image when the audio edition or its image
-    // is absent/empty. Layer 2 (Audnexus override at enrichment) is the guarantor.
+    // Prefer the audiobook cover; fall back to the book's print image.
     coverUrl: book.default_audio_edition?.image?.url || book.image?.url || undefined,
     description: book.description || undefined,
   };
@@ -261,16 +241,13 @@ export class HardcoverProvider implements ImportListProvider {
     const importMax = this.importMax ?? 50;
     if (importMax === 'all') return this.fetchAllPages(username, slug);
 
-    // Fixed limit — a single query for the first N rows by list position.
     const data = await this.executeQuery(CUSTOM_LIST_QUERY, { username, slug, limit: importMax, offset: 0 });
     const rows = this.resolveRows(data);
     this.validateRowIds(rows);
     return this.emitRows(rows, new Set<number>());
   }
 
-  // `all` — bounded pagination over `list_books` keyed on the RAW `list_books.id`.
-  // Validity + de-dup happen on raw rows BEFORE (and independent of) book mapping,
-  // so a row `mapBook` drops still consumes its id slot (AC5/AC6).
+  // Deduplicate raw row IDs before mapping so dropped books still consume their slot.
   private async fetchAllPages(username: string, slug: string): Promise<ImportListItem[]> {
     const seen = new Set<number>();
     const items: ImportListItem[] = [];
@@ -286,20 +263,19 @@ export class HardcoverProvider implements ImportListProvider {
       this.validateRowIds(rows);
 
       if (!budgetFrozen) {
-        // Freeze the budget from the FIRST response only — `books_count` cannot
-        // change the bound mid-run (F17).
+        // Later responses cannot move the first response's budget.
         fullPageBudget = customPageBudget(list.books_count);
         budgetFrozen = true;
       }
 
       const isFullPage = rows.length === PAGE_SIZE;
       const newRows = rows.filter((row) => !seen.has(row.id as number));
-      // A FULL page contributing zero new ids means the server ignored `offset`.
+      // A full page with no new IDs means the server ignored offset.
       if (isFullPage && newRows.length === 0) throw new ImportListError(this.name, REPEATED_PAGE_MSG);
 
       items.push(...this.emitRows(newRows, seen));
 
-      // Terminal short/empty page is ALWAYS permitted — the budget bounds only FULL pages.
+      // The budget counts only full pages; a terminal short page is always valid.
       if (!isFullPage) return items;
 
       fullPagesFetched += 1;
@@ -314,7 +290,7 @@ export class HardcoverProvider implements ImportListProvider {
     return parsed;
   }
 
-  // `lists: []` → not-found/private (AC7); `lists` null/missing → malformed (AC8).
+  // [] means not-found/private; null or missing means malformed.
   private resolveList(data: HardcoverResponse): HardcoverList {
     const lists = data.data?.lists;
     if (lists == null) throw new ImportListError(this.name, UNEXPECTED_LISTS_MSG);
@@ -322,8 +298,7 @@ export class HardcoverProvider implements ImportListProvider {
     return lists[0]!;
   }
 
-  // A resolved list's `list_books: []` is a genuine empty list (success); null/
-  // missing is a malformed nested response (AC8), distinct from a real empty array.
+  // [] is a valid empty list; null or missing rows are malformed.
   private requireRows(list: HardcoverList): HardcoverListBook[] {
     const rows = list.list_books;
     if (rows == null) throw new ImportListError(this.name, UNEXPECTED_ROWS_MSG);
@@ -334,15 +309,14 @@ export class HardcoverProvider implements ImportListProvider {
     return this.requireRows(this.resolveList(data));
   }
 
-  // Every row needs a numeric id — it is the stable dedup/loop-guard key (AC8).
+  // Raw IDs are the pagination dedup and loop-guard key.
   private validateRowIds(rows: HardcoverListBook[]): void {
     for (const row of rows) {
       if (typeof row.id !== 'number') throw new ImportListError(this.name, UNEXPECTED_ROW_ID_MSG);
     }
   }
 
-  // Emit output for unseen rows in query order; a row whose `book` is null/missing/
-  // unmappable still consumes its id slot (added to `seen`) but is dropped from output.
+  // Emit unseen rows in order; unmappable books still consume their ID slot before being dropped.
   private emitRows(rows: HardcoverListBook[], seen: Set<number>): ImportListItem[] {
     const out: ImportListItem[] = [];
     for (const row of rows) {
@@ -362,13 +336,11 @@ export class HardcoverProvider implements ImportListProvider {
     });
 
     const ids = idsData.data?.books_trending?.ids ?? [];
-    // Empty/null ids → skip the second query entirely (#1617 AC3).
     if (ids.length === 0) return [];
 
     const booksData = await this.executeQuery(BOOKS_BY_IDS_QUERY, { ids });
 
-    // `books(where:{id:{_in}})` returns rows unordered; re-sort into the original
-    // trending-rank order from `books_trending.ids`, dropping ids with no row (#1617 AC1).
+    // The second query is unordered; restore the ranking from books_trending.ids.
     const byId = new Map<number, ImportListItem>();
     for (const book of booksData.data?.books ?? []) {
       const item = mapBook(book);
@@ -443,16 +415,12 @@ export class HardcoverProvider implements ImportListProvider {
       if (!parsed.success) {
         return { success: false, message: `Validation failed: ${formatZodError(parsed.error)}` };
       }
-      // A real query surfaces schema drift (a missing field lands in `errors[]`)
-      // that the old `{ __typename }` probe could never catch (#1617 AC8).
+      // A real query exposes field-level schema drift that __typename cannot.
       if (parsed.data.errors?.length) {
         return { success: false, message: `Hardcover GraphQL error: ${parsed.data.errors[0]!.message}` };
       }
 
-      // A custom probe must apply the same list-resolution dispositions as a real
-      // sync: `lists: []` → not-found/private, null/missing lists/list_books or a
-      // null-id row → unexpected-response failure (AC9). A resolved list (including
-      // resolved-empty and null-book-only rows) clears the probe.
+      // Probe with the same not-found/malformed dispositions as a real sync.
       if (this.listType === 'custom') {
         try {
           this.validateRowIds(this.resolveRows(parsed.data));
@@ -467,12 +435,10 @@ export class HardcoverProvider implements ImportListProvider {
     }
   }
 
-  // Minimal real query for the configured list type (limit 1) so `test()` exercises
-  // the same fields a real sync uses.
+  // Probe the configured list type with the real projection at limit 1.
   private buildProbe(): { query: string; variables: Record<string, unknown> } {
     if (this.listType === 'custom') {
       const { username, slug } = this.requireParsedUrl();
-      // The operation declares `$offset: Int!`, so `offset` is required (AC9/F33).
       return { query: CUSTOM_LIST_QUERY, variables: { username, slug, limit: 1, offset: 0 } };
     }
     if (this.listType === 'shelf') {

@@ -76,10 +76,7 @@ describe('Import List IMPORT_LIST_ADAPTER_FACTORIES', () => {
 
     it('hardcover factory omits shelfId when undefined', () => {
       IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'trending', shelfId: undefined });
-      // Producer-omit pattern: undefined shelfId is dropped from the
-      // constructor payload, not passed through as explicit undefined
-      // (eopt invariant per #939 AC4). Read the LAST call — this file does not
-      // clear mocks between tests, so `.calls[0]` would inspect an earlier test's call.
+      // Undefined optional fields are omitted; inspect the latest uncleared mock call.
       const ctorArg = vi.mocked(HardcoverProvider).mock.calls.at(-1)![0];
       expect(ctorArg).not.toHaveProperty('shelfId');
     });
@@ -91,7 +88,6 @@ describe('Import List IMPORT_LIST_ADAPTER_FACTORIES', () => {
       );
     });
 
-    // #1879 — custom-list field forwarding (AC1, F2)
     it('hardcover factory forwards listUrl + numeric importMax for a custom list', () => {
       const url = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
       IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'custom', listUrl: url, importMax: 100 });
@@ -110,8 +106,7 @@ describe('Import List IMPORT_LIST_ADAPTER_FACTORIES', () => {
 
     it('hardcover factory omits listUrl/importMax for a non-custom list', () => {
       IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'trending' });
-      // Read the LAST call — this file does not clear mocks between tests, so
-      // `.calls[0]` would inspect an earlier test's call and pass vacuously (F4).
+      // Mocks persist across tests, so inspect the latest call.
       const ctorArg = vi.mocked(HardcoverProvider).mock.calls.at(-1)![0];
       expect(ctorArg).not.toHaveProperty('listUrl');
       expect(ctorArg).not.toHaveProperty('importMax');

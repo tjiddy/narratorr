@@ -1,14 +1,6 @@
 import { z } from 'zod';
 import { bookStatusSchema } from './book.js';
 
-// Slim shape for the library list view. Trimmed to what
-// LibraryBookCard / LibraryTableView / LibraryGridView / useLibraryFilters /
-// pages/library/helpers.ts / useLibraryPageState / LibraryModals /
-// DeleteBookModal and the library-launched SearchReleasesModal actually read.
-//
-// authors/narrators carry only `name` — the first name renders, and the
-// per-name client-side filter scans the full array.
-
 export const libraryBookListItemSchema = z.object({
   id: z.number(),
   title: z.string(),
@@ -36,11 +28,6 @@ export const libraryBookListItemSchema = z.object({
 
   collapsedCount: z.number().optional(),
 
-  // Stored edition_label (#1712): distinguishes two recordings of the same title on
-  // the library card. `.nullable().optional()` (like `collapsedCount`) so existing
-  // list fixtures/factories that omit the key need no churn — absent and `null` are
-  // treated identically (render nothing). The server hydration emits `null` when the
-  // column is null.
   editionLabel: z.string().nullable().optional(),
 
   createdAt: z.string(),

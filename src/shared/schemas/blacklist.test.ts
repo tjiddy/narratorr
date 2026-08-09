@@ -35,8 +35,6 @@ describe('createBlacklistSchema — trim behavior', () => {
     expect(result.success).toBe(true);
   });
 
-  // ===== #248 — GUID + optional infoHash =====
-
   it('accepts guid only (no infoHash)', () => {
     const { infoHash: _, ...base } = validBase;
     const result = createBlacklistSchema.safeParse({ ...base, guid: 'some-guid-value' });
@@ -77,7 +75,6 @@ describe('createBlacklistSchema — trim behavior', () => {
     expect(result.success).toBe(false);
   });
 
-  // #315 — user_cancelled reason
   it('accepts user_cancelled as a valid blacklist reason', () => {
     const result = createBlacklistSchema.safeParse({ ...validBase, reason: 'user_cancelled' });
     expect(result.success).toBe(true);
@@ -91,15 +88,10 @@ describe('createBlacklistSchema — trim behavior', () => {
   });
 });
 
-// ===== #321 — Centralized blacklist reason enum =====
-
 import { BLACKLIST_REASONS, REASON_LABELS, type BlacklistReason } from './blacklist.js';
 import type { BlacklistEntry } from '../../client/lib/api/blacklist.js';
 import type { BlacklistAndRetryRequest } from '../../server/services/rejection-helpers.js';
 
-// Compile-time assertions: consumer types must stay aligned with BlacklistReason.
-// If BlacklistEntry.reason or BlacklistAndRetryRequest.reason diverge from BlacklistReason,
-// these lines will produce a TypeScript error.
 type AssertExact<T, U> = [T] extends [U] ? [U] extends [T] ? true : false : false;
 type _ClientReasonIsBlacklistReason = AssertExact<BlacklistEntry['reason'], BlacklistReason> extends true ? true : never;
 type _ServerReasonIsBlacklistReason = AssertExact<BlacklistAndRetryRequest['reason'], BlacklistReason> extends true ? true : never;

@@ -1,14 +1,4 @@
-/**
- * Dispatcher-routing regression for MyAnonamouse fetchWithCookie /
- * fetchTorrentAsDataUri (F2/F3, PR #907 review).
- *
- * Mocks the production seam — `fetchWithOptionalDispatcher` — with a
- * non-forwarding `vi.fn()` and asserts that BOTH MAM dispatcher-attached
- * call sites pass the proxy dispatcher into the helper. The helper's own
- * routing contract (dispatcher → undiciFetch) is asserted in
- * network-service.test.ts. Search-cookie (F2) and torrent-bytes (F3) paths
- * can regress independently — each is asserted here.
- */
+/** Non-forwarding mock verifies both MAM proxy call sites pass their dispatcher. */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import type * as NetworkServiceModule from '../utils/network-service.js';
@@ -89,9 +79,7 @@ describe('MAM dispatcher-routing regression — fetchTorrentAsDataUri (F3)', () 
   });
 
   it('passes the dispatcher into fetchWithOptionalDispatcher on the torrent download', async () => {
-    // The torrent fetch now happens at grab time via resolveDownloadUrl, not
-    // inside search. Drive that path directly with a freeleech context so the
-    // wedge logic short-circuits and only the torrent fetch runs.
+    // Exercise grab-time fetch without wedge behavior.
     mockHelper.mockResolvedValueOnce(
       new Response(Buffer.from('fake-torrent'), {
         status: 200,
@@ -114,9 +102,6 @@ describe('MAM dispatcher-routing regression — fetchTorrentAsDataUri (F3)', () 
   });
 });
 
-// #1329 — the MAM .torrent grab is a separate adapter-side fetch that does not
-// route through DownloadUrl.resolveHttp, so it needs the canonical User-Agent
-// applied independently. Adding the UA must not drop the existing mam_id Cookie.
 describe('MAM .torrent grab User-Agent (#1329)', () => {
   beforeEach(() => {
     mockHelper.mockReset();
@@ -151,10 +136,6 @@ describe('MAM .torrent grab User-Agent (#1329)', () => {
   });
 });
 
-// #1423 — the MAM search/JSON API path (loadSearchJSONbasic.php / jsonLoad.php)
-// flows through fetchWithCookieMeta, which previously sent only the mam_id Cookie
-// and identified as the undici default. It must send the canonical User-Agent too,
-// matching the grab-path, without dropping the existing Cookie.
 describe('MAM search/JSON API User-Agent (#1423)', () => {
   beforeEach(() => {
     mockHelper.mockReset();

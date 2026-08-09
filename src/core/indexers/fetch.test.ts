@@ -97,8 +97,6 @@ describe('fetchWithProxy', () => {
     });
 
     it('uses 30s default timeout for direct fetch', async () => {
-      // We can't easily test actual timeout behavior, but we can verify
-      // it doesn't throw for a fast response
       server.use(
         http.get('https://indexer.test/api', () => {
           return new HttpResponse('ok');
@@ -426,7 +424,6 @@ describe('fetchWithProxy', () => {
     });
 
     it('all proxy error messages start with "FlareSolverr"', async () => {
-      // Error status
       server.use(
         http.post(`${PROXY_URL}/v1`, () => {
           return HttpResponse.json({ status: 'error', message: 'test' });
@@ -456,7 +453,6 @@ describe('fetchWithProxy', () => {
       const controller = new AbortController();
       await fetchWithProxy({ url: TARGET_URL, signal: controller.signal });
 
-      // The composed signal should be linked to caller — aborting caller should abort the composed signal
       expect(capturedSignal).toBeDefined();
       controller.abort();
       expect(capturedSignal!.aborted).toBe(true);
@@ -482,7 +478,6 @@ describe('fetchWithProxy', () => {
 
     it('pre-aborted signal rejects immediately for direct fetch', async () => {
       vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
-        // Real fetch would throw on aborted signal — simulate that
         if (init?.signal?.aborted) {
           throw new DOMException('The operation was aborted', 'AbortError');
         }

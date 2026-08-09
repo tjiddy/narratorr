@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ScriptNotifier } from './script.js';
 import type { EventPayload } from './types.js';
 
-// Mock child_process.execFile
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
@@ -62,7 +61,7 @@ describe('ScriptNotifier', () => {
     const env = (mockExecFile.mock.calls[0]![1] as unknown as { env: Record<string, string> }).env;
     expect(env.NARRATORR_SUBMISSION_SOURCE).toBe('library');
     expect(env.NARRATORR_SUBMISSION_STATUS).toBe('complete');
-    expect(env.NARRATORR_SUBMISSION_ACCEPTED).toBe('0'); // required zero present
+    expect(env.NARRATORR_SUBMISSION_ACCEPTED).toBe('0');
     expect(env.NARRATORR_SUBMISSION_HELD).toBe('2');
     expect(env.NARRATORR_SUBMISSION_SKIPPED).toBe('0');
     expect(env.NARRATORR_SUBMISSION_FAILED).toBe('1');
@@ -244,7 +243,7 @@ describe('ScriptNotifier', () => {
       const notifier = new ScriptNotifier({ path: dangerousPath });
       await notifier.send('on_grab', { event: 'on_grab' });
 
-      // execFile passes path as first arg (file to execute), not as shell command
+      // execFile receives the executable path directly, not through a shell.
       expect(mockExecFile).toHaveBeenCalledWith(
         dangerousPath,
         expect.any(Object),
@@ -253,7 +252,6 @@ describe('ScriptNotifier', () => {
     });
   });
 
-  // --- #199 boundary and payloadToEnv coverage tests ---
 
   it('uses default 30s timeout when timeout config is undefined', async () => {
     mockExecFile.mockImplementation((_file, _opts, callback) => {

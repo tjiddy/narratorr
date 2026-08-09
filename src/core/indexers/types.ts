@@ -26,37 +26,18 @@ export interface SearchResult {
   matchScore?: number;
   isFreeleech?: boolean;
   isVipOnly?: boolean;
-  /**
-   * Lowercase container (`m4b`, `mp3`). MAM-only — no other indexer exposes it
-   * structurally, so absence means unknown, not mp3. Display only; not read by
-   * the quality chain.
-   */
+  /** Lowercase MAM container. Absence is unknown, not mp3; display only. */
   format?: string;
 }
 
 export interface SearchOptions {
   limit?: number | undefined;
-  /**
-   * TRANSPORT filter. Newznab/Torznab emit it as `author=`; MAM/ABB ignore it.
-   * A query-relaxation rung that drops the author (#2104) must pass `undefined`
-   * here or the rung is inert on exactly the publisher-as-author cases it exists
-   * to fix — but see {@link rankingAuthor}, which keeps ranking canonical.
-   */
+  /** Newznab/Torznab transport filter; relaxation clears it but retains rankingAuthor. */
   author?: string | undefined;
   title?: string | undefined;
   signal?: AbortSignal | undefined;
   languages?: readonly string[] | undefined;
-  /**
-   * Ranking-only author context, read ONLY by the match scorer as
-   * `rankingAuthor ?? author`. No adapter reads it, so it is transport-inert by
-   * construction — a direct extension of the #1015 transport/ranking split.
-   *
-   * Exists because `author` is simultaneously the transport filter and the
-   * ranking context: passing `undefined` for transport would silently drop the
-   * author from ranking too, and `scoreResult` re-normalizes by `totalWeight`,
-   * so the score does not merely shrink — it changes shape, and
-   * `canonicalCompare` gates on it at a 0.1 band.
-   */
+  /** Ranking-only author context. Adapters must ignore it; scoring falls back to author. */
   rankingAuthor?: string | undefined;
 }
 
@@ -68,17 +49,7 @@ export interface IndexerTestResult {
   metadata?: Record<string, unknown> | undefined;
 }
 
-/**
- * Per-item parse trace produced by indexer adapters.
- * `source` is an adapter-specific origin marker:
- *   - 'item' for RSS <item> (Newznab, Torznab)
- *   - 'enclosure' for non-standard alternate-element traces
- *   - 'row' for JSON/HTML rows (MAM, ABB)
- *
- * `reason` is 'kept' for accepted items or 'dropped:<why>' for rejected ones.
- * `rawTitleBytes` is the hex of the first 32 raw-title bytes (UTF-8) and is
- * the diagnostic that lets a maintainer spot encoding issues from the log.
- */
+/** Per-item parse outcome; rawTitleBytes preserves UTF-8 shape for encoding diagnostics. */
 export interface IndexerParseTrace {
   source: 'item' | 'enclosure' | 'row';
   reason: 'kept' | 'dropped:empty-title' | 'dropped:no-url' | `dropped:${string}`;
@@ -97,21 +68,12 @@ export interface IndexerSearchResponse {
   results: SearchResult[];
   parseStats: IndexerParseStats;
   debugTrace: IndexerParseTrace[];
-  /**
-   * Optional transport metadata. Adapters with a single canonical request
-   * (Newznab, Torznab, MAM) populate both. ABB scrapes multiple pages and
-   * MAY populate the search-page request only, or omit both fields.
-   */
+  /** Canonical request metadata; ABB may report only its search request or omit both. */
   requestUrl?: string;
   httpStatus?: number;
 }
 
-/**
- * Explicit context passed to `IndexerAdapter.resolveDownloadUrl`. The
- * dispatch path satisfies all fields; `guid` is optional to match
- * `GrabParams.guid`. `isFreeleech` is required at the type level — callers
- * coerce missing values to `false` at the call site.
- */
+/** Grab context; guid mirrors optional GrabParams.guid and callers normalize isFreeleech. */
 export interface ResolveDownloadContext {
   guid?: string;
   downloadUrl: string;
@@ -121,12 +83,7 @@ export interface ResolveDownloadContext {
 
 export interface ResolveDownloadResult {
   downloadUrl: string;
-  /**
-   * MAM-only: `true` when the adapter appended the server-side `&fl` freeleech
-   * flag to the download fetch (Prefer mode + not-already-freeleech). Optional
-   * so adapters that never apply a wedge leave it unset. The service logs this
-   * one bit; MAM does not know inline whether the wedge was actually applied.
-   */
+  /** MAM only: freeleech was requested server-side, not necessarily applied. */
   wedgeRequested?: boolean;
 }
 
@@ -137,21 +94,11 @@ export interface IndexerAdapter {
   search(query: string, options?: SearchOptions): Promise<IndexerSearchResponse>;
   test(): Promise<IndexerTestResult>;
   refreshStatus?(): Promise<{ isVip: boolean; classname: string } | null>;
-  /**
-   * Optional grab-time hook that resolves a search-time `downloadUrl` (which
-   * may be an adapter-specific sentinel) into the real artifact URL. MAM uses
-   * this to fetch the torrent bytes lazily and optionally apply a freeleech
-   * wedge before download.
-   */
+  /** Resolve an adapter sentinel to its real grab URL; MAM may also request a freeleech wedge. */
   resolveDownloadUrl?(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult>;
 }
 
-/**
- * Compute the hex of the first `byteLimit` bytes of a string's UTF-8 encoding.
- * Returns undefined for empty input. Used by adapters to record `rawTitleBytes`
- * for the parse trace — captures encoding shape independently of how the
- * terminal renders the title.
- */
+/** Hex-encode the first UTF-8 bytes for render-independent title diagnostics. */
 export function rawTitleBytesHex(raw: string, byteLimit = 32): string | undefined {
   if (!raw) return undefined;
   const buf = Buffer.from(raw, 'utf8').subarray(0, byteLimit);

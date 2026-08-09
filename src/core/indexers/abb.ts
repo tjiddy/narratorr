@@ -17,8 +17,8 @@ import { requireDefined } from '@shared/utils/assert.js';
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface ABBConfig {
-  hostname: string; // e.g., 'audiobookbay.lu'
-  pageLimit: number; // Max pages to scrape per search
+  hostname: string; // Hostname only, e.g. audiobookbay.lu.
+  pageLimit: number;
   flareSolverrUrl?: string | undefined;
   proxyUrl?: string | undefined;
 }
@@ -106,7 +106,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     };
   }
 
-  /** Fetch detail pages, enrich results, and collect those with download URLs. Returns true when limit reached. */
+  /** Return true once the result limit is reached. */
   private async enrichAndCollect(
     pageResults: SearchResult[],
     results: SearchResult[],
@@ -167,7 +167,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       'Upgrade-Insecure-Requests': '1',
     };
 
-    // FlareSolverr takes precedence over standard proxy
+    // FlareSolverr takes precedence over the standard proxy.
     if (this.flareSolverrUrl) {
       return fetchWithProxy({ url, headers, proxyUrl: this.flareSolverrUrl, ...(signal !== undefined && { signal }) });
     }
@@ -185,7 +185,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     const debugTrace: IndexerParseTrace[] = [];
     let droppedEmptyTitle = 0;
 
-    // AudioBookBay uses various structures, try multiple selectors
+    // ABB markup varies; try selectors in preference order.
     const postSelectors = [
       'div.post',
       'article.post',
@@ -202,7 +202,6 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     posts.each((_, element) => {
       const $el = $(element);
 
-      // Try to find the title and link
       const titleSelectors = [
         '.postTitle h2 a',
         '.postTitle a',
@@ -227,16 +226,13 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         return;
       }
 
-      // Ensure absolute URL
       if (detailsUrl && !detailsUrl.startsWith('http')) {
         detailsUrl = `${this.baseUrl}${detailsUrl.startsWith('/') ? '' : '/'}${detailsUrl}`;
       }
 
-      // Try to find cover image
       const coverUrl = $el.find('img').first().attr('src') ||
                        $el.find('img').first().attr('data-src');
 
-      // Try to extract metadata from the post
       const postText = $el.text();
       const author = this.extractField(postText, ['Author:', 'Written by:', 'By:']);
       const narrator = this.extractField(postText, ['Narrator:', 'Narrated by:', 'Read by:']);
@@ -260,8 +256,6 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     const $ = cheerio.load(html);
     const result: Partial<SearchResult> = {};
 
-    // Extract info hash - it's typically displayed as plain text
-    // Common patterns: "Info Hash: abc123..." or in a table
     const infoHashPatterns = [
       /Info\s*Hash[:\s]*([a-f0-9]{40})/i,
       /infohash[:\s]*([a-f0-9]{40})/i,
@@ -269,7 +263,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       /([a-f0-9]{40})/i, // Last resort: any 40-char hex string
     ];
 
-    // First, try to find in specific elements that commonly contain the hash
+    // First search elements that commonly contain the hash; the whole page is the fallback.
     const hashContainers = [
       'td:contains("Info Hash")',
       '.torrent-detail',
@@ -293,10 +287,8 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       if (foundHash) break;
     }
 
-    // Extract page text once for reuse
     const pageText = $('body').text();
 
-    // If not found in specific containers, search the whole page
     if (!foundHash) {
       for (const pattern of infoHashPatterns) {
         const match = pageText.match(pattern);
@@ -307,16 +299,12 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       }
     }
 
-    // Build magnet URI (download URL) and set guid if we have an info hash
     if (result.infoHash) {
       result.guid = result.infoHash;
       const title = $('h1, .postTitle h2, article h2').first().text().trim();
       result.downloadUrl = buildMagnetUri(result.infoHash, title || undefined);
     }
 
-    // Extract additional metadata from the detail page
-
-    // Author
     if (!result.author) {
       const author = this.extractField(pageText, [
         'Author:',
@@ -326,7 +314,6 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       if (author !== undefined) result.author = author;
     }
 
-    // Narrator
     if (!result.narrator) {
       const narrator = this.extractField(pageText, [
         'Narrator:',
@@ -336,13 +323,11 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       if (narrator !== undefined) result.narrator = narrator;
     }
 
-    // Size
     const sizeMatch = pageText.match(/Size[:\s]*([\d.]+)\s*(MB|GB|TB)/i);
     if (sizeMatch?.[1] && sizeMatch[2]) {
       result.size = this.parseSize(sizeMatch[1], sizeMatch[2]);
     }
 
-    // Try to find seeders (may not be available on ABB)
     const seedersMatch = pageText.match(/Seeders?[:\s]*(\d+)/i);
     if (seedersMatch) {
       result.seeders = parseInt(seedersMatch[1]!, 10);
@@ -415,7 +400,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       });
 
       if (response.ok || response.status === 405) {
-        // 405 Method Not Allowed is okay for HEAD requests
+        // A 405 Method Not Allowed is acceptable for ABB HEAD requests.
         return { success: true, message: `Connected to ${this.config.hostname}` };
       }
 
@@ -435,7 +420,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
   private async testViaFlareSolverr(): Promise<{ success: boolean; message?: string }> {
     try {
-      // FlareSolverr has no request.head — use GET via request.get
+      // FlareSolverr has no request.head; use request.get.
       await fetchWithProxy({
         url: this.baseUrl,
         headers: { 'User-Agent': this.getNextUserAgent() },

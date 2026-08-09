@@ -190,7 +190,7 @@ describe('notification-events (leaf module)', () => {
 
   describe('schema-registry alignment', () => {
     it('notificationEventSchema.options matches NOTIFICATION_EVENTS exactly', async () => {
-      // Import dynamically to avoid pulling schema deps into this test
+      // Import dynamically to preserve the leaf-module dependency boundary.
       const { notificationEventSchema } = await import('./schemas/notifier.js');
       expect([...notificationEventSchema.options].sort()).toEqual([...NOTIFICATION_EVENTS].sort());
     });

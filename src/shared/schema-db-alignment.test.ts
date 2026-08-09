@@ -81,17 +81,13 @@ describe('schema-DB alignment', () => {
       expect([...books.enrichmentStatus.enumValues].sort()).toEqual([...ENRICHMENT_STATUSES].sort());
     });
 
-    // Guards the TypeScript surfaces (Drizzle column metadata + the Zod enum) against
-    // tuple drift. The DB-level *stored* value set is guarded separately by
-    // ck_companion_ebooks_status_domain, whose literal list derives from the same tuple.
+    // Stored values are separately constrained by ck_companion_ebooks_status_domain.
     it('companionEbooks.status DB column enum matches COMPANION_EBOOK_STATUSES and the Zod enum', () => {
       expect([...companionEbooks.status.enumValues].sort()).toEqual([...COMPANION_EBOOK_STATUSES].sort());
       expect([...companionEbookStatusSchema.options].sort()).toEqual([...COMPANION_EBOOK_STATUSES].sort());
     });
 
-    // #1710: SQLite text-enums emit no DB CHECK (drizzle-sqlite-text-enum-no-db-check),
-    // so this set-equality test is the only guard against productionTypeSchema and
-    // the books.production_type column drifting apart.
+    // SQLite text-enum metadata has no CHECK; this is the production-type drift guard.
     it('books.productionType DB column enum matches PRODUCTION_TYPES', () => {
       expect([...books.productionType.enumValues].sort()).toEqual([...PRODUCTION_TYPES].sort());
     });
@@ -112,9 +108,6 @@ describe('schema-DB alignment', () => {
       expect([...importLists.type.enumValues].sort()).toEqual([...IMPORT_LIST_TYPES].sort());
     });
 
-    // The two-axis split (#1445): Drizzle SQLite text-enums emit no DB CHECK, so
-    // these set-equality tests are the only guard against the Zod enum and the
-    // Drizzle column drifting apart for each axis.
     it('downloads.clientStatus DB column enum matches CLIENT_STATUSES', () => {
       expect([...downloads.clientStatus.enumValues].sort()).toEqual([...CLIENT_STATUSES].sort());
     });
@@ -123,9 +116,6 @@ describe('schema-DB alignment', () => {
       expect([...downloads.pipelineStage.enumValues].sort()).toEqual([...PIPELINE_STAGES].sort());
     });
 
-    // #1599: PROTOCOLS is the single source for the torrent/usenet enum across the
-    // Zod schemas, the DownloadProtocol type, and this DB column. SQLite text-enums
-    // emit no DB CHECK, so this set-equality test is the guard against drift.
     it('downloads.protocol DB column enum matches protocolSchema.options', () => {
       expect([...downloads.protocol.enumValues].sort()).toEqual([...protocolSchema.options].sort());
     });
@@ -158,15 +148,10 @@ describe('schema-DB alignment', () => {
       expect([...importJobs.phase.enumValues].sort()).toEqual([...importJobPhaseSchema.options].sort());
     });
 
-    // blacklist.blacklistType inlines its enum literal (schema.ts) rather than
-    // importing blacklistTypeSchema, so the two can genuinely drift — this is the
-    // only guard. (SQLite text-enums emit no DB CHECK: drizzle-sqlite-text-enum-no-db-check.)
     it('blacklist.blacklistType DB column enum matches blacklistTypeSchema.options', () => {
       expect([...blacklist.blacklistType.enumValues].sort()).toEqual([...blacklistTypeSchema.options].sort());
     });
 
-    // #1893: staged-import text-enums emit no DB CHECK, so these set-equality
-    // tests are the only guard against the Zod enum and the Drizzle column drifting.
     it('importSubmissions.status DB column enum matches SUBMISSION_STATUSES', () => {
       expect([...importSubmissions.status.enumValues].sort()).toEqual([...SUBMISSION_STATUSES].sort());
       expect([...submissionStatusSchema.options].sort()).toEqual([...SUBMISSION_STATUSES].sort());
@@ -182,8 +167,6 @@ describe('schema-DB alignment', () => {
       expect([...itemDispositionSchema.options].sort()).toEqual([...ITEM_DISPOSITIONS].sort());
     });
 
-    // importSubmissions.mode inlines its enum literal (schema.ts) rather than importing
-    // importModeSchema, so the two can genuinely drift — this is the only guard.
     it('importSubmissions.mode DB column enum matches importModeSchema.options', () => {
       expect([...importSubmissions.mode.enumValues].sort()).toEqual([...importModeSchema.options].sort());
     });
@@ -260,8 +243,7 @@ describe('schema-DB alignment', () => {
       expect([...protocolSchema.options].sort()).toEqual(original.sort());
     });
 
-    // The companion-ebook plan freezes this vocabulary — #1963 maps each value to
-    // owner-facing copy, so a value added or renamed here is a contract change.
+    // These values map to owner-facing copy; additions or renames are contract changes.
     it('companion ebook status values match the frozen contract list', () => {
       const original = ['available', 'none', 'ambiguous', 'invalid', 'drm_protected'];
       expect([...companionEbookStatusSchema.options].sort()).toEqual(original.sort());

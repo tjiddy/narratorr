@@ -4,7 +4,6 @@ import { qualityGateReasonSchema, type QualityGateReason } from './quality-gate-
 import type { QualityDecisionReason } from '../../server/services/quality-gate.types.js';
 import type { QualityGateData } from '../../client/lib/api/activity.js';
 
-/** A fully-populated, well-formed reason blob (all 16 launch keys present). */
 const fullReason = {
   action: 'held' as const,
   mbPerHour: 60,
@@ -25,10 +24,6 @@ const fullReason = {
 };
 
 describe('quality-gate-reason — type/schema drift guard (#1362)', () => {
-  // Both server and client types must derive from this schema. These assertions fail
-  // on EITHER drift direction — a schema key missing from a type AND a type key missing
-  // from the schema — closing the gap that `satisfies z.ZodType<T>` (one-directional)
-  // leaves open. Mirrors src/server/services/import-adapters/types.test.ts:39.
   it('QualityDecisionReason (server) equals z.infer of the schema', () => {
     expectTypeOf<z.infer<typeof qualityGateReasonSchema>>().toEqualTypeOf<QualityDecisionReason>();
   });

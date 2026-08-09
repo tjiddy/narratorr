@@ -18,10 +18,6 @@ export const qualitySettingsSchema = z.object({
   requiredWords: z.string().default(''),
 });
 
-// Form schema derived from qualitySettingsSchema via stripDefaults() — strips
-// .default() wrappers so all fields require explicit values in the form.
-// Cast to typed ZodObject for zodResolver/z.infer compatibility (Zod v4 limitation:
-// stripDefaults returns untyped shape; runtime behavior is correct).
 export const qualityFormSchema = stripDefaults(qualitySettingsSchema) as z.ZodObject<{
   grabFloor: z.ZodNumber;
   protocolPreference: typeof protocolPreferenceSchema;
@@ -33,8 +29,6 @@ export const qualityFormSchema = stripDefaults(qualitySettingsSchema) as z.ZodOb
   requiredWords: z.ZodString;
 }>;
 
-/** Quality-filtering fields only (excludes new-book defaults) — used by QualitySettingsSection form */
 export const qualityFilteringFormSchema = qualityFormSchema.omit({ searchImmediately: true });
 
-/** New-book default fields only — used by LibrarySettingsSection "When a New Book Is Added" form */
 export const newBookDefaultsFormSchema = qualityFormSchema.pick({ searchImmediately: true });
