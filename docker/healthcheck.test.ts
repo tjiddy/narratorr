@@ -7,16 +7,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dockerfile = path.join(__dirname, '..', 'Dockerfile');
 
-/**
- * Tests the Docker HEALTHCHECK command's URL_BASE variable expansion.
- *
- * The Dockerfile uses:
- *   curl -sf http://localhost:3000${URL_BASE:-}/api/health
- *
- * This verifies the shell expansion produces correct URLs for both
- * root deployments (URL_BASE unset) and subpath deployments (URL_BASE=/narratorr).
- */
-
+// Execute Bash's `${URL_BASE:-}` expansion for root and subpath values.
 function expandHealthcheckUrl(urlBase: string | undefined): string {
   const lines = [
     urlBase !== undefined ? `URL_BASE="${urlBase}"` : '',

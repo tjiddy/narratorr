@@ -10,7 +10,6 @@ const composePath = path.join(__dirname, '..', 'docker-compose.yml');
 describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
   let content: string;
 
-  // Load once — all tests read the same file
   function load(): string {
     if (!content) {
       content = fs.readFileSync(workflowPath, 'utf-8');
@@ -26,7 +25,6 @@ describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
 
     it('triggers release-channel builds only on strict semver tags', () => {
       const wf = load();
-      // vX.Y.Z only — dev milestone tags like v1219_01 must NOT match this filter
       expect(wf).toContain("tags: ['v[0-9]+.[0-9]+.[0-9]+']");
     });
 
@@ -97,10 +95,7 @@ describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
       const wf = load();
       expect(wf).toContain('GIT_TAG=${{ steps.vars.outputs.git_tag }}');
 
-      // The abbreviation width is a fourth copy of SHORT_SHA_LENGTH living in bash,
-      // outside TypeScript's reach — and the dev tag is what the UI renders as the
-      // version, so a drift here is user-visible. Derived, not literal, so this
-      // asserts agreement rather than re-stating the number.
+      // Bash owns a fourth SHORT_SHA_LENGTH copy; drift changes the user-visible dev version.
       const { SHORT_SHA_LENGTH } = await import('../src/server/utils/version.js');
       expect(wf).toContain('git_tag=develop-${GITHUB_SHA::' + SHORT_SHA_LENGTH + '}');
     });
@@ -169,8 +164,7 @@ describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
 
     it('asserts the third-party notice + LICENSE shipped non-empty in the image (#1862)', () => {
       const wf = load();
-      // Runtime deployment evidence — content sanity lives in license-notice.test.ts
-      // (pnpm verify); build gate + this check are presence-only.
+      // Runtime proves presence; license-notice.test.ts owns content validation.
       expect(wf).toContain('test -s /app/THIRD_PARTY_NOTICES.md');
       expect(wf).toContain('test -s /app/LICENSE');
       expect(wf).toContain('third-party notice or LICENSE missing/empty in published image');
@@ -185,7 +179,6 @@ describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
 
     it('parses the ffmpeg major numerically and fails the build when it is < 8', () => {
       const wf = load();
-      // Numeric capture (not a substring grep) followed by an integer `-lt 8` compare.
       expect(wf).toMatch(/FFMPEG_MAJOR=.*sed/);
       expect(wf).toMatch(/\$FFMPEG_MAJOR"?\s+-lt\s+8/);
       expect(wf).toContain('xHE-AAC/USAC decode regression (#1679)');
@@ -193,8 +186,6 @@ describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
 
     it('verifies ffprobe is executable at the app-derived path, not just anywhere on PATH', () => {
       const wf = load();
-      // Must derive ffprobe from the resolved ffmpeg path the same way deriveFfprobePath()
-      // does (trailing 'ffmpeg' -> 'ffprobe' swap), NOT a bare `command -v ffprobe`.
       expect(wf).toContain("command -v ffmpeg");
       expect(wf).toMatch(/FFPROBE_PATH=.*sed 's\/ffmpeg\$\/ffprobe\//);
       expect(wf).toMatch(/test -x "\$FFPROBE_PATH"/);
