@@ -56,7 +56,6 @@ describe('BooksTabContent', () => {
   it('renders "Add manually" CTA button in empty state (#246)', () => {
     renderBooksTab([]);
     expect(screen.getByRole('button', { name: /add manually/i })).toBeInTheDocument();
-    // Modal should NOT be open until CTA is clicked
     expect(getModal()).toBeNull();
   });
 
@@ -79,11 +78,9 @@ describe('BooksTabContent', () => {
     await user.type(screen.getByLabelText(/title/i), 'Test Book');
     await user.click(screen.getByRole('button', { name: /add book/i }));
 
-    // After success, modal should close
     await waitFor(() => {
       expect(getModal()).toBeNull();
     });
-    // CTA button should still be there
     expect(screen.getByRole('button', { name: /add manually/i })).toBeInTheDocument();
   });
 
@@ -230,7 +227,6 @@ describe('#296 modal behavior', () => {
     const backdrop = screen.getByTestId('modal-backdrop');
     await user.click(backdrop);
 
-    // Modal should still be open
     expect(getModal()).not.toBeNull();
   });
 
@@ -243,12 +239,10 @@ describe('#296 modal behavior', () => {
     const user = userEvent.setup();
     renderBooksTab([]);
 
-    // Open, type something, close via Escape
     await user.click(screen.getByRole('button', { name: /add manually/i }));
     await user.type(screen.getByLabelText(/title/i), 'Stale Value');
     await user.keyboard('{Escape}');
 
-    // Re-open — title should be empty (form remounted)
     await user.click(screen.getByRole('button', { name: /add manually/i }));
     expect(screen.getByLabelText(/title/i)).toHaveValue('');
   });
@@ -267,7 +261,6 @@ describe('#296 modal behavior', () => {
       expect(screen.getByRole('button', { name: /adding/i })).toBeDisabled();
     });
 
-    // Resolve to clean up
     resolveAdd({ id: 1, title: 'Test' });
     await waitFor(() => {
       expect(getModal()).toBeNull();
@@ -284,16 +277,13 @@ describe('#296 modal behavior', () => {
     await user.type(screen.getByLabelText(/title/i), 'Test');
     await user.click(screen.getByRole('button', { name: /add book/i }));
 
-    // Wait for pending state
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /adding/i })).toBeDisabled();
     });
 
-    // Escape should NOT close modal while pending
     await user.keyboard('{Escape}');
     expect(getModal()).not.toBeNull();
 
-    // Resolve to clean up
     resolveAdd({ id: 1, title: 'Test' });
     await waitFor(() => {
       expect(getModal()).toBeNull();
@@ -329,7 +319,6 @@ describe('#296 modal behavior', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to add book: Server error');
     });
-    // Modal stays open
     expect(getModal()).not.toBeNull();
   });
 
@@ -342,12 +331,10 @@ describe('#296 modal behavior', () => {
     await user.type(screen.getByLabelText(/title/i), 'Test');
     await user.click(screen.getByRole('button', { name: /add book/i }));
 
-    // Wait for error to surface
     await waitFor(() => {
       expect(getModal()).not.toBeNull();
     });
 
-    // Escape should still work after error (not pending anymore)
     await user.keyboard('{Escape}');
     expect(getModal()).toBeNull();
   });
@@ -357,13 +344,11 @@ describe('#296 modal behavior', () => {
     renderBooksTab([]);
 
     await user.click(screen.getByRole('button', { name: /add manually/i }));
-    // Don't type a title — submit immediately
     await user.click(screen.getByRole('button', { name: /add book/i }));
 
     await waitFor(() => {
       expect(screen.getByText('Title is required')).toBeInTheDocument();
     });
-    // Modal stays open
     expect(getModal()).not.toBeNull();
     expect(mockedApi.addBook).not.toHaveBeenCalled();
   });
@@ -373,14 +358,12 @@ describe('#296 modal behavior', () => {
     renderBooksTab([]);
 
     await user.click(screen.getByRole('button', { name: /add manually/i }));
-    // Submit without title to trigger validation
     await user.click(screen.getByRole('button', { name: /add book/i }));
 
     await waitFor(() => {
       expect(screen.getByText('Title is required')).toBeInTheDocument();
     });
 
-    // Escape should still work after validation error
     await user.keyboard('{Escape}');
     expect(getModal()).toBeNull();
   });
@@ -411,7 +394,6 @@ describe('#296 modal behavior', () => {
       expect(screen.getByRole('button', { name: /close/i })).toBeDisabled();
     });
 
-    // Resolve to clean up
     resolveAdd({ id: 1, title: 'Test' });
     await waitFor(() => {
       expect(getModal()).toBeNull();
