@@ -8,7 +8,6 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 
-// Mock side-effect helpers — we test orchestrator dispatch, not the helpers
 vi.mock('../utils/download-side-effects.js', () => ({
   emitGrabStarted: vi.fn(),
   emitBookStatusChangeOnGrab: vi.fn(),
@@ -21,7 +20,6 @@ vi.mock('../utils/download-side-effects.js', () => ({
   recordDownloadFailedEvent: vi.fn(),
 }));
 
-// Mock book-status utility
 vi.mock('../utils/book-status.js', () => ({
   revertBookStatus: vi.fn().mockResolvedValue('wanted'),
   transitionBookStatus: vi.fn().mockResolvedValue(true),
@@ -113,9 +111,7 @@ describe('DownloadOrchestrator', () => {
     blacklistService = inject<BlacklistService>({ create: vi.fn().mockResolvedValue({ id: 99 }) });
     const mockWhere = vi.fn().mockResolvedValue(undefined);
     const mockSet = vi.fn().mockReturnValue({ where: mockWhere });
-    // `select(...).from(...).where(...).limit(...)` — orchestrator uses this to
-    // capture pre-grab `books.status` (#1144). Default fixture book.status is
-    // 'imported' so existing tests keep the auto-upgrade-style replacement shape.
+    // Default the pre-grab status to the auto-upgrade (`imported`) path.
     const mockSelectChain = {
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
@@ -147,7 +143,6 @@ describe('DownloadOrchestrator', () => {
 
     it('dispatches book_status_change SSE after successful grab with the captured prior lifecycle as old_status', async () => {
       await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 });
-      // Default fixture pre-grab status is 'imported' (auto-upgrade shape).
       expect(emitBookStatusChangeOnGrab).toHaveBeenCalledWith(expect.objectContaining({
         broadcaster, bookId: 2, isHandoff: false, oldStatus: 'imported',
       }));
@@ -190,7 +185,6 @@ describe('DownloadOrchestrator', () => {
       (downloadService.grab as ReturnType<typeof vi.fn>).mockRejectedValue(new DuplicateDownloadError('Book 2 already has an active download (id: 1)', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
       await expect(orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 }))
         .rejects.toThrow(DuplicateDownloadError);
-      // No side effects should fire on error
       expect(emitGrabStarted).not.toHaveBeenCalled();
     });
 
@@ -220,7 +214,6 @@ describe('DownloadOrchestrator', () => {
       expect(result).toBe(mockDownload);
     });
 
-    // #1144 — capture pre-grab book.status as durable signal for quality gate
     describe('bookStatusAtGrab capture (#1144)', () => {
       function withBookStatus(status: string) {
         (mockDb as Record<string, unknown>).select = vi.fn().mockReturnValue({
@@ -255,13 +248,10 @@ describe('DownloadOrchestrator', () => {
         expect(downloadService.grab).toHaveBeenCalledWith(
           expect.objectContaining({ bookStatusAtGrab: null }),
         );
-        // No books lookup when bookId absent
         expect((mockDb as Record<string, unknown>).select).not.toHaveBeenCalled();
       });
 
       it('captures the pre-grab status BEFORE the orchestrator flips the book to downloading', async () => {
-        // Capture call order — select (books.status) must happen before the guarded
-        // transition that flips the book status.
         const callOrder: string[] = [];
         (mockDb as Record<string, unknown>).select = vi.fn().mockImplementation(() => {
           callOrder.push('select');
@@ -344,7 +334,6 @@ describe('DownloadOrchestrator', () => {
       expect(result).toBe(true);
     });
 
-    // #315 — blacklist integration
     it('calls blacklistService.create() with correct identifiers, reason user_cancelled, and blacklistType permanent when infoHash present', async () => {
       await orchestrator.cancel(1);
       expect(blacklistService.create).toHaveBeenCalledWith({
@@ -463,7 +452,6 @@ describe('DownloadOrchestrator', () => {
     });
 
     it('records download_completed event when progress >= 1', async () => {
-      // Need to set up getById for the title lookup
       (downloadService.getById as ReturnType<typeof vi.fn>).mockResolvedValue(mockDownload);
       await orchestrator.updateProgress(1, 1.0, 2);
       expect(recordDownloadCompletedEvent).toHaveBeenCalledWith(expect.objectContaining({
@@ -511,7 +499,6 @@ describe('DownloadOrchestrator', () => {
 
     it('still succeeds if download_failed event recording throws', async () => {
       (recordDownloadFailedEvent as ReturnType<typeof vi.fn>).mockImplementation(() => { throw new Error('event fail'); });
-      // Should not throw
       await orchestrator.setError(1, 'Connection lost', { bookId: 2, oldStatus: 'downloading' });
       expect(downloadService.setError).toHaveBeenCalled();
     });
@@ -521,7 +508,6 @@ describe('DownloadOrchestrator', () => {
     it('notification failure does not prevent SSE broadcast', async () => {
       (notifyGrab as ReturnType<typeof vi.fn>).mockImplementation(() => { throw new Error('notify fail'); });
       await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 });
-      // SSE helpers should still have been called
       expect(emitGrabStarted).toHaveBeenCalled();
     });
 
@@ -543,8 +529,6 @@ describe('DownloadOrchestrator', () => {
       expect(callArg.replaceExisting).toBeUndefined();
     });
 
-    // ===== #248 — guid threading =====
-
     it('passes guid to downloadService.grab when provided', async () => {
       await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2, guid: 'test-guid-123' });
       expect(downloadService.grab).toHaveBeenCalledWith(
@@ -559,7 +543,6 @@ describe('DownloadOrchestrator', () => {
     });
   });
 
-  // ── #1857 orchestrator-level integration: real lock/single-flight/commit-boundary wiring ──
   const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
   const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -593,8 +576,6 @@ describe('DownloadOrchestrator', () => {
       const p2 = orchestrator.grabInternal({ downloadUrl: 'm', title: 'B', bookId: 900 });
       await flush();
 
-      // The second admission is blocked behind the first — only one grab in flight.
-      // If the lock were removed, both would fire immediately → count 2 here.
       expect(downloadService.grab).toHaveBeenCalledTimes(1);
       releaseFirst(mockDownload);
       await Promise.all([p1, p2]);
@@ -602,12 +583,10 @@ describe('DownloadOrchestrator', () => {
     });
 
     it('grabForRetry rechecks IN-LOCK via hasGrabBlocker: skips the grab when the book already has a blocker', async () => {
-      // #1861 — the in-lock recheck runs the consolidated blocker classification
-      // (gatherBookBlockers → classifyBlockers) against the db, not getActiveByBookId.
       const replaceableRow = { id: 1, title: 'X', clientStatus: 'queued', pipelineStage: 'idle', externalId: 'e', addedAt: new Date() };
       (mockDb as Record<string, unknown>).select = vi.fn()
-        .mockReturnValueOnce(mockDbChain([replaceableRow])) // downloads (blocker present)
-        .mockReturnValueOnce(mockDbChain([]));              // importJobs
+        .mockReturnValueOnce(mockDbChain([replaceableRow])) // downloads: blocker present
+        .mockReturnValueOnce(mockDbChain([])); // importJobs
       const result = await orchestrator.grabForRetry({ downloadUrl: 'm', title: 'A', bookId: 901 });
       expect(result).toBe('already_active');
       expect(downloadService.grab).not.toHaveBeenCalled();
@@ -615,23 +594,20 @@ describe('DownloadOrchestrator', () => {
 
     it('grabForRetry grabs when no grab blocker exists for the book', async () => {
       (mockDb as Record<string, unknown>).select = vi.fn()
-        .mockReturnValueOnce(mockDbChain([])) // downloads (no blocker)
-        .mockReturnValueOnce(mockDbChain([])) // importJobs (no auto job)
-        .mockReturnValue(mockDbChain([{ status: 'wanted' }])); // books.status capture in grabWithinAdmissionLock
+        .mockReturnValueOnce(mockDbChain([])) // downloads
+        .mockReturnValueOnce(mockDbChain([])) // importJobs: no auto job
+        .mockReturnValue(mockDbChain([{ status: 'wanted' }])); // pre-grab book status
       const result = await orchestrator.grabForRetry({ downloadUrl: 'm', title: 'A', bookId: 902 });
       expect(result).toBe(mockDownload);
       expect(downloadService.grab).toHaveBeenCalled();
     });
 
-    // #1861 F3 — a tracked QG-eligible completed row (completed display + non-empty
-    // externalId) is a blocker at the REAL orchestrator seam. A regression narrowing
-    // hasGrabBlocker back to only-replaceable rows would reopen the tracked-completed
-    // retry-admission window while the boolean-mocking retry tests stayed green.
+    // The real gather/classify seam catches blocker narrowing that boolean-mocked retry tests cannot.
     it('grabForRetry treats a tracked QG-completed row as already_active (real gather seam)', async () => {
       const qgRow = { id: 3, title: 'Tracked', clientStatus: 'completed', pipelineStage: 'idle', externalId: 'ext-tracked', addedAt: new Date() };
       (mockDb as Record<string, unknown>).select = vi.fn()
-        .mockReturnValueOnce(mockDbChain([qgRow])) // downloads (QG-eligible completed)
-        .mockReturnValueOnce(mockDbChain([]));     // importJobs (none)
+        .mockReturnValueOnce(mockDbChain([qgRow])) // downloads: QG-eligible completed row
+        .mockReturnValueOnce(mockDbChain([])); // importJobs: none
       const result = await orchestrator.grabForRetry({ downloadUrl: 'm', title: 'A', bookId: 903 });
       expect(result).toBe('already_active');
       expect(downloadService.grab).not.toHaveBeenCalled();
@@ -645,13 +621,11 @@ describe('DownloadOrchestrator', () => {
       expect(await orchestrator.hasGrabBlocker(903)).toBe(true);
     });
 
-    // #1861 F4 — a pending/processing auto import job is a blocker even when NO
-    // download row matches. A regression dropping the auto-job half of the gather
-    // would pass the boolean-mocking retry tests but fail here.
+    // The real gather seam must include auto-import jobs even when no download row matches.
     it('grabForRetry treats a pending auto import job as already_active (real gather seam)', async () => {
       (mockDb as Record<string, unknown>).select = vi.fn()
-        .mockReturnValueOnce(mockDbChain([]))          // downloads (none)
-        .mockReturnValueOnce(mockDbChain([{ id: 77 }])); // importJobs (pending auto job)
+        .mockReturnValueOnce(mockDbChain([])) // downloads
+        .mockReturnValueOnce(mockDbChain([{ id: 77 }])); // pending import job
       const result = await orchestrator.grabForRetry({ downloadUrl: 'm', title: 'A', bookId: 904 });
       expect(result).toBe('already_active');
       expect(downloadService.grab).not.toHaveBeenCalled();
@@ -668,12 +642,12 @@ describe('DownloadOrchestrator', () => {
   describe('single-flight through grabWithReplace (F6)', () => {
     it('coalesces two concurrent IDENTICAL confirmed replaces into ONE admission', async () => {
       const { db, ds, orch } = makeReplaceOrch();
-      db.select.mockReturnValue(mockDbChain([])); // clear book (gather empty) + null book-status capture
+      db.select.mockReturnValue(mockDbChain([]));
       const p = { downloadUrl: 'm', title: 'New', bookId: 810, replace: true, guid: 'same-id' };
 
       const [a, b] = await Promise.all([orch.grabInternal(p), orch.grabInternal(p)]);
 
-      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1); // second joined the first's in-flight promise
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1);
       expect(a).toBe(mockDownload);
       expect(b).toBe(mockDownload);
     });
@@ -696,20 +670,19 @@ describe('DownloadOrchestrator', () => {
     it('v1/auto path: a post-insert book-status failure PROPAGATES (grab rejects)', async () => {
       asMock(transitionBookStatus).mockRejectedValueOnce(new Error('db locked'));
       await expect(orchestrator.grab({ downloadUrl: 'm', title: 'A', bookId: 920 })).rejects.toThrow('db locked');
-      // Insert succeeded (grab ran); only the post-insert status write threw — legacy propagates (F16).
       expect(downloadService.grab).toHaveBeenCalled();
     });
 
     it('internal replace path: PERSISTENT book-status failure → grab SUCCEEDS + no book_status_change SSE', async () => {
       const { db, orch } = makeReplaceOrch();
-      db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // claim lands
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.select.mockReturnValueOnce(mockDbChain([replaceableRow()])).mockReturnValue(mockDbChain([]));
-      asMock(transitionBookStatus).mockRejectedValue(new Error('db locked')); // persistent
+      asMock(transitionBookStatus).mockRejectedValue(new Error('db locked'));
 
       const result = await orch.grabInternal({ downloadUrl: 'm', title: 'New', bookId: 930, replace: true, guid: 'g' });
 
-      expect(result).toBe(mockDownload); // best-effort — grab still resolves
-      expect(emitBookStatusChangeOnGrab).not.toHaveBeenCalled(); // truthful SSE: suppressed on failure (F29)
+      expect(result).toBe(mockDownload);
+      expect(emitBookStatusChangeOnGrab).not.toHaveBeenCalled();
     });
 
     it('internal replace path: book-status write RETRY-SUCCESS → exactly one book_status_change SSE', async () => {
@@ -721,24 +694,23 @@ describe('DownloadOrchestrator', () => {
       const result = await orch.grabInternal({ downloadUrl: 'm', title: 'New', bookId: 931, replace: true, guid: 'g' });
 
       expect(result).toBe(mockDownload);
-      expect(emitBookStatusChangeOnGrab).toHaveBeenCalledTimes(1); // exactly one truthful event
+      expect(emitBookStatusChangeOnGrab).toHaveBeenCalledTimes(1);
     });
   });
 
-  // ── #1857 F18 — the FULL AC5 single-flight enumerated contracts ──
   describe('single-flight enumerated contracts (F18/AC5)', () => {
     it('terminal Blackhole winner: two identical confirmed replaces coalesce to ONE handoff (one client-add), both share it', async () => {
       const { db, ds, orch } = makeReplaceOrch();
-      db.select.mockReturnValue(mockDbChain([])); // clear book
-      asMock(ds.grab).mockResolvedValue(handoffDownload); // externalId null (terminal handoff)
+      db.select.mockReturnValue(mockDbChain([]));
+      asMock(ds.grab).mockResolvedValue(handoffDownload);
       asMock(ds.getById).mockResolvedValue(handoffDownload);
       const p = { downloadUrl: 'm', title: 'BH', bookId: 850, replace: true, guid: 'bh-id' };
 
       const [a, b] = await Promise.all([orch.grabInternal(p), orch.grabInternal(p)]);
 
-      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1); // exactly one row-insert / client-add
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1);
       expect(a).toBe(handoffDownload);
-      expect(b).toBe(handoffDownload); // the waiter shares the one terminal handoff
+      expect(b).toBe(handoffDownload);
     });
 
     it('no self-deadlock: a single confirmed replace acquires the book key ONCE and completes under a timeout', async () => {
@@ -761,7 +733,7 @@ describe('DownloadOrchestrator', () => {
       const p1 = orch.grabInternal({ downloadUrl: 'm', title: 'A', bookId: 852, replace: true, guid: 'a' });
       const p2 = orch.grabInternal({ downloadUrl: 'm', title: 'B', bookId: 852, replace: true, guid: 'b' });
       await flush();
-      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1); // second section has not entered its grab
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1);
       releaseFirst(mockDownload);
       await Promise.all([p1, p2]);
       expect(asMock(ds.grab)).toHaveBeenCalledTimes(2);
@@ -771,10 +743,10 @@ describe('DownloadOrchestrator', () => {
       const { db, ds, orch } = makeReplaceOrch();
       db.select.mockReturnValue(mockDbChain([]));
       const pA = { downloadUrl: 'm', title: 'A', bookId: 853, replace: true, guid: 'a' };
-      await orch.grabInternal(pA); // A1 settles
-      await orch.grabInternal({ downloadUrl: 'm', title: 'B', bookId: 853, replace: true, guid: 'b' }); // B
-      await orch.grabInternal(pA); // A2 after A1 settled → fresh (entry evicted)
-      expect(asMock(ds.grab)).toHaveBeenCalledTimes(3); // no stale coalescing
+      await orch.grabInternal(pA);
+      await orch.grabInternal({ downloadUrl: 'm', title: 'B', bookId: 853, replace: true, guid: 'b' });
+      await orch.grabInternal(pA);
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(3);
     });
 
     it('A→B→A pending: A2 joins A1 while B is queued; A2 shares A1 outcome and B still runs', async () => {
@@ -784,29 +756,28 @@ describe('DownloadOrchestrator', () => {
       const bdl = { ...mockDownload, id: 200 } as typeof mockDownload;
       let releaseA1!: (v: unknown) => void;
       asMock(ds.grab)
-        .mockImplementationOnce(() => new Promise((r) => { releaseA1 = r; })) // A1 deferred
-        .mockImplementationOnce(() => Promise.resolve(bdl));                   // B
+        .mockImplementationOnce(() => new Promise((r) => { releaseA1 = r; }))
+        .mockImplementationOnce(() => Promise.resolve(bdl));
       asMock(ds.getById).mockImplementation((id: number) => Promise.resolve(id === 200 ? bdl : a1dl));
       const pA = { downloadUrl: 'm', title: 'A', bookId: 854, replace: true, guid: 'a' };
       const pB = { downloadUrl: 'm', title: 'B', bookId: 854, replace: true, guid: 'b' };
 
-      const a1 = orch.grabInternal(pA); // A1 starts, holds the book mutex
-      const b = orch.grabInternal(pB);  // B queued behind on the book mutex
+      const a1 = orch.grabInternal(pA);
+      const b = orch.grabInternal(pB);
       await flush();
-      const a2 = orch.grabInternal(pA); // A2 joins A1's still-pending promise
+      const a2 = orch.grabInternal(pA);
       await flush();
-      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1); // only A1 has grabbed; A2 coalesced, B queued
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1);
 
       releaseA1(a1dl);
       const [r1, r2] = await Promise.all([a1, a2]);
       await b;
       expect(r1.id).toBe(100);
-      expect(r2.id).toBe(100); // A2 shared A1's outcome
-      expect(asMock(ds.grab)).toHaveBeenCalledTimes(2); // A1 + B ran; A2 did not add a third
+      expect(r2.id).toBe(100);
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(2);
     });
   });
 
-  // ── #1857 F19 — shared admission mutex proven across EVERY book-scoped entry path ──
   describe('shared admission mutex across entry paths (F19/AC13/AC17)', () => {
     it('a confirmed replace and a concurrent legacy grab() (v1/RSS/search-pipeline representative) do NOT overlap', async () => {
       const { db, ds, orch } = makeReplaceOrch();
@@ -816,9 +787,8 @@ describe('DownloadOrchestrator', () => {
         .mockImplementationOnce(() => new Promise((r) => { releaseReplace = r; }))
         .mockImplementationOnce(() => Promise.resolve(mockDownload));
       const replace = orch.grabInternal({ downloadUrl: 'm', title: 'R', bookId: 860, replace: true, guid: 'r' });
-      const legacy = orch.grab({ downloadUrl: 'm', title: 'L', bookId: 860 }); // the shared grab() path
+      const legacy = orch.grab({ downloadUrl: 'm', title: 'L', bookId: 860 });
       await flush();
-      // Removing the lock from grab() would let legacy fire immediately → count 2 here.
       expect(asMock(ds.grab)).toHaveBeenCalledTimes(1);
       releaseReplace(mockDownload);
       await Promise.all([replace, legacy]);
@@ -828,7 +798,7 @@ describe('DownloadOrchestrator', () => {
     it('a confirmed replace and a concurrent grabForRetry on the same book do NOT overlap', async () => {
       const { db, ds, orch } = makeReplaceOrch();
       db.select.mockReturnValue(mockDbChain([]));
-      asMock(ds.getActiveByBookId).mockResolvedValue([]); // retry would proceed to grab
+      asMock(ds.getActiveByBookId).mockResolvedValue([]);
       let releaseReplace!: (v: unknown) => void;
       asMock(ds.grab)
         .mockImplementationOnce(() => new Promise((r) => { releaseReplace = r; }))
@@ -843,25 +813,23 @@ describe('DownloadOrchestrator', () => {
     });
   });
 
-  // ── #1857 F21 — Blackhole post-insert commit boundary (AC14) ──
   describe('Blackhole post-insert commit boundary (F21/AC14)', () => {
     it('persistent status-write failure → grab SUCCEEDS, one handoff, concurrent waiter shares it, degraded logged, entry evicted on settle', async () => {
       const { db, ds, orch } = makeReplaceOrch();
-      db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // claim lands (replaceable path → bestEffort book status)
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.select.mockReturnValueOnce(mockDbChain([replaceableRow()])).mockReturnValue(mockDbChain([]));
-      asMock(ds.grab).mockResolvedValue(handoffDownload); // terminal handoff winner
+      asMock(ds.grab).mockResolvedValue(handoffDownload);
       asMock(ds.getById).mockResolvedValue(handoffDownload);
-      asMock(transitionBookStatus).mockRejectedValue(new Error('db unwritable')); // every retry fails
+      asMock(transitionBookStatus).mockRejectedValue(new Error('db unwritable'));
 
       const p = { downloadUrl: 'm', title: 'BH', bookId: 870, replace: true, guid: 'bh' };
       const [a, b] = await Promise.all([orch.grabInternal(p), orch.grabInternal(p)]);
 
-      expect(a).toBe(handoffDownload); // handoff already committed → grab still succeeds
-      expect(b).toBe(handoffDownload); // concurrent waiter shares the ONE handoff
+      expect(a).toBe(handoffDownload);
+      expect(b).toBe(handoffDownload);
       expect(asMock(ds.grab)).toHaveBeenCalledTimes(1);
-      expect(emitBookStatusChangeOnGrab).not.toHaveBeenCalled(); // no false SSE (F29)
-      expect(log.warn).toHaveBeenCalled(); // operator-visible degraded state logged
-      // Registry entry evicts on settle — a later re-grab is fresh (no post-settlement dedup, F36).
+      expect(emitBookStatusChangeOnGrab).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalled();
       expect(hasInFlightReplace(`870::${canonicalReleaseIdentity(p)}`)).toBe(false);
     });
   });

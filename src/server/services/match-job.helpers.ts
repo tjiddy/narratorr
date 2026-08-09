@@ -14,28 +14,12 @@ import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 import { withinDurationTolerance } from '@shared/duration-tolerance.js';
 import { formatDurationSeconds } from '@shared/format-duration.js';
 
-/** User-facing reason surfaced on a post-match recording-review row (#1711). */
+/** User-facing recording-review reason; machine-specific reasons stay in logs. */
 export const RECORDING_REVIEW_REASON =
   'Possible different recording of a book you already own — review before importing';
 
-/**
- * Post-match recording-identity check (#1662, #1711). On a resolved match, ask
- * the three-way `findDuplicate` whether the matched recording is already owned,
- * a different recording, or needs review — `bestMatch` carries the narrators +
- * duration the resolver needs (a no-author filename does not):
- *
- *  - `same-recording` → flag `isDuplicate=true, duplicateReason='slug'` (owned),
- *    plus `recordingVerdict:'same-recording'`.
- *  - `review`/no-signal → set the display-only `reviewReason` (NOT a hard
- *    `isDuplicate`) so the UI surfaces it but the row still flows, plus
- *    `recordingVerdict:'review'`.
- *  - `different-recording` WITH an incumbent → `recordingVerdict:'different-recording'`
- *    (a deliberate new recording of an owned title); not a duplicate, row stays selected.
- *  - `different-recording` WITHOUT an incumbent → a genuinely new book; left unflagged
- *    (no verdict, no badge).
- *
- * A failed lookup is non-fatal: the match still returns, just without a flag.
- */
+/** Annotate a resolved match from the three-way recording check. Review remains display-only;
+ * different recordings are flagged only with an incumbent, and lookup failure is non-fatal. */
 export async function applyLibraryDuplicate(
   result: MatchResult,
   bookService: Pick<BookService, 'findDuplicate'>,
@@ -49,9 +33,7 @@ export async function applyLibraryDuplicate(
       ...(result.bestMatch.asin !== undefined && { asin: result.bestMatch.asin }),
       ...(result.bestMatch.narrators !== undefined && { narrators: result.bestMatch.narrators }),
       ...(result.bestMatch.duration !== undefined && { duration: result.bestMatch.duration }),
-      // Production form (#1728, F2): normalize the matched edition's formatType so
-      // an abridged-vs-unabridged best match with no usable duration classifies as
-      // review rather than a silent same-recording duplicate.
+      // Normalize production form so an unmeasured abridged mismatch cannot look like the same recording.
       ...(result.bestMatch.formatType ? { productionType: normalizeProductionType(result.bestMatch.formatType) } : {}),
     });
     if (resolution.verdict === 'same-recording' && resolution.book) {
@@ -66,9 +48,7 @@ export async function applyLibraryDuplicate(
         { path: result.path, existingBookId: resolution.book?.id, title: result.bestMatch.title, recordingReviewReason: resolution.recordingReviewReason },
         'Post-match recording review required',
       );
-      // The user-facing `reviewReason` display text is intentionally left as the
-      // generic human warning (#1728): the machine reason rides the log context
-      // above, never into the display string.
+      // Keep the machine reason in logs; the UI receives a stable generic warning.
       return {
         ...result,
         reviewReason: RECORDING_REVIEW_REASON,
@@ -76,8 +56,7 @@ export async function applyLibraryDuplicate(
         ...(resolution.book ? { existingBookId: resolution.book.id } : {}),
       };
     }
-    // `different-recording` WITH an incumbent → a new recording of an owned title.
-    // A different-recording with NO incumbent is a genuinely new book — left unflagged.
+    // Without an incumbent, a different recording is simply a new book and stays unflagged.
     if (resolution.verdict === 'different-recording' && resolution.hasIncumbent) {
       log.debug(
         { path: result.path, title: result.bestMatch.title },
@@ -93,19 +72,12 @@ export async function applyLibraryDuplicate(
 
 const CAPPED_ATTEMPT_REASON = 'Low confidence match. Please verify.';
 
-/**
- * Cap a computed Confidence at the planner-attempt's `maxConfidence`. Stripped
- * attempts (album/strip-leading-series/etc.) emit `'medium'` as their cap so
- * downstream Review/Verified UI can flag them for human attention even when
- * the duration check would otherwise bless them as `'high'`.
- */
 export function capConfidence(c: Confidence, cap: 'high' | 'medium'): Confidence {
   if (cap === 'medium' && c === 'high') return 'medium';
   return c;
 }
 
-// Cap-driven downgrades from a planner attempt need a user-facing tooltip
-// reason; without one the amber Review pill renders with no explanation (#1052).
+// Cap-driven downgrades need a tooltip reason for the Review pill.
 export function applyAttemptCap(
   raw: Confidence,
   cap: 'high' | 'medium',
@@ -115,9 +87,7 @@ export function applyAttemptCap(
   const confidence = capConfidence(raw, cap);
   const reason = durationReason ?? (confidence === 'medium' ? CAPPED_ATTEMPT_REASON : undefined);
   const base = reason !== undefined ? { confidence, reason } : { confidence };
-  // `reasonKind` rides only when the DURATION reason survives (it pairs with
-  // `durationReason`). A cap-synthesized `CAPPED_ATTEMPT_REASON` carries no kind,
-  // matching the spec's "attempt-cap rows have no reasonKind" (#1929).
+  // `reasonKind` belongs only to a surviving duration reason, never a synthesized cap reason.
   return durationReasonKind !== undefined && reason === durationReason
     ? { ...base, reasonKind: durationReasonKind }
     : base;
@@ -126,68 +96,26 @@ export function applyAttemptCap(
 export interface DurationConfidenceResult {
   confidence: Confidence;
   reason?: string;
-  /** Structured discriminator paired with `reason` (#1929) — one of the three
-   * duration-derived kinds, or absent on a `high` result. */
+  /** Present only for duration-derived reasons. */
   reasonKind?: MatchReasonKind;
 }
 
-/**
- * The edition's chapter-table corroboration references, in SECONDS (#1942/#2168).
- *
- * ONE object with exactly one representation of "nothing usable" — `{}`, both
- * fields absent — rather than a `Pair | undefined` union, so no call site needs to
- * keep two null-checks in sync. Absent means "no usable reference of that kind";
- * neither field is ever present-and-`undefined`.
- *
- * The trimmed chapter COUNT is deliberately not here: it is a settle-time log
- * diagnostic owned by the corroborator, never cached and never returned.
- */
+/** Optional chapter-table runtimes in seconds; absent fields mean no usable reference. */
 export interface ChapterRuntimeSeconds {
-  /** The catalog's FULL chapter-table runtime. */
   fullSeconds?: number;
-  /** The same table with its trailing promotional run removed (#2168). */
+  /** Full table with trailing promotional chapters removed. */
   trimmedSeconds?: number;
 }
 
-/**
- * Single source of truth for "does the scanned runtime independently corroborate
- * this candidate?". Returns true only when both the scanned duration and the
- * candidate's metadata duration are present and positive AND the absolute gap is
- * within the shared `withinDurationTolerance` band (#1850/#1854). The two runtimes
- * carry different units — `scannedSeconds` is the unrounded scanner value in
- * SECONDS, `meta.duration` is the provider `runtimeLengthMin` in MINUTES — so the
- * minutes side is multiplied by 60 before the comparison. There is no relative %/score
- * tier: the result is identical regardless of title/author score, because a
- * duration gap answers the orthogonal "is this the complete edition I expect?"
- * question, on which high title confidence makes a gap MORE diagnostic, not less.
- *
- * Guard hygiene (#1266/#1821): both the falsy and `<= 0` checks are load-bearing —
- * a bare `!scannedSeconds` or `meta.duration > 0` alone misbehaves on the
- * `0`/`undefined` boundaries. A MISSING/zero runtime on either side is NOT a
- * disagreement (returns false so the single-result path keeps `high`; absent data
- * must not demote).
- */
+/** Corroborate seconds against the shared absolute tolerance; provider duration is in minutes.
+ * Missing/non-positive data is not disagreement, and chapter totals are additive references only. */
 export function isDurationVerified(
   meta: BookMetadata,
   scannedSeconds: number | undefined,
   chapterRuntimes?: ChapterRuntimeSeconds | undefined,
 ): boolean {
   if (!scannedSeconds || scannedSeconds <= 0) return false;
-  // #1942 — the edition's own chapter table is a strictly more authoritative
-  // runtime than the provider's `runtimeLengthMin` scalar (for Fablehaven
-  // B00CXXEX8W the scalar understates its own chapter table by ~14.6 min, so a
-  // pristine file flags). #2168 adds a SECOND chapter reference: the same table
-  // with its trailing promotional run (`Excerpt:` / `Preview` / `Bonus` /
-  // `End Credits`) removed, for the editions whose published total counts
-  // advertising a clean retail rip legitimately omits.
-  //
-  // Both are consulted as CORROBORATING SECOND SOURCES, never replacements: they
-  // are only ever passed in when the scalar check already disagreed, and the `||`
-  // shape means they can only ever ADD agreement. A file out of band against ALL
-  // THREE references still fails exactly as before — including a file that runs
-  // LONG, since the band stays symmetric (`Math.abs`) and trimming only makes the
-  // trimmed reference smaller. The caller converts ms → seconds; the same shared
-  // band judges every reference.
+  // Full or promo-trimmed chapter totals may corroborate a scan when the provider scalar is wrong.
   if (corroboratesScanned(chapterRuntimes?.fullSeconds, scannedSeconds)
     || corroboratesScanned(chapterRuntimes?.trimmedSeconds, scannedSeconds)) {
     return true;
@@ -201,24 +129,8 @@ function corroboratesScanned(reference: number | undefined, scannedSeconds: numb
     && withinDurationTolerance(reference, scannedSeconds);
 }
 
-/**
- * Determines confidence from duration data; it does NOT itself pick or reorder
- * the winner. The bestMatch is whatever the ranker returned as `scored[0]` —
- * primarily the top text-scored result, with duration only ever breaking a
- * score tie between sibling editions upstream (#1882, `durationTiebreak`); this
- * verdict then reads `high`/`medium` off that chosen top candidate.
- * The high-vs-medium decision is delegated to `isDurationVerified` so the single
- * absolute band lives in exactly one place (#1266/#1850). `scannedSeconds` is the
- * unrounded scanner runtime in SECONDS; the mismatch reason renders it from
- * seconds and the provider side from minutes.
- *
- * `chapterRuntimes` (#1942/#2168) are the optional corroborating chapter-table
- * runtimes in SECONDS — the full table total and the trailing-trim variant —
- * supplied only on a re-check after this function already returned
- * `duration-mismatch`. Suppress-only — see `isDurationVerified`. The mismatch
- * reason still renders the SCALAR expectation, because that is the runtime the
- * user sees on the catalog page.
- */
+/** Classify the already-ranked top candidate without reordering it. Chapter runtimes can suppress
+ * a scalar mismatch, but the displayed expectation remains the provider scalar. */
 export function resolveConfidenceFromDuration(
   scored: { meta: BookMetadata }[],
   scannedSeconds: number | undefined,
@@ -239,24 +151,8 @@ export function resolveConfidenceFromDuration(
   return { confidence: 'medium', reason: 'Best match missing duration — cannot verify', reasonKind: 'missing-duration' };
 }
 
-/**
- * Single-candidate RAW confidence (#1821): `high` unless the scanned runtime and
- * the candidate runtime are BOTH present and disagree (then `medium`/Review with
- * the same mismatch reason the multi-result path emits). Reuses the exact band in
- * `isDurationVerified` — no new threshold. A MISSING runtime on either side stays
- * `high` (absent data must not demote; only a positive disagreement warns).
- *
- * This is the RAW value. On the filename-single path it becomes the final
- * `MatchResult.confidence` directly; on the tag-single path it is still subject to
- * the pre-existing attempt cap, which can clamp a raw `high` to final `medium` for
- * a `maxConfidence: 'medium'` attempt. The helper only ever demotes an otherwise-
- * `high` single; it never raises a capped attempt's ceiling.
- *
- * `chapterRuntimes` (#1942/#2168) are the optional corroborating chapter-table
- * runtimes in SECONDS (full and trailing-trimmed), supplied only on a re-check
- * after this function already returned `duration-mismatch`. Suppress-only — see
- * `isDurationVerified`.
- */
+/** Raw single-candidate confidence stays high unless two positive runtimes disagree. Missing data
+ * never demotes; chapter references only suppress mismatches, and attempt caps apply later. */
 export function resolveSingleResultConfidence(
   meta: BookMetadata,
   scannedSeconds: number | undefined,
@@ -273,19 +169,9 @@ export function resolveSingleResultConfidence(
   return { confidence: 'high' };
 }
 
-/**
- * Top-result title-similarity floor. Below this, the filename pass emits
- * `confidence: 'none'` and the tag pass falls through to it.
- */
 export const TITLE_SIMILARITY_FLOOR = 0.5;
-/** Tag-pass author-name dice threshold (#984). */
 export const TAG_AUTHOR_PREDICATE_FLOOR = 0.7;
 
-/**
- * AC5 — title floor + author predicate gate for the tag pass. Logs at debug on
- * failure. Lives here rather than on `MatchJobService` for the `max-lines` budget
- * (#1942 F12); it needs nothing from the job beyond the logger and the path.
- */
 export function tagPassPredicatesPass(
   log: FastifyBaseLogger,
   path: string,
@@ -314,11 +200,7 @@ export function tagPassPredicatesPass(
   return true;
 }
 
-/**
- * ASIN kill-shot. Returns a single-candidate outcome when the tagged ASIN
- * resolves; null on miss or provider throw (the caller falls through to the
- * planner attempts). Same `max-lines` extraction as `tagPassPredicatesPass`.
- */
+/** Resolve a tagged ASIN directly; misses and provider failures fall through to planner attempts. */
 export async function runAsinKillShot(
   metadataService: { getBook(id: string): Promise<BookMetadata | null> },
   log: FastifyBaseLogger,
@@ -348,35 +230,16 @@ export interface TagQuery {
   title: string;
   author: string;
   year?: string;
-  /** Wanted series position from the audio tags (#1849), threaded to the
-   * shared position tiebreaker in `rankResultsCleaned`. Position 0 is valid
-   * (#1028) — preserved with `!== undefined`, never `||`. */
+  /** Audio-tag series position; zero is valid. */
   seriesPosition?: number;
 }
 
-/**
- * Strip a trailing parenthetical suffix from a tag-derived author string.
- * Tagger tools commonly auto-append markers like `(audio)` or `(Read by ...)`
- * that break Audible's structured `author=` exact-match search. Only the
- * rightmost trailing paren is stripped — embedded parens (e.g. `Robert (Bob) Smith`)
- * are usually meaningful aliases and stay intact. Unlike `cleanTagTitle`, this
- * is unconditional: edition metadata is essentially never meaningful on the
- * author side, so no `isEditionParen` gate.
- */
+/** Strip only the trailing tagger suffix from authors; embedded parentheses may be meaningful aliases. */
 export function cleanTagAuthor(s: string): string {
   return s.replace(/\s*\([^)]*\)\s*$/, '').trim();
 }
 
-/**
- * Build a tag-derived search query from the AudioScanResult, applying
- * cleanTagTitle to tagTitle and cleanTagAuthor to tagAuthor. Returns null when
- * the scan lacks usable tags (missing title or author after cleaning) — caller
- * falls through to Pass 2. `year` is carried through (when present in tags)
- * for use by the rankResultsCleaned tiebreaker; missing tagYear is fine —
- * tiebreaker no-ops. `seriesPosition` is likewise carried through (when the
- * scan tagged one) for the shared position tiebreaker; a genuine position `0`
- * survives via the `!== undefined` guard (#1849/#1028).
- */
+/** Build a cleaned tag query or return null when title/author are unusable; preserve position zero. */
 export function deriveTagQuery(audioResult: AudioScanResult | null): TagQuery | null {
   if (!audioResult) return null;
   const rawTitle = audioResult.tagTitle?.trim();
@@ -395,37 +258,16 @@ export function deriveTagQuery(audioResult: AudioScanResult | null): TagQuery | 
   };
 }
 
-/** Normalize a title for the album-vs-prefix difference check: lowercase, trim, collapse internal whitespace. */
 function normalizeForTitleCompare(s: string): string {
   return s.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
-/**
- * Resolve the tag-pass search title, redirecting generic/series-name title tags
- * to the album when the real title lives there (#1650). Operates on the RAW
- * `tagTitle` before `cleanTagTitle` strips the `, Book N` marker — the
- * bare-vs-prefix distinction needs the original suffix. Uses only `tagTitle` +
- * `tagAlbum` (no folder data, no signature change):
- *
- * - **Bare placeholder** (`Book 1`, `Series, Book 1`): no usable title in the
- *   tag → use the cleaned album when present, else `null` (caller falls through
- *   to Pass 2's filename-derived search).
- * - **Series-prefix + differing album** (`Shattered Sea, Book 1` / album
- *   `Half a King`): the `, Book N` marker means the cleaned prefix is a series
- *   name, so prefer the cleaned album when it differs (normalized) from the
- *   prefix.
- * - **Legitimate `, Book N` title** (`The Hobbit, Book 1` with album
- *   `The Hobbit` or no album): keep the cleaned title. The rule keys on the
- *   album difference, not the title shape, because `The Hobbit, Book 1` and
- *   `Shattered Sea, Book 1` are indistinguishable by grammar alone.
- */
+/** Resolve raw tags before stripping Book markers. Bare volume placeholders use a usable album;
+ * series-prefix tags use a differing album, while matching/no album keeps the cleaned title. */
 function resolveTagSearchTitle(rawTitle: string, rawAlbum: string | undefined): string | null {
   const cleanedTitle = cleanTagTitle(rawTitle).trim();
   const cleanedAlbum = rawAlbum?.trim() ? cleanTagTitle(rawAlbum).trim() : '';
-  // Shape-check the album the same way the title is checked (#1652): a bare
-  // volume marker (`Book 5`) is no more usable as a search title than a bare
-  // volume-marker title, so it must not survive `cleanTagTitle` and become the
-  // search query.
+  // A bare volume-marker album is no more usable than a bare volume-marker title.
   const usableAlbum = cleanedAlbum.length > 0 && !isPureVolumeMarker(rawAlbum!.trim());
 
   if (isPureVolumeMarker(rawTitle)) {
@@ -443,39 +285,8 @@ function resolveTagSearchTitle(rawTitle: string, rawAlbum: string | undefined): 
 const TAG_TITLE_WEIGHT = 0.6;
 const TAG_AUTHOR_WEIGHT = 0.4;
 
-/**
- * Multi-form title score for a tag-derived input against a book-metadata
- * candidate. Composes 1-6 candidate strings from `result.title` and the
- * canonical primary-series ref (`seriesPrimary`, falling back to `series[0]`)
- * and returns the max dice across them.
- *
- * Two distinct concerns, both load-bearing:
- *
- * 1. Symmetric cleaning (#1011) — `cleanTagTitle` runs on `result.title` AND
- *    the primary-series name so publisher decoration like "(Full Audiobook)"
- *    or "[Bonus]" doesn't poison dice. The input is already cleaned upstream
- *    by `deriveTagQuery`, so cleaning the result side restores symmetry.
- *
- * 2. Multi-form composition — Audible's canonical title is short; series
- *    annotation lives in the structured `series[]` field, not the title
- *    string. Tag titles inline series. Cleaning alone produces dice ≈ 0.4
- *    on Eric-shape inputs because the two sides carry different content.
- *    Composing `title + ': ' + series.name` (and the dash/order/position
- *    variants) lets the input match its semantic equivalent, so an
- *    Eric-shape (`title="Eric"`, `series=[{name:"Discworld"}]`,
- *    input="Eric: Discworld") scores 1.0.
- *
- * Canonical-series source (#1088 / #1097): `seriesPrimary` is the Audnexus-
- * derived canonical ref. When present it is preferred over `series[0]`, which
- * on Audible can be a broader universe/meta-series (e.g. Cosmere) rather than
- * the real book series (Stormlight Archive). Fallback to `series[0]` only
- * when `seriesPrimary` is absent (Audible-only candidates).
- *
- * Empty-array guard: `Math.max(...[])` returns `-Infinity`. Without the guard,
- * a result with `title === undefined` and missing/empty series name would
- * silently return `-Infinity` and pass any floor check downstream. The
- * `scores.length > 0 ? Math.max(...scores) : 0` form returns `0` instead.
- */
+/** Score cleaned title and canonical primary-series composites against the already-cleaned input.
+ * Keep the empty-candidate guard: `Math.max(...[])` is `-Infinity`, not zero. */
 export function tagTitleScore(input: string, result: BookMetadata): number {
   const title = cleanTagTitle(result.title ?? '');
   const primary = pickPrimarySeries(result);
@@ -497,23 +308,8 @@ export function tagTitleScore(input: string, result: BookMetadata): number {
   return scores.length > 0 ? Math.max(...scores) : 0;
 }
 
-/**
- * Shared position-agreement tiebreaker (#1849), consumed by BOTH `rankResults`
- * (folder pass) and `rankResultsCleaned` (tag pass) so the two rankers can't
- * drift (DRY-3). On a score tie between identically-titled series entries
- * (the whole Fablehaven series is just "Fablehaven"), prefer the candidate
- * whose primary-series position equals the wanted (parsed/tagged) position.
- *
- * Semantics:
- *  - `wanted == null` → returns `0` (strict no-op); ranking falls through to
- *    the year tiebreaker byte-for-byte, exactly as before this existed.
- *  - Uses `pickPrimarySeries` (the one shared series resolver, #1088/#1097)
- *    and `===` so a genuine position `0` (#1028) is respected, never coerced.
- *  - A candidate with no position — or a differing one — is a non-match: it
- *    loses ONLY to a candidate whose position equals `wanted`, and ties every
- *    other non-match (returns `0`), so ordering among non-matches is unchanged.
- *    Absence never demotes a candidate below another non-match and never throws.
- */
+/** Prefer an exact primary-series position on score ties. Missing wanted position is a strict no-op;
+ * zero is valid, and all non-matches remain tied. */
 export function positionTiebreak(a: BookMetadata, b: BookMetadata, wanted: number | undefined): number {
   if (wanted == null) return 0;
   const aMatch = pickPrimarySeries(a)?.position === wanted ? 1 : 0;
@@ -521,60 +317,16 @@ export function positionTiebreak(a: BookMetadata, b: BookMetadata, wanted: numbe
   return bMatch - aMatch;
 }
 
-/**
- * Shared duration-agreement tiebreaker (#1882), consumed by BOTH `rankResults`
- * (folder pass) and `rankResultsCleaned` (tag pass). On a score tie between
- * sibling editions of one book (identical title/author/narrators, different
- * runtimes — e.g. the four Audible editions of "Dogs of War"), prefer the
- * candidate whose provider runtime agrees with the scanned duration.
- *
- * It is a TIEBREAKER, never a ranker: it runs only inside the existing
- * `< 0.001` score-tie branch, AFTER `positionTiebreak` (position disambiguates
- * different BOOKS in a series; duration disambiguates EDITIONS of one book) and
- * BEFORE the year tiebreaker.
- *
- * The whole duration/units decision is delegated to `isDurationVerified` →
- * `withinDurationTolerance` — no new predicate, no new tolerance constant, no
- * re-derived minutes→seconds conversion (the DRY mandate that keeps the tiebreak
- * judging with the same ruler as the post-match verdict, so pick and verdict
- * cannot disagree). Four-state contract, all falling out of the two booleans:
- *  - Invalid `scannedSeconds` (undefined/0/negative) → `isDurationVerified` is
- *    false on both sides → `0` (whole comparator no-ops; absent scan cannot
- *    decide, the #1850 "absent must not demote" doctrine).
- *  - Valid scan: a VERIFIED candidate beats a NON-VERIFIED one. "Non-verified"
- *    folds together missing/zero AND present-but-off candidate duration —
- *    `isDurationVerified` returns false for all of them.
- *  - verified vs verified → `0` (both agree, nothing to decide).
- *  - non-verified vs non-verified → `0` (absence/disagreement never demotes one
- *    non-match below another).
- */
+/** Prefer the only duration-verified edition on score ties. Invalid scans and equal verification
+ * states are no-ops; the shared verifier keeps ranking and final verdict on one tolerance. */
 export function durationTiebreak(a: BookMetadata, b: BookMetadata, scannedSeconds: number | undefined): number {
   const aMatch = isDurationVerified(a, scannedSeconds) ? 1 : 0;
   const bMatch = isDurationVerified(b, scannedSeconds) ? 1 : 0;
   return bMatch - aMatch;
 }
 
-/**
- * Tag-pass scoring: composes the result-side title from `result.title` +
- * the canonical primary-series ref via `tagTitleScore`, removing the
- * cleanName-derived symmetry assumption from #984. Author side is preserved exactly from #995 —
- * normalizeNarrator on both sides so dice scores reflect semantic similarity,
- * not punctuation noise.
- *
- * Title/author weighting (0.6 / 0.4) mirrors `scoreResult` at
- * `src/core/utils/similarity.ts:62-84`; we re-derive the combined score
- * inline because we no longer call `scoreResult` for the title side.
- *
- * Tiebreakers (score tie within 0.001), in precedence order: the shared
- * `positionTiebreak` (#1849) runs first — series position is the stronger
- * series-disambiguation signal — then `durationTiebreak` (#1882) prefers the
- * sibling edition whose runtime agrees with the scanned duration, then the year
- * tiebreaker (#995): candidates whose publishedDate year matches tagYear rank
- * first. Position/year are tag-derived only; folder year is NOT consulted here
- * (Pass 2's signal stays out of Pass 1). `scannedSeconds` is the unrounded
- * scanner runtime in SECONDS; it is optional so direct/backward-compatible
- * callers (unit tests) may omit it — the comparator no-ops on an absent scan.
- */
+/** Rank tag candidates 60/40 by title/author. Ties use tag series position, scanned duration,
+ * then tag year; folder year never leaks into this pass. */
 export function rankResultsCleaned(
   detailed: BookMetadata[],
   tagQuery: TagQuery,
@@ -599,13 +351,8 @@ export function rankResultsCleaned(
   const tagYear = tagQuery.year ? parseInt(tagQuery.year, 10) : undefined;
   scored.sort((a, b) => {
     if (Math.abs(a.score - b.score) < 0.001) {
-      // Series position is the stronger series-disambiguation signal (#1849),
-      // so it runs before the year tiebreaker; when positions tie or the wanted
-      // position is absent it no-ops and year decides exactly as before.
       const posCmp = positionTiebreak(a.meta, b.meta, tagQuery.seriesPosition);
       if (posCmp !== 0) return posCmp;
-      // Edition disambiguation (#1882): after position, prefer the sibling whose
-      // runtime agrees with the scan; no-ops on an absent/zero scan.
       const durCmp = durationTiebreak(a.meta, b.meta, scannedSeconds);
       if (durCmp !== 0) return durCmp;
       if (tagYear) {
@@ -621,13 +368,7 @@ export function rankResultsCleaned(
   return scored;
 }
 
-/**
- * Scores and ranks results by title+author similarity. On a score tie the
- * precedence is `positionTiebreak` (#1849) → `durationTiebreak` (#1882) →
- * folder-year. `scannedSeconds` is the unrounded scanner runtime in SECONDS and
- * is optional: the folder scan can be absent, so an undefined value no-ops the
- * duration comparator (direct unit-test callers may omit it too).
- */
+/** Folder-pass score ties use series position, scanned duration, then folder year. */
 export function rankResults(
   detailed: BookMetadata[],
   book: MatchCandidate,
@@ -645,12 +386,8 @@ export function rankResults(
   const folderYear = extractYear(basename(book.path));
   scored.sort((a, b) => {
     if (Math.abs(a.score - b.score) < 0.001) {
-      // Position agreement (#1849) outranks the folder-year tiebreaker; it
-      // no-ops when the wanted position is absent so year decides as before.
       const posCmp = positionTiebreak(a.meta, b.meta, book.seriesPosition);
       if (posCmp !== 0) return posCmp;
-      // Edition disambiguation (#1882): after position, prefer the sibling whose
-      // runtime agrees with the scan; no-ops on an absent/zero scan.
       const durCmp = durationTiebreak(a.meta, b.meta, scannedSeconds);
       if (durCmp !== 0) return durCmp;
       if (folderYear) {
@@ -666,30 +403,14 @@ export function rankResults(
   return scored;
 }
 
-/** Extract the first 4-digit year from a publishedDate string (e.g. '2011-06-14' → 2011). */
 export function parsePublishedYear(date: string | undefined): number | undefined {
   if (!date) return undefined;
   const match = date.match(/\b(\d{4})\b/);
   return match ? parseInt(match[1]!, 10) : undefined;
 }
 
-/**
- * Wrong-edition guard (#1650). Two *unabridged* readings of the same book are
- * inherently almost the same length, so duration cannot distinguish editions —
- * the narrator can. When the file's embedded narrator tag names a different
- * person than the matched edition's narrators, the match is the right book but
- * the wrong edition; return a user-facing reason so the central cap can
- * downgrade `high → medium` (Review).
- *
- * Delegates the signal-presence AND match decision to the shared core
- * `compareNarratorSignals` predicate (#1652) so the file side and the primitive
- * can no longer disagree about emptiness: a punctuation-only narrator (`'-'`
- * vs `'.'`) normalizes to no usable signal on both sides → `'no-signal'` → no
- * cap, NOT a spurious mismatch. Spelling/punctuation variants at or above the
- * `0.8` dice threshold are `'match'` (no cap); an absent file tag or an edition
- * with no usable `narrators` is `'no-signal'` (no cap). Only a genuine
- * `'mismatch'` returns a user-facing reason. Exported for direct unit tests.
- */
+/** Narrator distinguishes same-length editions. The shared signal comparator treats absent or
+ * punctuation-only values as no signal; only a genuine mismatch returns a Review reason. */
 export function narratorMismatchReason(
   fileNarratorRaw: string | undefined,
   editionNarrators: string[] | undefined,
@@ -699,33 +420,15 @@ export function narratorMismatchReason(
   return `Narrator mismatch — file: ${(fileNarratorRaw ?? '').trim()} · matched edition: ${editions.join(', ')}`;
 }
 
-/**
- * Explicit context the cap needs to emit its observability log (#1652). The
- * `MatchResult` alone carries no `matchSource`/`durationVerified` — those live
- * branch-locally at the call site, so the caller threads them in here.
- */
+/** Branch-local context required only for the narrator-cap observability log. */
 export interface NarratorCapContext {
   log: FastifyBaseLogger;
   matchSource: MatchSource;
-  /** True when the scanned runtime independently corroborated the chosen edition (the `/import-uat` signal). */
   durationVerified: boolean;
 }
 
-/**
- * Central post-outcome narrator clamp (#1650). Applied to the *resolved*
- * `{ confidence, reason }` of every high-confidence match outcome — both passes,
- * including the tag ASIN kill-shot — so no high-confidence branch can slip past
- * it. Only ever downgrades `high → medium`; never promotes, and never overrides
- * an existing duration/attempt cap (a result already at `medium`/`none` is left
- * untouched). Fires even when duration verified the match — narrator is the
- * discriminator duration lacks, so it must not be bypassed by `isDurationVerified`.
- *
- * On an actual `high → medium` demotion it emits a single observability log
- * (#1652) carrying the book identity, the file/edition narrators, the match
- * source, and whether duration corroborated the edition — the instrument the
- * next `/import-uat` run reads. The log fires ONLY on the transition, never on
- * the no-op/non-high/no-signal paths above.
- */
+/** Clamp every resolved high-confidence path to medium on narrator mismatch, even after duration
+ * verification. Never override an existing cap; log only when the demotion actually occurs. */
 export function applyNarratorCap(
   result: MatchResult,
   audioResult: AudioScanResult | null,
