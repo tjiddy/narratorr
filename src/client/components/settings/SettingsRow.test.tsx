@@ -11,7 +11,6 @@ describe('SettingsRow', () => {
         </SettingsRow>
       );
       expect(screen.getByText('What it does')).toBeInTheDocument();
-      // htmlFor/id association: the row label resolves to the control.
       expect(screen.getByLabelText('My setting')).toBeInTheDocument();
     });
 
@@ -52,7 +51,6 @@ describe('SettingsRow', () => {
         </SettingsRow>
       );
       const control = screen.getByLabelText('My setting');
-      // Stacked: control lives in an mt-3 block under the header (row layout uses shrink-0 beside it).
       expect(control.closest('div.mt-3')).not.toBeNull();
       expect(control.closest('div.shrink-0')).toBeNull();
     });

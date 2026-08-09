@@ -25,7 +25,6 @@ describe('SelectWithChevron', () => {
       const select = screen.getByLabelText('Test');
       expect(select.tagName).toBe('SELECT');
       expect(select).toHaveClass('appearance-none');
-      // ChevronDownIcon renders as svg
       const svg = select.parentElement!.querySelector('svg');
       expect(svg).toBeInTheDocument();
     });

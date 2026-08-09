@@ -70,7 +70,6 @@ describe('useFetchCategories', () => {
     expect(result.current.showDropdown).toBe(true);
   });
 
-  // #844 — id forwarding for sentinel resolution
   it('forwards clientId as id when editing a dirty client (isDirty=true)', async () => {
     (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
       categories: ['audiobooks'],

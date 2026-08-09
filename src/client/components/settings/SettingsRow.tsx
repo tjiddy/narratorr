@@ -1,29 +1,17 @@
 import type { ReactNode } from 'react';
 
-/**
- * A single settings row: label + optional description, plus the control. Rows are meant to sit
- * inside a `SettingsTable` (which supplies the border + hairline dividers). The row-table content
- * pattern for the settings redesign — reused by Audio Tools, Post Processing, and (rolling out)
- * other simple key/value sections.
- *
- * Layouts: `row` (default) puts the control right-aligned beside the label — for short controls
- * (toggle, select, number). `stacked` puts the control full-width below the label — for wide
- * content (long text inputs, checkbox grids, input+button clusters).
- */
+/** Row right-aligns compact controls; stacked puts wide controls below the header. */
 export interface SettingsRowProps {
   label: ReactNode;
   description?: ReactNode;
-  /** Control(s): right-aligned in `row`, full-width below the header in `stacked`. */
   children?: ReactNode;
   htmlFor?: string;
-  /** Dim the label/description (e.g. an ffmpeg-gated automation that's unavailable). */
   muted?: boolean;
   layout?: 'row' | 'stacked';
 }
 
 export function SettingsRow({ label, description, children, htmlFor, muted, layout = 'row' }: SettingsRowProps) {
-  // Group content (a checkbox grid, a multi-control cluster) has no single control to point a
-  // label at — an htmlFor-less <label> would be associated with nothing, so render a <span>.
+  // Without htmlFor there is no single control, so use a span instead of an unbound label.
   const header = (
     <div className={`min-w-0 ${muted ? 'opacity-50' : ''}`}>
       {htmlFor ? (
@@ -52,13 +40,7 @@ export function SettingsRow({ label, description, children, htmlFor, muted, layo
   );
 }
 
-/**
- * Bordered container that turns a stack of `SettingsRow`s into the row-table look.
- * Deliberately NOT overflow-hidden: rows carry no background (the container paints bg-card/40
- * itself, so the rounded corners need no clipping), and clipping would decapitate absolutely-
- * positioned popovers escaping a row (an InfoTip in a top row opens upward past the table edge).
- * If a row ever gains its own background, round/clip that row — don't re-add overflow here.
- */
+/** Do not add overflow-hidden: it clips row popovers, and the container background needs no clipping. */
 export function SettingsTable({ children }: { children: ReactNode }) {
   return (
     <div className="rounded-xl border border-border bg-card/40 divide-y divide-border">
