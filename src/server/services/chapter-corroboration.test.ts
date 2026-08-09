@@ -1,13 +1,6 @@
 /**
- * #1942 — the chapter-corroboration owner: cache classification, single-flight,
- * throttle/backoff bridge, and the lazy trigger.
- *
- * The load-bearing property under test is NOT "does it return the right number"
- * but "does the right thing SETTLE". A cached verdict means the rescuable book
- * never retries, so a transient outcome (a rate-limit page, an auth-proxy 403, a
- * wrong-edition body) that settles as `no usable runtime` would permanently
- * re-break the false positive this feature exists to fix. Every case therefore
- * asserts BOTH the returned value AND the HTTP call count on a second lookup.
+ * Cache settlement is the invariant: definitive outcomes suppress a second request, while
+ * transient, rate-limited, and wrong-edition outcomes retry. Assert result and call count.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -22,14 +15,10 @@ import {
 import type { ChapterRuntimeSeconds, DurationConfidenceResult } from './match-job.helpers.js';
 
 const ASIN = 'B00CXXEX8W';
-/** Fablehaven Book 1's live chapter runtime (2026-07-25). */
+/** Fablehaven Book 1 runtime observed 2026-07-25, in milliseconds. */
 const FABLEHAVEN_MS = 33219490;
 
-/**
- * The requested edition's complete record. Defaults model a table with NO
- * trimmable tail (#2168): the trim contributes nothing and both references carry
- * the same value, which is the non-regression shape (AC30/AC31).
- */
+/** Complete record with no trimmable tail by default. */
 function completeRecord(overrides: Partial<Extract<ChapterRuntimeOutcome, { kind: 'ok' }>> = {}): ChapterRuntimeOutcome {
   return {
     kind: 'ok',
@@ -41,14 +30,13 @@ function completeRecord(overrides: Partial<Extract<ChapterRuntimeOutcome, { kind
   };
 }
 
-/** A record whose trailing promotional run WAS removed, leaving a distinct runtime. */
+/** Complete record with one promotional tail removed. */
 function trimmedRecord(overrides: Partial<Extract<ChapterRuntimeOutcome, { kind: 'ok' }>> = {}): ChapterRuntimeOutcome {
   return completeRecord({ runtimeLengthMs: 86_400_000, trimmedRuntimeMs: 85_134_000, trimmedChapterCount: 1, ...overrides });
 }
 
-/** The "nothing usable" shape every miss returns — one representation, never `undefined`. */
+/** Canonical "nothing usable" result; every miss returns this instead of undefined. */
 const NONE = {};
-/** Fablehaven's references: no trimmable tail, so both carry the same value. */
 const FABLEHAVEN_REFS = { fullSeconds: 33219.49, trimmedSeconds: 33219.49 };
 
 interface Harness {
@@ -109,11 +97,7 @@ describe('createChapterCorroborator — trust gate (D3/AC5)', () => {
     expect(h.getChapterRuntime).toHaveBeenCalledTimes(1);
   });
 
-  /**
-   * #2168 AC15 — `usableChapterSeconds` is the ONE validity gate, applied
-   * IDENTICALLY to both references. The pure trim rule returns these values raw
-   * (its unit tests pin that); the rejection happens here and nowhere else.
-   */
+  // Both full and trimmed references pass through the same positive-finite gate.
   it.each([
     ['zero', 0],
     ['negative', -5_000],
@@ -168,8 +152,7 @@ describe('createChapterCorroborator — the settle diagnostic (#2168 AC16/AC22)'
   });
 
   it('a trusted ZERO-LENGTH trailing match logs a count of 1 even though the two runtimes are equal', async () => {
-    // Counterfactual: derive the logged count from `trimmed !== full` and this
-    // reads 0. The count is the ADAPTER's, never re-derived (AC2/AC22).
+    // Trust the adapter's count; runtime equality does not imply zero trimmed chapters.
     const log = createMockLogger();
     const getChapterRuntime = vi.fn<(asin: string) => Promise<ChapterRuntimeOutcome>>()
       .mockResolvedValue(completeRecord({ trimmedChapterCount: 1 }));
@@ -201,7 +184,6 @@ describe('createChapterCorroborator — the settle diagnostic (#2168 AC16/AC22)'
 
     expect(a).toEqual(b);
     expect(Object.keys(a).sort()).toEqual(['fullSeconds', 'trimmedSeconds']);
-    // ...and a cache HIT emits no count at all, exactly as it emits no log line today.
     expect(await withCount.corroborator.getChapterRuntimeSeconds(ASIN)).toEqual(a);
     expect(withCount.getChapterRuntime).toHaveBeenCalledTimes(1);
   });
@@ -247,14 +229,11 @@ describe('createChapterCorroborator — cache matrix (AC2)', () => {
       await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(FABLEHAVEN_REFS);
       expect(h.getChapterRuntime).toHaveBeenCalledTimes(3);
 
-      // ...and the promotion settles: a fourth lookup issues no request.
       await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(FABLEHAVEN_REFS);
       expect(h.getChapterRuntime).toHaveBeenCalledTimes(3);
     });
 
     it('a wrong-edition chapter body can never settle as a verdict about the requested ASIN', async () => {
-      // The adapter already refuses to hand back another edition's runtime; this
-      // pins that the owner does not cache the resulting `invalid_record` either.
       h.getChapterRuntime.mockResolvedValue({ kind: 'invalid_record', reason: 'asin-mismatch' });
 
       await h.corroborator.getChapterRuntimeSeconds(ASIN);
@@ -382,7 +361,6 @@ describe('createChapterCorroborator — owner-instance isolation (F14/AC2)', () 
     await expect(us.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(FABLEHAVEN_REFS);
     await expect(uk.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 30000, trimmedSeconds: 30000 });
 
-    // Each settled independently — neither reused the other's verdict.
     expect(us.getChapterRuntime).toHaveBeenCalledTimes(1);
     expect(uk.getChapterRuntime).toHaveBeenCalledTimes(1);
     await us.corroborator.getChapterRuntimeSeconds(ASIN);
@@ -451,9 +429,7 @@ describe('corroborateDurationVerdict — lazy trigger (AC4/AC7/AC9)', () => {
   });
 
   it('#2168 — a TRIMMED-ONLY reference still triggers the recheck, and rides back out for the cap signal', async () => {
-    // The reference set the verdict was promoted with must reach the caller, or
-    // the recomputed `durationVerified` would be false and the caps would demote
-    // the row straight back (AC23).
+    // Return the promotion reference so downstream duration caps see verification.
     lookupChapterSeconds.mockResolvedValue({ trimmedSeconds: 85_134 });
     const recheck = vi.fn(() => HIGH);
 

@@ -9,15 +9,10 @@ import { isPersistableCompanionBasename } from './companion-ebook-observation.js
 import { openCompanionEbook } from './companion-ebook-open.js';
 import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
 
-// Two files differing only by case cannot coexist on a case-insensitive FS —
-// the fixture itself is unrepresentable on NTFS, so the test can only be skipped.
+// Case-only names cannot coexist on case-insensitive filesystems.
 const CASE_SENSITIVE_FS = process.platform !== 'win32';
 
-/**
- * Real temp directories throughout — the dotfile / subdirectory / symlink / unpersistable-name
- * distinctions are the point. `readdir` and `lstat` are spies delegating to the real
- * implementations so the failure contract can be driven with genuine errnos.
- */
+// Use real temp entries; spy only readdir and lstat to inject filesystem failures.
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   return { ...actual, readdir: vi.fn(actual.readdir), lstat: vi.fn(actual.lstat) };
@@ -37,14 +32,8 @@ function errno(code: string): NodeJS.ErrnoException {
 }
 
 /**
- * Assert a logged `error` value is the output of `serializeError`, not the caught `Error`.
- *
- * The own-ENUMERABLE key set is what makes this discriminating. On a real `Error`, `message`
- * and `stack` are non-enumerable, so `Object.keys(rawError)` yields only the assigned `code`;
- * a `toMatchObject`/`objectContaining({ message })` matcher reads through to the non-enumerable
- * property and passes on a raw `Error` too, which is exactly the hole this closes. Pino
- * serializes own-enumerable properties only, so the key set is also what actually reaches the
- * log line. Mirrors the repository precedent at `indexer-search.service.test.ts:715-724`.
+ * Match enumerable keys: ordinary matchers can read Error.message and falsely accept a raw Error,
+ * which Pino would serialize without that non-enumerable detail.
  */
 function expectSerializedError(logged: unknown, original: Error, expected: { code?: string }): void {
   expect(logged).not.toBe(original);
@@ -127,7 +116,7 @@ describe('findCompanionEbookCandidates', () => {
       expect(await call()).toEqual({ outcome: 'ok', candidates: ['real.epub'] });
     });
 
-    // AC11 — "temp name" means born-hidden and nothing more. No temp-suffix blocklist.
+    // "Temp name" means born-hidden only; there is no temp-suffix blocklist.
     it('includes a visible book.tmp.epub and book.part.epub', async () => {
       await touch('book.tmp.epub', 'book.part.epub');
       expect(await call()).toEqual({ outcome: 'ok', candidates: ['book.part.epub', 'book.tmp.epub'] });
@@ -139,7 +128,7 @@ describe('findCompanionEbookCandidates', () => {
     });
   });
 
-  // AC10 term 3 — only creatable on POSIX, which is where production runs (Alpine).
+  // These legal POSIX basenames are only creatable where production runs, not on NTFS.
   describe.runIf(isLinux)('unpersistable basenames', () => {
     const unpersistable = ['sub\\book.epub', ' book.epub'];
 
@@ -148,7 +137,6 @@ describe('findCompanionEbookCandidates', () => {
       expect(await call()).toEqual({ outcome: 'ok', candidates: ['book.epub'] });
     });
 
-    // One domain, three sites: the write boundary, discovery (above), and the opener.
     it.each(unpersistable)('is rejected by filenameSchema and by the opener too: %j', async (name) => {
       await touch(name);
       expect(isPersistableCompanionBasename(name)).toBe(false);
@@ -157,7 +145,6 @@ describe('findCompanionEbookCandidates', () => {
       ).resolves.toEqual({ outcome: 'invalid_filename' });
     });
 
-    // F31 — the skip branch an operator cannot diagnose from the panel.
     it('logs exactly one debug record per skipped entry, with no error key', async () => {
       await touch(' book.epub', 'book.epub');
       const result = await call();
@@ -175,7 +162,7 @@ describe('findCompanionEbookCandidates', () => {
       await touch('B.epub', 'a.epub', 'A.epub', '10.epub', '9.epub', 'é.epub');
       const result = await call();
 
-      // The exact case `localeCompare` gets wrong: it ties A/a and orders 9 before 10.
+      // localeCompare ties A/a and sorts 9 before 10.
       expect(result).toEqual({
         outcome: 'ok',
         candidates: ['10.epub', '9.epub', 'A.epub', 'B.epub', 'a.epub', 'é.epub'],
@@ -215,8 +202,7 @@ describe('findCompanionEbookCandidates', () => {
       await touch('a.epub', 'b.epub');
       vi.mocked(lstat).mockRejectedValueOnce(errno('EACCES'));
 
-      // Not a partial `ok` list — that is exactly how the reconciler would overwrite a good
-      // observation with one that silently dropped an unreadable candidate.
+      // Partial success could overwrite a complete prior observation.
       expect(await call()).toEqual({ outcome: 'undetermined' });
     });
   });
@@ -230,8 +216,7 @@ describe('findCompanionEbookCandidates', () => {
       expect(logger.spies.debug).toHaveBeenCalledTimes(1);
       const [record] = logger.spies.debug.mock.calls[0] as [Record<string, unknown>, string];
       expect(record).toMatchObject({ bookId: 7, path: bookPath });
-      // The result union discards the caught value, so this record is the ONLY trail back to
-      // it — a raw `Error` here would serialize to `{}` in the JSON log and erase the cause.
+      // This log is the only surviving cause because the result union discards it.
       expectSerializedError(record.error, failure, { code: 'EACCES' });
     });
 
@@ -242,7 +227,6 @@ describe('findCompanionEbookCandidates', () => {
 
       const result = await call();
 
-      // The branch a "log only on failure" implementation silently drops.
       expect(result.outcome).toBe('ok');
       expect(logger.spies.debug).toHaveBeenCalledTimes(1);
       const [record] = logger.spies.debug.mock.calls[0] as [Record<string, unknown>, string];

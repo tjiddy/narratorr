@@ -13,29 +13,22 @@ import {
 } from '@core/utils/network-service.js';
 import { finalizeCoverWrite, type CoverWriteOutcome } from './cover-write.js';
 
-/** Check whether a coverUrl points to a remote HTTP(S) resource. */
 export function isRemoteCoverUrl(url: string | null | undefined): boolean {
   if (!url) return false;
   return url.startsWith('http://') || url.startsWith('https://');
 }
 
-/** Map Content-Type header to file extension, defaulting to jpg. */
 function contentTypeToExt(contentType: string | null): string {
   if (!contentType) return 'jpg';
   const base = contentType.split(';')[0]!.trim();
   return mimeToExt(base) ?? 'jpg';
 }
 
-/** Check if content-type indicates an image. */
 function isImageContentType(contentType: string | null): boolean {
   return contentType?.startsWith('image/') === true;
 }
 
-/**
- * Pre-check Content-Length: warn on malformed values, throw on over-cap.
- * No-op when the header is absent or valid within cap; the streaming cap in
- * `readBodyWithCap` continues to backstop bodies from servers that lie.
- */
+/** Reject oversized declarations; malformed or absent lengths fall through to the streaming cap. */
 async function inspectContentLength(
   response: Response,
   context: { bookId: number; remoteUrl: string; log: FastifyBaseLogger },
@@ -60,10 +53,7 @@ async function inspectContentLength(
   }
 }
 
-/**
- * Read response body with a streamed size cap. Aborts and throws if the body
- * exceeds MAX_COVER_SIZE — even when the server lies about Content-Length.
- */
+/** Read with a hard streaming cap independent of Content-Length. */
 async function readBodyWithCap(response: Response): Promise<Buffer> {
   if (!response.body) {
     return Buffer.alloc(0);
@@ -90,22 +80,9 @@ async function readBodyWithCap(response: Response): Promise<Buffer> {
 }
 
 /**
- * Download a remote cover image and save it locally using the existing
- * cover contract: `{bookPath}/cover.{ext}` + coverUrl → `/api/books/{id}/cover`.
- *
- * SSRF mitigations: refuses cloud-metadata hostnames, validates every DNS
- * answer against a block policy (RFC 1918, loopback, link-local, ULA, mapped
- * IPv4), and uses an undici Agent whose `connect.lookup` re-validates at
- * socket time to defeat DNS rebinding. Manual redirect handling caps hops at 5
- * and re-runs validation on each hop. Response size is capped at MAX_COVER_SIZE
- * via Content-Length pre-check + streamed running total.
- *
- * Atomic write: writes to a temp file first, then renames over the target.
- *
- * Returns a {@link CoverWriteOutcome}: `'written'` once the `cover.*` rename commits (even if the
- * subsequent DB `coverUrl` update throws — see {@link finalizeCoverWrite}), `'failed'` on any
- * failure *before* the rename, and `'skipped'` when there is no remote URL to materialize. Never
- * throws.
+ * Fetch through SSRF-safe redirect validation with a hard size cap, then atomically rename into
+ * `cover.{ext}`. Rename commits `written`; later cleanup/DB failures cannot downgrade it. Returns
+ * `failed` before that point and `skipped` for nonremote input; never throws.
  */
 export async function downloadRemoteCover(
   bookId: number,
@@ -113,15 +90,9 @@ export async function downloadRemoteCover(
   remoteUrl: string,
   db: Db,
   log: FastifyBaseLogger,
-  /**
-   * Optional diagnostic side channel, invoked once with the underlying cause whenever the outcome
-   * is `'failed'` — the caught VALUE for a rejection (so `.code`/`.cause` survive for
-   * `toShortErrorText`), a descriptive string for the two non-throw arms that have no error object.
-   * Trailing and optional so the existing three callers and their mocks are untouched (#2159).
-   */
+  /** Receives the underlying pre-rename failure once, preserving nested cause data. */
   onFailure?: ((cause: unknown) => void) | undefined,
 ): Promise<CoverWriteOutcome> {
-  // Caller-gated no-op: nothing to materialize (null / non-remote URL). Not a failure.
   if (!remoteUrl || !bookPath || !isRemoteCoverUrl(remoteUrl)) {
     return 'skipped';
   }
@@ -156,8 +127,7 @@ export async function downloadRemoteCover(
       finalPath = join(bookPath, keepFilename);
       const tempPath = join(bookPath, `.cover-download-${randomUUID()}.tmp`);
 
-      // Atomic write: temp file → rename (rename() overwrites target). This is the irreversible
-      // media-visible write — once it commits the outcome is 'written' regardless of what follows.
+      // Rename is the commit point: later failures cannot downgrade written.
       await writeFile(tempPath, buffer);
       await rename(tempPath, finalPath);
     } catch (error: unknown) {
@@ -166,8 +136,7 @@ export async function downloadRemoteCover(
       return 'failed';
     }
 
-    // Cover materialized on disk. Sibling cleanup + DB `coverUrl` update are nonfatal from here:
-    // a failure is logged but does NOT downgrade the outcome (the file changed regardless).
+    // Cleanup and DB localization are nonfatal after the commit point.
     await finalizeCoverWrite(bookId, bookPath, keepFilename, db, log);
     log.info({ bookId, path: finalPath }, 'Remote cover downloaded and saved locally');
     return 'written';

@@ -4,29 +4,15 @@ import { titleVariantsDebugResponseSchema } from '@shared/schemas.js';
 import { explainTitlePairing } from '../services/series-title-match.js';
 
 /**
- * Spy-wrap the REAL `explainTitlePairing` so the route's DELEGATION is
- * observable (#2110 AC20/AC31). A behavioural fixture cannot see that property:
- * a *correct* inline copy of the rule in the route returns byte-identical JSON
- * for every case below, so "make the route recompute the rule" is not a
- * falsifiable mutation. Only "was the exported function actually called, with
- * the two request titles?" can fail when the rule gets a second home.
- *
- * The `esm-same-module-vi-mock-bypass` hazard does not apply here: the route
- * imports `explainTitlePairing` from a DIFFERENT module (`series-title-match`),
- * not through a local binding inside it, so the override is what the route
- * resolves. Mutation-verified: bypass the call (inline the rule in the route)
- * and the delegation test below is the only failure — every behavioural
- * assertion here stays green.
+ * Spy-wrap the real pairing rule: behavioral fixtures cannot distinguish delegation from an
+ * inline copy. The route imports this separate module, so the mock intercepts it.
  */
 vi.mock('../services/series-title-match.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/series-title-match.js')>();
   return { ...actual, explainTitlePairing: vi.fn(actual.explainTitlePairing) };
 });
 
-// NOTE: no auth/CSRF assertions here on purpose — `createTestApp` registers no
-// `authPlugin`, so any such assertion would pass vacuously
-// (`createtestapp-omits-auth-plugin`). The route inherits the standard `/api/*`
-// hook and adds no auth surface of its own.
+// No auth assertions: createTestApp omits authPlugin, so they would pass vacuously.
 describe('POST /api/series/title-variants-debug', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
 
@@ -71,9 +57,6 @@ describe('POST /api/series/title-variants-debug', () => {
     expect(body.full).toBe('chapterhouse dune');
   });
 
-  // The zero-variant arm. Asserted explicitly so it is never "fixed" into a 400:
-  // an empty variant set is the diagnostic answer for a title that carries no
-  // alphanumerics, and it is exactly why such a member cannot pair on the title path.
   it('returns 200 with variants: [] and full: "" for a title that yields no variants', async () => {
     const res = await post({ title: '[ ]' });
 
@@ -86,12 +69,7 @@ describe('POST /api/series/title-variants-debug', () => {
     expect(body.variants).toEqual([]);
   });
 
-  /**
-   * The motivating case (#2110). Both sides of this pair report
-   * `full: 'world of warcraft'`, so a response carrying only `full` + `variants`
-   * let an operator conclude MATCH while production refused. `degenerateFull`
-   * and `lossless` are the two inputs that were missing.
-   */
+  // In the motivating case, equal full forms differ because one is degenerate; expose lossless.
   it('surfaces the degeneracy inputs for a title whose subtitle the fold erases', async () => {
     const res = await post({ title: 'World of Warcraft: Перед бурей' });
 
@@ -106,22 +84,13 @@ describe('POST /api/series/title-variants-debug', () => {
     ]);
   });
 
-  /**
-   * AC29 — EXACTLY five top-level keys when `other` is omitted.
-   *
-   * `not.toHaveProperty('comparison')` is not enough: it passes for any
-   * accidental sixth key, and parsing through the (non-strict) Zod object would
-   * strip unknown keys before they could be seen — while the route registers no
-   * response schema to strip them in production. So the key set is asserted
-   * directly, on the RAW parsed payload.
-   */
+  // Assert raw keys directly because non-strict Zod parsing would hide extras.
   it('returns exactly the five per-side keys when `other` is omitted', async () => {
     const body = JSON.parse((await post({ title: 'Chapterhouse: Dune' })).payload);
     expect(Object.keys(body).sort()).toEqual(['degenerateFull', 'full', 'input', 'lossless', 'variants']);
   });
 
   describe('two-title comparison (#2110)', () => {
-    /** The AC28 worked example, minus `reason` — which AC30 governs by CONTENT, not wording. */
     const wowComparison = {
       input: 'World of Warcraft: Перед бурей',
       full: 'world of warcraft',
@@ -145,16 +114,7 @@ describe('POST /api/series/title-variants-debug', () => {
       },
     };
 
-    /**
-     * AC28/AC33 — the endpoint now agrees with production on the class that
-     * motivated the finding. `other`'s `prefix(1)` DOES equal `title`'s FULL
-     * form, but `title` is degenerate, so row 7's non-degenerate-target
-     * condition fails and row 8 decides.
-     *
-     * Two assertions, deliberately: a deep-equal with `reason` excluded, plus
-     * AC30's content assertions on `reason` itself. A single `toEqual` over the
-     * whole object would pin prose.
-     */
+    // Assert reason content separately so its prose remains free to change.
     it('returns the whole worked example for the motivating pair', async () => {
       const res = await post({
         title: 'World of Warcraft: Перед бурей',
@@ -168,16 +128,10 @@ describe('POST /api/series/title-variants-debug', () => {
       const { reason, ...comparisonWithoutReason } = body.comparison;
       expect({ ...body, comparison: comparisonWithoutReason }).toEqual(wowComparison);
 
-      // AC30 — both FULL forms are always named.
       expect(reason).toContain('world of warcraft');
       expect(reason).toContain('world of warcraft beyond the dark portal');
     });
 
-    /**
-     * The derived arm, in BOTH argument orders. A bug that returns the right
-     * boolean with the wrong `arm`, or names the wrong offering side, fails here
-     * and nowhere else.
-     */
     it.each([
       ['title', { title: 'The Churn: An Expanse Novella', other: 'The Churn' }],
       ['other', { title: 'The Churn', other: 'The Churn: An Expanse Novella' }],
@@ -186,8 +140,6 @@ describe('POST /api/series/title-variants-debug', () => {
 
       expect(body.comparison.pairs).toBe(true);
       expect(body.comparison.arm).toBe('derived-equals-full');
-      // AC30 — the offering variant's tag and raw, and WHICH request field
-      // offered it.
       expect(body.comparison.reason).toContain('prefix(1)');
       expect(body.comparison.reason).toContain('the churn');
       expect(body.comparison.reason).toContain(`(offered by: ${offeringSide})`);
@@ -202,19 +154,13 @@ describe('POST /api/series/title-variants-debug', () => {
     it('reports lossless-equals-lossless for identical non-Latin twins', async () => {
       const body = JSON.parse((await post({ title: 'Перед бурей', other: '  перед  БУРЕЙ (Unabridged)' })).payload);
       expect(body.comparison).toMatchObject({ pairs: true, arm: 'lossless-equals-lossless' });
-      // AC30 — both FULL forms are empty, so both render as `(empty)`, and the
-      // shared lossless text is what the arm actually keyed on.
+      // The arm keys on lossless text even though both folded forms are empty.
       expect(body.comparison.reason).toContain('(empty)');
       expect(body.comparison.reason).toContain('перед бурей');
       expect(body.full).toBe('');
       expect(body.variants).toEqual([]);
     });
 
-    /**
-     * AC20/AC31 — the STRUCTURAL observation. Rows 1–8 exist in exactly one
-     * place; the route's only job is to call it and merge in the `other` side.
-     * See the mock's docblock for why no behavioural fixture can see this.
-     */
     it('delegates the verdict to the exported explainTitlePairing', async () => {
       const spy = vi.mocked(explainTitlePairing);
       spy.mockClear();
@@ -239,7 +185,6 @@ describe('POST /api/series/title-variants-debug', () => {
     ['empty string', { title: '' }],
     ['whitespace only', { title: '   ' }],
     ['over 1024 characters', { title: 'x'.repeat(1025) }],
-    // AC26 — `other` carries the identical bounds.
     ['whitespace-only other', { title: 'Chapterhouse: Dune', other: '   ' }],
     ['empty other', { title: 'Chapterhouse: Dune', other: '' }],
     ['over-1024 other', { title: 'Chapterhouse: Dune', other: 'x'.repeat(1025) }],

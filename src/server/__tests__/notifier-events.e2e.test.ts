@@ -21,7 +21,7 @@ import {
   waitForRequests,
 } from './msw-handlers.js';
 
-// Mock audio scanner — enrichment needs valid audio files we don't have in tests
+// Avoid requiring valid audio fixtures for notification coverage.
 vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
@@ -41,7 +41,7 @@ const MOCK_SCAN_RESULT = {
 
 const MAGNET_URI = `magnet:?xt=urn:btih:${TORRENT_HASH}&dn=Test+Book`;
 
-// Default sinks for all notification URLs — prevents onUnhandledRequest: 'error' blowups
+  // Default notification URL sinks prevent strict unhandled-request failures.
 const mswServer = setupServer(
   http.post(WEBHOOK_URL, () => new HttpResponse(null, { status: 200 })),
   http.post(WEBHOOK_URL_2, () => new HttpResponse(null, { status: 200 })),
@@ -61,17 +61,14 @@ describe('Notifier event triggers E2E', () => {
     mswServer.listen({ onUnhandledRequest: 'error' });
     e2e = await createE2EApp();
 
-    // Temp directories for import tests
     downloadParent = await mkdtemp(join(tmpdir(), 'narratorr-notif-dl-'));
     libraryDir = await mkdtemp(join(tmpdir(), 'narratorr-notif-lib-'));
 
-    // Create download source with audio files
     const downloadSource = join(downloadParent, DOWNLOAD_FOLDER);
     await mkdir(downloadSource, { recursive: true });
     await writeFile(join(downloadSource, 'book.m4b'), Buffer.alloc(1024));
     await writeFile(join(downloadSource, 'chapter2.m4b'), Buffer.alloc(2048));
 
-    // Seed indexer
     const indexerRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/indexers',
@@ -86,7 +83,6 @@ describe('Notifier event triggers E2E', () => {
     expect(indexerRes.statusCode).toBe(201);
     indexerId = indexerRes.json().id;
 
-    // Seed download client (host/port must match QB_BASE)
     const clientRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/download-clients',
@@ -101,7 +97,6 @@ describe('Notifier event triggers E2E', () => {
     expect(clientRes.statusCode).toBe(201);
     downloadClientId = clientRes.json().id;
 
-    // Library + import settings
     await e2e.services.settings.set('library', {
       path: libraryDir,
       folderFormat: '{author}/{title}',
@@ -117,7 +112,6 @@ describe('Notifier event triggers E2E', () => {
       redownloadFailed: true,
     });
 
-    // Notifier 1: grab-only webhook (WEBHOOK_URL)
     const n1 = await e2e.app.inject({
       method: 'POST',
       url: '/api/notifiers',
@@ -131,7 +125,6 @@ describe('Notifier event triggers E2E', () => {
     });
     expect(n1.statusCode).toBe(201);
 
-    // Notifier 2: all-events webhook (WEBHOOK_URL_2)
     const n2 = await e2e.app.inject({
       method: 'POST',
       url: '/api/notifiers',
@@ -145,7 +138,6 @@ describe('Notifier event triggers E2E', () => {
     });
     expect(n2.statusCode).toBe(201);
 
-    // Notifier 3: Discord (all events)
     const n3 = await e2e.app.inject({
       method: 'POST',
       url: '/api/notifiers',
@@ -174,7 +166,6 @@ describe('Notifier event triggers E2E', () => {
     await rm(libraryDir, { recursive: true, force: true });
   });
 
-  /** Trigger a grab via API. Returns the grab response. */
   async function triggerGrab(title: string) {
     const bookRes = await e2e.app.inject({
       method: 'POST',
@@ -200,8 +191,6 @@ describe('Notifier event triggers E2E', () => {
     return { grabRes, bookId };
   }
 
-  // ── Event Routing ──────────────────────────────────────────────────────
-
   describe('event routing', () => {
     it('notifier with on_grab only does NOT receive on_import events', async () => {
       const { handler: grabOnlyHandler, captured: grabOnlyCaptured } = webhookCaptureHandler(WEBHOOK_URL);
@@ -221,11 +210,9 @@ describe('Notifier event triggers E2E', () => {
       const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Routing Test Book', 'Routing Author');
       await e2e.services.importOrchestrator.importDownload(downloadId);
 
-      // Wait for all-events webhook + discord to confirm notification cycle completed
       await waitForRequests(allEventsCaptured, 1);
       await waitForRequests(discordCaptured, 1);
 
-      // Grab-only webhook should NOT have received the on_import event
       expect(grabOnlyCaptured).toHaveLength(0);
       expect((allEventsCaptured[0]!.body as Record<string, unknown>).event).toBe('on_import');
     });
@@ -254,8 +241,6 @@ describe('Notifier event triggers E2E', () => {
       expect(captured2).toHaveLength(1);
     });
   });
-
-  // ── Webhook Payload Structure ──────────────────────────────────────────
 
   describe('webhook payload structure', () => {
     it('on_grab contains book.title, release.title, release.size', async () => {
@@ -341,8 +326,6 @@ describe('Notifier event triggers E2E', () => {
     });
   });
 
-  // ── Discord Format ────────────────────────────────────────────────────
-
   describe('Discord format', () => {
     it('sends embed with title, color, fields, timestamp, and footer', async () => {
       const { handler, captured } = discordCaptureHandler();
@@ -369,21 +352,17 @@ describe('Notifier event triggers E2E', () => {
         footer: { text: 'Narratorr' },
       }));
 
-      // Fields should include Book title and Release title
       const fields = embed!.fields as { name: string; value: string }[];
       expect(fields).toEqual(expect.arrayContaining([
         expect.objectContaining({ name: 'Book', value: 'Discord Format Test' }),
         expect.objectContaining({ name: 'Release', value: 'Discord Format Test' }),
       ]));
 
-      // Timestamp should be a valid ISO 8601 string (round-trips through toISOString())
       const ts = embed!.timestamp as string;
       expect(typeof ts).toBe('string');
       expect(new Date(ts).toISOString()).toBe(ts);
     });
   });
-
-  // ── Resilience ────────────────────────────────────────────────────────
 
   describe('resilience', () => {
     it('grab succeeds when webhook returns 500', async () => {
@@ -444,7 +423,6 @@ describe('Notifier event triggers E2E', () => {
       expect(result.bookId).toBe(bookId);
       expect(result.fileCount).toBe(2);
 
-      // Book status should still transition to imported
       const bookRes = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
       expect(bookRes.json().status).toBe('imported');
     });

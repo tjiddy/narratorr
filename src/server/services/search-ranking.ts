@@ -2,34 +2,18 @@ import { calculateQuality } from '@core/utils/index.js';
 import { narratorsFuzzyMatch } from '@core/utils/similarity.js';
 import type { SearchResult } from '@core/index.js';
 
-/** Optional narrator-priority config for auto-grab scoring. */
 export interface NarratorPriority {
   bookNarrators: string[];
-  /**
-   * Test-only seam (#1650/#1652): overrides the `0.8` dice threshold passed
-   * through to `narratorsFuzzyMatch`. `buildNarratorPriority` never assigns it
-   * in production, so the default always applies at runtime — it exists purely
-   * so `similarity.test.ts` can exercise the exact-boundary and relaxed-bar
-   * cases. Do NOT drop it as dead code.
-   */
+  /** Test-only threshold override; production always uses narratorsFuzzyMatch's default. */
   threshold?: number;
 }
 
 const NARRATOR_QUALITY_FLOOR_MBHR = 30;
 
-/**
- * Check whether a search result's narrator fuzzy-matches any of the book's narrators.
- * Delegates to the shared `narratorsFuzzyMatch` primitive (#1650) so the fuzzy
- * cross-product and the `0.8` default threshold live in exactly one place.
- */
 function isNarratorMatch(result: SearchResult, priority: NarratorPriority): boolean {
   return narratorsFuzzyMatch(result.narrator, priority.bookNarrators, priority.threshold);
 }
 
-/**
- * Compute the narrator-match tier value for a result.
- * Returns 1 for boosted (narrator match above quality floor), 0 otherwise.
- */
 function narratorTierValue(
   result: SearchResult,
   priority: NarratorPriority | undefined,
@@ -65,7 +49,6 @@ export function canonicalCompare(
 
   if (Math.abs(scoreDiff) > 0.1) return scoreDiff;
 
-  // Narrator-match tier (only when narratorPriority is provided)
   if (narratorPriority && narratorPriority.bookNarrators.length > 0) {
     const nA = narratorTierValue(a, narratorPriority, bookDuration, durationUnknown);
     const nB = narratorTierValue(b, narratorPriority, bookDuration, durationUnknown);
@@ -86,8 +69,7 @@ export function canonicalCompare(
     if (prefA !== prefB) return prefB - prefA;
   }
 
-  // Language tier: mismatch ranks below match/unknown (absence ≠ mismatch)
-  // Sub-tier: primary language (first entry) ranks above other matches
+  // Missing language is neutral; explicit mismatch loses, then primary wins among matches.
   if (languages.length > 0) {
     const primary = languages[0];
     const aLang = a.language?.toLowerCase();
@@ -95,7 +77,6 @@ export function canonicalCompare(
     const aMatch = !aLang || languages.includes(aLang) ? 1 : 0;
     const bMatch = !bLang || languages.includes(bLang) ? 1 : 0;
     if (aMatch !== bMatch) return bMatch - aMatch;
-    // Among matches, prefer primary language
     if (aMatch === 1 && bMatch === 1 && languages.length > 1) {
       const aPrimary = aLang === primary ? 1 : 0;
       const bPrimary = bLang === primary ? 1 : 0;
@@ -103,12 +84,12 @@ export function canonicalCompare(
     }
   }
 
-  // Indexer priority tier: lower value = more preferred (ascending)
+  // Lower indexer priority wins.
   const prioA = a.indexerPriority ?? Infinity;
   const prioB = b.indexerPriority ?? Infinity;
   if (prioA !== prioB) return prioA - prioB;
 
-  // Grabs tier: log-scale normalization
+  // Normalize grabs logarithmically.
   const grabsA = Math.log10((a.grabs ?? 0) + 1);
   const grabsB = Math.log10((b.grabs ?? 0) + 1);
   if (grabsA !== grabsB) return grabsB - grabsA;

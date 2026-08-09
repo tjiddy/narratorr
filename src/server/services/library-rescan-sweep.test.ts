@@ -22,7 +22,6 @@ function createMockLogger(): FastifyBaseLogger {
   } as unknown as FastifyBaseLogger;
 }
 
-/** `select().from().where()` resolving to zero books — the scan body runs, the row loop does not. */
 function createEmptyDb(): Db {
   return inject<Db>({
     select: vi.fn().mockReturnValue({
@@ -31,18 +30,11 @@ function createEmptyDb(): Db {
   });
 }
 
-/** The wrapper is a SWEEP-only seam, so its stub carries `reconcileAll` and nothing else. */
 function createCompanionStub() {
   return { reconcileAll: vi.fn().mockResolvedValue(undefined) };
 }
 
-/**
- * The same stub plus a `reconcileBook` PROBE — an extra property the wrapper's
- * `CompanionSweepTrigger` parameter does not declare, so it can only be reached by code that
- * went looking for it. Used by the one test that asserts the wrapper never fans out per-book;
- * everywhere else it would be exactly the irrelevant fixture member the narrow interface exists
- * to eliminate.
- */
+/** Add an undeclared per-book probe to prove the narrow sweep seam cannot fan out. */
 function createProbedCompanionStub() {
   return {
     reconcileAll: vi.fn().mockResolvedValue(undefined),
@@ -59,10 +51,6 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
     vi.resetAllMocks();
     log = createMockLogger();
   });
-
-  // ==========================================================================
-  // AC12 — which outcomes sweep, and that the error identity survives
-  // ==========================================================================
 
   describe('AC12 outcome matrix', () => {
     it('a successful rescan sweeps once, never per-book, and returns the summary unchanged', async () => {
@@ -120,10 +108,6 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
     });
   });
 
-  // ==========================================================================
-  // AC10/AC13/AC14 — ordering, against the REAL scan lock
-  // ==========================================================================
-
   describe('ordering against a real LibraryScanService', () => {
     let root: string;
     let libraryScan: LibraryScanService;
@@ -146,9 +130,7 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
     });
 
     it('AC10/AC13: the sweep is not invoked until that rescan released `scanning`', async () => {
-      // The probe IS the assertion: `rescanLibrary` throws `ScanInProgressError` synchronously
-      // while the flag is held, so a probe that succeeds proves the service's own `finally`
-      // already ran. No timers, no sleeps — the ordering is read off the real lock.
+      // A nested rescan succeeds only after the real scanning flag is released.
       let scanLockFree: boolean | null = null;
       let resolveSweep!: () => void;
       const sweepStarted = new Promise<void>((r) => { resolveSweep = r; });
@@ -173,7 +155,7 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
     });
 
     it('AC13/AC14: a second rescan may begin while an earlier sweep is still reading — that overlap is LEGAL, not a bug to fix', async () => {
-      // Sweep A never settles, so it is provably still in flight for the whole test.
+      // Keep sweep A in flight for the entire second rescan.
       let releaseSweepA!: () => void;
       const sweepA = new Promise<void>((r) => { releaseSweepA = r; });
       const companionEbook = { reconcileAll: vi.fn().mockReturnValue(sweepA) };
@@ -181,9 +163,7 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
       await rescanLibraryWithCompanionSweep({ libraryScan, companionEbook, log });
       expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
 
-      // The second rescan runs to completion — no ScanInProgressError, because the sweep does
-      // not hold `scanning`. This test exists so a future reader does not "fix" AC13 back into
-      // a global mutual-exclusion invariant.
+      // Sweep work deliberately does not own the scan mutex.
       await expect(rescanLibraryWithCompanionSweep({ libraryScan, companionEbook, log }))
         .resolves.toEqual({ scanned: 0, missing: 0, restored: 0 });
       expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(2);
@@ -210,10 +190,6 @@ describe('rescanLibraryWithCompanionSweep (#1960 AC9–AC14)', () => {
       spy.mockRestore();
     });
   });
-
-  // ==========================================================================
-  // Isolation — the sweep can never change what the caller sees
-  // ==========================================================================
 
   describe('sweep isolation', () => {
     it('a REJECTING reconcileAll does not fail the rescan', async () => {

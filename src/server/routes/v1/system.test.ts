@@ -13,7 +13,7 @@ import { v1SystemRoutes } from './system.js';
 import { systemV1Schema } from '@shared/schemas/v1/system.js';
 import { getVersion, getCommit, getBuildTime } from '../../utils/version.js';
 
-// Mock config so the auth plugin runs with authBypass off (mirrors books.test).
+// Run the auth plugin with authBypass off.
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
 
 const VALID_KEY = 'valid-key';
@@ -30,7 +30,6 @@ const authService = {
   createSessionCookie: vi.fn().mockReturnValue('cookie'),
 } as unknown as AuthService;
 
-/** Assert a body matches the v1 error envelope `{ error: { code, message } }`. */
 function expectV1Envelope(body: unknown): void {
   expect(body).toMatchObject({ error: { code: expect.any(String), message: expect.any(String) } });
 }
@@ -45,8 +44,6 @@ describe('v1 system route', () => {
     await app.register(cookie);
     await app.register(authPlugin, { authService });
     await v1SystemRoutes(app);
-    // Prowlarr/Readarr compat-shim decoy at the longer path — proves the new
-    // `/api/v1/system` route does NOT shadow it.
     app.get('/api/v1/system/status', async () => ({ compat: true }));
     await app.ready();
   });
@@ -88,9 +85,6 @@ describe('v1 system route', () => {
 
     it('sources field values from the existing version/node/os helpers', async () => {
       const body = (await get()).json();
-      // Build env is unset in the test runner, so the version helpers resolve to
-      // their fallbacks (`commit`/`buildTime` → "unknown", `version` → "dev").
-      // Assert provenance by matching the very helpers the handler reuses.
       expect(body.version).toBe(getVersion());
       expect(body.commit).toBe(getCommit());
       expect(body.buildTime).toBe(getBuildTime());
@@ -124,7 +118,6 @@ describe('v1 system route', () => {
   });
 });
 
-/** A valid SystemV1 body, used as the base for the fail-closed regression tests. */
 function validSystemBody() {
   return {
     version: 'dev',
@@ -135,12 +128,7 @@ function validSystemBody() {
   };
 }
 
-// Fail-closed regression coverage (F1). The no-leak guarantee rests entirely on
-// `systemV1Schema` being `.strict()`: the route body is always clean, so the
-// happy-path tests above would STILL pass if `.strict()` regressed to Zod's
-// default strip. These two tests pin the guarantee at both layers — the schema
-// itself rejects an extra key, and Fastify serialization fails-closed (5xx)
-// rather than stripping a leaked field. Mirrors books.test.ts's F6 test.
+// Pin fail-closed behavior at both direct parsing and Fastify serialization.
 describe('strict / fail-closed schema (F1)', () => {
   it.each(['libraryPath', 'freeSpace', 'dbSize'])(
     'systemV1Schema.parse rejects the sensitive %s field instead of stripping it',
@@ -151,9 +139,6 @@ describe('strict / fail-closed schema (F1)', () => {
   );
 
   it('Fastify serialization fails closed (500) when a handler leaks an internal field', async () => {
-    // A route declaring `response: systemV1Schema` whose handler returns a leaky
-    // object must FAIL serialization, not strip-and-ship. This pins the keystone
-    // behavior at the Fastify layer, not just at direct parse.
     const leakyApp = Fastify({ logger: false });
     leakyApp.setSerializerCompiler(serializerCompiler);
     leakyApp.get('/leak', { schema: { response: { 200: systemV1Schema } } }, async () => ({

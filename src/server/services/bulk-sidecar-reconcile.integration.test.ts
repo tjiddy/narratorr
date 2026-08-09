@@ -8,26 +8,15 @@ import type { Db } from '@db/index.js';
 import type * as NetworkServiceModule from '@core/utils/network-service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 
-/**
- * Real-`downloadRemoteCover` coverage for the #1670 reconcile cover-idempotency invariant.
- *
- * The existing `bulk-operation.service.test.ts` idempotency check hand-flips the mocked DB row from a
- * remote to a local `coverUrl` between runs — proving orchestration branching, not that the real
- * downloader localizes `coverUrl` so the second run skips. Here `downloadRemoteCover` runs FOR REAL
- * (writing into a temp folder and issuing the DB `coverUrl` update); only the network fetch is
- * stubbed at the `network-service` boundary (per spec review F1 — assert zero second-run downloads at
- * the fetch boundary, never by mocking `downloadRemoteCover` itself).
- */
+/** Exercise real cover localization and second-run idempotency while stubbing only the network. */
 
-// Hoisted so the (hoisted) vi.mock factory below can close over them without a TDZ error.
+// Hoist these so the mock factory can close over them without a TDZ error.
 const { fetchMock, dispatcherCloseSpy } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
   dispatcherCloseSpy: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Stub ONLY the network seam: `fetchWithSsrfRedirect` (so no real HTTP/DNS) and
-// `createSsrfSafeDispatcher` (so dispatcher.close() hits a spy). `downloadRemoteCover` itself — the
-// fs write, the coverUrl localization, the DB update — stays real.
+// Cover writing and localization remain real; only HTTP and dispatcher creation are stubbed.
 vi.mock('@core/utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   return {
@@ -63,10 +52,7 @@ function imageResponse(): Response {
   });
 }
 
-/**
- * Recording DB mock. `select…from…where` returns the (mutable) rows; `update…set…where` captures the
- * values production wrote so the test can feed the localized `coverUrl` into a second run.
- */
+/** Return mutable rows and capture production's coverUrl update for the second run. */
 type ReconcileRow = { id: number; path: string; coverUrl: string | null };
 
 function makeDb(rows: ReconcileRow[]) {
@@ -98,8 +84,7 @@ function withTmp(fn: (root: string) => Promise<void>): () => Promise<void> {
 
 describe('runSidecarReconcile — real cover localization idempotency (#1699)', () => {
   beforeEach(() => {
-    // resetAllMocks (not clearAllMocks) so any queued *Once responses drain between tests
-    // — see learning vitest-clearallmocks-once-queue.
+    // resetAllMocks drains queued Once implementations; clearAllMocks does not.
     vi.resetAllMocks();
     dispatcherCloseSpy.mockResolvedValue(undefined);
   });
@@ -110,7 +95,6 @@ describe('runSidecarReconcile — real cover localization idempotency (#1699)', 
     const setTotal = vi.fn();
     const tick = vi.fn();
 
-    // --- Run 1: remote coverUrl → real download + localize ---
     fetchMock.mockResolvedValue(imageResponse());
     await runSidecarReconcile(
       { db, bookService: makeBookService(), log: makeLog(), jobId: 'job-1', where: undefined },
@@ -118,12 +102,9 @@ describe('runSidecarReconcile — real cover localization idempotency (#1699)', 
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    // The real downloader wrote a cover file into the temp folder...
     expect(await pathExists(join(root, 'cover.jpg'))).toBe(true);
-    // ...and localized coverUrl to the canonical local form (the value production actually wrote).
     expect(captured.coverUrl).toBe('/api/books/1/cover');
 
-    // --- Run 2: feed the production-written local coverUrl back in → must skip the download ---
     rows[0]!.coverUrl = captured.coverUrl ?? null;
     fetchMock.mockClear();
 
@@ -132,7 +113,6 @@ describe('runSidecarReconcile — real cover localization idempotency (#1699)', 
       vi.fn(), vi.fn(),
     );
 
-    // isRemoteCoverUrl('/api/books/1/cover') is false → the cover gate short-circuits, zero fetches.
     expect(fetchMock).not.toHaveBeenCalled();
   }));
 });

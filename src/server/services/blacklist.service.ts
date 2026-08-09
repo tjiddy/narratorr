@@ -14,12 +14,10 @@ export class BlacklistService {
   async getAll(
     pagination?: { limit?: number; offset?: number },
   ): Promise<{ data: BlacklistRow[]; total: number }> {
-    // Get total count
     const [{ value: total } = { value: 0 }] = await this.db
       .select({ value: countFn() })
       .from(blacklist);
 
-    // Get data with optional pagination and stable ordering
     let query = this.db
       .select()
       .from(blacklist)
@@ -46,8 +44,7 @@ export class BlacklistService {
       throw new Error('Blacklist entry requires at least one identifier (infoHash or guid)');
     }
 
-    // Normalize every optional field so the upsert SET clause writes deterministic values.
-    // Drizzle drops `undefined` from SET, which would let stale row values leak through on conflict.
+    // Drizzle omits undefined SET values; normalize them so an upsert cannot retain stale fields.
     const normalized = {
       bookId: data.bookId ?? null,
       infoHash: data.infoHash ?? null,
@@ -139,9 +136,7 @@ export class BlacklistService {
     guids?: string[],
   ): Promise<{ blacklistedHashes: Set<string>; blacklistedGuids: Set<string> }> {
     const now = new Date();
-    // Invariant: both operands are always defined, so or() never returns undefined.
-    // accumulateBlacklisted narrows its param to NonNullable — keep this non-undefined
-    // (a dropped operand would let Drizzle's and(inArray, undefined) silently skip expiry filtering).
+    // Keep this non-null: Drizzle silently drops an undefined operand from and().
     const expiryFilter = or(
       eq(blacklist.blacklistType, 'permanent'),
       gt(blacklist.expiresAt, now),
@@ -152,10 +147,7 @@ export class BlacklistService {
     const hashList = hashes ?? [];
     const guidList = guids ?? [];
 
-    // Empty/omitted input: the expiry-only query returns every active row's
-    // identifiers (relied on by getBlacklistedHashes/isBlacklisted). chunkArray([])
-    // yields no chunks, so this branch must stay explicit — not folded into the
-    // chunk loops below, which would issue zero queries and return empty Sets.
+    // Empty filters mean all active identifiers; chunkArray([]) would issue no queries.
     if (hashList.length === 0 && guidList.length === 0) {
       const rows: BlacklistRow[] = await this.db
         .select()
@@ -168,10 +160,7 @@ export class BlacklistService {
       return { blacklistedHashes, blacklistedGuids };
     }
 
-    // Chunk each identifier list's inArray query (SQLite bind-param limit is 999),
-    // applying the expiry predicate per chunk and unioning every returned row's
-    // identifiers into both Sets — so a row matched via one identifier still
-    // contributes the other (preserving the old combined-query cross-population).
+    // Query each identifier kind in chunks, but collect both identifiers from every matched row.
     if (hashList.length > 0) {
       await this.accumulateBlacklisted(blacklist.infoHash, hashList, expiryFilter, blacklistedHashes, blacklistedGuids);
     }
@@ -181,8 +170,7 @@ export class BlacklistService {
     return { blacklistedHashes, blacklistedGuids };
   }
 
-  // The expiry predicate adds 2 fixed binds per chunk query; 480 leaves ample
-  // headroom under the 999 limit (in-repo convention ceiling is 998).
+  // Leave room for the expiry predicate under SQLite's 999-bind limit.
   private static readonly IDENTIFIER_CHUNK_SIZE = 480;
 
   private async accumulateBlacklisted(
@@ -204,7 +192,7 @@ export class BlacklistService {
     }
   }
 
-  /** Backward-compatible wrapper — returns only blacklisted infoHashes. */
+  /** Backward-compatible wrapper returning active blacklisted infoHashes. */
   async getBlacklistedHashes(hashes?: string[]): Promise<Set<string>> {
     const { blacklistedHashes } = await this.getBlacklistedIdentifiers(hashes);
     return blacklistedHashes;

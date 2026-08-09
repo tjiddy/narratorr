@@ -45,7 +45,7 @@ export class EventHistoryService {
     private bookService: BookService,
   ) {}
 
-  /** Wire cyclic / late-bound deps after construction. Call once during composition. */
+  /** Wire the late-bound retry dependency exactly once during composition. */
   wire(deps: EventHistoryServiceWireDeps): void {
     this.wired.set(deps);
   }
@@ -88,13 +88,11 @@ export class EventHistoryService {
       ? conditions.length === 1 ? conditions[0] : and(...conditions)
       : undefined;
 
-    // Get total count (with filters, before pagination)
     const [{ value: total } = { value: 0 }] = await this.db
       .select({ value: countFn() })
       .from(bookEvents)
       .where(where);
 
-    // Get data with optional pagination
     let query = this.db
       .select()
       .from(bookEvents)
@@ -172,7 +170,6 @@ export class EventHistoryService {
       throw new EventHistoryServiceError('Event has no associated download', 'NO_DOWNLOAD');
     }
 
-    // Look up download for infoHash
     const downloadRows = await this.db
       .select()
       .from(downloads)
@@ -184,14 +181,10 @@ export class EventHistoryService {
       throw new EventHistoryServiceError('Associated download not found', 'DOWNLOAD_NOT_FOUND');
     }
 
-    // Fail-fast: if we will need retrySearchDeps later (event has bookId),
-    // verify wire() was called BEFORE we mutate any state. Without this guard,
-    // an unwired service would blacklist + revert book status and only then
-    // throw ServiceWireError, leaving a partial mark-failed operation behind.
+    // Resolve late-bound deps before mutation; an unwired service must not partially blacklist/revert.
     const retrySearchDeps = event.bookId ? this.wired.require().retrySearchDeps : null;
 
-    // Blacklist the release if infoHash present; skip for Usenet (no infoHash).
-    // Catch failures so book status revert and retry-search dispatch still run.
+    // Usenet has no infoHash; blacklist failure is nonfatal so revert and retry still run.
     if (download.infoHash) {
       try {
         await this.blacklistService.create({
@@ -210,16 +203,13 @@ export class EventHistoryService {
       this.log.debug({ downloadId: download.id }, 'Skipping blacklist — no infoHash (Usenet download)');
     }
 
-    // Revert book to wanted status
     if (event.bookId) {
       await this.bookService.updateStatus(event.bookId, 'wanted');
     }
 
     this.log.info({ eventId, downloadId: event.downloadId, bookId: event.bookId }, 'Event marked as failed');
 
-    // Trigger book-scoped retry search (fire-and-forget) — does NOT reset global retry budget.
-    // retrySearchDeps was resolved up-front (fail-fast) so a missing wire could not have
-    // produced any partial side effects above.
+    // Book-scoped retry is fire-and-forget and does not reset the global retry budget.
     if (event.bookId && retrySearchDeps) {
       retrySearch(event.bookId, retrySearchDeps)
         .catch((err) => this.log.warn({ error: serializeError(err) }, 'Mark-as-failed retry search failed'));

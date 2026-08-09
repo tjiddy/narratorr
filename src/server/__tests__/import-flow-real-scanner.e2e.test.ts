@@ -13,26 +13,15 @@ import {
 } from './msw-handlers.js';
 
 /**
- * Fixture-backed e2e test for the import → enrich pipeline.
- *
- * This file deliberately does NOT mock `scanAudioDirectory` — it copies the
- * tracked `e2e/assets/silent.m4b` fixture into a temp download path and
- * exercises the real music-metadata parser end-to-end. ImportService.
- * enrichAfterImport (`src/server/services/import.service.ts:183-191`)
- * silently absorbs enrichment failures and continues, so a passing import
- * alone does not prove the scanner ran. We therefore assert
- * scanner-derived book fields (codec, fileFormat, fileCount, duration,
- * enrichmentStatus) directly to prove real metadata reached the DB.
- *
- * The sibling `import-flow.e2e.test.ts` keeps its mocked scanner for speed;
- * this is the one fixture-backed integration case.
+ * Exercise the real music-metadata scanner with the tracked silent fixture. Import absorbs
+ * enrichment failures, so successful import alone does not prove scanning ran; assert
+ * `enrichmentStatus === 'file-enriched'` plus persisted audio metadata.
  */
 
 const FIXTURE_PATH = join(import.meta.dirname, '..', '..', '..', 'e2e', 'assets', 'silent.m4b');
 
 const mswServer = setupServer(
-  // Default webhook sink — present so onUnhandledRequest:'error' never fires
-  // for fire-and-forget notifications during the import flow.
+  // Absorb fire-and-forget notifications under strict unhandled-request mode.
   http.post(WEBHOOK_URL, () => new HttpResponse(null, { status: 200 })),
 );
 
@@ -42,8 +31,7 @@ describe('Import flow E2E — real audio scanner', () => {
   let libraryDir: string;
   let downloadClientId: number;
 
-  // The shared qbGetTorrentHandler hardcodes content_path as `${savePath}/Test Audiobook`,
-  // so the download folder name must match.
+  // Must match the content path hardcoded by qbGetTorrentHandler.
   const DOWNLOAD_FOLDER = 'Test Audiobook';
 
   beforeAll(async () => {
@@ -53,7 +41,6 @@ describe('Import flow E2E — real audio scanner', () => {
     downloadParent = await mkdtemp(join(tmpdir(), 'narratorr-real-scan-dl-'));
     libraryDir = await mkdtemp(join(tmpdir(), 'narratorr-real-scan-lib-'));
 
-    // Copy the tracked fixture into the simulated download folder.
     const downloadSource = join(downloadParent, DOWNLOAD_FOLDER);
     await mkdir(downloadSource, { recursive: true });
     await copyFile(FIXTURE_PATH, join(downloadSource, 'silent.m4b'));
@@ -120,23 +107,17 @@ describe('Import flow E2E — real audio scanner', () => {
     expect(bookRes.statusCode).toBe(200);
     const book = bookRes.json();
 
-    // Real scanner ran — enrichmentStatus only flips to 'file-enriched' inside
-    // enrichBookFromAudio when scanAudioDirectory returns non-null with codec.
+    // Only a successful real scan sets file-enriched.
     expect(book.enrichmentStatus).toBe('file-enriched');
 
-    // music-metadata stores `metadata.format.codec` raw — spellings like
-    // 'AAC', 'AAC LC', or 'MPEG-4/AAC' are all legitimate for an AAC fixture.
-    // Match case-insensitively so a parser-version bump doesn't break us.
+    // Parser versions expose several legitimate AAC spellings.
     expect(book.audioCodec).toMatch(/aac/i);
 
-    // Deterministic — derived from extname(filePath).slice(1).toLowerCase()
-    // at src/core/utils/audio-scanner.ts:172.
     expect(book.audioFileFormat).toBe('m4b');
 
-    // Single-file fixture.
     expect(book.audioFileCount).toBe(1);
 
-    // Documented 10-second length; allow ±1s for Math.round and parser drift.
+    // Allow rounding and parser drift around the fixture's ten-second duration.
     expect(book.audioDuration).toBeGreaterThanOrEqual(9);
     expect(book.audioDuration).toBeLessThanOrEqual(11);
   });

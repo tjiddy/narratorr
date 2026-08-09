@@ -31,14 +31,7 @@ import {
 
 type SubmissionRow = typeof importSubmissions.$inferSelect;
 
-/**
- * The exact projected column set the report-detail read selects (F62/F66). The
- * KEYS mirror `REPORT_ITEM_COLUMNS`; a regression guard asserts `itemPayload` is
- * absent so a report expansion of an accepted row can never transfer its (up to
- * 64 MiB) staged payload. A FUNCTION (not a module-level const) so it does not
- * dereference schema columns at import time — that would break the suites that
- * partially mock `db/schema`.
- */
+/** Exclude 64 MiB itemPayload reads; function form avoids schema access during partial mocks. */
 export function reportItemProjection() {
   return {
     disposition: importSubmissionItems.disposition,
@@ -52,7 +45,7 @@ export function reportItemProjection() {
   } as const;
 }
 
-/** One raw row of the atomic attention CTE (columns aliased to camelCase). */
+/** Raw camel-cased row from the atomic attention CTE. */
 interface AttentionQueryRow {
   id: number | null;
   clientSubmissionId: string | null;
@@ -74,24 +67,11 @@ interface AttentionQueryRow {
 
 const emptyAggregates = (): SubmissionAggregates => ({ accepted: 0, held: 0, skipped: 0, failed: 0 });
 
-/**
- * Read-side over the #1893 staged-submission substrate (#1894). Owns the list,
- * the atomic attention snapshot (one CTE, one captured cutoff), and the
- * report-detail projection (no `itemPayload`). All assembly flows through the
- * shared pure DTO mappers so summaries here are byte-identical to the mutation
- * path's. Mutations + the receiving-only DELETE stay on `ImportStagingService`.
- */
+/** Read-side for lists, atomic attention snapshots, and payload-free report detail. */
 export class ImportSubmissionReportService {
   constructor(private readonly db: Db) {}
 
-  /**
-   * Paginated durable-record list, newest-first (`createdAt DESC, id DESC`). Set-
-   * based (F84): NEVER the per-record progress loader. `complete` rows use their
-   * frozen aggregate columns; the (rare) non-`complete` rows on a page get live
-   * counts from ONE grouped disposition query; `detailsPruned` for `complete` rows
-   * comes from ONE batch existence query. At most those two item-table queries per
-   * page (each skipped when its id set is empty).
-   */
+  /** Newest-first page with at most one live-count and one complete-item existence query. */
   async list(query: SubmissionListQuery): Promise<SubmissionListResponse> {
     const where = query.source ? eq(importSubmissions.source, query.source) : undefined;
     const totalRows = await this.db
@@ -113,12 +93,11 @@ export class ImportSubmissionReportService {
     return { data, total };
   }
 
-  /** Set-based progress for a page of headers — the two-batch-query loader (F52/F84). */
   private async loadPageProgress(headers: SubmissionRow[]): Promise<Map<number, SubmissionProgress>> {
     const completeIds = headers.filter((h) => h.status === 'complete').map((h) => h.id);
     const liveIds = headers.filter((h) => h.status !== 'complete').map((h) => h.id);
 
-    // Batch 1 — grouped disposition counts for the non-complete rows only.
+    // One grouped count for all live rows.
     const liveAgg = new Map<number, SubmissionAggregates>(liveIds.map((id) => [id, emptyAggregates()]));
     if (liveIds.length > 0) {
       const counts = await this.db
@@ -141,7 +120,7 @@ export class ImportSubmissionReportService {
       }
     }
 
-    // Batch 2 — existence probe (DISTINCT) for the complete rows' pruning flag.
+    // One existence probe for all complete rows.
     const hasItems = new Set<number>();
     if (completeIds.length > 0) {
       const withItems = await this.db
@@ -163,16 +142,10 @@ export class ImportSubmissionReportService {
     return map;
   }
 
-  /**
-   * Attention read (F60/F68/F71). ONE atomic CTE with ONE captured cutoff computes
-   * both `data` (the single newest attention-worthy submission in scope, or null)
-   * and `watch` (any non-terminal row in scope). Because it is one statement,
-   * `{data:null, watch:false}` is reachable ONLY when no attention-worthy and no
-   * non-terminal row genuinely exists.
-   */
+  /** Compute newest attention data and watch from one statement and one captured cutoff. */
   async attention(query: SubmissionAttentionQuery): Promise<AttentionResponse> {
     const source: string | null = query.source ?? null;
-    // `updated_at` is stored as unixepoch SECONDS; strict `<` (F61).
+    // Stored timestamps are epoch seconds; exactly-at-cutoff is not abandoned.
     const cutoffSeconds = Math.floor((Date.now() - ABANDONED_UPLOAD_GRACE_MS) / 1000);
     const rows = await this.db.all<AttentionQueryRow>(sql`
       WITH scoped AS (
@@ -216,7 +189,6 @@ export class ImportSubmissionReportService {
   private attentionRowToDto(row: AttentionQueryRow): AttentionSubmission {
     const toIso = (s: number) => new Date(s * 1000).toISOString();
     const isComplete = row.status === 'complete';
-    // Progress/pruning DECISIONS come from the shared pure builders (F6).
     const counts: SubmissionAggregates = {
       accepted: Number(row.acceptedCount),
       held: Number(row.heldCount),
@@ -229,8 +201,7 @@ export class ImportSubmissionReportService {
     const attention: SubmissionAttention = isComplete
       ? { kind: 'completed-attention', held: progress.aggregates.held, failed: progress.aggregates.failed }
       : { kind: 'abandoned' };
-    // Adapt the raw CTE row to the normalized header input and feed the SINGLE
-    // canonical mapper — no second summary-header assembly here (F39).
+    // Reuse canonical header assembly instead of duplicating attention DTO logic.
     const headerInput: SubmissionHeaderInput = {
       id: Number(row.id),
       clientSubmissionId: row.clientSubmissionId!,
@@ -246,12 +217,7 @@ export class ImportSubmissionReportService {
     return { ...buildHeaderFields(headerInput, progress), itemsIncluded: false, attention };
   }
 
-  /**
-   * Report-detail projection (F62/F66/F87) — the by-id `includeItems=true` read.
-   * Selects ONLY the projected columns (no `itemPayload`), maps each row through
-   * the report-row mapper (accepted `item` omitted, failed `message` from
-   * `reason`), and collapses a pruned record to the summary arm.
-   */
+  /** Select payload-free report rows; return summary when details were pruned. */
   async reportDetail(id: number): Promise<SubmissionResponse> {
     const [header] = await this.db.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
     if (!header) throw new SubmissionError('submission-not-found', 404, 'submission not found');
@@ -268,7 +234,6 @@ export class ImportSubmissionReportService {
     return { ...buildHeaderFields(drizzleHeaderInput(header), progress), itemsIncluded: true, items };
   }
 
-  /** Single-record progress for report-detail — the shared pure builders decide (F6). */
   private async recordProgress(header: SubmissionRow): Promise<SubmissionProgress> {
     if (header.status === 'complete') {
       const counts: SubmissionAggregates = {

@@ -9,7 +9,6 @@ import { DuplicateDownloadError } from '../services/download.service.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import type { Db } from '@db/index.js';
 
-// Helper to build SearchResult with specific fields
 function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {
   return {
     title: 'Test Book',
@@ -23,7 +22,7 @@ function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {
 }
 
 describe('filterAndRankResults', () => {
-  const ONE_HOUR = 3600; // 1 hour in seconds
+  const ONE_HOUR = 3600;
 
   it('returns durationUnknown: true when bookDuration is undefined', () => {
     const { durationUnknown } = filterAndRankResults([], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
@@ -61,7 +60,7 @@ describe('filterAndRankResults', () => {
   });
 
   it('filters results below grabFloor MB/hr (when duration known)', () => {
-    // 100 MB over 1 hour = 100 MB/hr. Set floor at 150 to filter it out.
+    // 100 MiB/hour falls below the 150 MiB/hour floor.
     const results = [
       makeResult({ size: 100 * 1024 * 1024, title: 'Low Quality' }),
       makeResult({ size: 200 * 1024 * 1024, title: 'High Quality' }),
@@ -80,7 +79,7 @@ describe('filterAndRankResults', () => {
   });
 
   it('skips grabFloor filtering when duration is unknown', () => {
-    // 10 MB over unknown duration — should pass through even with high floor
+    // Unknown duration bypasses rate filtering.
     const results = [
       makeResult({ size: 10 * 1024 * 1024, title: 'Tiny' }),
     ];
@@ -104,7 +103,7 @@ describe('filterAndRankResults', () => {
       makeResult({ matchScore: 0.85, size: 500 * 1024 * 1024, title: 'Large' }),
     ];
     const { results: sorted } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-    // Score diff is 0.05 (<= 0.1), so MB/hr wins. Large = 500 MB/hr > Small = 100 MB/hr
+    // Scores within 0.1 defer to MB/hour.
     expect(sorted[0]!.title).toBe('Large');
     expect(sorted[1]!.title).toBe('Small');
   });
@@ -307,7 +306,6 @@ describe('search routes', () => {
     for (const s of Object.values(logSpies)) s.mockClear();
   });
 
-  // Wave 11.2 — REST GET /api/search retired; SSE /api/search/stream is the active surface.
   describe('GET /api/search (removed in Wave 11.2)', () => {
     it('returns 404 — route was retired in favor of SSE /api/search/stream', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
@@ -392,7 +390,6 @@ describe('search routes', () => {
       expect(JSON.parse(res.payload).error).toBe('No download client');
     });
 
-    // #197 — DuplicateDownloadError route handling (ERR-1)
     it('returns 409 with { code: ACTIVE_DOWNLOAD_EXISTS } when DuplicateDownloadError has ACTIVE_DOWNLOAD_EXISTS code', async () => {
       (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(
         new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }),
@@ -408,8 +405,7 @@ describe('search routes', () => {
       });
 
       expect(res.statusCode).toBe(409);
-      // #1857/#1861 — coded body carries the active title + count from the REQUIRED
-      // structured details (no ids, no request-title fallback — that fallback was deleted).
+      // Blocker details must come from structured metadata, never ids or request-title fallback.
       expect(JSON.parse(res.payload)).toEqual({ code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'A Book' }, count: 1 });
     });
 
@@ -461,7 +457,6 @@ describe('search routes', () => {
       expect(JSON.parse(res.payload)).toEqual({ code: 'PIPELINE_ACTIVE', reason: 'processing' });
     });
 
-    // #558 — Typed download client errors propagate to error-handler plugin
     it('returns 401 when DownloadClientAuthError propagates through error handler', async () => {
       (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(
         new DownloadClientAuthError('qBittorrent', 'Session expired'),
@@ -528,7 +523,6 @@ describe('search routes', () => {
       const mockDownload = { id: 1, title: 'Test', status: 'downloading' };
       (services.downloadOrchestrator.grabInternal as Mock).mockResolvedValue(mockDownload);
 
-      // Create a separate app instance with logging enabled to capture log output
       const logLines: string[] = [];
       const { Writable } = await import('node:stream');
       const logStream = new Writable({
@@ -568,7 +562,6 @@ describe('search routes', () => {
     });
   });
 
-  // ===== #248 — grab route accepts guid =====
 
   describe('POST /api/search/grab — guid threading', () => {
     it('passes guid to downloadOrchestrator.grabInternal when provided', async () => {

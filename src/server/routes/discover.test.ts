@@ -56,7 +56,6 @@ describe('Discover Routes', () => {
       expect(body).toHaveLength(2);
       expect(body[0].score).toBe(80);
       expect(body[1].score).toBe(60);
-      // Timestamps serialized as ISO strings
       expect(body[0].refreshedAt).toBe(NOW.toISOString());
     });
 
@@ -96,9 +95,6 @@ describe('Discover Routes', () => {
     });
   });
 
-  // Old POST /api/discover/suggestions/:id/add tests removed — #524 replaced with mark-added
-
-  // --- #524: mark-added endpoint (status-flip only) ---
   describe('POST /api/discover/suggestions/:id/mark-added', () => {
     it('flips status from pending to added and returns updated suggestion', async () => {
       (services.discovery.markSuggestionAdded as Mock).mockResolvedValueOnce({
@@ -150,7 +146,6 @@ describe('Discover Routes', () => {
       expect(body.suggestion.authorAsin).toBe('A001');
     });
 
-    // #1150 — libraryBookId surfaced on mark-added response
     it('forwards libraryBookId from the service to the response (mark-added)', async () => {
       (services.discovery.markSuggestionAdded as Mock).mockResolvedValueOnce({
         suggestion: mockSuggestionRow({ id: 1, status: 'added', libraryBookId: 42 }),
@@ -162,7 +157,6 @@ describe('Discover Routes', () => {
     });
   });
 
-  // #1150 — libraryBookId surfaced across all three suggestion-returning paths
   describe('libraryBookId surface (#1150)', () => {
     it('GET /api/discover/suggestions returns libraryBookId per row', async () => {
       (services.discovery.getSuggestions as Mock).mockResolvedValueOnce([
@@ -210,7 +204,6 @@ describe('Discover Routes', () => {
       expect(res.statusCode).toBe(409);
     });
 
-    // #149 — typed error routing via plugin (ERR-1)
     it('returns 409 when task registry throws TaskRegistryError ALREADY_RUNNING (plugin-routed)', async () => {
       (services.settings.get as Mock).mockResolvedValueOnce({ enabled: true });
       (services.taskRegistry.runExclusive as Mock).mockRejectedValue(new TaskRegistryError('Task "discovery" is already running', 'ALREADY_RUNNING'));
@@ -232,7 +225,6 @@ describe('Discover Routes', () => {
     });
   });
 
-  // Wave 11.2 (#755) — GET /api/discover/stats and POST /api/discover/suggestions/:id/snooze retired
   describe('removed routes', () => {
     it('GET /api/discover/stats returns 404', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/discover/stats' });
@@ -331,9 +323,6 @@ describe('Discover Routes', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Diversity reason filter (#407)
-  // -------------------------------------------------------------------------
 
   describe('diversity reason query param', () => {
     it('GET /api/discover/suggestions?reason=diversity returns 200 and forwards to service', async () => {
@@ -350,9 +339,6 @@ describe('Discover Routes', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // #406 — Concurrent refresh protection
-  // ---------------------------------------------------------------------------
   describe('POST /api/discover/refresh concurrency (AC7)', () => {
     it('returns 409 when task registry reports discovery is already running', async () => {
       (services.settings.get as Mock).mockResolvedValueOnce({ enabled: true });
@@ -387,5 +373,3 @@ describe('Discover Routes', () => {
     });
   });
 });
-
-// #514 blacklistService guard tests removed — #524 moved search dispatch to POST /api/books
