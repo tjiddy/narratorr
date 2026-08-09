@@ -29,11 +29,7 @@ export interface ImportSubmissionListParams {
   offset?: number;
 }
 
-/**
- * Client wrapper over the durable import-report read side (#1894). The "latest"
- * panel read is just `listImportSubmissions({ source, limit: 1 })`. All reads
- * return a JSON body (never 204) so `fetchApi` can parse them.
- */
+/** Durable import-report transport; every read returns JSON, never 204. */
 export const submissionsApi = {
   listImportSubmissions: (params?: ImportSubmissionListParams) => {
     const q = new URLSearchParams();
@@ -54,26 +50,25 @@ export const submissionsApi = {
   discardImportSubmission: (id: number) =>
     fetchApi<{ success: true }>(`/import/submissions/${id}`, { method: 'DELETE' }),
 
-  // ── Staged write + poll lane (#1902) ──────────────────────────────────────
-  /** create-or-return by clientSubmissionId → the durable header (`receiving`). */
+  /** Create-or-return by clientSubmissionId. */
   createImportSubmission: (body: CreateSubmissionBody) =>
     fetchApi<SubmissionResponse>('/import/submissions', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  /** Inert chunked upload of `{ items: [{ ordinal, item }] }` (idempotent per ordinal). */
+  /** Inert chunk upload, idempotent per ordinal. */
   putImportSubmissionItems: (id: number, body: PutItemsBody) =>
     fetchApi<SubmissionResponse>(`/import/submissions/${id}/items`, {
       method: 'PUT',
       body: JSON.stringify(body),
     }),
-  /** Digest-verified finalize; CAS-flips `receiving` → `processing`. */
+  /** Digest-verified CAS from receiving to processing. */
   finalizeImportSubmission: (id: number) =>
     fetchApi<SubmissionResponse>(`/import/submissions/${id}/finalize`, { method: 'POST' }),
-  /** Query-selected read by id — summary (`includeItems=false`) or one-time detail. */
+  /** Summary or one-time detail read by id. */
   getImportSubmission: (id: number, includeItems = false) =>
     fetchApi<SubmissionResponse>(`/import/submissions/${id}?includeItems=${includeItems}`),
-  /** by-client recovery lookup — same summary/detail arms as `getImportSubmission`. */
+  /** Recovery lookup by clientSubmissionId, with the same summary/detail arms. */
   getImportSubmissionByClientId: (clientSubmissionId: string, includeItems = false) =>
     fetchApi<SubmissionResponse>(`/import/submissions/by-client/${clientSubmissionId}?includeItems=${includeItems}`),
 };

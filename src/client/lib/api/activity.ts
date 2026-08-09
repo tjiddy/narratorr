@@ -14,22 +14,14 @@ export interface Download {
   downloadUrl?: string;
   size?: number;
   seeders: number | null;
-  /**
-   * Derived display status — the compatibility seam (#1445). UI keys off this.
-   * `clientStatus`/`pipelineStage` are the underlying two-axis truth.
-   */
+  /** Derived UI status; clientStatus and pipelineStage remain the two-axis truth. */
   status: DownloadStatus;
   clientStatus: ClientStatus;
   pipelineStage: PipelineStage;
-  /** Quality gate comparison data, present when status is pending_review */
+  /** Present only for pending_review. */
   qualityGate?: QualityGateData;
   progress: number;
-  /**
-   * Current download rate in bytes/sec. SSE-only — the REST /activity response
-   * does not populate this field (speed is transient and not persisted). Patched
-   * into the Query cache by useEventSource when a download_progress event arrives.
-   * `null`/`undefined` means not reported; `0` means active but stalled.
-   */
+  /** SSE-only bytes/sec: nullish means unreported; zero means active but stalled. */
   downloadSpeed?: number | null;
   externalId?: string;
   errorMessage?: string;
@@ -37,7 +29,6 @@ export interface Download {
   completedAt: string | null;
 }
 
-/** Quality gate comparison data — derived from the shared `qualityGateReasonSchema`. */
 export type QualityGateData = QualityGateReason;
 
 export interface ActivityCounts {

@@ -49,9 +49,7 @@ export const authApi = {
 
   getAuthConfig: () => fetchApi<AuthConfig>('/auth/config'),
 
-  // Mint a short-lived, session-scoped stream token (#1453) for SSE auth. POST so
-  // it inherits the Basic-auth CSRF gate; `fetchApi` sends the X-Requested-With
-  // header and forwards the session cookie. Not API-key-reachable.
+  // POST preserves the Basic-auth CSRF gate and session cookie; API keys cannot mint tokens.
   mintStreamToken: () =>
     fetchApi<StreamToken>('/auth/stream-token', { method: 'POST' }),
 

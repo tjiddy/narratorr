@@ -19,12 +19,8 @@ export interface SearchResponse {
     titles: string[];
   };
   /**
-   * The winning rung's query when progressive relaxation (#2104) produced the
-   * hits — absent when rung 1 (the query the user asked for) did.
-   *
-   * This interface is INDEPENDENT of `searchResponseSchema`, not inferred from
-   * it, so it has to be kept in step by hand; `search-stream.test.ts`'s
-   * compile-time compatibility guard is what catches the drift.
+   * Winning relaxed query; absent when the original query won. This manual wire
+   * type is kept aligned with searchResponseSchema by a compile-time test.
    */
   relaxedQuery?: string;
 }
