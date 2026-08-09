@@ -1,4 +1,4 @@
-// Does not use useSettingsForm: entity form for download client CRUD, not a settings category patch.
+// Download-client CRUD is an entity form, not a settings-category patch.
 import type { DownloadClient, TestResult } from '@/lib/api';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
 import { DownloadClientForm } from './DownloadClientForm';

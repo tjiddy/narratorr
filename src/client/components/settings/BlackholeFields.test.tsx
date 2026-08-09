@@ -10,7 +10,6 @@ function FieldWrapper({ isEdit, protocolError, watchDirError }: { isEdit?: boole
     defaultValues: { name: 'Test', type: 'blackhole', enabled: true, priority: 50, settings: { watchDir: '', protocol: 'torrent' } },
   });
 
-  // Inject protocol error via setError on mount if requested
   if (protocolError && !errors.settings?.protocol) {
     setError('settings.protocol', { type: 'validate', message: 'Invalid protocol' });
   }

@@ -45,14 +45,11 @@ describe('DownloadClientForm (#201)', () => {
         />,
       );
 
-      // Default type is qbittorrent — switch to blackhole
       await user.selectOptions(screen.getByLabelText('Type'), 'blackhole');
 
-      // BlackholeFields should render
       expect(screen.getByText('Watch Directory')).toBeInTheDocument();
       expect(screen.getByText('Protocol')).toBeInTheDocument();
 
-      // DownloadClientFields should NOT render
       expect(screen.queryByText('Host')).not.toBeInTheDocument();
       expect(screen.queryByText('Port')).not.toBeInTheDocument();
     });
@@ -66,11 +63,9 @@ describe('DownloadClientForm (#201)', () => {
         />,
       );
 
-      // Default type is qbittorrent
       expect(screen.getByText('Host')).toBeInTheDocument();
       expect(screen.getByText('Port')).toBeInTheDocument();
 
-      // BlackholeFields should NOT render
       expect(screen.queryByText('Watch Directory')).not.toBeInTheDocument();
       expect(screen.queryByText('Protocol')).not.toBeInTheDocument();
     });
@@ -88,20 +83,16 @@ describe('DownloadClientForm (#201)', () => {
         />,
       );
 
-      // Type some values into qbittorrent fields
       const hostInput = screen.getByPlaceholderText('localhost');
       await user.type(hostInput, 'myhost.local');
       expect(hostInput).toHaveValue('myhost.local');
 
-      // Switch to sabnzbd — settings should reset to sabnzbd defaults
       await user.selectOptions(screen.getByLabelText('Type'), 'sabnzbd');
 
-      // sabnzbd shows API Key instead of Username/Password
       await waitFor(() => {
         expect(screen.getByText('API Key')).toBeInTheDocument();
       });
 
-      // Host field should be empty (reset to default empty string)
       const newHostInput = screen.getByPlaceholderText('localhost');
       expect(newHostInput).toHaveValue('');
     });
@@ -137,12 +128,8 @@ describe('DownloadClientForm (#201)', () => {
         />,
       );
 
-      // Verify pre-filled data
       expect(screen.getByPlaceholderText('localhost')).toHaveValue('saved-host');
 
-      // The edit-mode Type select is now disabled + display-only (#1342), so the prior
-      // "switch type then assert no reset" interaction is no longer reachable — a disabled
-      // <select> cannot be changed via userEvent.selectOptions. The type is immutable identity.
       const typeSelect = screen.getByLabelText('Type');
       expect(typeSelect).toBeInTheDocument();
       expect(typeSelect).toBeDisabled();
@@ -160,17 +147,13 @@ describe('DownloadClientForm (#201)', () => {
         <DownloadClientForm mode="create" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
       );
 
-      // Fetch categories on the default qbittorrent type
       await user.click(screen.getByRole('button', { name: /fetch/i }));
       await waitFor(() => {
         expect(screen.getByText('audiobooks')).toBeInTheDocument();
         expect(screen.getByText('movies')).toBeInTheDocument();
       });
 
-      // Switch type via the production type select. The `key={selectedType}`
-      // on `<DownloadClientFields>` must remount the hook so prior categories
-      // are dropped without any new fetch. Removing the production key would
-      // leave the dropdown items rendered and fail this assertion.
+      // Removing key={selectedType} leaves the previous hook state rendered.
       await user.selectOptions(screen.getByLabelText('Type'), 'sabnzbd');
 
       expect(screen.queryByText('audiobooks')).not.toBeInTheDocument();
@@ -180,9 +163,7 @@ describe('DownloadClientForm (#201)', () => {
 
   describe('unimplemented adapter warning', () => {
     it('unimplemented adapter type shows amber warning text and disables test button', () => {
-      // Note: Currently all schema types are in the registry, so this branch is unreachable
-      // with valid form data. We test this by verifying the isImplemented check behavior
-      // when all types ARE implemented — the warning should NOT appear for valid types.
+      // All schema types are registered, so only the implemented path is reachable here.
       renderWithProviders(
         <DownloadClientForm
           mode="create"
@@ -191,10 +172,8 @@ describe('DownloadClientForm (#201)', () => {
         />,
       );
 
-      // Default qbittorrent IS implemented — no warning should appear
       expect(screen.queryByText(/adapter not yet implemented/i)).not.toBeInTheDocument();
 
-      // Test button should NOT be disabled for implemented types
       const testButton = screen.getByRole('button', { name: /test/i });
       expect(testButton).not.toBeDisabled();
     });
@@ -213,14 +192,11 @@ describe('DownloadClientForm (#201)', () => {
         />,
       );
 
-      // Fill required name field
       await user.type(screen.getByPlaceholderText('qBittorrent'), 'My Test Client');
-      // Fill host so validation passes
       await user.type(screen.getByPlaceholderText('localhost'), 'testhost');
 
       await user.click(screen.getByRole('button', { name: /test/i }));
 
-      // handleSubmit wraps onFormTest — it only fires if validation passes
       await waitFor(() => {
         expect(onFormTest).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -232,7 +208,6 @@ describe('DownloadClientForm (#201)', () => {
       });
     });
 
-    // #1057 — edit-mode form passes raw data to onFormTest (no id); the shared hook seam injects id downstream
     it('edit-mode test button calls onFormTest with raw form data (no id)', async () => {
       const onFormTest = vi.fn();
       const user = userEvent.setup();
@@ -288,7 +263,6 @@ describe('DownloadClientForm (#201)', () => {
       expect(onSubmit.mock.calls[0]![0]).toMatchObject({ type: client.type });
     });
 
-    // #827 — create mode does NOT include id (no saved row to resolve against)
     it('create-mode test button does NOT include id in onFormTest payload', async () => {
       const onFormTest = vi.fn();
       const user = userEvent.setup();
@@ -343,7 +317,6 @@ describe('DownloadClientForm (#201)', () => {
 
       const select = screen.getByLabelText('Type');
       expect(select.className).toContain('appearance-none');
-      // ChevronDownIcon renders an SVG sibling
       const selectParent = select.parentElement!;
       expect(selectParent.querySelector('svg')).not.toBeNull();
     });
@@ -368,19 +341,15 @@ describe('DownloadClientForm (#201)', () => {
 
       const select = screen.getByLabelText('Type');
 
-      // Before submit: no validation errors yet
       expect(select.className).toContain('border-border');
       expect(select.className).not.toContain('border-destructive');
 
-      // Submit triggers zodResolver — invalid type produces errors.type
       await user.click(screen.getByRole('button', { name: /save/i }));
       await waitFor(() => {
         expect(screen.getByLabelText('Type').className).toContain('border-destructive');
       });
     });
   });
-
-  // ===== #263 — path mappings in create mode =====
 
   const mockOnSubmit = vi.fn();
   const mockOnFormTest = vi.fn();
@@ -401,7 +370,6 @@ describe('DownloadClientForm (#201)', () => {
         <DownloadClientForm mode="create" onSubmit={mockOnSubmit} onFormTest={mockOnFormTest} />,
       );
 
-      // Fill required fields (qbittorrent default requires name, host, port, username, password)
       await user.type(screen.getByLabelText('Name'), 'Test Client');
       await user.type(screen.getByLabelText('Host'), 'localhost');
       await user.clear(screen.getByLabelText('Port'));
@@ -409,13 +377,11 @@ describe('DownloadClientForm (#201)', () => {
       await user.type(screen.getByLabelText('Username'), 'admin');
       await user.type(screen.getByLabelText('Password'), 'pass');
 
-      // Add a mapping
       await user.click(screen.getByRole('button', { name: /add mapping/i }));
       await user.type(screen.getByLabelText(/remote path/i), '/remote');
       await user.type(screen.getByLabelText(/local path/i), '/local');
       await user.click(screen.getByRole('button', { name: /^add$/i }));
 
-      // Submit form
       await user.click(screen.getByRole('button', { name: /add client/i }));
       await waitFor(() => {
         expect(mockOnSubmit).toHaveBeenCalledWith(
@@ -432,7 +398,6 @@ describe('DownloadClientForm (#201)', () => {
         <DownloadClientForm mode="create" onSubmit={mockOnSubmit} onFormTest={mockOnFormTest} />,
       );
 
-      // Fill required fields
       await user.type(screen.getByLabelText('Name'), 'Test Client');
       await user.type(screen.getByLabelText('Host'), 'localhost');
       await user.clear(screen.getByLabelText('Port'));
@@ -481,12 +446,7 @@ describe('DownloadClientForm (#201)', () => {
     });
   });
 
-  // #908 family — settingsFromClient registry-overlay guard (siblings: NotifierCard.test.tsx,
-  // IndexerCard.test.tsx). Each case renders edit mode with a client of one type and fires Test
-  // without switching the type selector. As of #1342 that no-switch shape is the permanent
-  // documented contract: the edit-mode Type selector is now rendered disabled and unregistered
-  // (DownloadClientForm.tsx), so in-edit type switching is intentionally unreachable. The overlay
-  // is validated at hydration, per type, instead.
+  // Edit-mode type is immutable, so registry-overlay isolation is tested at hydration.
   describe('#908 — settingsFromClient registry overlay (no foreign-type leak)', () => {
     it('qBittorrent edit Test payload contains no SABnzbd/blackhole keys', async () => {
       const onFormTest = vi.fn();
@@ -515,16 +475,12 @@ describe('DownloadClientForm (#201)', () => {
 
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-      // Foreign keys for qBittorrent MUST NOT leak (useSsl is allowed by qBittorrent schema).
-      // Registry-derived via the shared #908-family helper: covers apiKey (sabnzbd) and
-      // watchDir/protocol (blackhole).
       const foreignKeys = foreignRegistryKeys('qbittorrent', DOWNLOAD_CLIENT_TYPES, DOWNLOAD_CLIENT_REGISTRY);
       expect(foreignKeys).toEqual(expect.arrayContaining(['apiKey', 'watchDir', 'protocol']));
       for (const key of foreignKeys) {
         expect(payloadSettings).not.toHaveProperty(key);
       }
 
-      // Stored qBittorrent keys MUST round-trip
       expect(payloadSettings).toHaveProperty('host', 'qb.local');
       expect(payloadSettings).toHaveProperty('port', 8080);
       expect(payloadSettings).toHaveProperty('username', 'admin');
@@ -557,13 +513,11 @@ describe('DownloadClientForm (#201)', () => {
 
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-      // Foreign keys for SABnzbd MUST NOT leak (useSsl and apiKey are allowed)
       expect(payloadSettings).not.toHaveProperty('username');
       expect(payloadSettings).not.toHaveProperty('password');
       expect(payloadSettings).not.toHaveProperty('watchDir');
       expect(payloadSettings).not.toHaveProperty('protocol');
 
-      // Stored SABnzbd keys MUST round-trip
       expect(payloadSettings).toHaveProperty('host', 'sab.local');
       expect(payloadSettings).toHaveProperty('apiKey', 'sab-key');
     });
