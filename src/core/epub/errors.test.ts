@@ -11,17 +11,12 @@ import {
 const ARCHIVE_READ = { archiveRead: true } as const;
 const NOT_ARCHIVE_READ = { archiveRead: false } as const;
 
-/** An `Error` carrying an arbitrary `code`, without widening the caught-value type. */
 function coded(code: unknown): Error {
   return Object.assign(new Error('boom'), { code });
 }
 
 describe('classifyEpubReadError — arm 2, the non-Error domain', () => {
-  // Each row is marked as an archive read, so any implementation that reaches
-  // the code/kind arms without first requiring an `Error` fails here: every one
-  // of these has an absent `code` and is not an excluded subclass, so it would
-  // otherwise classify `decoder-failure` and a mandatory consumer would persist
-  // `truncated` for an indeterminate library failure.
+  // Without the Error guard, these values resemble uncoded decoder failures.
   const values: Array<[label: string, value: unknown]> = [
     ['null', null],
     ['undefined', undefined],
@@ -45,9 +40,7 @@ describe('classifyEpubReadError — arm 3, provenance', () => {
 });
 
 describe('classifyEpubReadError — arm 4, the excluded subclasses', () => {
-  // These indicate a defect in our own code or a hostile value that reached the
-  // library, never a corrupt book. Arm 4 exists because provenance and code
-  // shape alone would report an uncoded TypeError as a corrupt book.
+  // These indicate a code defect or hostile value, not a corrupt archive.
   const subclasses: Array<[label: string, make: () => Error]> = [
     ['TypeError', () => new TypeError('boom')],
     ['RangeError', () => new RangeError('boom')],
@@ -66,10 +59,7 @@ describe('classifyEpubReadError — arm 4, the excluded subclasses', () => {
 });
 
 describe('classifyEpubReadError — arm 5, code shape', () => {
-  // The documented errnos plus the three Node does NOT document. An allowlist
-  // implementation passes the documented ones and fails the undocumented trio —
-  // which is the Decision 3 regression this row guards: `ETIMEDOUT` from a
-  // network mount persisted as a durable `truncated` verdict.
+  // Include undocumented errnos so the test rejects a finite errno allowlist.
   const errnos = [
     'EACCES',
     'EIO',
@@ -87,27 +77,21 @@ describe('classifyEpubReadError — arm 5, code shape', () => {
   });
 
   it('classifies a present string code that is neither errno- nor zlib-shaped as throw', () => {
-    // Arm 5 is an allowlist of decoder shapes, not a denylist of errnos.
     expect(classifyEpubReadError(coded('ERR_STREAM_PREMATURE_CLOSE'), ARCHIVE_READ)).toBe('throw');
   });
 
   it('classifies an ordinary Error wearing the cap-breach code string as throw', () => {
-    // Separates the cap-breach *identity* from its *code spelling*: arm 1's
-    // predicate does not match this value, so it falls through to arm 5.
     const impostor = coded(EPUB_CAP_EXCEEDED_CODE);
     expect(isCapExceededError(impostor)).toBe(false);
     expect(classifyEpubReadError(impostor, ARCHIVE_READ)).toBe('throw');
   });
 
   it('classifies a present non-string code as throw', () => {
-    // A numeric errno-style value or a symbol is not "absent".
     expect(classifyEpubReadError(coded(12), ARCHIVE_READ)).toBe('throw');
     expect(classifyEpubReadError(coded(Symbol('x')), ARCHIVE_READ)).toBe('throw');
   });
 
   it('does not let the errno shape shadow the zlib allowance', () => {
-    // `/^E[A-Z0-9]+$/` does not match `ERR_ZLIB_BINDING_CLOSED` — the
-    // underscore falls outside the character class.
     expect(/^E[A-Z0-9]+$/.test('ERR_ZLIB_BINDING_CLOSED')).toBe(false);
   });
 });
@@ -117,8 +101,6 @@ describe('classifyEpubReadError — arm 6, decoder failures', () => {
     ['a zlib Z_ code', coded('Z_DATA_ERROR')],
     ['a zlib ERR_ZLIB_ code', coded('ERR_ZLIB_BINDING_CLOSED')],
     ['an uncoded plain Error', new Error('boom')],
-    // A nullish `code` reads as absent, deliberately: "property present holding
-    // nullish" is a distinction with no mechanical meaning.
     ['code: undefined', coded(undefined)],
     ['code: null', coded(null)],
   ];
@@ -152,16 +134,12 @@ describe('cap-breach identity across modules', () => {
     const error = await breach();
 
     expect(isCapExceededError(error)).toBe(true);
-    // Arm 1 precedes the provenance arm, so the label does not depend on it and
-    // no caller ever needs an ordering rule.
+    // Cap identity precedes provenance.
     expect(classifyEpubReadError(error, ARCHIVE_READ)).toBe('cap-exceeded');
     expect(classifyEpubReadError(error, NOT_ARCHIVE_READ)).toBe('cap-exceeded');
   });
 
   it('does not reach cap-exceeded by accident', async () => {
-    // This is the set that would have caught the original defect — a cap breach
-    // raised as an uncoded Error classifying `decoder-failure`, and a mandatory
-    // caller persisting `truncated` where the slate requires `limit_exceeded`.
     expect(classifyEpubReadError(new Error('boom'), ARCHIVE_READ)).toBe('decoder-failure');
     expect(classifyEpubReadError(coded(EPUB_CAP_EXCEEDED_CODE), ARCHIVE_READ)).toBe('throw');
   });

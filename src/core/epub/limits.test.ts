@@ -10,12 +10,7 @@ import {
   MAX_TOC_ENTRIES,
 } from './limits.js';
 
-/**
- * Exact-value pins only. The at-the-limit / limit+1 behavioural tests live with
- * the consumers: `MAX_XML_BYTES` with 1.1b, the entry counts with 1.1c, the
- * cover and TOC caps with 1.1e. A silent retune here is a test failure rather
- * than a behaviour change.
- */
+// Exact-value pins only; at-the-limit behavior lives with each consumer.
 describe('core/epub limits', () => {
   it('pins the exact value of each of the seven constants', () => {
     expect(MAX_ARCHIVE_BYTES).toBe(256 * 1024 * 1024);
@@ -28,9 +23,7 @@ describe('core/epub limits', () => {
   });
 
   it('keeps the EPUB cover cap distinct from the audiobook cover-download cap', () => {
-    // MAX_COVER_SIZE bounds an *outbound download* of audiobook cover art;
-    // MAX_EPUB_COVER_BYTES bounds an *inflated archive member*. They drift
-    // independently — a future "unification" refactor must fail here.
+    // Outbound audiobook downloads and inflated EPUB members have independent caps.
     expect(MAX_EPUB_COVER_BYTES).not.toBe(MAX_COVER_SIZE);
   });
 });
