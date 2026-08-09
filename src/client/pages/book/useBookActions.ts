@@ -15,15 +15,7 @@ export function useBookActions(bookId: number) {
     queryClient.invalidateQueries({ queryKey: queryKeys.book(bookId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.bookFiles(bookId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-    // The series card lives in its own ROOT namespace — `queryKeys.book(id)` is
-    // `['books', id]` while `queryKeys.bookSeries(id)` is `['book', id, 'series']`
-    // — so no prefix cascade reaches it and a metadata save that clears the series
-    // would otherwise leave the card rendering stale cached data until a reload
-    // (#2069 AC17). `BookFixMatchModal` already invalidates this key explicitly;
-    // putting it in the shared helper also covers the rename mutation, which is
-    // strictly more invalidation and loses nothing. Retag is deliberately NOT
-    // covered: its success handler never calls this helper, and a re-tag rewrites
-    // file tags without changing any stored series.
+    // The series query uses singular `book`, so the `books` invalidations cannot reach it.
     queryClient.invalidateQueries({ queryKey: queryKeys.bookSeries(bookId) });
   };
 
@@ -41,17 +33,13 @@ export function useBookActions(bookId: number) {
   const mergeMutation = useMutation({
     mutationFn: () => api.mergeBookToM4b(bookId),
     onSuccess: (result) => {
-      // Route now returns 202 acknowledgement. Completion/failure communicated via SSE.
+      // Completion/failure and cache invalidation are communicated via SSE; only toast queued here.
       if (result.status === 'queued') {
         toast.info(`Merge queued (position ${result.position})`);
       }
-      // No toast for 'started' — SSE merge_started handles that.
-      // No invalidateBookQueries() — SSE merge_complete cache rules handle invalidation.
-      // No enrichmentWarning — moved to SSE merge_complete event handler in useEventSource.
     },
     onError: (error: Error) => {
-      // API-level failures (e.g., 409 ALREADY_IN_PROGRESS) happen before SSE events fire,
-      // so the mutation must handle these directly.
+      // Pre-SSE API failures must surface here.
       toast.error(`Merge failed: ${getErrorMessage(error)}`);
     },
   });
@@ -79,19 +67,14 @@ export function useBookActions(bookId: number) {
     onError: (error: Error) => {
       toast.error(`Refresh scan failed: ${getErrorMessage(error)}`);
     },
-    // onSettled, not onSuccess (#1963): the route fires the companion-ebook reconcile in a
-    // `finally`, so a book with no audio files throws NO_AUDIO_FILES *after* the ebook
-    // observation was refreshed. Invalidating only on success would leave the Ebook panel
-    // showing a stale observation in exactly that case. The toasts stay where they were.
+    // The route reconciles the companion ebook before NO_AUDIO_FILES throws, so invalidate on settled.
     onSettled: () => {
       invalidateBookQueries();
     },
   });
 
   const ffmpegStatus = useFfmpegStatus();
-  // Optimistic while the status query LOADS (ffmpeg is present on the normal Docker
-  // install), but fail SAFE on a query error — gate the merge/retag buttons rather than
-  // leave them enabled on a box where ffmpeg may be absent.
+  // Assume the normal Docker install while loading, but fail closed on detection errors.
   const ffmpegConfigured = ffmpegStatus.isError ? false : ffmpegStatus.data?.detected !== false;
 
   const deleteMutation = useMutation({
