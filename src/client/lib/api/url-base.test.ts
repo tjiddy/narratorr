@@ -3,13 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { createElement } from 'react';
 import { MemoryRouter, Routes, Route, Link, useLocation } from 'react-router';
 
-/**
- * Tests the BrowserRouter basename contract used in main.tsx:
- * `<BrowserRouter basename={URL_BASE || '/'}>`
- *
- * Since main.tsx is a side-effect entry point, we test the routing behavior
- * directly using MemoryRouter with the same basename logic.
- */
+/** Exercises main.tsx's basename contract without importing its side-effect entry point. */
 
 function LocationDisplay() {
   const location = useLocation();
@@ -79,7 +73,6 @@ describe('URL_BASE router basename integration', () => {
   });
 
   it('URL_BASE || "/" produces correct basename for both root and subpath', () => {
-    // This tests the exact expression used in main.tsx: `URL_BASE || '/'`
     const emptyBase = '';
     const subpathBase = '/narratorr';
     expect(emptyBase || '/').toBe('/');

@@ -1,11 +1,4 @@
-/**
- * Format a download/upload rate (bytes/sec) for display.
- *
- * - `0` renders as `"0 KB/s"` (the stalled signal — users need to see this distinctly).
- * - Negative input is coerced to 0 defensively; rates should never be negative.
- * - Sub-KB rates use KB/s as the minimum display unit for consistency.
- * - Binary units throughout (1 KiB = 1024 bytes) to match existing byte formatters.
- */
+/** Binary bytes/sec with a KB/s floor; non-positive values render as stalled. */
 export function formatBytesPerSec(bytesPerSec: number): string {
   if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return '0 KB/s';
   const KB = 1024;
