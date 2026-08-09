@@ -3,9 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, renderHook, screen, act } from '@testing-library/react';
 import { useTrackedForm, useDirtyFormsState, _resetForTesting } from './dirty-forms';
 
-// Minimal error boundary so a component that throws during render can be
-// rendered without failing the test — used to prove an aborted render commits
-// no registry entry.
+// Lets an aborted render be observed without failing the test.
 class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() {
@@ -29,7 +27,6 @@ function TrackedForm({
   return null;
 }
 
-// Reactive read of the module store — re-renders whenever the store notifies.
 function readState() {
   return renderHook(() => useDirtyFormsState()).result;
 }
@@ -45,7 +42,6 @@ describe('dirty-forms registry', () => {
     expect(state.current.dirtyLabels).toEqual(['Merge & Convert']);
 
     form.unmount();
-    // The effect cleanup removes the entry and notifies subscribers.
     expect(state.current.dirtyLabels).toEqual([]);
   });
 
@@ -68,7 +64,6 @@ describe('dirty-forms registry', () => {
     act(() => {
       screen.getByRole('button').click();
     });
-    // Entry retained (dirty:false), so it no longer shows in the label list.
     expect(state.current.dirtyLabels).toEqual([]);
   });
 
@@ -103,9 +98,6 @@ describe('dirty-forms registry', () => {
   });
 
   it('derives the registry only from committed mounts (commit-phase sync)', () => {
-    // A Probe alone (no tracked form) reads empty; only once a tracked form
-    // commits does its entry appear — the store is never written during render
-    // (further proven by the StrictMode case, which leaves no phantom entry).
     const state = readState();
     expect(state.current.dirtyLabels).toEqual([]);
 
@@ -125,9 +117,7 @@ describe('dirty-forms registry', () => {
 
   it('an aborted (throwing) render commits no phantom entry (F2)', () => {
     function Exploder(): null {
-      // The registration is scheduled as a layout effect; because this render
-      // throws, React discards it and the effect never commits. A render-phase
-      // write would instead leak a 'Ghost' entry that nothing cleans up.
+      // React discards this layout effect; a render-time write would leak Ghost.
       useTrackedForm({ isDirty: true, isPending: false, label: 'Ghost' });
       throw new Error('render aborted');
     }
@@ -165,8 +155,6 @@ describe('dirty-forms registry', () => {
     act(() => {
       screen.getByRole('button').click();
     });
-    // Writes happen only in committed effects, so React never warns that the
-    // store notified (updated a subscriber) during another component's render.
     const warned = errorSpy.mock.calls.some((call) =>
       call.some(
         (arg) =>
@@ -183,9 +171,6 @@ describe('dirty-forms registry', () => {
     const state = readState();
     expect(state.current.dirtyLabels).toEqual(['Old Name']);
 
-    // Rerender the SAME mounted form (stable useId) with a new label. The effect
-    // must re-run on the label change (removing `label` from its deps would keep
-    // the stale name, which the guard modal would then display).
     view.rerender(<TrackedForm label="New Name" isDirty />);
     expect(state.current.dirtyLabels).toEqual(['New Name']);
   });
@@ -193,7 +178,6 @@ describe('dirty-forms registry', () => {
   it('getSnapshot returns a stable reference between notifications', () => {
     const state = readState();
     const first = state.current;
-    // No store mutation happened, so re-reading returns the same cached object.
     expect(state.current).toBe(first);
   });
 

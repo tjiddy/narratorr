@@ -1,12 +1,7 @@
 import { useId, useLayoutEffect, useSyncExternalStore } from 'react';
 
-// Module-level dirty-form registry. Every tracked settings card registers a
-// `useId`-keyed entry describing whether it holds unsaved edits (`dirty`), has a
-// save in flight (`pending`), and its display `label`. The unsaved-changes guard
-// reads the derived snapshot to decide whether to intercept navigation and which
-// card names to show. Exposed via `useSyncExternalStore` so React re-renders on
-// change (see learning: module-state-use-sync-external-store — a bare `let`
-// won't trigger re-renders and tears across concurrent renders).
+// Module state tracks dirty/pending settings forms for the navigation guard.
+// useSyncExternalStore provides reactive, concurrency-safe snapshots.
 
 interface FormEntry {
   dirty: boolean;
@@ -15,17 +10,14 @@ interface FormEntry {
 }
 
 export interface DirtyFormsState {
-  /** Labels of every entry currently `dirty === true`, in insertion order. */
   dirtyLabels: string[];
-  /** True when any tracked form has a save in flight. */
   anyPending: boolean;
 }
 
 const registry = new Map<string, FormEntry>();
 const listeners = new Set<() => void>();
 
-// Cached immutable snapshot — rebuilt only inside notify(). `useSyncExternalStore`
-// requires getSnapshot to return a stable reference between changes or it loops.
+// getSnapshot must retain its reference between notifications or React loops.
 let cachedSnapshot: DirtyFormsState = { dirtyLabels: [], anyPending: false };
 
 function computeSnapshot(): DirtyFormsState {
@@ -54,17 +46,8 @@ function getSnapshot(): DirtyFormsState {
   return cachedSnapshot;
 }
 
-/**
- * Register a form with the dirty registry for the lifetime of the calling
- * component. The entry is retained while mounted regardless of `isDirty`/
- * `isPending` (a clean-again form stays in the Map with `dirty: false`), and
- * removed on unmount.
- *
- * Synchronization happens in commit phase (`useLayoutEffect`), never during
- * render: a render-phase write to the module store is a non-local mutation that
- * violates React's purity rules and, because React can restart or abandon a
- * render, could leave a phantom entry that never gets cleaned up.
- */
+// Register for the mounted lifetime. Commit-phase writes avoid phantom entries from
+// restarted renders; clean forms remain registered until unmount.
 export function useTrackedForm({
   isDirty,
   isPending,
@@ -85,12 +68,10 @@ export function useTrackedForm({
   }, [id, isDirty, isPending, label]);
 }
 
-/** Reactive snapshot of the dirty registry for the navigation guard. */
 export function useDirtyFormsState(): DirtyFormsState {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-/** Reset store state for testing. Notifies any active subscribers before clearing them. */
 export function _resetForTesting(): void {
   registry.clear();
   cachedSnapshot = { dirtyLabels: [], anyPending: false };
