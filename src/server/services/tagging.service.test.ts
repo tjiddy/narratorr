@@ -3,17 +3,14 @@ import { buildFfmpegArgs, tagFile, TaggingService, RetagError, STRING_METADATA_T
 import { buildCanonicalTags, readExistingTags, resolveTags, SIMPLE_EXCLUDABLE_FIELDS } from './retag-plan.js';
 import { createMockSettingsService } from '../__tests__/helpers.js';
 
-// ffmpeg is auto-detected now (the path setting was removed). Mock the resolver as a plain
-// arrow reading a hoisted toggle so vi.clearAllMocks() never wipes it; flip to `false` in the
-// not-detected tests. Default detected so the retag/tag success paths are deterministic.
+// A plain closure survives vi.clearAllMocks; tests toggle auto-detection through hoisted state.
 const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
 vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
 });
 
-// Mock child_process — the callback is the LAST arg, which may be the 3rd (cmd, args, cb)
-// or the 4th (cmd, args, options, cb) once an options object like `{ env }` is passed.
+// The callback is the last arg for both the 3rd- and 4th-argument call shapes.
 vi.mock('node:child_process', () => ({
   execFile: vi.fn((...args: unknown[]) => {
     const cb = args[args.length - 1] as (err: Error | null, result: { stdout: string; stderr: string }) => void;
@@ -21,10 +18,7 @@ vi.mock('node:child_process', () => ({
   }),
 }));
 
-// Mock fs/promises — readdir must handle both call shapes:
-// collectAudioFilePaths calls readdir(dir, { withFileTypes: true }) → returns Dirent[]
-// findCoverFile/warnUnsupportedFormats call readdir(dir) → returns string[]
-// _readdirFiles stores the filename list; the mock auto-converts to Dirent when withFileTypes is set.
+// withFileTypes callers need Dirent-like entries; bare readdir callers need filenames.
 let _readdirFiles: string[] = [];
 vi.mock('node:fs/promises', () => ({
   readdir: vi.fn((_dir: string, opts?: { withFileTypes?: boolean }) => {
@@ -42,7 +36,6 @@ vi.mock('node:fs/promises', () => ({
   stat: vi.fn().mockResolvedValue({ size: 1000 }),
 }));
 
-// Mock music-metadata
 vi.mock('music-metadata', () => ({
   parseFile: vi.fn().mockResolvedValue({
     common: {},
@@ -50,10 +43,7 @@ vi.mock('music-metadata', () => ({
   }),
 }));
 
-// Mock drizzle-orm — uses importOriginal to preserve all real exports (getTableColumns,
-// sql, etc.) while only overriding `eq` for assertion capture. This is necessary because
-// drizzle-orm is imported at module scope by transitive dependencies (e.g., book-list.service.ts
-// uses getTableColumns). Without importOriginal, those imports would be undefined.
+// Preserve real exports used by transitive imports; override only eq for assertion capture.
 vi.mock('drizzle-orm', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -62,7 +52,6 @@ vi.mock('drizzle-orm', async (importOriginal) => {
   };
 });
 
-// Mock db schema
 vi.mock('@db/schema.js', () => ({
   books: { id: 'books.id' },
   authors: { id: 'authors.id', name: 'authors.name' },
@@ -77,14 +66,7 @@ import { basename } from 'node:path';
 import { parseFile } from 'music-metadata';
 
 describe('STRING_METADATA_TAGS', () => {
-  // Guard B — binds the ffmpeg write map to the server-side string-field diff list.
-  // `STRING_METADATA_TAGS` maps each string field to its ffmpeg `-metadata` key; its
-  // field-key set must match `SIMPLE_EXCLUDABLE_FIELDS` (the diff list) exactly. Without
-  // this guard a field could be diffable by the apply path but never written to ffmpeg —
-  // the preview would show a change that the write path silently drops. Numeric
-  // `seriesPart`/`track` are written separately and are absent from both lists by design.
-  // Mirrors the connector registry schema-alignment precedent
-  // (src/core/connectors/registry.test.ts).
+  // Preview/apply parity: every diffable string field needs an ffmpeg write mapping; numeric fields are separate.
   it('field-key set equals SIMPLE_EXCLUDABLE_FIELDS', () => {
     expect(new Set(STRING_METADATA_TAGS.map(([field]) => field))).toEqual(
       new Set(SIMPLE_EXCLUDABLE_FIELDS),
@@ -154,13 +136,10 @@ describe('buildFfmpegArgs', () => {
     const tags: TagMetadata = { artist: 'Author' };
     const args = buildFfmpegArgs('/books/input.mp3', '/books/out.mp3', tags);
 
-    // Should only have one -i (for the audio input)
     const iCount = args.filter(a => a === '-i').length;
     expect(iCount).toBe(1);
 
-    // Pre-#2078 this mapped `0:a` alone, so EVERY tag write without a cover input silently
-    // stripped embedded art — including `populate_missing`, where shouldEmbedCover is false
-    // precisely BECAUSE the file already has art. `?` keeps files with no picture unaffected.
+    // Mapping only 0:a strips embedded art; 0:v? preserves it without failing files that lack a picture.
     const mapIdx = args.indexOf('-map', args.indexOf('-map') + 1);
     expect(args[mapIdx]).toBe('-map');
     expect(args[mapIdx + 1]).toBe('0:v?');
@@ -172,8 +151,6 @@ describe('buildFfmpegArgs', () => {
     const args = buildFfmpegArgs('/books/input.m4b', '/books/out.m4b', { artist: 'Author' }, '/books/cover.jpg');
 
     const mapped = args.reduce<string[]>((acc, a, i) => (a === '-map' ? [...acc, args[i + 1]!] : acc), []);
-    // Exactly one video mapping, and it is the new cover input — never `0:v?` alongside it,
-    // which would emit two attached pictures.
     expect(mapped).toEqual(['0:a', '1']);
     expect(mapped).not.toContain('0:v?');
   });
@@ -317,7 +294,6 @@ describe('resolveTags new-field populate_missing awareness (#1671)', () => {
       series: 'old', seriesPart: 9, subtitle: 'old', asin: 'OLD', publisher: 'old', description: 'old', date: '1999', genre: 'old',
     };
     const resolved = resolveTags(desired, existing, 'populate_missing');
-    // every desired new field is already populated → nothing to write
     expect(resolved).toBeNull();
   });
 
@@ -449,8 +425,6 @@ describe('tagFile', () => {
     expect(result.status).toBe('tagged');
     expect(parseFile).toHaveBeenCalledWith('/books/file.mp3');
 
-    // Verify ffmpeg was called with args that do NOT contain artist (already exists)
-    // but DO contain album and title (which were empty)
     const { execFile } = await import('node:child_process');
     const callArgs = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
     expect(callArgs).not.toContain('artist=New Author');
@@ -496,7 +470,6 @@ describe('tagFile', () => {
     expect(result.status).toBe('tagged');
     const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
     expect(args).toContain('/books/cover.jpg');
-    // No metadata flags
     expect(args.filter(a => a === '-metadata').length).toBe(0);
   });
 
@@ -531,14 +504,11 @@ describe('tagFile', () => {
   it('uses temp file strategy: writes to a born-hidden .tmp.ext, then atomically renames (#1852 AC9)', async () => {
     await tagFile('/books/file.mp3', '/usr/bin/ffmpeg', { artist: 'Author' }, 'overwrite');
 
-    // Temp basename is dot-led (born hidden) AND the finalize is still an atomic rename-over-original.
-    // Separator-agnostic: path.join yields '\' on Windows, '/' elsewhere (pre-existing #1852 test,
-    // normalized here per the repo's Windows path-assertion convention).
+    // Accept OS-native separators; rename-over-original stays atomic without unlinking first.
     expect(rename).toHaveBeenCalledWith(
       expect.stringMatching(/[\\/]\.file\.tmp\.mp3$/),
       '/books/file.mp3',
     );
-    // Original should NOT be unlinked — rename overwrites atomically on POSIX
     expect(unlink).not.toHaveBeenCalledWith('/books/file.mp3');
   });
 
@@ -554,8 +524,6 @@ describe('tagFile', () => {
   });
 
   it('assigns track number for multi-file books, omits for single-file', async () => {
-    // This tests the TaggingService.tagBook behavior for track numbering
-    // tagFile itself receives the tags — it doesn't decide track numbering
     const tags: TagMetadata = { artist: 'Author', track: 2, trackTotal: 5 };
     const args = buildFfmpegArgs('/books/ch02.mp3', '/books/ch02.tmp.mp3', tags);
     expect(args).toContain('track=2/5');
@@ -566,7 +534,6 @@ describe('tagFile', () => {
   });
 
   it('in populate_missing mode with cover, skips cover when file already has art', async () => {
-    // File has existing tags AND existing cover art
     (parseFile as Mock).mockResolvedValue({
       common: { artist: 'Existing', album: 'Existing', title: 'Existing', picture: [{ data: Buffer.from('img') }] },
       format: {},
@@ -580,13 +547,11 @@ describe('tagFile', () => {
       '/books/cover.jpg',
     );
 
-    // All tags populated + cover art exists → should skip entirely
     expect(result.status).toBe('skipped');
     expect(result.reason).toBe('All tags already populated');
   });
 
   it('in populate_missing mode with cover, embeds cover when file has no art', async () => {
-    // File has existing tags but NO cover art
     (parseFile as Mock).mockResolvedValue({
       common: { artist: 'Existing', album: 'Existing', title: 'Existing', picture: [] },
       format: {},
@@ -600,7 +565,6 @@ describe('tagFile', () => {
       '/books/cover.jpg',
     );
 
-    // Tags all populated but no cover → should embed cover
     expect(result.status).toBe('tagged');
 
     const { execFile } = await import('node:child_process');
@@ -636,16 +600,13 @@ describe('tagFile', () => {
 
     expect(result.status).toBe('failed');
     expect(result.reason).toContain('EXDEV');
-    // Original file should NOT have been deleted (no unlink on original)
     expect(unlink).not.toHaveBeenCalledWith('/books/file.mp3');
-    // Temp file should be cleaned up
     expect(unlink).toHaveBeenCalledWith(expect.stringContaining('file.tmp.mp3'));
   });
 
   it('readExistingTags returns empty on parse failure (treats as all empty)', async () => {
     (parseFile as Mock).mockRejectedValueOnce(new Error('corrupt file'));
 
-    // In populate_missing with parse failure, should tag (treats existing as {})
     const result = await tagFile(
       '/books/file.mp3',
       '/usr/bin/ffmpeg',
@@ -657,9 +618,8 @@ describe('tagFile', () => {
   });
 });
 
-describe('TaggingService', () => {
+  describe('TaggingService', () => {
   function createMockDb() {
-    // db is passed to constructor but no longer used by retagBook (delegates to BookService)
     return { select: vi.fn() };
   }
 
@@ -669,7 +629,6 @@ describe('TaggingService', () => {
     mockBookService = { getById: vi.fn() };
   });
 
-  /** Build a minimal BookWithAuthor for mock returns. */
   function makeBook(overrides: {
     id?: number; title?: string; path?: string | null;
     authors?: { name: string }[]; narrators?: { name: string }[];
@@ -696,7 +655,6 @@ describe('TaggingService', () => {
     };
   }
 
-  /** Default tagging-ready settings: ffmpeg configured + tagging enabled. */
   const taggingDefaults = {
     processing: {},
     tagging: { enabled: true, mode: 'overwrite' as const },
@@ -800,7 +758,6 @@ describe('TaggingService', () => {
       const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
       const result = await service.retagBook(1);
 
-      // Should complete without error — author is optional
       expect(result.tagged).toBe(1);
     });
 
@@ -866,26 +823,21 @@ describe('TaggingService', () => {
         authorName: 'Author',
       }, '/usr/bin/ffmpeg', 'overwrite', false);
 
-      // 3 files → 3 tagged calls
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ tagged: 3 }),
         expect.any(String),
       );
 
-      // Verify track numbers were assigned in sorted order
       const { execFile } = await import('node:child_process');
       const calls = (execFile as unknown as Mock).mock.calls;
-      // Files sorted: 01.mp3 (track 1/3), 02.mp3 (track 2/3), 10.mp3 (track 3/3)
       const trackArgs = calls.map((c: unknown[]) => {
         const args = c[1] as string[];
         return args.find(a => a.startsWith('track='));
       });
       expect(trackArgs).toEqual(['track=1/3', 'track=2/3', 'track=3/3']);
 
-      // Verify files were processed in numeric sort order (01 before 02 before 10)
       const inputFiles = calls.map((c: unknown[]) => {
         const args = c[1] as string[];
-        // The input file is the arg right after the first -i
         const iIdx = args.indexOf('-i');
         return args[iIdx + 1];
       });
@@ -907,7 +859,6 @@ describe('TaggingService', () => {
 
       expect(result.tagged).toBe(1);
 
-      // Verify no track metadata was passed to ffmpeg
       const { execFile } = await import('node:child_process');
       const calls = (execFile as unknown as Mock).mock.calls;
       const args = calls[0]![1] as string[];
@@ -926,13 +877,11 @@ describe('TaggingService', () => {
       }, '/usr/bin/ffmpeg', 'overwrite', false);
 
       expect(result.tagged).toBe(0);
-      expect(result.skipped).toBe(2); // .ogg and .flac
+      expect(result.skipped).toBe(2);
       expect(result.warnings).toContainEqual(expect.stringContaining('.ogg'));
       expect(result.warnings).toContainEqual(expect.stringContaining('.flac'));
       expect(result.warnings).toContain('No taggable audio files found');
-      // cover.jpg should NOT be warned about (not an audio format)
       expect(result.warnings.some(w => w.includes('cover.jpg'))).toBe(false);
-      // Should log warnings for each unsupported file
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ file: 'book.ogg' }),
         'Tag write skipped',
@@ -948,7 +897,7 @@ describe('TaggingService', () => {
 
       const result = await service.tagBook(1, '/books/test', { title: 'Test' }, '/usr/bin/ffmpeg', 'overwrite', false);
 
-      expect(result.skipped).toBe(1); // only the visible unsupported file
+      expect(result.skipped).toBe(1);
       expect(result.warnings).toContainEqual(expect.stringContaining('visible.ogg'));
       expect(result.warnings.some(w => w.includes('.hidden.flac'))).toBe(false);
       expect(log.warn).not.toHaveBeenCalledWith(
@@ -958,7 +907,6 @@ describe('TaggingService', () => {
     });
 
     it('logs warnings for unsupported files alongside tagging taggable ones', async () => {
-      // readdir is called twice: once by collectAudioFiles, once by tagBook for unsupported scan
       _readdirFiles = ['ch01.mp3', 'bonus.ogg', 'ch02.mp3'];
       const db = createMockDb();
       const settings = createMockSettingsService(taggingDefaults);
@@ -970,8 +918,8 @@ describe('TaggingService', () => {
         authorName: 'Author',
       }, '/usr/bin/ffmpeg', 'overwrite', false);
 
-      expect(result.tagged).toBe(2); // two mp3s tagged
-      expect(result.skipped).toBe(1); // .ogg skipped with warning
+      expect(result.tagged).toBe(2);
+      expect(result.skipped).toBe(1);
       expect(result.warnings).toContainEqual(expect.stringContaining('.ogg'));
     });
 
@@ -1051,7 +999,6 @@ describe('TaggingService', () => {
 
       expect(result.tagged).toBe(1);
       const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
-      // No -metadata flags; cover stream included
       expect(args.filter(a => a === '-metadata').length).toBe(0);
       expect(args).toContain('-disposition:v');
     });
@@ -1077,8 +1024,7 @@ describe('TaggingService', () => {
 
       it('multi-file overwrite, every file has existing chapter title → existing titles preserved (not clobbered with book.title)', async () => {
         _readdirFiles = ['ch01.mp3', 'ch02.mp3', 'ch03.mp3'];
-        // tagBook reads existing once per multi-file overwrite file. With overwrite mode,
-        // tagFile does NOT re-read, so exactly 3 parseFile calls total.
+        // Overwrite reads once per file in tagBook; tagFile must not read again.
         (parseFile as Mock)
           .mockResolvedValueOnce({ common: { title: 'Chapter One: The Beginning' }, format: {} })
           .mockResolvedValueOnce({ common: { title: 'Chapter Two: The Middle' }, format: {} })
@@ -1097,21 +1043,18 @@ describe('TaggingService', () => {
           'title=Chapter Two: The Middle',
           'title=Chapter Three: The End',
         ]);
-        // album invariant: every file gets book title for album
         const albumsWritten = calls.map((c: unknown[]) => findArg(c[1] as string[], 'album='));
         expect(albumsWritten).toEqual([
           'album=This Inevitable Ruin',
           'album=This Inevitable Ruin',
           'album=This Inevitable Ruin',
         ]);
-        // No file ever gets title=<book.title>
         const titleArgs = calls.flatMap((c: unknown[]) => (c[1] as string[]).filter(a => a.startsWith('title=')));
         expect(titleArgs.every(a => a !== 'title=This Inevitable Ruin')).toBe(true);
       });
 
       it('multi-file overwrite, files have NO existing title → per-file title derives from basename (extension stripped, never book.title)', async () => {
         _readdirFiles = ['001 - The Boy Who Lived.mp3', '002 - The Vanishing Glass.mp3'];
-        // parseFile default mock returns empty common (no title)
         const settings = createMockSettingsService(taggingDefaults);
         const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
 
@@ -1125,14 +1068,12 @@ describe('TaggingService', () => {
           'title=001 - The Boy Who Lived',
           'title=002 - The Vanishing Glass',
         ]);
-        // Confirm we did NOT fabricate `Chapter 1`, `Chapter 2`, etc.
         expect(titlesWritten.some(t => /^title=Chapter \d+$/.test(t ?? ''))).toBe(false);
       });
 
       it('multi-file populate_missing, files have existing titles → existing preserved via resolveTags (no title in ffmpeg args)', async () => {
         _readdirFiles = ['ch01.mp3', 'ch02.mp3'];
-        // populate_missing mode reads existing in BOTH tagBook (no — we skip it now) and tagFile.
-        // With mode='populate_missing', tagBook skips the up-front read entirely; only tagFile reads.
+        // populate_missing skips tagBook's pre-read; tagFile reads once per file.
         (parseFile as Mock)
           .mockResolvedValueOnce({ common: { title: 'Existing Chapter 1' }, format: {} })
           .mockResolvedValueOnce({ common: { title: 'Existing Chapter 2' }, format: {} });
@@ -1148,13 +1089,11 @@ describe('TaggingService', () => {
 
         const calls = (execFile as unknown as Mock).mock.calls;
         const titleArgs = calls.flatMap((c: unknown[]) => (c[1] as string[]).filter(a => a.startsWith('title=')));
-        // populate_missing + existing title set on every file → resolveTags skips title
         expect(titleArgs).toEqual([]);
       });
 
       it('multi-file populate_missing, files have NO existing title → basename-derived title written (NOT book.title)', async () => {
         _readdirFiles = ['001 - Track Name.mp3', '002 - Another Track.mp3'];
-        // No existing title → readExistingTags returns empty; resolveTags writes desired
         const settings = createMockSettingsService({
           processing: {},
           tagging: { enabled: true, mode: 'populate_missing' as const },
@@ -1189,7 +1128,6 @@ describe('TaggingService', () => {
         const calls = (execFile as unknown as Mock).mock.calls;
         const titleArgs = calls.flatMap((c: unknown[]) => (c[1] as string[]).filter(a => a.startsWith('title=')));
         expect(titleArgs).toEqual([]);
-        // album=book.title invariant preserved (album is not excluded)
         const albumArgs = calls.flatMap((c: unknown[]) => (c[1] as string[]).filter(a => a.startsWith('album=')));
         expect(albumArgs).toEqual(['album=Book Title', 'album=Book Title']);
       });
@@ -1215,7 +1153,6 @@ describe('TaggingService', () => {
       });
 
       it('multi-file overwrite preserves existing track numbering behavior', async () => {
-        // Regression guard for the AC: "Existing track-numbering behavior is unchanged."
         _readdirFiles = ['02.mp3', '01.mp3', '10.mp3'];
         const settings = createMockSettingsService(taggingDefaults);
         const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1288,7 +1225,7 @@ describe('TaggingService', () => {
         title: 'The Way of Kings',
         composer: 'Michael Kramer',
         grouping: 'Stormlight',
-        // `series` carries the series name alongside `grouping` (survives MP3) (#1671).
+        // series survives MP3; grouping alone does not.
         series: 'Stormlight',
       });
       expect(plan.mode).toBe('overwrite');
@@ -1307,7 +1244,6 @@ describe('TaggingService', () => {
       const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
 
       const plan = await service.planRetag(1);
-      // seriesPosition reaches preview (was previously dropped) — series-part stringified, 0 preserved.
       expect(plan.canonical).toMatchObject({
         series: 'Stormlight', seriesPart: '0', subtitle: 'Sub', asin: 'B0XYZ',
         publisher: 'Tor', description: 'Desc', date: '2014', genre: 'Fantasy',
@@ -1382,9 +1318,7 @@ describe('TaggingService', () => {
       const plan = await service.planRetag(1);
       const file = plan.files[0]!;
       expect(file.outcome).toBe('will-tag');
-      // artist already populated → not in diff
       expect(file.diff?.find(d => d.field === 'artist')).toBeUndefined();
-      // album was empty string → current rendered as null
       const albumDiff = file.diff?.find(d => d.field === 'album');
       expect(albumDiff).toEqual({ field: 'album', current: null, next: 'New Title' });
     });
@@ -1396,7 +1330,7 @@ describe('TaggingService', () => {
           artist: 'A', albumartist: 'A', album: 'B', title: 'T', composer: ['C'], grouping: 'G',
           track: { no: 1 },
         },
-        // `series` has no common mapping — it round-trips through the native TXXX frame (#1671).
+        // music-metadata has no common series mapping; it round-trips through native TXXX.
         native: { 'ID3v2.4': [{ id: 'TXXX:series', value: 'G' }] },
         format: {},
       });
@@ -1452,7 +1386,6 @@ describe('TaggingService', () => {
       );
       expect(plan.files).toHaveLength(3);
       expect(plan.files.every(f => f.outcome === 'skip-unsupported')).toBe(true);
-      // Warning is still surfaced so the user knows none of those files are taggable
       expect(plan.warnings).toContain('No taggable audio files found');
     });
 
@@ -1539,7 +1472,7 @@ describe('TaggingService', () => {
     describe('per-file title (#1090)', () => {
       it('multi-file overwrite, files with existing chapter titles → diff preserves them (no row claims book.title overwrite)', async () => {
         _readdirFiles = ['ch01.mp3', 'ch02.mp3'];
-        // planRetag reads existing once per file (passed into planFile, which skips its own read).
+        // planRetag passes one read per file into planFile; planFile must not reread.
         (parseFile as Mock)
           .mockResolvedValueOnce({ common: { title: 'Chapter One' }, format: {} })
           .mockResolvedValueOnce({ common: { title: 'Chapter Two' }, format: {} });
@@ -1553,14 +1486,12 @@ describe('TaggingService', () => {
           { field: 'title', current: 'Chapter One', next: 'Chapter One' },
           { field: 'title', current: 'Chapter Two', next: 'Chapter Two' },
         ]);
-        // album invariant
         const albumRows = plan.files.flatMap(f => (f.diff ?? []).filter(d => d.field === 'album'));
         expect(albumRows.map(r => r.next)).toEqual(['Multi Book', 'Multi Book']);
       });
 
       it('multi-file overwrite, files without existing title → diff next=basename, current=null (never book.title)', async () => {
         _readdirFiles = ['001 - The Boy Who Lived.mp3', '002 - The Vanishing Glass.mp3'];
-        // parseFile default returns empty common
         setupBook({ title: "Sorcerer's Stone", authors: [{ name: 'JK Rowling' }] });
         const settings = createMockSettingsService(taggingDefaults);
         const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1593,7 +1524,6 @@ describe('TaggingService', () => {
 
       it('multi-file populate_missing, file lacks title → basename-derived title in diff (NOT book.title)', async () => {
         _readdirFiles = ['001 - First.mp3', '002 - Second.mp3'];
-        // Default mock: empty common → no existing title
         setupBook({ title: 'Book Title', authors: [{ name: 'Author' }] });
         const settings = createMockSettingsService({
           processing: {},
@@ -1654,7 +1584,6 @@ describe('TaggingService', () => {
         const plan = await service.planRetag(1, { mode: 'overwrite' });
 
         expect(plan.mode).toBe('overwrite');
-        // overwrite produces an artist diff that populate_missing would have skipped
         const artistDiff = plan.files[0]!.diff?.find(d => d.field === 'artist');
         expect(artistDiff?.current).toBe('Existing Artist');
         expect(artistDiff?.next).toBe('New Artist');
@@ -1690,14 +1619,12 @@ describe('TaggingService', () => {
         const plan = await service.planRetag(1, { embedCover: false });
 
         expect(plan.embedCover).toBe(false);
-        // hasCoverFile reflects disk regardless of toggle — modal needs it to drive checkbox enablement
+        // Disk state stays visible so the modal can enable its cover checkbox.
         expect(plan.hasCoverFile).toBe(true);
         expect(plan.files.find(f => f.file === 'book.mp3')?.coverPending).toBeFalsy();
       });
 
       it('hasCoverFile reflects disk state when embedCover override left undefined (settings.embedCover=false default)', async () => {
-        // Regression guard for the modal's disabled-checkbox heuristic: the modal needs hasCoverFile
-        // even before the user toggles embedCover, so settings.embedCover=false must NOT zero hasCoverFile.
         _readdirFiles = ['book.mp3', 'cover.jpg'];
         setupBook({ title: 'X', authors: [{ name: 'A' }] });
         const settings = createMockSettingsService(taggingDefaults);
@@ -1732,7 +1659,6 @@ describe('TaggingService', () => {
 
     it('mode override changes resolveTags behavior in the apply path', async () => {
       _readdirFiles = ['book.mp3'];
-      // File has existing artist tag — populate_missing would skip it; overwrite would replace.
       (parseFile as Mock).mockResolvedValue({
         common: { artist: 'Existing', album: 'Existing', title: 'Existing' },
         format: {},
@@ -1746,7 +1672,6 @@ describe('TaggingService', () => {
       await service.retagBook(1, new Set(), { mode: 'overwrite' });
 
       const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
-      // overwrite mode → existing values replaced
       expect(args).toContain('artist=A');
       expect(args).toContain('album=Test');
     });
@@ -1779,9 +1704,7 @@ describe('TaggingService', () => {
 
       const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
       expect(args.some(a => a.endsWith('cover.jpg'))).toBe(false);
-      // Observation point moved by #2078: `-disposition:v` is now emitted unconditionally (it
-      // labels the file's OWN preserved picture), so it no longer distinguishes "cover embedded"
-      // from "cover suppressed". The input list does — a suppressed cover opens no second input.
+      // -disposition:v is unconditional for preserved art; only input count proves cover suppression.
       expect(args.filter(a => a === '-i')).toHaveLength(1);
       expect(args[args.indexOf('-map', args.indexOf('-map') + 1) + 1]).toBe('0:v?');
     });
@@ -1800,7 +1723,6 @@ describe('TaggingService', () => {
 
       await service.retagBook(1);
 
-      // settings.mode=populate_missing → existing tags preserved (no -metadata flags for set fields)
       const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
       expect(args).not.toContain('artist=A');
     });
@@ -1826,11 +1748,7 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
     }) };
   });
 
-  /**
-   * Extract per-file "tagged" set from execFile mock calls. The apply path's
-   * RetagResult exposes only counts, so per-file identity has to come from
-   * what ffmpeg was actually invoked against.
-   */
+  // RetagResult exposes counts only, so derive per-file identity from ffmpeg inputs.
   function appliedTaggedFiles(): Set<string> {
     const calls = (execFile as unknown as Mock).mock.calls;
     const files = new Set<string>();
@@ -1838,9 +1756,7 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
       const args = c[1] as string[];
       const iIdx = args.indexOf('-i');
       const inputPath = args[iIdx + 1]!;
-      // `basename` handles both POSIX `/` and Windows `\` — the apply path uses
-      // `path.join()` which produces OS-native separators, so splitting on a
-      // hardcoded `/` only works on Linux/macOS.
+      // basename handles OS-native separators produced by path.join.
       const fileName = basename(inputPath);
       files.add(fileName);
     }
@@ -1861,7 +1777,6 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
       const planWillTag = new Set(plan.files.filter(f => f.outcome === 'will-tag').map(f => f.file));
       const planSkipped = new Set(plan.files.filter(f => f.outcome !== 'will-tag').map(f => f.file));
 
-      // Re-run with fresh mock state for apply
       vi.clearAllMocks();
       (stat as Mock).mockResolvedValue({ size: 1000 });
       _readdirFiles = [...dirContents];
@@ -1869,9 +1784,7 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
       const applyResult = await service.retagBook(1);
       const applyTagged = appliedTaggedFiles();
 
-      // bonus.ogg → skip-unsupported in plan; warning in apply
       expect(planSkipped.has('bonus.ogg')).toBe(true);
-      // File-identity parity, not just count parity (#1086 parity hardening)
       expect(applyTagged).toEqual(planWillTag);
       expect(applyResult.tagged).toBe(planWillTag.size);
     });
@@ -1883,10 +1796,7 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
       id: 1, title: 'Book Title', path: '/library/test',
       authors: [{ name: 'A' }], narrators: [], seriesName: null, seriesPosition: null, coverUrl: null,
     });
-    // planRetag reads existing once per file. parseFile mock queue:
-    //   1: ch01 → 'Existing 1'
-    //   2: ch02 → (no title, falls back to basename 'ch02')
-    //   3: ch03 → 'Existing 3'
+    // parseFile's queue follows sorted ch01/ch02/ch03 order.
     (parseFile as Mock)
       .mockResolvedValueOnce({ common: { title: 'Existing 1' }, format: {} })
       .mockResolvedValueOnce({ common: {}, format: {} })
@@ -1905,7 +1815,6 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
     expect(planTitlesByFile.get('ch02.mp3')).toBe('ch02');
     expect(planTitlesByFile.get('ch03.mp3')).toBe('Existing 3');
 
-    // Apply path: re-seed mocks
     vi.clearAllMocks();
     (stat as Mock).mockResolvedValue({ size: 1000 });
     _readdirFiles = ['ch01.mp3', 'ch02.mp3', 'ch03.mp3'];
@@ -2042,7 +1951,7 @@ describe('TaggingService.retagBook() via BookService.getById() (issue #79)', () 
   });
 
   it('retagBook() calls BookService.getById() rather than raw junction queries', async () => {
-    const db = { select: vi.fn() }; // select should not be called
+    const db = { select: vi.fn() };
     const settings = createMockSettingsService(taggingDefaults);
     const service = new TaggingService(db as never, settings as never, {
       info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),

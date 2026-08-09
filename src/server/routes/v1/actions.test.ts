@@ -28,12 +28,10 @@ import { initializeKey, _resetKey } from '../../utils/secret-codec.js';
 import { downloadV1Schema } from '@shared/schemas/v1/downloads.js';
 import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 
-// Mock config so the auth plugin runs with authBypass off (mirrors books.test).
+// Exercise the auth plugin with authBypass disabled.
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
 
-// signReleaseId derives its HMAC key from the secret-codec key. Some describe
-// blocks mint a releaseId at collection time (top-level `const`), which runs
-// before any beforeAll — so initialize the key at module load.
+// Top-level release tokens are minted before beforeAll; initialize their HMAC key at collection time.
 _resetKey();
 initializeKey(Buffer.alloc(32, 0x2b));
 
@@ -41,7 +39,6 @@ const VALID_KEY = 'valid-key';
 const keyHeaders = { 'x-api-key': VALID_KEY };
 const BOOK_ID = 1;
 
-/** A hydrated BookWithAuthor row as bookService.getById returns it. */
 function hydratedBook(overrides?: Record<string, unknown>) {
   return {
     ...createMockDbBook({ id: BOOK_ID, ...overrides }),
@@ -49,7 +46,6 @@ function hydratedBook(overrides?: Record<string, unknown>) {
   };
 }
 
-/** A SearchResult-shaped row as IndexerSearchService.searchAllWithStatus returns it. */
 function searchResult(overrides?: Record<string, unknown>) {
   return {
     title: 'The Way of Kings (Unabridged)',
@@ -69,7 +65,6 @@ function searchResult(overrides?: Record<string, unknown>) {
   };
 }
 
-/** A hydrated DownloadWithBook row as downloadOrchestrator.grab / getById return. */
 function hydratedDownload(overrides?: Record<string, unknown>) {
   return {
     id: 42,
@@ -117,17 +112,12 @@ const bookService = { getById: vi.fn() } as unknown as BookService;
 const indexerSearchService = { searchAllWithStatus: vi.fn() } as unknown as IndexerSearchService;
 const downloadOrchestrator = { grab: vi.fn() } as unknown as DownloadOrchestrator;
 const downloadService = { getById: vi.fn() } as unknown as DownloadService;
-// #1800 — post-processing deps for the shared display filter chain the v1
-// search handler now routes through. Defaults (set in beforeEach) are pass-all:
-// empty blacklist, permissive quality/metadata, empty LAN allowlist.
 const blacklistService = { getBlacklistedIdentifiers: vi.fn() } as unknown as BlacklistService;
 const settingsService = { get: vi.fn() } as unknown as SettingsService;
 const indexerService = { getLanAllowlist: vi.fn() } as unknown as IndexerService;
 const db = createMockDb();
 
-// Per-test mutable state driving the smart db.select impl: resolveByPublicId
-// selects only `{ id }` (→ bookRows); the dedup lookup selects several download
-// columns (→ downloadRows).
+// db.select({ id }) reads bookRows; wider projections read downloadRows.
 let bookRows: Array<{ id: number }>;
 let downloadRows: Array<Record<string, unknown>>;
 
@@ -153,8 +143,7 @@ describe('v1 action routes (search + grab)', () => {
     (bookService.getById as Mock).mockResolvedValue(hydratedBook());
     (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
     (downloadService.getById as Mock).mockResolvedValue(null);
-    // Pass-all post-processing defaults so the existing search tests still see
-    // their raw fixtures survive the filter chain (blacklist/quality/enrichment).
+    // Pass-all defaults isolate route behavior from the shared display filters.
     (blacklistService.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() });
     (settingsService.get as Mock).mockImplementation((cat: string) => {
       if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5, rejectWords: '', requiredWords: '' });
@@ -167,19 +156,14 @@ describe('v1 action routes (search + grab)', () => {
     downloadRows = [];
     db.select.mockImplementation((proj?: Record<string, unknown>) => {
       const keys = proj ? Object.keys(proj) : [];
-      // resolveByPublicId selects exactly { id }; the dedup lookup selects more.
       if (keys.length === 1 && keys[0] === 'id') return mockDbChain(bookRows);
       return mockDbChain(downloadRows);
     });
   });
 
-  // --------------------------------------------------------------------------
-  // Search
-  // --------------------------------------------------------------------------
-
   describe('POST /api/v1/books/:publicId/search', () => {
     it('returns a 404 v1 envelope for an unknown publicId', async () => {
-      bookRows = []; // resolveByPublicId → null
+      bookRows = [];
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_nope/search', headers: keyHeaders });
 
@@ -188,10 +172,7 @@ describe('v1 action routes (search + grab)', () => {
       expect(indexerSearchService.searchAllWithStatus as Mock).not.toHaveBeenCalled();
     });
 
-    // #1983 F3 — pins the CANONICAL `v1PublicIdParamSchema` (`.trim().min(1)`) as this
-    // route's validator. Reverting this module to a private `z.string().min(1)` copy turns
-    // these back into 404 lookups, which `common.test.ts` (schema in isolation) and the
-    // companion-route suite (a different consumer) both stay green through.
+    // A private schema copy would turn whitespace into 404 and escape canonical-schema coverage.
     it.each(['%20', '%20%20', '%09'])(
       'returns a 400 BAD_REQUEST envelope for the whitespace-only publicId %s, without resolving',
       async (encoded) => {
@@ -200,8 +181,6 @@ describe('v1 action routes (search + grab)', () => {
         expect(res.statusCode).toBe(400);
         expect(res.json()).toEqual({ error: { code: 'BAD_REQUEST', message: expect.any(String) } });
         expectV1Envelope(res.json());
-        // Validation precedes the handler: neither the publicId resolution nor the
-        // search fan-out was reached.
         expect(db.select).not.toHaveBeenCalled();
         expect(bookService.getById as Mock).not.toHaveBeenCalled();
         expect(indexerSearchService.searchAllWithStatus as Mock).not.toHaveBeenCalled();
@@ -227,9 +206,6 @@ describe('v1 action routes (search + grab)', () => {
     });
 
     it('serializes a release whose seeders is absent (post-fix adapter shape) as seeders: null, no 500', async () => {
-      // AC4: the torznab adapter now omits seeders entirely for a non-numeric
-      // attr (never emits NaN). The strict releaseV1Schema accepts the
-      // absent-then-nulled seeders; the v1 DTO has no leechers field.
       const { seeders: _drop, ...noSeeders } = searchResult();
       void _drop;
       (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [noSeeders], succeeded: 1, failed: 0 });
@@ -250,25 +226,19 @@ describe('v1 action routes (search + grab)', () => {
 
       const calls = (indexerSearchService.searchAllWithStatus as Mock).mock.calls;
 
-      // Rung 1 is the canonical query, byte-identical to the pre-ladder one.
       const [query, options] = calls[0]!;
       expect(query).toContain('Way of Kings');
       expect(query).toContain('Brandon Sanderson');
       expect(options).toEqual({ title: 'The Way of Kings', author: 'Brandon Sanderson', rankingAuthor: 'Brandon Sanderson' });
 
-      // v1 discovery runs the full ladder (#2104 AC28). "The Way of Kings" is
-      // colon-free and paren-free, so that costs exactly ONE extra rung — the
-      // author-dropped one, which keeps the canonical author for RANKING while
-      // dropping it from transport.
+      // The author-dropped transport rung still keeps the canonical author for ranking.
       expect(calls.map(([q, o]) => [q, (o as { author?: string }).author])).toEqual([
         ['The Way of Kings Brandon Sanderson', 'Brandon Sanderson'],
         ['the way of kings', undefined],
       ]);
     });
 
-    // AC28 — v1 search is DISCOVERY only, so it runs the full ladder with no
-    // corroboration floor; the response envelope stays unchanged. The `.strict()`
-    // release DTO is the enforcement point for "no rung disclosure".
+    // Public discovery has no corroboration floor; strict DTOs must not expose ladder metadata.
     it('returns candidates found only at a relaxed rung, with no rung field on the envelope (AC28)', async () => {
       (bookService.getById as Mock).mockResolvedValue({
         ...hydratedBook(),
@@ -289,17 +259,12 @@ describe('v1 action routes (search + grab)', () => {
       expect(body.data[0]).not.toHaveProperty('relaxedQuery');
       expect(body.data[0]).not.toHaveProperty('rung');
 
-      // The winning rung really was a relaxed one.
       const queries = (indexerSearchService.searchAllWithStatus as Mock).mock.calls.map((c) => c[0] as string);
       expect(queries[0]).toBe('The Churn An Expanse Novella Brandon Sanderson');
       expect(queries.at(-1)).toBe('the churn Brandon Sanderson');
     });
 
-    // #2138 F1 (spec review) — the public discovery caller shares
-    // `buildQueryLadder`, so the tail-rung admission changes its query sequence
-    // and its cap displacement too. The existing relaxed-rung test above covers
-    // only the two-segment shape where `suffix(1)` was already admitted, so it
-    // cannot see the deep-franchise regression.
+    // A two-segment fixture cannot catch tail-rung cap displacement; use a deep franchise title.
     it('returns a deep-franchise candidate found only at the tail rung, envelope unchanged (AC28, F1)', async () => {
       (bookService.getById as Mock).mockResolvedValue({
         ...hydratedBook(),
@@ -318,16 +283,11 @@ describe('v1 action routes (search + grab)', () => {
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body) as { data: Array<Record<string, unknown>>; total: number };
       expect(body.total).toBe(1);
-      // No floor on discovery, so the franchise-dropping release is RETURNED
-      // here even though the auto paths hold it (#2138 AC9/AC10).
       expect(body.data[0]!.title).toBe('Haunted Starlight - Brandon Sanderson');
-      // The strict envelope gains no rung or relaxed-query field.
       expect(Object.keys(body)).toEqual(['data', 'total']);
       expect(body.data[0]).not.toHaveProperty('relaxedQuery');
       expect(body.data[0]).not.toHaveProperty('rung');
 
-      // Rungs 0-4: the tail rung is the deepest of the author-ON arm, reached
-      // only after every more specific rung answered a genuine zero.
       const queries = (indexerSearchService.searchAllWithStatus as Mock).mock.calls.map((c) => c[0] as string);
       expect(queries).toEqual([
         'Star Wars The High Republic Haunted Starlight Brandon Sanderson',
@@ -357,10 +317,6 @@ describe('v1 action routes (search + grab)', () => {
       expect(indexerSearchService.searchAllWithStatus as Mock).not.toHaveBeenCalled();
     });
 
-    // ------------------------------------------------------------------------
-    // #1800 — v1 search now routes through the shared display filter chain.
-    // ------------------------------------------------------------------------
-
     it('excludes a blacklisted release (by guid) from the v1 data list; total is the filtered count', async () => {
       const clean = searchResult({ guid: 'clean-guid', title: 'Words of Radiance (Unabridged)' });
       const blacklisted = searchResult({ guid: 'blk-guid', title: 'Oathbringer (Unabridged)' });
@@ -380,8 +336,7 @@ describe('v1 action routes (search + grab)', () => {
     });
 
     it('excludes a "Part 2 of 5" multi-part Usenet release from the v1 data list (real multi-part filter)', async () => {
-      // language pre-set so enrichUsenetLanguages skips it (no NZB fetch); the
-      // multi-part filter keys off the title regardless.
+      // Pre-set language to avoid an NZB fetch; the multi-part filter only needs the title.
       const partial = searchResult({
         protocol: 'usenet',
         title: 'Words of Radiance Part 2 of 5',
@@ -414,9 +369,6 @@ describe('v1 action routes (search + grab)', () => {
       expect(body.total).toBe(body.data.length);
     });
 
-    // Duration precedence (AC5): the handler must derive the seconds value via
-    // resolveBookQualityInputs, NOT a raw `book.duration * 60`. Spy on the shared
-    // wrapper and assert the exact bookDuration second-argument it receives.
     describe('duration precedence via resolveBookQualityInputs', () => {
       afterEach(() => { vi.restoreAllMocks(); });
 
@@ -435,7 +387,7 @@ describe('v1 action routes (search + grab)', () => {
         await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
         expect(spy).toHaveBeenCalledTimes(1);
-        expect(spy.mock.calls[0]![1]).toBe(3600); // NOT 1800 (30 * 60)
+        expect(spy.mock.calls[0]![1]).toBe(3600);
       });
 
       it('falls back to duration * 60 (minutes→seconds) when audioDuration is null', async () => {
@@ -444,7 +396,7 @@ describe('v1 action routes (search + grab)', () => {
 
         await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
-        expect(spy.mock.calls[0]![1]).toBe(3600); // 60 min → 3600 s
+        expect(spy.mock.calls[0]![1]).toBe(3600);
       });
 
       it('passes undefined (durationUnknown path) when the book has neither audioDuration nor duration', async () => {
@@ -453,14 +405,10 @@ describe('v1 action routes (search + grab)', () => {
 
         await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
-        expect(spy.mock.calls[0]![1]).toBeUndefined(); // NOT 0
+        expect(spy.mock.calls[0]![1]).toBeUndefined();
       });
     });
   });
-
-  // --------------------------------------------------------------------------
-  // Grab — happy path
-  // --------------------------------------------------------------------------
 
   describe('POST /api/v1/books/:publicId/grab — happy path', () => {
     it('grabs once and returns 201 with the download serialized via toDownloadV1 (internals stripped)', async () => {
@@ -481,16 +429,9 @@ describe('v1 action routes (search + grab)', () => {
     });
   });
 
-  // --------------------------------------------------------------------------
-  // Search → grab round-trip (the signed-token public contract)
-  // --------------------------------------------------------------------------
-
   describe('POST /search → POST /grab (signed releaseId round-trip)', () => {
     it('accepts a releaseId minted by /search at /grab and forwards that release to the download client', async () => {
-      // The contract that matters for #1488: the token the search endpoint hands
-      // out must verify on the grab endpoint. Mint it via the real search route
-      // (not a hand-signed token) so an accidental re-wire of search to the
-      // unsigned body encoder would fail here even while the reject tests stay green.
+      // Mint through /search so an unsigned-encoder regression cannot hide behind reject-only tests.
       (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [searchResult()], succeeded: 1, failed: 0 });
 
       const searchRes = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
@@ -504,8 +445,6 @@ describe('v1 action routes (search + grab)', () => {
       expect(downloadV1Schema.parse(grabRes.json())).toBeTruthy();
       expect(downloadOrchestrator.grab as Mock).toHaveBeenCalledTimes(1);
       const [params] = (downloadOrchestrator.grab as Mock).mock.calls[0]!;
-      // The grab side effect receives the searched release's own grab fields —
-      // proving the signed token round-tripped its payload, not an attacker's.
       expect(params).toMatchObject({
         downloadUrl: 'http://indexer.example/torrent/1',
         title: 'The Way of Kings (Unabridged)',
@@ -517,19 +456,9 @@ describe('v1 action routes (search + grab)', () => {
     });
   });
 
-  // --------------------------------------------------------------------------
-  // #1800 — grab replay boundary (documentation, NOT enforcement).
-  // --------------------------------------------------------------------------
-
   describe('grab replay boundary (#1800)', () => {
     it('grabs a release from a previously-signed id even though it would be filtered at search (MAC-only, no re-search/re-filter)', async () => {
-      // The grab token is a stable, no-TTL HMAC. /grab verifies only the MAC and
-      // does NOT re-run search or the filter chain, so a consumer holding an id
-      // for a now-blacklisted / multi-part release can still replay it. This is
-      // the SAME posture as every internal surface — filtering the v1 search list
-      // is presentation parity, not grab-time enforcement. Pinning the boundary
-      // makes any future grab-time-enforcement change a deliberate, test-visible
-      // decision (Not in Scope for #1800).
+      // Filtering is presentation-only: stable no-TTL tokens verify the MAC without re-running filters.
       const releaseId = signReleaseId({ downloadUrl: 'http://x/blacklisted', title: 'Part 2 of 5', protocol: 'usenet', guid: 'blk-guid' });
       (blacklistService.getBlacklistedIdentifiers as Mock).mockResolvedValue({
         blacklistedHashes: new Set<string>(),
@@ -540,18 +469,12 @@ describe('v1 action routes (search + grab)', () => {
 
       expect(res.statusCode).toBe(201);
       expect(downloadOrchestrator.grab as Mock).toHaveBeenCalledTimes(1);
-      // Grab never touches the search/filter chain.
       expect(indexerSearchService.searchAllWithStatus as Mock).not.toHaveBeenCalled();
       expect(blacklistService.getBlacklistedIdentifiers as Mock).not.toHaveBeenCalled();
     });
   });
 
-  // --------------------------------------------------------------------------
-  // Grab — idempotency
-  // --------------------------------------------------------------------------
-
   describe('POST /api/v1/books/:publicId/grab — idempotency', () => {
-    /** Wire grab so the first call "persists" a matching row for the dedup lookup. */
     function grabPersistsRow(row?: Record<string, unknown>) {
       (downloadOrchestrator.grab as Mock).mockImplementation(async () => {
         downloadRows.push({ id: 42, guid: 'guid-1', infoHash: null, downloadUrl: 'http://x/1', indexerId: 3, ...row });
@@ -575,7 +498,6 @@ describe('v1 action routes (search + grab)', () => {
     });
 
     it('terminal-state retry still returns the existing record (200, same publicId), not 409 and not a new grab', async () => {
-      // Existing row is already terminal (completed/imported) — replay must still dedup.
       downloadRows = [{ id: 42, guid: 'guid-1', infoHash: null, downloadUrl: 'http://x/1', indexerId: 3 }];
       (downloadService.getById as Mock).mockResolvedValue(hydratedDownload({ clientStatus: 'completed', pipelineStage: 'imported', progress: 1 }));
       const releaseId = signReleaseId({ downloadUrl: 'http://x/1', title: 'T', protocol: 'torrent', guid: 'guid-1', indexerId: 3 });
@@ -591,7 +513,7 @@ describe('v1 action routes (search + grab)', () => {
       let grabCalls = 0;
       (downloadOrchestrator.grab as Mock).mockImplementation(async () => {
         grabCalls++;
-        await new Promise((r) => setImmediate(r)); // yield so both handlers reach the lock
+        await new Promise((r) => setImmediate(r)); // Let both handlers reach the lock.
         downloadRows.push({ id: 42, guid: 'guid-1', infoHash: null, downloadUrl: 'http://x/1', indexerId: 3 });
         return hydratedDownload();
       });
@@ -644,9 +566,7 @@ describe('v1 action routes (search + grab)', () => {
       });
 
       it('(d) documented degradation: adapter-rewritten stored URL with no stable identifier misses → fresh grab', async () => {
-        // Stored row holds the EFFECTIVE (adapter-rewritten) URL; the search-time
-        // token carries only the original URL and no guid/infoHash. This is the
-        // accepted miss — and is unreachable for real results, which carry a guid.
+        // Accepted miss: stored effective URL differs from the token URL; real results carry a stable guid.
         downloadRows = [{ id: 11, guid: null, infoHash: null, downloadUrl: 'http://x/rewritten', indexerId: null }];
         const releaseId = signReleaseId({ downloadUrl: 'http://x/original', title: 'T', protocol: 'torrent' });
 
@@ -667,13 +587,10 @@ describe('v1 action routes (search + grab)', () => {
         const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/grab', headers: keyHeaders, payload: { releaseId } });
 
         expect(res.statusCode).toBe(200);
-        // guid-first precedence selects row 2, NOT the infoHash-matching row 1.
         expect(downloadService.getById as Mock).toHaveBeenCalledWith(2);
       });
 
       it('(F1) a token carrying an indexerId does NOT match a same-guid row whose persisted indexerId is null → fresh grab', async () => {
-        // Guid is scoped to indexerId when the token carries one: a persisted
-        // null indexerId is NOT a wildcard, so dedup misses and a fresh grab runs.
         downloadRows = [{ id: 50, guid: 'guid-1', infoHash: null, downloadUrl: 'http://x/1', indexerId: null }];
         const releaseId = signReleaseId({ downloadUrl: 'http://x/1', title: 'T', protocol: 'torrent', guid: 'guid-1', indexerId: 3 });
 
@@ -709,10 +626,6 @@ describe('v1 action routes (search + grab)', () => {
     });
   });
 
-  // --------------------------------------------------------------------------
-  // Grab — conflicts & errors
-  // --------------------------------------------------------------------------
-
   describe('POST /api/v1/books/:publicId/grab — conflicts & errors', () => {
     const releaseId = signReleaseId({ downloadUrl: 'http://x/1', title: 'T', protocol: 'torrent', guid: 'guid-x' });
     const grab = (body: Record<string, unknown> = { releaseId }) =>
@@ -731,9 +644,6 @@ describe('v1 action routes (search + grab)', () => {
     });
 
     it('surfaces a PIPELINE_ACTIVE DuplicateDownloadError as a 409 with a blocker-neutral, id-free message (#1861)', async () => {
-      // The consolidated classifier can now raise PIPELINE_ACTIVE on v1 (e.g. a
-      // QG-eligible completed row); the mapper's message must be code-aware and
-      // must NOT claim "active download" for a pipeline blocker.
       (downloadOrchestrator.grab as Mock).mockRejectedValue(new DuplicateDownloadError('Book has a download in the import pipeline', 'PIPELINE_ACTIVE', { reason: 'processing' }));
 
       const res = await grab();
@@ -782,9 +692,6 @@ describe('v1 action routes (search + grab)', () => {
     });
 
     it('rejects a forged releaseId carrying an attacker downloadUrl (no valid MAC) with 400 and never grabs', async () => {
-      // The pre-fix forgery: an unsigned base64url(JSON) body smuggling an
-      // arbitrary downloadUrl. With signing it has no valid signature segment, so
-      // verifyReleaseId returns null and the URL never reaches the download client.
       const forged = encodeReleaseId({ downloadUrl: 'http://attacker/evil', title: 'T', protocol: 'torrent' });
 
       const res = await grab({ releaseId: forged });
@@ -813,9 +720,6 @@ describe('v1 action routes (search + grab)', () => {
       expectV1Envelope(res.json());
     });
 
-    // #1983 F3 — the body is VALID here, so the only thing that can fail is the path
-    // param: a whitespace-only publicId must be a 400 from the canonical validator, never
-    // a 404 from the resolver.
     it.each(['%20', '%20%20', '%09'])(
       'returns a 400 BAD_REQUEST envelope for the whitespace-only publicId %s with a valid body, without resolving',
       async (encoded) => {
@@ -829,8 +733,6 @@ describe('v1 action routes (search + grab)', () => {
         expect(res.statusCode).toBe(400);
         expect(res.json()).toEqual({ error: { code: 'BAD_REQUEST', message: expect.any(String) } });
         expectV1Envelope(res.json());
-        // Validation precedes the handler: neither the publicId resolution nor the grab
-        // was reached.
         expect(db.select).not.toHaveBeenCalled();
         expect(bookService.getById as Mock).not.toHaveBeenCalled();
         expect(downloadOrchestrator.grab as Mock).not.toHaveBeenCalled();
@@ -847,10 +749,6 @@ describe('v1 action routes (search + grab)', () => {
       expect(downloadOrchestrator.grab as Mock).not.toHaveBeenCalled();
     });
   });
-
-  // --------------------------------------------------------------------------
-  // Auth (real auth-plugin fixture)
-  // --------------------------------------------------------------------------
 
   describe('auth (real auth-plugin fixture)', () => {
     const releaseId = signReleaseId({ downloadUrl: 'http://x/1', title: 'T', protocol: 'torrent', guid: 'guid-1' });
@@ -877,7 +775,6 @@ describe('v1 action routes (search + grab)', () => {
   });
 });
 
-/** Assert a body is the canonical v1 error envelope, NOT the internal `{ statusCode, error, message }`. */
 function expectV1Envelope(body: unknown): void {
   expect(v1ErrorEnvelopeSchema.safeParse(body).success).toBe(true);
   const b = body as Record<string, unknown>;
