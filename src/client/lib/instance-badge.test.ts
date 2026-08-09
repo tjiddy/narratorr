@@ -10,8 +10,7 @@ import {
   recolorFaviconDataUri,
 } from './instance-badge.js';
 
-// Mirrors src/client/public/favicon.svg (intentionally NOT imported — the pure helpers
-// operate on whatever SVG source the effect hands them at runtime).
+// Representative runtime SVG; asset drift is covered separately below.
 const FAVICON_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">\n' +
   '  <path d="M3 18v-6a9 9 0 0 1 18 0v6" />\n' +
@@ -48,15 +47,9 @@ describe('applyTitlePrefix', () => {
 });
 
 describe('recolorFaviconDataUri', () => {
-  // The recolor is a string replace of AMBER_STROKE in whatever SVG the live icon link
-  // serves. The literal lives in unlinked homes (this constant, the asset, the fixture
-  // above) — if the served favicon's stroke ever changes, the replace silently becomes an
-  // identity transform and the dev badge favicon reverts to prod-identical while every
-  // fixture-based test stays green. This assertion binds the constant to the real asset so
-  // that drift fails loudly instead of shipping.
+  // Recoloring silently no-ops if the asset stroke drifts from AMBER_STROKE.
   it('AMBER_STROKE matches the served favicon asset', () => {
-    // path.join from cwd, not new URL(import.meta.url): under the jsdom test
-    // environment import.meta.url is not a file: URL and new URL() throws.
+    // jsdom does not expose import.meta.url as a file URL; resolve from cwd.
     const svg = readFileSync(join(process.cwd(), 'src/client/public/favicon.svg'), 'utf8');
     expect(svg).toContain(AMBER_STROKE);
   });
@@ -68,13 +61,12 @@ describe('recolorFaviconDataUri', () => {
     const decoded = decodeURIComponent(uri.slice('data:image/svg+xml,'.length));
     expect(decoded).toContain(VIOLET_STROKE);
     expect(decoded).not.toContain(AMBER_STROKE);
-    // Glyph path data is retained.
     expect(decoded).toContain('<path d="M3 18v-6a9 9 0 0 1 18 0v6"');
   });
 
   it('percent-encodes the # so no bare fragment separator leaks into the URI', () => {
     const uri = recolorFaviconDataUri(FAVICON_SVG);
-    expect(uri).not.toContain(VIOLET_STROKE); // must be %238b5cf6, never a bare #8b5cf6
+    expect(uri).not.toContain(VIOLET_STROKE);
     expect(uri).toContain('%238b5cf6');
   });
 

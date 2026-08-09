@@ -54,7 +54,7 @@ describe('applyInstanceBadge', () => {
 
     expect(doc.title).toBe('Narratorr');
     expect(iconHref(doc)).toBe('https://app.test/favicon.svg');
-    expect(fetchSvg).not.toHaveBeenCalled(); // no favicon fetch when there is no badge
+    expect(fetchSvg).not.toHaveBeenCalled();
   });
 
   it('leaves favicon + title untouched when the status fetch rejects', async () => {
@@ -83,7 +83,7 @@ describe('applyInstanceBadge', () => {
       doc,
     });
 
-    expect(doc.title).toBe('Narratorr'); // no partial mutation — title untouched too
+    expect(doc.title).toBe('Narratorr');
     expect(iconHref(doc)).toBe('https://app.test/favicon.svg');
   });
 
@@ -96,7 +96,7 @@ describe('applyInstanceBadge', () => {
       doc,
     });
 
-    expect(doc.title).toBe('Narratorr'); // title untouched when the icon link is absent
+    expect(doc.title).toBe('Narratorr');
     expect(iconHref(doc)).toBeUndefined();
     expect(fetchSvg).not.toHaveBeenCalled();
   });
