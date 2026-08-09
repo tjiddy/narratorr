@@ -12,22 +12,16 @@ import { DiscoveryService } from './discovery.service.js';
 import { computeWeightMultipliers } from './discovery-weights.js';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 
-/** Serialize a Drizzle SQL expression to a raw SQL string for predicate assertions. */
 const dialect = new SQLiteSyncDialect();
 function toSQL(expr: unknown): string {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return dialect.sqlToQuery((expr as any).getSQL()).sql;
 }
 
-/** Extract the bound parameter values from a Drizzle SQL expression (for asserting IN(...) contents). */
 function toParams(expr: unknown): unknown[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return dialect.sqlToQuery((expr as any).getSQL()).params;
 }
-
-// ---------------------------------------------------------------------------
-// Mocks
-// ---------------------------------------------------------------------------
 
 const mockMetadataService = {
   searchBooksForDiscovery: vi.fn().mockResolvedValue({ books: [], warnings: [] }),
@@ -62,8 +56,7 @@ function createService(dbOverrides?: ReturnType<typeof createMockDb>) {
   };
 }
 
-// Helper: a minimal imported book row for signal extraction tests
-// Shape matches analyzeLibrary query: { book: books, authorName: authors.name }
+// Mirrors analyzeLibrary's { book, authorName } projection.
 function makeBookRow(overrides: Record<string, unknown> = {}) {
   return {
     book: {
@@ -135,7 +128,7 @@ describe('DiscoveryService', () => {
       const signals = await service.analyzeLibrary();
       const authorEntry = signals.authorAffinity.get('Author A');
       expect(authorEntry?.count).toBe(3);
-      expect(authorEntry?.strength).toBeCloseTo(3 / 5); // 3/5 = 0.6
+      expect(authorEntry?.strength).toBeCloseTo(3 / 5);
     });
 
     it('aggregates genre frequency distribution', async () => {
@@ -183,7 +176,6 @@ describe('DiscoveryService', () => {
       const { service } = createService(db);
 
       const signals = await service.analyzeLibrary();
-      // Should not create a gap entry since position is null
       expect(signals.seriesGaps).toHaveLength(0);
     });
 
@@ -210,7 +202,7 @@ describe('DiscoveryService', () => {
 
       const signals = await service.analyzeLibrary();
       expect(signals.narratorAffinity.get('Narrator X')).toBe(3);
-      expect(signals.narratorAffinity.has('Narrator Y')).toBe(false); // only 2
+      expect(signals.narratorAffinity.has('Narrator Y')).toBe(false);
     });
 
     it('calculates median duration correctly', async () => {
@@ -244,11 +236,9 @@ describe('DiscoveryService', () => {
 
   describe('scoreCandidates (via generateCandidates)', () => {
     it('clamps score to 0-100 range', async () => {
-      // Access scoreCandidate indirectly through the service
-      // A candidate with maximum bonuses should not exceed 100
       const db = createMockDb();
-      // First call: analyzeLibrary (imported books)
       db.select
+        // First call: analyzeLibrary books; then narrators, tracked books, and dismissed suggestions.
         .mockReturnValueOnce(mockDbChain([
           makeBookRow({ id: 1, duration: 1000, genres: ['Fantasy'] }),
           makeBookRow({ id: 2, duration: 1000, genres: ['Fantasy'] }),
@@ -256,11 +246,8 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 4, duration: 1000, genres: ['Fantasy'] }),
           makeBookRow({ id: 5, duration: 1000, genres: ['Fantasy'] }),
         ]))
-        // Second call: analyzeLibrary (narrator rows)
         .mockReturnValueOnce(mockDbChain([]))
-        // Third call: existing books for exclusion
         .mockReturnValueOnce(mockDbChain([]))
-        // Fourth call: dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]));
 
       const recentDate = new Date();
@@ -291,18 +278,15 @@ describe('DiscoveryService', () => {
   describe('generateCandidates (pipeline)', () => {
     function setupCandidateTest() {
       const db = createMockDb();
-      // analyzeLibrary query (imported books)
+      // Select order: library books, narrators, tracked books, dismissed suggestions.
       db.select
         .mockReturnValueOnce(mockDbChain([
           makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 }),
           makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
           makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
         ]))
-        // analyzeLibrary query (narrator rows)
         .mockReturnValueOnce(mockDbChain([]))
-        // existing books for exclusion (now includes title + authorName for fuzzy match)
         .mockReturnValueOnce(mockDbChain([{ asin: 'EXISTING1', title: 'Already Owned Book', authorName: 'Some Other Author' }]))
-        // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([{ asin: 'DISMISSED1' }]));
       return db;
     }
@@ -350,7 +334,7 @@ describe('DiscoveryService', () => {
       const { service } = createService(db);
       const signals = await service.analyzeLibrary();
       const candidates = await service.generateCandidates(signals);
-      // Region is 'us' → english only
+      // US region accepts English only.
       expect(candidates.find(c => c.asin === 'FR1')).toBeUndefined();
       expect(candidates.find(c => c.asin === 'EN1')).toBeDefined();
     });
@@ -377,9 +361,8 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
           makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
         ]))
-        // analyzeLibrary narrator rows
+        // Then analyzeLibrary narrator rows, tracked title/author rows, and dismissed suggestions.
         .mockReturnValueOnce(mockDbChain([]))
-        // existing books — title+author close to candidate
         .mockReturnValueOnce(mockDbChain([{ asin: 'OTHER_ASIN', title: 'The Name of the Wind', authorName: 'Patrick Rothfuss' }]))
         .mockReturnValueOnce(mockDbChain([]));
 
@@ -394,7 +377,6 @@ describe('DiscoveryService', () => {
       const { service } = createService(db);
       const signals = await service.analyzeLibrary();
       const candidates = await service.generateCandidates(signals);
-      // "Name of the Wind" by "Patrick Rothfuss" should be excluded via fuzzy match
       expect(candidates.find(c => c.asin === 'DIFF_ASIN')).toBeUndefined();
       expect(candidates.find(c => c.asin === 'UNIQUE1')).toBeDefined();
     });
@@ -407,12 +389,12 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
           makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
         ]))
-        // analyzeLibrary narrator rows
+        // Then analyzeLibrary narrator rows, tracked books, and dismissed suggestions.
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]));
 
-      // Only the first call (author query) gets the wrong-author book; rest return empty
+      // Only the author query receives candidates; later signal queries stay empty.
       mockMetadataService.searchBooksForDiscovery
         .mockResolvedValueOnce({
           books: [
@@ -426,7 +408,6 @@ describe('DiscoveryService', () => {
       const { service } = createService(db);
       const signals = await service.analyzeLibrary();
       const candidates = await service.generateCandidates(signals);
-      // "Completely Different Person" should be filtered as low author-match for author-based query
       expect(candidates.find(c => c.asin === 'SAME1')).toBeDefined();
       expect(candidates.find(c => c.asin === 'WRONG1')).toBeUndefined();
     });
@@ -449,7 +430,6 @@ describe('DiscoveryService', () => {
       const candidates = await service.generateCandidates(signals);
       const recent = candidates.find(c => c.asin === 'RECENT');
       const old = candidates.find(c => c.asin === 'OLD');
-      // Both get author base score, but recent gets +10 bonus
       if (recent && old) {
         expect(recent.score).toBeGreaterThan(old.score);
       }
@@ -479,19 +459,13 @@ describe('DiscoveryService', () => {
     it('inserts new suggestions and returns added count', async () => {
       const db = createMockDb();
       db.select
-        // dismissal stats (#406)
+        // Dismissal stats; then library, narrator, tracked, dismissed, pending, and upsert rows.
         .mockReturnValueOnce(mockDbChain([]))
-        // analyzeLibrary: one imported book
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
-        // analyzeLibrary: narrator rows
         .mockReturnValueOnce(mockDbChain([]))
-        // existing books for exclusion
         .mockReturnValueOnce(mockDbChain([]))
-        // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
-        // currentPending (no existing pending)
         .mockReturnValueOnce(mockDbChain([]))
-        // batch SELECT for upsert (#554)
         .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
       db.delete.mockReturnValue(mockDbChain());
@@ -510,19 +484,13 @@ describe('DiscoveryService', () => {
     it('preserves dismissed suggestions on refresh', async () => {
       const db = createMockDb();
       db.select
-        // dismissal stats (#406)
+        // Dismissal stats; then library, narrator, tracked, dismissed, pending, and upsert rows.
         .mockReturnValueOnce(mockDbChain([]))
-        // analyzeLibrary: imported books
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
-        // analyzeLibrary: narrator rows
         .mockReturnValueOnce(mockDbChain([]))
-        // existing books for exclusion
         .mockReturnValueOnce(mockDbChain([]))
-        // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
-        // currentPending: no pending
         .mockReturnValueOnce(mockDbChain([]))
-        // batch SELECT for upsert (#554) — existing dismissed row
         .mockReturnValueOnce(mockDbChain([{ asin: 'DISMISSED1', status: 'dismissed' }]));
       db.insert.mockReturnValue(mockDbChain());
       db.delete.mockReturnValue(mockDbChain());
@@ -534,26 +502,19 @@ describe('DiscoveryService', () => {
 
       const { service } = createService(db);
       const result = await service.refreshSuggestions();
-      // Should not insert or update dismissed row
       expect(result.added).toBe(0);
     });
 
     it('updates existing pending suggestions with new score', async () => {
       const db = createMockDb();
       db.select
-        // dismissal stats (#406)
+        // Dismissal stats; then library, narrator, tracked, dismissed, pending, and upsert rows.
         .mockReturnValueOnce(mockDbChain([]))
-        // analyzeLibrary: imported books
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
-        // analyzeLibrary: narrator rows
         .mockReturnValueOnce(mockDbChain([]))
-        // existing books for exclusion
         .mockReturnValueOnce(mockDbChain([]))
-        // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
-        // currentPending: one existing pending — production selects only { id, asin }
         .mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING' }]))
-        // batch SELECT for upsert (#554) — existing pending row
         .mockReturnValueOnce(mockDbChain([{ asin: 'EXISTING_PENDING', status: 'pending' }]));
       db.insert.mockReturnValue(mockDbChain());
       db.delete.mockReturnValue(mockDbChain());
@@ -566,28 +527,22 @@ describe('DiscoveryService', () => {
       const { service } = createService(db);
       const result = await service.refreshSuggestions();
       expect(result.added).toBe(0);
-      // Existing pending row updated via INSERT ON CONFLICT DO UPDATE (#554)
+      // Existing pending rows update through batch ON CONFLICT (#554).
       expect(db.insert).toHaveBeenCalled();
     });
 
     it('deletes stale pending suggestions not regenerated', async () => {
       const db = createMockDb();
       db.select
-        // dismissal stats (#406)
+        // Dismissal stats; then library, narrator, tracked, dismissed, and pending rows.
         .mockReturnValueOnce(mockDbChain([]))
-        // analyzeLibrary: imported books
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
-        // analyzeLibrary: narrator rows
         .mockReturnValueOnce(mockDbChain([]))
-        // existing books for exclusion
         .mockReturnValueOnce(mockDbChain([]))
-        // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
-        // currentPending: one stale pending (won't be regenerated) — production selects only { id, asin }
         .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1' }]));
       db.delete.mockReturnValue(mockDbChain());
 
-      // No candidates generated (empty results)
       mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
 
       const { service } = createService(db);
@@ -604,8 +559,7 @@ describe('DiscoveryService', () => {
         { id: 2, asin: 'B002', score: 60, status: 'pending', reason: 'genre' },
       ];
       const db = createMockDb();
-      // First select is the suggestions query; second select is the
-      // library-enrichment query (defaults to empty via createMockDb).
+      // The enrichment select falls through to createMockDb's empty default.
       db.select.mockReturnValueOnce(mockDbChain(mockData));
       const { service } = createService(db);
 
@@ -647,10 +601,6 @@ describe('DiscoveryService', () => {
     });
   });
 
-  /* addSuggestion + buildCreatePayload tests removed — #524 replaced with markSuggestionAdded.
-     Book creation now happens via POST /api/books (client-side), not the discovery service. */
-
-  // --- #524: markSuggestionAdded (status-flip only) ---
   describe('markSuggestionAdded', () => {
     it('flips status from pending to added and returns updated row', async () => {
       const existing = { id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending' };
@@ -663,7 +613,6 @@ describe('DiscoveryService', () => {
       expect(result).not.toBeNull();
       expect(result!.alreadyAdded).toBeFalsy();
       expect(result!.suggestion.status).toBe('added');
-      // Must NOT call bookService.create — status flip only
       expect(mockBookService.create).not.toHaveBeenCalled();
       expect(mockBookService.findDuplicate).not.toHaveBeenCalled();
       expect(mockEventHistoryService.create).not.toHaveBeenCalled();
@@ -700,23 +649,16 @@ describe('DiscoveryService', () => {
     });
   });
 
-  // --- #408: Expiry ---
-
   describe('expireSuggestions (within refreshSuggestions)', () => {
     it('deletes pending suggestions older than expiryDays with correct predicate', async () => {
       const deleteChain = mockDbChain({ rowsAffected: 2 });
       const db = createMockDb();
-      // Expiry delete
+      // Operation order: expiry delete; library, tracked, dismissed, pending; stale delete.
       db.delete.mockReturnValueOnce(deleteChain);
-      // analyzeLibrary
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // existing books
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // dismissed suggestions
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // currentPending
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // stale delete
       db.delete.mockReturnValue(mockDbChain());
 
       mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
@@ -724,14 +666,12 @@ describe('DiscoveryService', () => {
       const { service, log } = createService(db);
       await service.refreshSuggestions();
 
-      // Expiry delete should be called with status='pending' AND createdAt < cutoff (strict lt, not lte)
       expect(db.delete).toHaveBeenCalled();
       expect(deleteChain.where).toHaveBeenCalled();
       const whereArg = (deleteChain.where as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       const sql = toSQL(whereArg);
-      // Must have status = 'pending' guard for race safety
+      // Pending guard prevents races; the cutoff is strict <, not <=.
       expect(sql).toContain('"status" = ?');
-      // Must use strict < (lt), not <= (lte), for the "older than N days" cutoff
       expect(sql).toContain('"created_at" < ?');
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ expired: 2 }),
@@ -741,17 +681,12 @@ describe('DiscoveryService', () => {
 
     it('appends warning on expiry failure but does not throw', async () => {
       const db = createMockDb();
-      // Expiry delete throws
+      // Operation order: expiry delete; library, tracked, dismissed, pending; stale delete.
       db.delete.mockReturnValueOnce(mockDbChain([], { error: new Error('DB locked') }));
-      // analyzeLibrary
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // existing books
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // dismissed suggestions
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // currentPending
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // stale delete (no stale)
       db.delete.mockReturnValue(mockDbChain());
 
       mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
@@ -762,9 +697,7 @@ describe('DiscoveryService', () => {
       expect(result.warnings).toEqual(expect.arrayContaining([expect.stringContaining('Expiry')]));
       expect(log.warn).toHaveBeenCalled();
 
-      // The catch's log.warn receives a serializeError()-wrapped object, not the raw Error.
-      // A serialized error is a plain object with message/type; Pino would drop a raw Error
-      // instance to {} in JSON logs.
+      // Pino drops raw Error fields; the catch must log serializeError's plain shape.
       const warnMock = log.warn as ReturnType<typeof vi.fn>;
       const expiryWarn = warnMock.mock.calls.find(
         (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('expiry step failed'),
@@ -777,23 +710,14 @@ describe('DiscoveryService', () => {
     });
 
     it('surfaces driver weirdness (delete result missing rowsAffected) via the outer catch', async () => {
-      // Regression: pre-helper, the cast `as unknown as { rowsAffected?: number }`
-      // silently coalesced missing values to 0 via `?? 0`. After conversion to the
-      // throwing getRowsAffected() helper, a missing rowsAffected flows through the
-      // outer try/catch — expireSuggestions() returns 0, pushes the expiry warning,
-      // and log.warn receives a serializeError-wrapped payload.
+      // Missing rowsAffected must reach the outer catch; treating it as zero hides driver failures.
       const db = createMockDb();
-      // Expiry delete: resolves with a result that has no rowsAffected field
+      // Operation order: expiry delete; library, tracked, dismissed, pending; stale delete.
       db.delete.mockReturnValueOnce(mockDbChain({}));
-      // analyzeLibrary
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // existing books
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // dismissed suggestions
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // currentPending
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // stale delete (no stale)
       db.delete.mockReturnValue(mockDbChain());
 
       mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
@@ -809,7 +733,6 @@ describe('DiscoveryService', () => {
       );
       expect(expiryWarn).toBeDefined();
       const logged = expiryWarn![0] as { error: Record<string, unknown> };
-      // Canonical shape: { error: serializeError(...) } — not a raw Error instance
       expect(logged.error).not.toBeInstanceOf(Error);
       expect(logged.error.message).toEqual(expect.stringContaining('rowsAffected'));
       expect(logged.error.type).toBe('Error');
@@ -817,20 +740,14 @@ describe('DiscoveryService', () => {
 
     it('continues candidate generation after expiry failure', async () => {
       const db = createMockDb();
-      // Expiry delete throws
+      // Operation order: expiry delete; library, tracked, dismissed, pending, upsert; stale delete.
       db.delete.mockReturnValueOnce(mockDbChain([], { error: new Error('DB locked') }));
-      // analyzeLibrary
       db.select.mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]));
-      // existing books
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // dismissed
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // currentPending
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // batch SELECT for upsert (#554)
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
-      // stale delete
       db.delete.mockReturnValue(mockDbChain());
 
       mockMetadataService.searchBooksForDiscovery.mockResolvedValueOnce({
@@ -841,7 +758,6 @@ describe('DiscoveryService', () => {
       const { service } = createService(db);
       const result = await service.refreshSuggestions();
 
-      // Should still insert new candidates despite expiry failure
       expect(result.added).toBeGreaterThanOrEqual(1);
       expect(result.warnings.length).toBeGreaterThan(0);
     });
@@ -850,21 +766,14 @@ describe('DiscoveryService', () => {
   describe('refreshSuggestions (regenerated pending preservation)', () => {
     it('overwrites reason and reasonContext for normal regenerated pending suggestions', async () => {
       const db = createMockDb();
-      // Expiry delete
       db.delete.mockReturnValue(mockDbChain());
-      // dismissal stats (#406)
+      // Select order: dismissal stats, library, narrators, tracked, dismissed, pending, upsert rows.
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // analyzeLibrary
       db.select.mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]));
-      // analyzeLibrary narrator rows
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // existing books
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // dismissed
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // currentPending — production selects only { id, asin }
       db.select.mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING' }]));
-      // batch SELECT for upsert (#554)
       db.select.mockReturnValueOnce(mockDbChain([{ asin: 'EXISTING_PENDING', status: 'pending' }]));
       const insertChain = mockDbChain();
       db.insert.mockReturnValue(insertChain);
@@ -877,52 +786,35 @@ describe('DiscoveryService', () => {
       const { service } = createService(db);
       await service.refreshSuggestions();
 
-      // Normal pending rows get upserted via INSERT ON CONFLICT DO UPDATE (#554)
       expect(db.insert).toHaveBeenCalled();
 
-      // Pin the SET payload (#1365): the regenerated-pending upsert must overwrite
-      // reason/reasonContext UNCONDITIONALLY from excluded.* — no CASE expression.
-      // A regression that reintroduces conditional CASE logic (or drops
-      // reasonContext from the SET) must fail here, not slip past a bare call count.
+      // Pin unconditional excluded.* assignments; call counts miss CASE or dropped-field regressions (#1365).
       const onConflict = insertChain.onConflictDoUpdate as ReturnType<typeof vi.fn>;
       expect(onConflict).toHaveBeenCalled();
       const setPayload = onConflict.mock.calls[0]![0].set;
       expect(toSQL(setPayload.reason)).toBe('excluded.reason');
       expect(toSQL(setPayload.reasonContext)).toBe('excluded.reason_context');
-      // No conditional overwrite — the contract is an unconditional excluded.* copy.
       expect(toSQL(setPayload.reason).toLowerCase()).not.toContain('case');
       expect(toSQL(setPayload.reasonContext).toLowerCase()).not.toContain('case');
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Diversity Factor (#407)
-  // -------------------------------------------------------------------------
-
   describe('diversity via generateCandidates', () => {
-    /**
-     * Sets up generateCandidates mocks with a library that has only Fantasy genre.
-     * Returns the db mock so callers can add further mock chain entries if needed.
-     */
     function setupDiversityTest(opts?: { existingAsins?: string[]; dismissedAsins?: string[]; libraryGenres?: string[][] }) {
       const db = createMockDb();
       const genres = opts?.libraryGenres ?? [['Fantasy']];
       const libraryBooks = genres.map((g, i) => makeBookRow({ id: i + 1, genres: g, duration: 1000 }));
       db.select
-        // analyzeLibrary
+        // Analyze library; then load tracked books and dismissed suggestions.
         .mockReturnValueOnce(mockDbChain(libraryBooks))
-        // existing books
         .mockReturnValueOnce(mockDbChain((opts?.existingAsins ?? []).map(asin => ({ asin, title: 'Existing', authorName: 'Someone' }))))
-        // dismissed suggestions
         .mockReturnValueOnce(mockDbChain((opts?.dismissedAsins ?? []).map(asin => ({ asin }))));
       return db;
     }
 
     it('queries genres NOT in the library genreDistribution from the curated list', async () => {
       const db = setupDiversityTest({ libraryGenres: [['Fantasy'], ['Fantasy'], ['Romance']] });
-      // Affinity queries return empty; diversity query returns a book
       mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
-      // We need to intercept the diversity search calls — they should NOT include Fantasy or Romance
       const searchCalls: string[] = [];
       mockMetadataService.searchBooksForDiscovery.mockImplementation(async (query: string) => {
         searchCalls.push(query);
@@ -941,7 +833,6 @@ describe('DiscoveryService', () => {
       const diversityCandidates = candidates.filter(c => c.reason === 'diversity');
       expect(diversityCandidates.length).toBeGreaterThanOrEqual(1);
       expect(diversityCandidates.length).toBeLessThanOrEqual(2);
-      // None of the diversity candidates should be from Fantasy or Romance (library genres)
       for (const dc of diversityCandidates) {
         expect(dc.asin).not.toContain('DIV-Fantasy');
         expect(dc.asin).not.toContain('DIV-Romance');
@@ -951,11 +842,10 @@ describe('DiscoveryService', () => {
     it('skips gracefully when library has no genre distribution (empty library)', async () => {
       const db = createMockDb();
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no imported books
+        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]));
 
-      // Diversity should still query since ALL curated genres are missing
       mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
         books: [{ asin: 'DIV1', title: 'Diverse Book', authors: [{ name: 'Author X' }], language: 'English' }],
         warnings: [],
@@ -965,10 +855,9 @@ describe('DiscoveryService', () => {
       const signals = await service.analyzeLibrary();
       const candidates = await service.generateCandidates(signals);
 
-      // With an empty library there are no affinity signals, but diversity should still work
       const diversityCandidates = candidates.filter(c => c.reason === 'diversity');
-      expect(diversityCandidates.length).toBeGreaterThanOrEqual(0); // may get 1-2
-      // No crash = success for this test
+      expect(diversityCandidates.length).toBeGreaterThanOrEqual(0);
+      // Reaching this point without a crash is the contract.
     });
 
     it('treats entire curated list as missing when all library genres are null/empty', async () => {
@@ -982,9 +871,8 @@ describe('DiscoveryService', () => {
         .mockReturnValueOnce(mockDbChain([]));
 
       mockMetadataService.searchBooksForDiscovery.mockImplementation(async (query: string) => {
-        // Affinity queries return nothing (Author A has no genre results to work with)
+        // Affinity queries return nothing; diversity queries return unique books per genre.
         if (query === 'Author A') return { books: [], warnings: [] };
-        // Diversity queries return unique books per genre
         return {
           books: [{ asin: `DIV-${query}`, title: `A ${query} Book`, authors: [{ name: 'New Author' }], language: 'English' }],
           warnings: [],
@@ -995,13 +883,11 @@ describe('DiscoveryService', () => {
       const signals = await service.analyzeLibrary();
       expect(signals.genreDistribution.size).toBe(0);
       const candidates = await service.generateCandidates(signals);
-      // All curated genres are "missing" so diversity has the full list to pick from
       const diversityCandidates = candidates.filter(c => c.reason === 'diversity');
       expect(diversityCandidates.length).toBeGreaterThanOrEqual(1);
     });
 
     it('produces 0 diversity candidates when library covers all curated genres', async () => {
-      // Import from CLAUDE.md: DIVERSITY_GENRES has 15 entries
       const allCuratedGenres = [
         'Mystery', 'Thriller', 'Science Fiction', 'Fantasy', 'Romance',
         'Horror', 'Biography', 'History', 'Business', 'Self-Help',
@@ -1020,7 +906,7 @@ describe('DiscoveryService', () => {
     it('filters diversity candidates through same quality rules (ASIN, language, dismissed, existing)', async () => {
       const db = setupDiversityTest({ existingAsins: ['EXISTING1'], dismissedAsins: ['DISMISSED1'] });
       mockMetadataService.searchBooksForDiscovery.mockImplementation(async (query: string) => {
-        // Only diversity queries return candidates (not affinity queries for Fantasy)
+        // Only diversity queries return candidates, not the Fantasy affinity query.
         if (query === 'Fantasy') return { books: [], warnings: [] };
         return {
           books: [
@@ -1051,12 +937,10 @@ describe('DiscoveryService', () => {
 
     it('catches and logs metadata query errors without crashing the pipeline', async () => {
       const db = setupDiversityTest();
-      // Affinity queries return empty, diversity queries throw
       mockMetadataService.searchBooksForDiscovery.mockRejectedValue(new Error('API down'));
 
       const { service, log } = createService(db);
       const signals = await service.analyzeLibrary();
-      // Should not throw
       const candidates = await service.generateCandidates(signals);
       expect(Array.isArray(candidates)).toBe(true);
       expect(log.warn).toHaveBeenCalled();
@@ -1087,12 +971,10 @@ describe('DiscoveryService', () => {
     }
 
     it('diversity base weight (15) is lower than all affinity weights', () => {
-      // SIGNAL_WEIGHTS: author=40, series=50, genre=25, narrator=20, diversity=15
-      // We verify this structurally by checking candidates' scores
-      expect(15).toBeLessThan(20); // narrator
-      expect(15).toBeLessThan(25); // genre
-      expect(15).toBeLessThan(40); // author
-      expect(15).toBeLessThan(50); // series
+      expect(15).toBeLessThan(20);
+      expect(15).toBeLessThan(25);
+      expect(15).toBeLessThan(40);
+      expect(15).toBeLessThan(50);
     });
 
     it('diversity candidates receive quality/recency/duration bonuses', async () => {
@@ -1108,8 +990,8 @@ describe('DiscoveryService', () => {
             title: 'Recent Diverse Book',
             authors: [{ name: 'New Author' }],
             language: 'English',
-            duration: 1000, // within stddev of library median
-            publishedDate: recentDate.toISOString(), // recent = +10 bonus
+            duration: 1000,
+            publishedDate: recentDate.toISOString(),
           }],
           warnings: [],
         };
@@ -1120,8 +1002,8 @@ describe('DiscoveryService', () => {
       const candidates = await service.generateCandidates(signals);
       const dc = candidates.find(c => c.asin === 'DIV_BONUS');
       if (dc) {
-        // base = 15 * 0.3 = 4.5, duration bonus = 5, recency bonus = 10 → ~19.5
-        expect(dc.score).toBeGreaterThan(15 * 0.3); // must be higher than base alone
+        // Base 4.5 plus duration and recency bonuses.
+        expect(dc.score).toBeGreaterThan(15 * 0.3);
       }
     });
 
@@ -1138,16 +1020,14 @@ describe('DiscoveryService', () => {
 
       const collisionAsin = 'COLLISION1';
       mockMetadataService.searchBooksForDiscovery.mockImplementation(async (query: string) => {
-        // Affinity genre query returns the collision book
+        // The affinity genre query returns the collision book; diversity repeats it.
         if (query === 'Fantasy') {
           return {
             books: [{ asin: collisionAsin, title: 'Genre Book', authors: [{ name: 'Popular Author' }], language: 'English' }],
             warnings: [],
           };
         }
-        // Author query for "Author A" — return empty to keep it clean
         if (query === 'Author A') return { books: [], warnings: [] };
-        // Diversity query also returns same ASIN + a unique one
         return {
           books: [
             { asin: collisionAsin, title: 'Genre Book', authors: [{ name: 'Popular Author' }], language: 'English' },
@@ -1162,7 +1042,6 @@ describe('DiscoveryService', () => {
       const candidates = await service.generateCandidates(signals);
 
       const collision = candidates.find(c => c.asin === collisionAsin);
-      // The collision ASIN should be kept as affinity, not diversity
       expect(collision).toBeDefined();
       expect(collision!.reason).not.toBe('diversity');
     });
@@ -1177,7 +1056,7 @@ describe('DiscoveryService', () => {
         .mockReturnValueOnce(mockDbChain([]));
 
       mockMetadataService.searchBooksForDiscovery.mockImplementation(async (query: string) => {
-        // Only diversity queries (non-Fantasy, non-Author A) return candidates
+        // Only non-Fantasy, non-author diversity queries return candidates.
         if (query === 'Fantasy' || query === 'Author A') return { books: [], warnings: [] };
         return {
           books: [{ asin: `DIV-${query}`, title: 'Test', authors: [{ name: 'Auth' }], language: 'English' }],
@@ -1190,7 +1069,7 @@ describe('DiscoveryService', () => {
       const candidates = await service.generateCandidates(signals);
       const dc = candidates.find(c => c.reason === 'diversity');
       expect(dc).toBeDefined();
-      // diversity strength = 0.3, weight = 15 → base score = 4.5
+      // Weight 15 × strength 0.3 = 4.5.
       expect(dc!.score).toBeGreaterThanOrEqual(4);
       expect(dc!.reason).toBe('diversity');
     });
@@ -1199,13 +1078,11 @@ describe('DiscoveryService', () => {
 
   describe('diversity dismissal behavior (AC4)', () => {
     it('dismissed diversity ASIN excluded per-ASIN but genre is still queried on next refresh', async () => {
-      // If ASIN "DIV1" from Mystery is dismissed, next refresh should still query Mystery
-      // but exclude DIV1 specifically
       const db = createMockDb();
       db.select
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'] })]))
         .mockReturnValueOnce(mockDbChain([]))
-        .mockReturnValueOnce(mockDbChain([{ asin: 'DIV1' }])); // DIV1 dismissed
+        .mockReturnValueOnce(mockDbChain([{ asin: 'DIV1' }]));
 
       const searchCalls: string[] = [];
       mockMetadataService.searchBooksForDiscovery.mockImplementation(async (query: string) => {
@@ -1224,7 +1101,6 @@ describe('DiscoveryService', () => {
       const signals = await service.analyzeLibrary();
       const candidates = await service.generateCandidates(signals);
 
-      // DIV1 should be excluded (dismissed), but a different book from the same genre should work
       const diversityCandidates = candidates.filter(c => c.reason === 'diversity');
       const diversityAsins = diversityCandidates.map(c => c.asin);
       expect(diversityAsins).not.toContain('DIV1');
@@ -1267,7 +1143,6 @@ describe('DiscoveryService', () => {
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]));
 
-      // All diversity queries return the same ASIN
       mockMetadataService.searchBooksForDiscovery.mockImplementation(async (query: string) => {
         if (query === 'Fantasy') return { books: [], warnings: [] };
         return {
@@ -1281,15 +1156,11 @@ describe('DiscoveryService', () => {
       const candidates = await service.generateCandidates(signals);
       const diversityCandidates = candidates.filter(c => c.reason === 'diversity');
 
-      // Should only appear once despite being returned by multiple genre queries
       const sameBookCount = diversityCandidates.filter(c => c.asin === 'SAME_BOOK').length;
       expect(sameBookCount).toBeLessThanOrEqual(1);
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // #406 — Dismissal ratio computation
-  // ---------------------------------------------------------------------------
   describe('computeDismissalRatios', () => {
     it('computes ratio with 3 dismissed, 2 added for genre → ratio = 0.6', async () => {
       const db = createMockDb();
@@ -1349,13 +1220,11 @@ describe('DiscoveryService', () => {
 
       await service.computeDismissalRatios();
 
-      // Verify the where predicate uses inArray for ['dismissed', 'added'] only
       expect(chain.where).toHaveBeenCalled();
       const whereArg = (chain.where as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       const sql = toSQL(whereArg);
       expect(sql).toContain('"status" in (?, ?)');
 
-      // Verify groupBy is called (reason + status columns)
       expect(chain.groupBy).toHaveBeenCalled();
     });
 
@@ -1374,21 +1243,13 @@ describe('DiscoveryService', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // #406 — Weight multiplier calculation
-  // ---------------------------------------------------------------------------
   describe('computeWeightMultipliers', () => {
-    // Import the pure function for direct testing
-    // Ratios input: { reason: { dismissed, added, total } }
-    // The function lives on the service but is a pure computation
-
     it('ratio at exactly 0.80 → multiplier = 1.0 (threshold is "exceeds", not "meets")', () => {
       const result = computeWeightMultipliers({ author: { dismissed: 4, added: 1, total: 5 } });
       expect(result.author).toBe(1.0);
     });
 
     it('ratio at 0.81 → multiplier = 0.98', () => {
-      // 81 dismissed, 19 added → ratio = 0.81
       const result = computeWeightMultipliers({ author: { dismissed: 81, added: 19, total: 100 } });
       expect(result.author).toBeCloseTo(0.98);
     });
@@ -1419,7 +1280,6 @@ describe('DiscoveryService', () => {
     });
 
     it('reason with exactly 5 total suggestions → threshold met, ratio applied', () => {
-      // 5 dismissed, 0 added → ratio = 1.0 → multiplier = 0.60
       const result = computeWeightMultipliers({ genre: { dismissed: 5, added: 0, total: 5 } });
       expect(result.genre).toBeCloseTo(0.60);
     });
@@ -1431,30 +1291,24 @@ describe('DiscoveryService', () => {
 
     it('multiple reasons above threshold simultaneously → each adjusted independently', () => {
       const result = computeWeightMultipliers({
-        author: { dismissed: 9, added: 1, total: 10 },   // ratio 0.90 → 0.80
-        genre: { dismissed: 10, added: 0, total: 10 },    // ratio 1.00 → 0.60
-        series: { dismissed: 3, added: 7, total: 10 },    // ratio 0.30 → 1.0
+        author: { dismissed: 9, added: 1, total: 10 },
+        genre: { dismissed: 10, added: 0, total: 10 },
+        series: { dismissed: 3, added: 7, total: 10 },
       });
       expect(result.author).toBeCloseTo(0.80);
       expect(result.genre).toBeCloseTo(0.60);
       expect(result.series).toBe(1.0);
-      // Unmentioned reasons default to 1.0
       expect(result.narrator).toBe(1.0);
       expect(result.diversity).toBe(1.0);
     });
 
     it('clamp guards: multiplier never goes below 0.25', () => {
-      // This can't happen with valid ratios (max ratio is 1.0 → 0.60),
-      // but the clamp guards against floating-point edge cases
-      // We test the formula boundary directly
+      // Valid ratios bottom at 0.60; this pins the defensive floor.
       const result = computeWeightMultipliers({ author: { dismissed: 10, added: 0, total: 10 } });
       expect(result.author).toBeGreaterThanOrEqual(0.25);
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // #406 — scoreCandidate with weight multiplier
-  // ---------------------------------------------------------------------------
   describe('scoreCandidate with multiplier (via generateCandidates)', () => {
     function setupScoringTest() {
       const db = createMockDb();
@@ -1464,8 +1318,9 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
           makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
         ]))
-        .mockReturnValueOnce(mockDbChain([]))  // existing books
-        .mockReturnValueOnce(mockDbChain([])); // dismissed suggestions
+        // Then load existing books and dismissed suggestions.
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
       return db;
     }
 
@@ -1502,7 +1357,6 @@ describe('DiscoveryService', () => {
 
       const fullScore = full.find(c => c.asin === 'NEW1' && c.reason === 'author')?.score ?? 0;
       const halfScore = half.find(c => c.asin === 'NEW1' && c.reason === 'author')?.score ?? 0;
-      // The base weight portion should be halved, but bonuses remain the same
       expect(halfScore).toBeLessThan(fullScore);
     });
 
@@ -1519,47 +1373,27 @@ describe('DiscoveryService', () => {
       const candidates = await service.generateCandidates(signals, { author: 0.25, series: 0.25, genre: 0.25, narrator: 0.25, diversity: 0.25 });
       const scored = candidates.find(c => c.asin === 'NEW1');
       expect(scored).toBeDefined();
-      // Score should be > 0 because bonuses (recency, duration) still apply even with floor multiplier
       expect(scored!.score).toBeGreaterThan(0);
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // #406 — refreshSuggestions with weight tuning
-  // ---------------------------------------------------------------------------
   describe('refreshSuggestions weight tuning integration', () => {
     function setupRefreshTest(ratioRows: Array<{ reason: string; status: string; count: number }> = []) {
       const db = createMockDb();
-      // Call order in refreshSuggestions:
-      // 1. expireSuggestions: db.delete
-      // 2. computeDismissalStats: db.select (dismissal counts — #406)
-      // 3. analyzeLibrary: db.select (imported books)
-      // 4. generateCandidates: db.select (existing books), db.select (dismissed asins)
-      // 5. currentPending: db.select
-      // Then upsert loop + stale deletion
-
-      // expireSuggestions delete
+      // Order: expiry; dismissal stats, library, narrators, tracked, dismissed, pending; stale delete.
       db.delete.mockReturnValue(mockDbChain({ rowsAffected: 0 }));
-      // computeDismissalStats query (#406)
       db.select
         .mockReturnValueOnce(mockDbChain(ratioRows))
-        // analyzeLibrary: imported books
         .mockReturnValueOnce(mockDbChain([]))
-        // analyzeLibrary: narrator rows
         .mockReturnValueOnce(mockDbChain([]))
-        // existing books for exclusion
         .mockReturnValueOnce(mockDbChain([]))
-        // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
-        // currentPending
         .mockReturnValueOnce(mockDbChain([]));
 
       return db;
     }
 
-    // Helper: assert no settings write persisted a weightMultipliers key. The
-    // computed multipliers are an in-memory parameter only (#1565 removed the
-    // inert persisted snapshot); they must never be written back to settings.
+    // Multipliers are in-memory scoring inputs and must never persist in settings (#1565).
     function expectNoPersistedMultipliers(settingsService: { set: unknown }) {
       const setMock = settingsService.set as ReturnType<typeof vi.fn>;
       const persistedMultiplierWrites = setMock.mock.calls.filter(
@@ -1578,10 +1412,6 @@ describe('DiscoveryService', () => {
     });
 
     it('refresh with downweighting dismissal history → still does not persist weightMultipliers (#1565)', async () => {
-      // Dismissal history that would downweight the `author` reason. The computed
-      // multiplier still flows into scoring via generateCandidates(signals,
-      // multipliers) — see the `scoreCandidate with multiplier` suite — but the
-      // value is never written back to the discovery settings blob.
       const db = setupRefreshTest([
         { reason: 'author', status: 'dismissed', count: 9 },
         { reason: 'author', status: 'added', count: 1 },
@@ -1596,20 +1426,15 @@ describe('DiscoveryService', () => {
     it('DB error during ratio computation → refresh continues, still no persisted multipliers (#1565)', async () => {
       const db = createMockDb();
       db.delete.mockReturnValue(mockDbChain({ rowsAffected: 0 }));
-      // computeDismissalStats throws
+      // computeDismissalStats throws; later selects cover library, tracked, dismissed, and pending rows.
       db.select
         .mockReturnValueOnce(mockDbChain([], { error: new Error('DB connection lost') }))
-        // analyzeLibrary
         .mockReturnValueOnce(mockDbChain([]))
-        // existing books
         .mockReturnValueOnce(mockDbChain([]))
-        // dismissed
         .mockReturnValueOnce(mockDbChain([]))
-        // currentPending
         .mockReturnValueOnce(mockDbChain([]));
       const { service, settingsService } = createService(db);
 
-      // Should not throw — refresh falls back to DEFAULT_MULTIPLIERS in-memory
       await expect(service.refreshSuggestions()).resolves.toBeDefined();
 
       expectNoPersistedMultipliers(settingsService);
@@ -1617,23 +1442,13 @@ describe('DiscoveryService', () => {
 
   });
 
-  // ---------------------------------------------------------------------------
-  // #404 — Series Completion Intelligence
-  // ---------------------------------------------------------------------------
-
   describe('series completion intelligence (#404)', () => {
-    /**
-     * Sets up generateCandidates mocks with a library containing series books.
-     * Returns db so callers can customize metadata responses.
-     */
     function setupSeriesTest(libraryBooks: ReturnType<typeof makeBookRow>[]) {
       const db = createMockDb();
       db.select
-        // analyzeLibrary (imported books)
+        // Analyze library; then load existing books and dismissed suggestions.
         .mockReturnValueOnce(mockDbChain(libraryBooks))
-        // existing books for ASIN exclusion
         .mockReturnValueOnce(mockDbChain([]))
-        // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]));
       return db;
     }
@@ -1735,7 +1550,6 @@ describe('DiscoveryService', () => {
         const signals = await service.analyzeLibrary();
         await service.generateCandidates(signals);
 
-        // Series query should use structured title+author, not a keywords blob
         const seriesCall = mockMetadataService.searchBooksForDiscovery.mock.calls.find(
           (c: unknown[]) => c[0] === 'Stormlight' && (c[1] as { title?: string })?.title === 'Stormlight',
         );
@@ -1768,7 +1582,6 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
           makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
         ]);
-        // Position 3 = continuation (maxOwned+1), position 5 = not in missingPositions
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
           books: [
             { asin: 'POS3', title: 'Book 3', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 3 }] },
@@ -1792,7 +1605,6 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
           makeBookRow({ id: 3, seriesName: 'Stormlight', seriesPosition: 4 }),
         ]);
-        // Return a gap book at position 3 (not continuation, so no +20 bonus)
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
           books: [
             { asin: 'SCORE_TEST', title: 'Gap Book', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 3 }] },
@@ -1805,7 +1617,6 @@ describe('DiscoveryService', () => {
 
         const seriesCandidate = candidates.find(c => c.asin === 'SCORE_TEST' && c.reason === 'series');
         expect(seriesCandidate).toBeDefined();
-        // Base: SIGNAL_WEIGHTS.series(50) * multiplier(1) * strength(1.0) = 50
         expect(seriesCandidate!.score).toBe(50);
       });
 
@@ -1815,7 +1626,6 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
           makeBookRow({ id: 3, seriesName: 'Stormlight', seriesPosition: 4 }),
         ]);
-        // Return two different books: one matching series gap, one for author
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
           books: [
             { asin: 'SERIES_BOOK', title: 'Series Gap', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 3 }] },
@@ -1837,7 +1647,6 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
           makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
         ]);
-        // Position 3 = maxOwned(2) + 1 → gets +20 bonus
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
           books: [
             { asin: 'NEXT_POS', title: 'Next Book', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 3 }] },
@@ -1850,7 +1659,6 @@ describe('DiscoveryService', () => {
 
         const nextCandidate = candidates.find(c => c.asin === 'NEXT_POS');
         expect(nextCandidate).toBeDefined();
-        // Base 50 + next-position bonus 20 = 70
         expect(nextCandidate!.score).toBe(70);
       });
 
@@ -1860,7 +1668,6 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
           makeBookRow({ id: 3, seriesName: 'Stormlight', seriesPosition: 4 }),
         ]);
-        // Position 3 = gap (not maxOwned+1=5) → no bonus
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
           books: [
             { asin: 'GAP_BOOK', title: 'Gap Book', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 3 }] },
@@ -1873,7 +1680,6 @@ describe('DiscoveryService', () => {
 
         const gapCandidate = candidates.find(c => c.asin === 'GAP_BOOK');
         expect(gapCandidate).toBeDefined();
-        // Base 50 only, no +20 bonus (position 3 !== maxOwned+1=5)
         expect(gapCandidate!.score).toBe(50);
       });
 
@@ -1882,8 +1688,7 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 1, seriesName: 'Fractional', seriesPosition: 0.1 }),
           makeBookRow({ id: 2, seriesName: 'Fractional', seriesPosition: 0.2 }),
         ]);
-        // nextPosition = 0.2 + 0.1 = 0.30000000000000004 (IEEE 754 drift)
-        // Metadata returns exact 0.3 — tolerance-aware comparison must match
+        // 0.2 + 0.1 drifts; exact metadata 0.3 must match within tolerance.
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
           books: [
             { asin: 'FRAC_NEXT', title: 'Frac Next', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Fractional', position: 0.3 }] },
@@ -1897,9 +1702,8 @@ describe('DiscoveryService', () => {
         const nextCandidate = candidates.find(c => c.asin === 'FRAC_NEXT');
         expect(nextCandidate).toBeDefined();
         expect(nextCandidate!.reason).toBe('series');
-        // Base 50 + continuation bonus 20 = 70
         expect(nextCandidate!.score).toBe(70);
-        // Continuation position → no "(position X)" suffix in reason text
+        // Continuations omit the position suffix.
         expect(nextCandidate!.reasonContext).toBe('Next in Fractional — you have books 1-0.2');
       });
 
@@ -1909,7 +1713,6 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 2, seriesName: 'Fractional', seriesPosition: 0.2 }),
           makeBookRow({ id: 3, seriesName: 'Fractional', seriesPosition: 0.4 }),
         ]);
-        // Gap at 0.3, nextPosition = 0.5 — metadata candidate at 0.3 is a gap, not continuation
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
           books: [
             { asin: 'FRAC_GAP', title: 'Frac Gap', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Fractional', position: 0.3 }] },
@@ -1923,9 +1726,8 @@ describe('DiscoveryService', () => {
         const gapCandidate = candidates.find(c => c.asin === 'FRAC_GAP');
         expect(gapCandidate).toBeDefined();
         expect(gapCandidate!.reason).toBe('series');
-        // Base 50 only — position 0.3 is a gap, not nextPosition (0.5), so no +20 bonus
         expect(gapCandidate!.score).toBe(50);
-        // Gap position → includes "(position 0.3)" suffix in reason text
+        // Gaps include their fractional position in reason text.
         expect(gapCandidate!.reasonContext).toContain('(position 0.3)');
       });
 
@@ -1943,12 +1745,12 @@ describe('DiscoveryService', () => {
         });
         const { service } = createService(db);
         const signals = await service.analyzeLibrary();
-        // Floor all multipliers so author query doesn't outscore series in the dedup map
+        // Floor every reason so the author candidate cannot win dedup.
         const candidates = await service.generateCandidates(signals, { author: 0.25, series: 0.25, genre: 0.25, narrator: 0.25, diversity: 0.25 });
 
         const floorCandidate = candidates.find(c => c.asin === 'FLOOR_BOOK');
         expect(floorCandidate).toBeDefined();
-        // series: 50 * 0.25 * 1.0 = 12.5 vs author: 40 * 0.25 * 0.6 = 6 → series wins dedup
+        // Series scores 12.5 versus the duplicate author's 6.
         expect(floorCandidate!.reason).toBe('series');
         expect(floorCandidate!.score).toBe(12.5);
       });
@@ -1964,10 +1766,8 @@ describe('DiscoveryService', () => {
         const { service } = createService(db);
         const signals = await service.analyzeLibrary();
 
-        // Only position 1 should be tracked; null position book is skipped
         expect(signals.seriesGaps).toHaveLength(1);
         expect(signals.seriesGaps[0]!.maxOwned).toBe(1);
-        // No gaps — only continuation at nextPosition
         expect(signals.seriesGaps[0]!.missingPositions).toEqual([]);
         expect(signals.seriesGaps[0]!.nextPosition).toBe(2);
       });
@@ -1983,7 +1783,6 @@ describe('DiscoveryService', () => {
 
         const gap = signals.seriesGaps.find(g => g.seriesName === 'Fractional');
         expect(gap).toBeDefined();
-        // No gaps between consecutive fractional positions — continuation is nextPosition
         expect(gap!.missingPositions).toEqual([]);
         expect(gap!.nextPosition).toBe(3.5);
         expect(gap!.maxOwned).toBe(2.5);
@@ -1994,7 +1793,6 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
           makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
         ]);
-        // Metadata returns a book but NOT at position 3 (the missing one)
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
           books: [
             { asin: 'WRONG_POS', title: 'Wrong', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 7 }] },
@@ -2032,7 +1830,6 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
           makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
         ]);
-        // Position 10 is not in missingPositions [3]
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
           books: [
             { asin: 'FAR_POS', title: 'Far Away', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 10 }] },
@@ -2056,14 +1853,11 @@ describe('DiscoveryService', () => {
         const signals = await service.analyzeLibrary();
         const candidates = await service.generateCandidates(signals);
 
-        // Should not throw, just log warning
         expect(Array.isArray(candidates)).toBe(true);
         expect(log.warn).toHaveBeenCalled();
       });
     });
   });
-
-  // #341 — book_added event tests removed — #524 moved event recording to POST /api/books
 
   describe('batch upsert (#554)', () => {
     function setupRefreshMocks(db: ReturnType<typeof createMockDb>, opts: {
@@ -2071,29 +1865,21 @@ describe('DiscoveryService', () => {
       candidateCount?: number;
     } = {}) {
       const { existingRows = [], candidateCount = 1 } = opts;
-      // Pre-upsert fixed calls:
+      // Select order: dismissal stats, library, narrators, tracked, dismissed, pending, upsert rows.
       db.select
-        // dismissal stats
         .mockReturnValueOnce(mockDbChain([]))
-        // analyzeLibrary: books
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
-        // analyzeLibrary: narrators
         .mockReturnValueOnce(mockDbChain([]))
-        // existing books
         .mockReturnValueOnce(mockDbChain([]))
-        // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
-        // currentPending — production selects only { id, asin }
         .mockReturnValueOnce(mockDbChain(existingRows.filter(r => r.status === 'pending').map(r => ({
           id: r.id, asin: r.asin,
         }))))
-        // batch SELECT for upsert
         .mockReturnValueOnce(mockDbChain(existingRows));
       db.insert.mockReturnValue(mockDbChain());
       db.update.mockReturnValue(mockDbChain());
       db.delete.mockReturnValue(mockDbChain());
 
-      // Generate candidate metadata responses
       const books = Array.from({ length: candidateCount }, (_, i) => ({
         asin: existingRows[i]?.asin ?? `NEW${i}`,
         title: `Book ${i}`,
@@ -2113,10 +1899,8 @@ describe('DiscoveryService', () => {
         const { service } = createService(db);
         await service.refreshSuggestions();
 
-        // db.insert is used for the batch upsert (INSERT ON CONFLICT)
         expect(db.insert).toHaveBeenCalled();
-        // No individual per-candidate selects: the 7th select call is the batch SELECT
-        // Total selects should be exactly 7 (6 fixed + 1 batch), not 6 + N
+        // Six fixed selects plus one batch select; no per-candidate reads.
         expect(db.select).toHaveBeenCalledTimes(7);
       });
 
@@ -2133,11 +1917,9 @@ describe('DiscoveryService', () => {
         const { service } = createService(db);
         const result = await service.refreshSuggestions();
 
-        // Existing pending rows updated via ON CONFLICT, not individual updates
         expect(db.insert).toHaveBeenCalled();
-        // No per-candidate selects
+        // Six fixed selects plus one batch select.
         expect(db.select).toHaveBeenCalledTimes(7);
-        // Updated, not added
         expect(result.added).toBe(0);
       });
 
@@ -2164,7 +1946,6 @@ describe('DiscoveryService', () => {
         const { service } = createService(db);
         const result = await service.refreshSuggestions();
 
-        // 2 new + 1 existing = 1 batch upsert
         expect(db.insert).toHaveBeenCalled();
         expect(db.select).toHaveBeenCalledTimes(7);
         expect(result.added).toBe(2);
@@ -2199,7 +1980,7 @@ describe('DiscoveryService', () => {
           .mockReturnValueOnce(mockDbChain([]))
           .mockReturnValueOnce(mockDbChain([]))
           .mockReturnValueOnce(mockDbChain([]))
-          // 2 chunked batch SELECTs for 1001 ASINs (999 + 2)
+          // Two chunked batch SELECTs for 1001 ASINs (999 + 2).
           .mockReturnValueOnce(mockDbChain([]))
           .mockReturnValueOnce(mockDbChain([]));
         db.insert.mockReturnValue(mockDbChain());
@@ -2215,7 +1996,6 @@ describe('DiscoveryService', () => {
         const { service } = createLargeService(db, candidateCount);
         await service.refreshSuggestions();
 
-        // 6 fixed + 2 chunked batch SELECTs = 8
         expect(db.select).toHaveBeenCalledTimes(8);
       });
 
@@ -2229,7 +2009,7 @@ describe('DiscoveryService', () => {
           .mockReturnValueOnce(mockDbChain([]))
           .mockReturnValueOnce(mockDbChain([]))
           .mockReturnValueOnce(mockDbChain([]))
-          // 1 batch SELECT (50 < 999)
+          // One batch SELECT covers 50 ASINs below the 999-parameter limit.
           .mockReturnValueOnce(mockDbChain([]));
         db.insert.mockReturnValue(mockDbChain());
         db.delete.mockReturnValue(mockDbChain());
@@ -2245,7 +2025,6 @@ describe('DiscoveryService', () => {
         const result = await service.refreshSuggestions();
 
         expect(result.added).toBe(50);
-        // 2 chunked INSERT calls (47 + 3)
         expect(db.insert).toHaveBeenCalledTimes(2);
       });
     });
@@ -2254,7 +2033,6 @@ describe('DiscoveryService', () => {
       it('empty candidate list → no upsert DB queries', async () => {
         const db = createMockDb();
         setupRefreshMocks(db, { candidateCount: 0 });
-        // Override metadata to return no candidates
         mockMetadataService.searchBooksForDiscovery.mockReset();
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
 
@@ -2281,19 +2059,14 @@ describe('DiscoveryService', () => {
         const db = createMockDb();
         db.delete.mockReturnValue(mockDbChain());
         db.select
-          // dismissal stats
+          // Dismissal stats; then library, narrator, tracked, dismissed, and pending rows.
           .mockReturnValueOnce(mockDbChain([]))
-          // analyzeLibrary: books
           .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
-          // analyzeLibrary: narrators
           .mockReturnValueOnce(mockDbChain([]))
-          // existing books
           .mockReturnValueOnce(mockDbChain([]))
-          // dismissed
           .mockReturnValueOnce(mockDbChain([]))
-          // currentPending: one stale pending not in candidates — production selects only { id, asin }
           .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1' }]));
-        // No candidates → empty batch SELECT not needed (short-circuit)
+        // Empty candidates short-circuit the upsert select.
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
 
         const { service } = createService(db);
@@ -2309,53 +2082,41 @@ describe('DiscoveryService', () => {
         const deleteChain = mockDbChain();
         db.delete.mockReturnValue(deleteChain);
 
-        // 1100 stale pending suggestions → 2 chunks (999 + 101)
         const stalePending = Array.from({ length: 1100 }, (_, i) => ({
           id: i + 1,
           asin: `STALE${i + 1}`,
         }));
 
         db.select
-          // dismissal stats
+          // Dismissal stats; then library, narrator, tracked, dismissed, and pending rows.
           .mockReturnValueOnce(mockDbChain([]))
-          // analyzeLibrary: books
           .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
-          // analyzeLibrary: narrators
           .mockReturnValueOnce(mockDbChain([]))
-          // existing books
           .mockReturnValueOnce(mockDbChain([]))
-          // dismissed
           .mockReturnValueOnce(mockDbChain([]))
-          // currentPending: all stale (no candidates regenerated)
           .mockReturnValueOnce(mockDbChain(stalePending));
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
 
         const { service } = createService(db);
         const result = await service.refreshSuggestions();
 
-        // Every stale ID reported as removed
         expect(result.removed).toBe(1100);
 
-        // Isolate the stale-delete predicates (inArray on suggestions.id) from the
-        // separate expireSuggestions() delete (filters status + created_at), and
-        // capture the bound ID values from each chunk's IN(...) clause.
+        // Isolate stale-delete predicates from the separate expireSuggestions delete.
         const staleChunks = (deleteChain.where as ReturnType<typeof vi.fn>).mock.calls
           .filter(c => /"id"\s+in\s+\(/i.test(toSQL(c[0])))
           .map(c => toParams(c[0]) as number[]);
 
-        // Two chunks: 999 + 101
         expect(staleChunks).toHaveLength(2);
         expect(staleChunks[0]).toHaveLength(999);
         expect(staleChunks[1]).toHaveLength(101);
 
-        // Boundary IDs land in the expected chunks (1 & 999 in the first, 1000 & 1100 in the second)
         expect(staleChunks[0]).toContain(1);
         expect(staleChunks[0]).toContain(999);
         expect(staleChunks[1]).toContain(1000);
         expect(staleChunks[1]).toContain(1100);
 
-        // The union of both chunks targets every stale ID exactly once — no
-        // dropped tail, no repeated chunk, no wrong IDs.
+        // The flattened chunks must target each stale ID exactly once.
         const targetedIds = staleChunks.flat().sort((a, b) => a - b);
         expect(targetedIds).toEqual(stalePending.map(p => p.id));
       });
@@ -2363,12 +2124,10 @@ describe('DiscoveryService', () => {
   });
 });
 
-// ===== Real-libsql integration: covers refreshSuggestions upsert SET clause =====
-//
-// Mocked-DB tests can't catch invalid SQL identifiers in the ON CONFLICT DO UPDATE
-// SET clause because the SQL is never executed. This block exercises the full
-// upsert path against a real libsql DB so identifier mismatches surface as test
-// failures instead of runtime 500s.
+/**
+ * Mock chains never execute ON CONFLICT SQL. Real libsql catches invalid excluded-column
+ * identifiers before they become runtime 500s.
+ */
 
 describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
   let dir: string;
@@ -2398,8 +2157,7 @@ describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
       settingsService,
     );
 
-    // Seed an imported book so analyzeLibrary produces non-empty signals
-    // (otherwise refreshSuggestions short-circuits before the upsert path).
+    // Non-empty signals keep refreshSuggestions on the upsert path.
     const [author] = await db
       .insert(authors)
       .values({ publicId: generatePublicId('au'), name: 'Author A', slug: 'author-a' })
@@ -2423,14 +2181,12 @@ describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // libsql may keep file handles on Windows
+      // libsql may retain file handles on Windows.
     }
   });
 
   it('second refresh upserts in place — exercises ON CONFLICT SET clause without identifier errors', async () => {
-    // Same candidate returned on both refreshes; second call hits ON CONFLICT
-    // and fires the SET clause that previously referenced excluded."authorAsin"
-    // (camelCase) and crashed with `no such column`.
+    // Repeating the ASIN executes ON CONFLICT; camelCase excluded.authorAsin crashed here.
     const candidate = {
       asin: 'NEWBOOK1',
       title: 'New Book',
@@ -2440,7 +2196,6 @@ describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
 
     mockMetadata.searchBooksForDiscovery.mockResolvedValue({ books: [candidate], warnings: [] });
 
-    // First refresh — inserts. SET clause not executed (no conflicts yet).
     const first = await service.refreshSuggestions();
     expect(first.added).toBeGreaterThanOrEqual(1);
 
@@ -2448,11 +2203,9 @@ describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
     expect(afterFirst).toHaveLength(1);
     const refreshedAtFirst = afterFirst[0]!.refreshedAt;
 
-    // Wait a tick so refreshed_at advances on the second insert.
+    // Advance refreshed_at beyond the first insert's one-second timestamp precision.
     await new Promise((r) => setTimeout(r, 1100));
 
-    // Second refresh — same ASIN, hits ON CONFLICT, fires SET clause.
-    // Before the fix this threw `SqliteError: no such column: excluded.authorAsin`.
     await expect(service.refreshSuggestions()).resolves.not.toThrow();
 
     const afterSecond = await db.select().from(suggestions).where(eq(suggestions.asin, 'NEWBOOK1'));
@@ -2461,10 +2214,10 @@ describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
   });
 });
 
-// ===== #1150: enrichWithLibraryBookId — surfaces matched library book id =====
-//
-// Exercises the enrichment helper against a real libsql DB so the ASIN-first +
-// title/author fallback semantics (lowest-id tie-breaker) are covered end-to-end.
+/**
+ * Real libsql covers ASIN-first, pairwise title/author fallback, and lowest-ID
+ * tie-breaking for library-book enrichment (#1150).
+ */
 
 describe('DiscoveryService — getSuggestions enrichment with libraryBookId (real libsql)', () => {
   let dir: string;
@@ -2500,7 +2253,7 @@ describe('DiscoveryService — getSuggestions enrichment with libraryBookId (rea
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // libsql may keep file handles on Windows
+      // libsql may retain file handles on Windows.
     }
   });
 
@@ -2542,9 +2295,7 @@ describe('DiscoveryService — getSuggestions enrichment with libraryBookId (rea
   });
 
   it('prefers the ASIN match over a competing pairwise title+author match (ASIN-first precedence, F4)', async () => {
-    // Two library rows both match the suggestion: one by ASIN (a different title), one by
-    // the pairwise title+author bucket. ASIN resolution must win — an implementation that
-    // preferred the title bucket whenever it hit would return the wrong row.
+    // Both buckets match; ASIN must beat title/author fallback.
     const author = await seedAuthor('Brandon Sanderson', 'brandon-sanderson');
     const asinRow = await seedLibraryBook({ title: 'Totally Different', asin: 'MATCHASIN', authorId: author.id });
     const titleRow = await seedLibraryBook({ title: 'Suggestion Title', asin: null, authorId: author.id });
@@ -2567,10 +2318,7 @@ describe('DiscoveryService — getSuggestions enrichment with libraryBookId (rea
   });
 
   it('recognizes a colon-subtitle / edition variant of an owned title via the shared identity normalizer (#1662 F1)', async () => {
-    // The owned book is the bare title; the suggestion carries a colon subtitle.
-    // The shared `buildTitleShape`/`titlesMatchForDedup` pairwise relation bridges the
-    // bare base to its subtitled sibling (one side stripped), so discovery enrichment
-    // agrees with isBookInLibrary / the import dedup contract instead of showing it as new.
+    // Pairwise title matching bridges a bare title to its colon-subtitled sibling.
     const author = await seedAuthor('Ursula K. Le Guin', 'ursula-k-le-guin');
     const libBook = await seedLibraryBook({ title: 'Tehanu', asin: null, authorId: author.id });
     await seedSuggestion({ asin: 'NOMATCH', title: 'Tehanu: The Last Book of Earthsea', authorName: 'Ursula K. Le Guin' });
@@ -2647,8 +2395,7 @@ describe('DiscoveryService — getSuggestions enrichment with libraryBookId (rea
   });
 
   it('does NOT match a distinct-subtitle sibling of a same-author library book (#1891)', async () => {
-    // The suggestion and the only same-author library row are two DISTINCT franchise
-    // subtitles; the pairwise predicate refuses the bridge → libraryBookId null.
+    // Distinct franchise subtitles must not bridge through their shared base title.
     const author = await seedAuthor('Aaron Rosenberg', 'aaron-rosenberg');
     await seedLibraryBook({ title: 'World of Warcraft: Tides of Darkness', asin: null, authorId: author.id });
     await seedSuggestion({ asin: 'NOMATCH', title: 'World of Warcraft: Beyond the Dark Portal', authorName: 'Aaron Rosenberg' });
@@ -2659,9 +2406,7 @@ describe('DiscoveryService — getSuggestions enrichment with libraryBookId (rea
   });
 
   it('resolves a bare "Dune" suggestion to a "Dune (Edition: Deluxe)" library row via the colonBase bucket (#1891 retrieval invariant)', async () => {
-    // The library title carries a colon INSIDE a removable parenthetical; the fixpoint
-    // core collapses it to "dune" so both share colonBase — the bucket is not keyed on
-    // the stale colon-first artifact ("dune (edition").
+    // Fixpoint normalization removes the parenthetical colon before building colonBase.
     const author = await seedAuthor('Frank Herbert', 'frank-herbert');
     const libBook = await seedLibraryBook({ title: 'Dune (Edition: Deluxe)', asin: null, authorId: author.id });
     await seedSuggestion({ asin: 'NOMATCH', title: 'Dune', authorName: 'Frank Herbert' });

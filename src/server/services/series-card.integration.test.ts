@@ -40,43 +40,22 @@ async function seedBookWithSeries(db: Db, opts: {
   return book!.id;
 }
 
-/**
- * The library-pool loader's projection, verbatim and WITHOUT an `ORDER BY`
- * (#2175 AC7a). Used as an explicit precondition: an ordering fixture that
- * cannot first prove the planner reorders these rows proves nothing about the
- * loader's `.orderBy(asc(books.id))` ([[sqlite-covering-index-forces-scan-order]]).
- */
+/** Unordered loader projection; proves forced planner order differs before testing production ORDER BY (#2175 AC7a). */
 async function poolProbeIds(db: Db): Promise<number[]> {
   const rows = await db.all(sql`SELECT id, title, series_position, user_cleared_fields, series_name FROM books WHERE series_name IS NOT NULL`);
   return (rows as { id: number }[]).map((row) => row.id);
 }
 
 /**
- * The index that makes the probe above come back non-ascending. NOT in the
- * production schema (#2175 AC12) — created inside the test body only.
- *
- * The pre-#2175 narrow `books (series_name)` index is no longer sufficient:
- * that worked because the loader was CONSTRAINED by `series_name IN (…)` and the
- * plan flipped to `SEARCH … USING COVERING INDEX (series_name=?)`. The loader now
- * scans on `series_name IS NOT NULL`, and measured against this schema a narrow
- * index leaves the plan at `SCAN books` with ids ascending. An index covering
- * every non-rowid column the loader projects drives it to
- * `SEARCH books USING COVERING INDEX (series_name>?)` and the order follows
- * `series_name` (`id` is the rowid and rides along implicitly).
+ * Test-only covering index forces the IS NOT NULL scan into series_name order.
+ * A narrow index leaves SCAN books/id order; covering projected columns yields
+ * SEARCH ... COVERING INDEX (#2175 AC12).
  */
 async function forcePoolReorderingIndex(db: Db): Promise<void> {
   await db.run(sql`CREATE INDEX idx_books_pool_covering_2175 ON books (series_name, title, series_position, user_cleared_fields)`);
 }
 
-/**
- * Capture every SQL statement the libSQL client executes, with its bound args.
- *
- * Two distinct #2175 AC14 observables ride on this: the pool load is ONE
- * statement, and that statement carries ZERO pool-derived bound parameters. The
- * second is the load-bearing one — a dynamic `IN (…)` built from the matched
- * spellings would also be a single statement returning the same rows in the same
- * order, so a statement COUNT alone cannot see the invariant.
- */
+/** Captures SQL and args: AC14 requires one pool statement with zero pool-derived parameters; count alone misses a dynamic IN query returning identical rows. */
 function spyStatements(db: Db): { executed: { sql: string; args: unknown }[]; restore: () => void } {
   const client = db.$client as unknown as { execute: (...a: unknown[]) => unknown };
   const original = client.execute.bind(client);
@@ -89,7 +68,6 @@ function spyStatements(db: Db): { executed: { sql: string; args: unknown }[]; re
   return { executed, restore: () => { client.execute = original as typeof client.execute; } };
 }
 
-/** The statements that read the candidate pool, isolated from every other read. */
 function poolStatements(executed: { sql: string; args: unknown }[]): { sql: string; args: unknown }[] {
   return executed.filter((s) => /from "books"/i.test(s.sql) && /"series_position"/.test(s.sql) && /"user_cleared_fields"/.test(s.sql));
 }
@@ -113,7 +91,7 @@ describe('SeriesCardService — integration', () => {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // libsql may keep the file handle on Windows
+      // libsql may keep the file handle on Windows.
     }
   });
 
@@ -154,7 +132,6 @@ describe('SeriesCardService — integration', () => {
 
     it('key removed after Hardcover cache exists: subsequent GET bypasses series_members entirely', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
-      // Pre-seed a Hardcover-shaped series row + non-library members
       const [seedRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523,
         name: 'The Band',
@@ -165,7 +142,6 @@ describe('SeriesCardService — integration', () => {
       await db.insert(seriesMembers).values({
         seriesId: seedRow!.id, hardcoverBookId: 9999, slug: 'ghost', title: 'Ghost Member', normalizedTitle: 'ghost member', authorName: 'Nicholas Eames', position: 5, source: 'hardcover',
       });
-      // Key removed — GET must bypass series_members entirely
       const fetchSpy = vi.fn();
       globalThis.fetch = fetchSpy as typeof globalThis.fetch;
       const svc = new SeriesCardService(db, log, settingsServiceWith(''));
@@ -209,26 +185,18 @@ describe('SeriesCardService — integration', () => {
       expect(card!.hardcoverSeriesId).toBe(5523);
       expect(card!.seriesAuthor).toBe('Nicholas Eames');
       expect(card!.members).toHaveLength(3);
-      // Bloody Rose is in library
       const bloody = card!.members.find((m) => m.title === 'Bloody Rose')!;
       expect(bloody.inLibrary).toBe(true);
       expect(bloody.libraryBookId).toBe(bookId);
 
-      // AC5.3 regression: Hardcover `image.url` must still flow into the
-      // persisted row AND the returned card even though the component no
-      // longer renders thumbnails (#1139 Bug 5). Deleting the production
-      // assignment `imageUrl: member.imageUrl` in `persistAndBuildCard` must
-      // make these assertions fail; deleting the DB column or the read
-      // mapping must also fail them.
+      // Image URL remains a persistence/DTO contract even though the UI no longer renders thumbnails (#1139 AC5.3).
       const kings = card!.members.find((m) => m.title === 'Kings of the Wyld')!;
       expect(kings.imageUrl).toBe('https://example.test/kw.jpg');
       expect(bloody.imageUrl).toBeNull();
 
-      // Cache row persisted
       const persisted = await db.select().from(series).where(eq(series.hardcoverSeriesId, 5523));
       expect(persisted).toHaveLength(1);
       expect(persisted[0]!.authorName).toBe('Nicholas Eames');
-      // #1443 — upsertHardcoverSeries creates the row with an opaque sr_ publicId.
       expect(persisted[0]!.publicId).toMatch(/^sr_/);
       const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, persisted[0]!.id));
       expect(memberRows).toHaveLength(3);
@@ -287,19 +255,15 @@ describe('SeriesCardService — integration', () => {
       const card = await svc.refreshSeriesForBook(bookId);
 
       expect(card!.seriesAuthor).toBe('New Author');
-      // Body should reference the by-id query, not the by-name one
       const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
       expect(body.query).toContain('GetSeriesMembersById');
       expect(body.variables.id).toBe(5523);
 
-      // Stale member dropped, new member persisted.
       const final = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, row!.id));
       const hardcover = final.filter((m) => m.source === 'hardcover');
       expect(hardcover).toHaveLength(1);
       expect(hardcover[0]!.title).toBe('Kings of the Wyld');
-      // The owned Bloody Rose pairs with no member in this payload, so #2144's
-      // invariant gives it a local row of its own — it is still the operator's
-      // book and still belongs on the card.
+      // The unmatched owned book remains on the card as a local row (#2144).
       const local = final.filter((m) => m.source === 'local');
       expect(local).toHaveLength(1);
       expect(local[0]!.bookId).toBe(bookId);
@@ -307,7 +271,6 @@ describe('SeriesCardService — integration', () => {
     });
   });
 
-  // F1 (PR #1135 review): direct coverage for runScheduledRefresh branches.
   describe('runScheduledRefresh — AC15 branch matrix', () => {
     async function seedStaleSeriesRow(opts: {
       name: string;
@@ -340,7 +303,6 @@ describe('SeriesCardService — integration', () => {
 
     it('cached-id branch: calls GetSeriesMembersById, replaces members, updates author_name', async () => {
       const row = await seedStaleSeriesRow({ name: 'The Band', normalizedName: 'the band', hardcoverSeriesId: 5523, authorName: 'Old Author' });
-      // Pre-seed a stale Hardcover member that should be replaced
       await db.insert(seriesMembers).values({
         seriesId: row.id, hardcoverBookId: 9001, slug: 'stale', title: 'Stale Member', normalizedTitle: 'stale member', authorName: 'Old Author', position: 1, source: 'hardcover',
       });
@@ -356,11 +318,9 @@ describe('SeriesCardService — integration', () => {
       const result = await svc.runScheduledRefresh();
 
       expect(result.refreshed).toBe(1);
-      // The fetch body must be the GetSeriesMembersById query — never the resolver
       const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
       expect(body.query).toContain('GetSeriesMembersById');
       expect(body.variables.id).toBe(5523);
-      // Author updated, stale member replaced
       const refreshedRow = (await db.select().from(series).where(eq(series.id, row.id)))[0]!;
       expect(refreshedRow.authorName).toBe('New Author');
       const final = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, row.id));
@@ -387,7 +347,6 @@ describe('SeriesCardService — integration', () => {
       const result = await svc.runScheduledRefresh();
 
       expect(result.refreshed).toBe(1);
-      // The first GraphQL call must be the resolver's by-name request (not by-id)
       const firstBody = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
       expect(firstBody.query).toContain('GetSeriesMembers');
       expect(firstBody.query).not.toContain('GetSeriesMembersById');
@@ -401,13 +360,7 @@ describe('SeriesCardService — integration', () => {
 
     it('null-id branch with multiple linked books: picks the lowest books.id deterministically', async () => {
       const row = await seedStaleSeriesRow({ name: 'Shared Series', normalizedName: 'shared series', hardcoverSeriesId: null, authorName: null });
-      // Give each candidate book observably distinct seriesName + author so the
-      // GraphQL request the resolver issues proves WHICH book was picked. The
-      // `lower` book is inserted first → gets the lower books.id; if
-      // orderBy(asc(books.id)) is broken, the resolver will issue the
-      // higher-id book's name/author instead and the assertions below will
-      // fail. Both books still link to the same stale series row via
-      // series_members.seriesId, so the sweep treats them as siblings.
+      // Distinct names/authors expose which linked book the resolver chose; lower books.id must win.
       const lowerBookId = await seedBookWithSeries(db, {
         title: 'Kings of the Wyld',
         seriesName: 'Lower Series Name',
@@ -420,9 +373,7 @@ describe('SeriesCardService — integration', () => {
         seriesPosition: 2,
         authorName: 'Higher Author',
       });
-      // Insert series_members rows in the OPPOSITE order from books.id to
-      // make sure the query's orderBy(asc(books.id)) is the load-bearing
-      // signal, not the insertion order of the member rows.
+      // Reverse member insertion order so books.id—not row insertion—decides.
       await db.insert(seriesMembers).values([
         { seriesId: row.id, bookId: higherBookId, title: 'Bloody Rose', normalizedTitle: 'bloody rose', authorName: 'Higher Author', position: 2, source: 'local' },
         { seriesId: row.id, bookId: lowerBookId, title: 'Kings of the Wyld', normalizedTitle: 'kings of the wyld', authorName: 'Lower Author', position: 1, source: 'local' },
@@ -438,9 +389,6 @@ describe('SeriesCardService — integration', () => {
       const result = await svc.runScheduledRefresh();
 
       expect(result.refreshed).toBe(1);
-      // The GraphQL variables MUST come from the lower-id book. Reversing the
-      // orderBy in the production code would send 'Higher Series Name' /
-      // 'Higher Author' instead and fail both assertions.
       const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
       expect(body.variables.name).toBe('Lower Series Name');
       expect(body.variables.author).toBe('Lower Author');
@@ -448,7 +396,6 @@ describe('SeriesCardService — integration', () => {
 
     it('no-qualifying-book branch: logs at info and skips, does not modify the row', async () => {
       const row = await seedStaleSeriesRow({ name: 'Ghost Series', normalizedName: 'ghost series', hardcoverSeriesId: null, authorName: null });
-      // No series_members rows, so no linked book at all → no-qualifying-book branch.
       const fetchSpy = vi.fn();
       globalThis.fetch = fetchSpy as typeof globalThis.fetch;
       const infoCalls: unknown[][] = [];
@@ -463,10 +410,8 @@ describe('SeriesCardService — integration', () => {
       expect(result.refreshed).toBe(0);
       expect(result.skipped).toBe(1);
       expect(fetchSpy).not.toHaveBeenCalled();
-      // Row preserved
       const after = (await db.select().from(series).where(eq(series.id, row.id)))[0]!;
       expect(after.lastFetchedAt?.getTime()).toBe(row.lastFetchedAt?.getTime());
-      // Info log mentioned the skip reason
       const skipLog = infoCalls.find(([meta]) => typeof meta === 'object' && meta !== null && (meta as { seriesId?: number }).seriesId === row.id);
       expect(skipLog).toBeDefined();
       const skipMessage = String(skipLog?.[1] ?? '');
@@ -488,14 +433,10 @@ describe('SeriesCardService — integration', () => {
       const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
       const result = await svc.runScheduledRefresh();
 
-      // The healthy row was refreshed; the failing row was skipped. The two
-      // sweep entries depend on `series.id` order returned by the SELECT, but
-      // regardless of order both rows must have been attempted.
       expect(result.refreshed + result.skipped).toBe(2);
       expect(result.refreshed).toBe(1);
       expect(result.skipped).toBe(1);
       expect(fetchMock).toHaveBeenCalledTimes(2);
-      // The healthy row had its author updated; the failing row did not.
       const healthyAfter = (await db.select().from(series).where(eq(series.id, ok.id)))[0]!;
       expect(healthyAfter.authorName).toBe('Healthy Author');
       const failingAfter = (await db.select().from(series).where(eq(series.id, failing.id)))[0]!;
@@ -503,7 +444,6 @@ describe('SeriesCardService — integration', () => {
     });
 
     it('stale-row selection: only rows with last_fetched_at older than STALE_AFTER_DAYS are picked', async () => {
-      // One stale row, one fresh row (last_fetched_at = now)
       await seedStaleSeriesRow({ name: 'Stale', normalizedName: 'stale', hardcoverSeriesId: 9001, authorName: 'A' });
       await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: 'Fresh', normalizedName: 'fresh', hardcoverSeriesId: 9002, authorName: 'A',
@@ -525,16 +465,8 @@ describe('SeriesCardService — integration', () => {
     });
   });
 
-  // #1139 polish: cross-cutting integration coverage for the dedup + ordering fixes.
   describe('#1139 polish — dedup, NULL ordering, post-create dedup', () => {
-    /**
-     * AC1.4: After the Hardcover cache is established, the book-create /
-     * re-import path's `upsertSeriesLink` must NOT add a second local row for
-     * a book already covered by a Hardcover member. The series card must
-     * render that book exactly once.
-     */
     it('AC1.4: upsertSeriesLink after Hardcover cache exists does not add a duplicate row', async () => {
-      // Seed a Hardcover-cached series with one Hardcover member
       const [seedRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523,
         name: 'The Band',
@@ -553,7 +485,6 @@ describe('SeriesCardService — integration', () => {
         source: 'hardcover',
       });
 
-      // Now "create" a library book in this series — simulates the book-create / re-import path
       const bookId = await seedBookWithSeries(db, {
         title: 'Bloody Rose',
         seriesName: 'The Band',
@@ -567,12 +498,10 @@ describe('SeriesCardService — integration', () => {
         authorName: 'Nicholas Eames',
       });
 
-      // series_members must still hold exactly one row for this series
       const rows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seedRow!.id));
       expect(rows).toHaveLength(1);
       expect(rows[0]!.source).toBe('hardcover');
 
-      // The card view shows Bloody Rose exactly once, matched to the new library book
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
       const card = await svc.getSeriesForBook(bookId);
       expect(card!.hardcoverSeriesId).toBe(5523);
@@ -583,14 +512,8 @@ describe('SeriesCardService — integration', () => {
     });
 
     /**
-     * AC2.4 + AC2.6: Two Hardcover members must not BOTH claim the same library
-     * book during persist; only one row gets the `bookId` populated.
-     *
-     * The fixture uses two UNPOSITIONED members whose titles both pair with the
-     * library book: since #2097 the adapter keeps at most one work per finite
-     * position, so two same-position members no longer reach `persistMembers` —
-     * while unpositioned works, which used to collapse under `DISTINCT ON`, now
-     * all arrive, making the shared claim set more load-bearing than before.
+     * Use two unpositioned title matches: finite-position duplicates collapse upstream,
+     * while null-position works both reach persistMembers and exercise its shared claim set.
      */
     it('AC2.6: persist path does not duplicate library bookId across rows in the same series', async () => {
       const bookId = await seedBookWithSeries(db, {
@@ -616,7 +539,6 @@ describe('SeriesCardService — integration', () => {
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
       await svc.getSeriesForBook(bookId);
 
-      // Pull every series_member row and check no bookId is duplicated
       const persisted = await db.select().from(series).where(eq(series.hardcoverSeriesId, 5523));
       const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, persisted[0]!.id));
       const populatedBookIds = memberRows.map((m) => m.bookId).filter((v): v is number => v !== null);
@@ -624,10 +546,6 @@ describe('SeriesCardService — integration', () => {
       expect(populatedBookIds[0]).toBe(bookId);
     });
 
-    /**
-     * AC2.4: Same dedup must hold in the cache-driven render path — only the
-     * first member processed claims the library book.
-     */
     it('AC2.4: cache render does not mark two Hardcover members at the same position as both in-library', async () => {
       const bookId = await seedBookWithSeries(db, {
         title: 'Bloody Rose',
@@ -638,7 +556,6 @@ describe('SeriesCardService — integration', () => {
       const [seedRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523, name: 'The Band', normalizedName: 'the band', authorName: 'Nicholas Eames', lastFetchedAt: new Date(),
       }).returning();
-      // Two Hardcover rows at position 2 — only ONE should show inLibrary=true
       await db.insert(seriesMembers).values([
         { seriesId: seedRow!.id, hardcoverBookId: 1002, slug: 'a', title: 'Bloody Rose A', normalizedTitle: 'bloody rose a', authorName: 'Nicholas Eames', position: 2, source: 'hardcover' },
         { seriesId: seedRow!.id, hardcoverBookId: 1003, slug: 'b', title: 'Bloody Rose B', normalizedTitle: 'bloody rose b', authorName: 'Nicholas Eames', position: 2, source: 'hardcover' },
@@ -653,15 +570,8 @@ describe('SeriesCardService — integration', () => {
     });
 
     /**
-     * #2097 AC14 — the live prod case (2026-08-03), end to end against a real
-     * migrated DB: World of Warcraft (hardcover_series_id 2375) position 15
-     * carries the Russian work "…: Перед бурей" (62 readers) alongside the
-     * English "Before the Storm" (7). Hasura used to collapse the pair by
-     * readership, so the cached row and the card both showed the Cyrillic title.
-     *
-     * The assertions walk the whole chain — persisted row, its `book_id` link,
-     * and the rendered member — because a picker that only fixed the mapped
-     * member would still leave the wrong title in `series_members`.
+     * Live WoW position 15 has Russian (62 readers) and English (7) works. The old
+     * picker selected Russian; assert the English work through persistence, link, and render (#2097).
      */
     it('#2097 AC14: persists and renders the English work at WoW position 15, not the more-read Russian one', async () => {
       const bookId = await seedBookWithSeries(db, {
@@ -701,14 +611,7 @@ describe('SeriesCardService — integration', () => {
       expect(rendered[0]!.libraryBookId).toBe(bookId);
     });
 
-    /**
-     * #2097 AC3 + AC12 — `DISTINCT ON` treated SQL NULLs as equal, so several
-     * unpositioned works in one series used to arrive as a single row. Each now
-     * persists on its own: `series_members` has no unique index on
-     * `(series_id, position)` (the two unique indexes are keyed by Hardcover id
-     * and by local book id), so there is no constraint violation and no silent
-     * overwrite.
-     */
+    /** DISTINCT ON collapsed null positions; schema permits multiples because unique indexes key Hardcover ID/local book ID (#2097). */
     it('#2097 AC3: persists one row per unpositioned work instead of collapsing them', async () => {
       const bookId = await seedBookWithSeries(db, {
         title: 'Kings of the Wyld',
@@ -741,15 +644,11 @@ describe('SeriesCardService — integration', () => {
       expect(card!.members).toHaveLength(4);
     });
 
-    /**
-     * AC3.1: Cache mode places NULL positions LAST.
-     */
     it('AC3.1: cache mode renders [1, 2.5, 4, null] order regardless of insertion order', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Anchor Book', seriesName: 'Test Series', seriesPosition: 1, authorName: 'Some Author' });
       const [seedRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 9999, name: 'Test Series', normalizedName: 'test series', authorName: 'Some Author', lastFetchedAt: new Date(),
       }).returning();
-      // Insert in mixed order including NULL position
       await db.insert(seriesMembers).values([
         { seriesId: seedRow!.id, hardcoverBookId: 4, slug: 'd', title: 'Companion', normalizedTitle: 'companion', authorName: 'Some Author', position: null, source: 'hardcover' },
         { seriesId: seedRow!.id, hardcoverBookId: 3, slug: 'c', title: 'Book Four', normalizedTitle: 'book four', authorName: 'Some Author', position: 4, source: 'hardcover' },
@@ -763,9 +662,6 @@ describe('SeriesCardService — integration', () => {
       expect(card!.members.map((m) => m.position)).toEqual([1, 2.5, 4, null]);
     });
 
-    /**
-     * AC3.2: Library-only mode produces the same NULLS-LAST order.
-     */
     it('AC3.2: library-only mode places NULL position last with the same comparator', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Anchor', seriesName: 'Test Series', seriesPosition: 1, authorName: 'Some Author' });
       await seedBookWithSeries(db, { title: 'Companion', seriesName: 'Test Series', seriesPosition: null, authorName: 'Some Author' });
@@ -775,17 +671,12 @@ describe('SeriesCardService — integration', () => {
       const svc = new SeriesCardService(db, log, settingsServiceWith(''));
       const card = await svc.getSeriesForBook(bookId);
 
-      // Anchor is position=1, then 2.5, then 4, then NULL Companion
       expect(card!.members.map((m) => m.position)).toEqual([1, 2.5, 4, null]);
       expect(card!.members.map((m) => m.title)).toEqual(['Anchor', 'Book Two-Five', 'Book Four', 'Companion']);
     });
   });
 
-  // #2096: the live production case. A Hardcover member "Chapterhouse: Dune" at
-  // position 6 against a library "Chapterhouse Dune" carrying a stale position 17
-  // failed BOTH signals — the member colon-truncated to `chapterhouse`, and the
-  // positions disagreed — so the bind left the stale position and the Series panel
-  // offered "+Add" for a book the user already owned.
+  // Live case: "Chapterhouse: Dune" at position 6 failed title matching against "Chapterhouse Dune" with stale position 17, exposing +Add for an owned book (#2096).
   describe('#2096 — colon-separated member titles', () => {
     function mockFetchHardcover(payload: unknown): ReturnType<typeof vi.fn> {
       const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }));
@@ -826,7 +717,6 @@ describe('SeriesCardService — integration', () => {
       expect(member.inLibrary).toBe(true);
       expect(member.libraryBookId).toBe(bookId);
 
-      // The bind syncs BOTH durable fields — the stale 17 is rewritten to 6.
       const [row] = await db.select().from(books).where(eq(books.id, bookId));
       expect(row!.seriesName).toBe('Dune');
       expect(row!.seriesPosition).toBe(6);
@@ -846,9 +736,7 @@ describe('SeriesCardService — integration', () => {
 
       const memberRows = await db.select().from(seriesMembers);
       expect(memberRows).toHaveLength(1);
-      // Pre-#2096 this column received `chapterhouse`; it now receives the full
-      // separator form. The column has zero production read sites, so the value
-      // simply changes shape with no backfill.
+      // This write-only column changes from "chapterhouse" to full separator form; no backfill needed.
       expect(memberRows[0]!.normalizedTitle).toBe('chapterhouse dune');
     });
 
@@ -880,38 +768,19 @@ describe('SeriesCardService — integration', () => {
       const rows = await db.select().from(seriesMembers);
       expect(rows).toHaveLength(2);
       expect(rows.find((r) => r.title === '[ ]')!.normalizedTitle).toBe('');
-      // An empty variant set never claims a candidate on the title path, and this
-      // member has no position to be rescued by either.
+      // Empty title variants and null position provide no matching arm.
       expect(card!.members.find((m) => m.title === '[ ]')!.inLibrary).toBe(false);
     });
   });
 
-  // #2108: `loadLibraryBooksForSeriesNames` pins `ORDER BY books.id`, because
-  // `findInLibraryMatch` is first-claim-wins WITHIN a match-quality tier — so
-  // pool order is the only deciding input when two candidates pair on the same
-  // tier, and unordered that sequence is a query-planner accident.
   describe('#2108 — pinned candidate claim order', () => {
-    // Both traps that would make this test green-but-vacuous are closed here:
-    //
-    //  - WITHOUT a forced index the planner emits `SCAN books` and rowid order
-    //    falls out anyway, so the pool is id-ascending with or without the
-    //    `.orderBy()`. `forcePoolReorderingIndex` drives it onto
-    //    `SEARCH … USING COVERING INDEX`, which returns rows in series_name order
-    //    instead — hence the deliberately INVERTED seeding (lower id →
-    //    'Zeta Series', higher id → 'Alpha Series') — and `poolProbeIds` asserts
-    //    that reordering as an explicit precondition rather than trusting the
-    //    index to bite ([[sqlite-covering-index-forces-scan-order]]).
-    //  - With CROSS-TIER candidates the arm ranking would pick the winner
-    //    regardless of order, and the `.orderBy()` could be deleted with the test
-    //    still green. Both books therefore pair `full-equals-full` with the same
-    //    member (both titles normalize to `chapterhouse dune`) — one tier, so
-    //    only the SQL order decides.
-    //
-    // Counterfactuals, all run and recorded at #2175: deleting
-    // `.orderBy(asc(books.id))` flips the claim to the higher id and this test
-    // FAILS; dropping to the pre-#2175 NARROW `books (series_name)` index leaves
-    // the plan at `SCAN books`, the precondition assertion FAILS first, and
-    // without that assertion the whole case would silently pass on both branches.
+    /**
+     * Matching is first-claim-wins within one quality tier, so SQL pool order decides.
+     * A test-only covering index forces the unordered projection into series_name order,
+     * and the precondition proves it. Both candidates share one match tier so ranking
+     * cannot mask a missing ORDER BY. Removing orderBy flips the winner; a narrow index
+     * leaves SCAN books/id order and fails the precondition (#2175).
+     */
     it('claims the lower-id book when two same-tier candidates compete under an index', async () => {
       const lowerId = await seedBookWithSeries(db, {
         title: 'Chapterhouse Dune',
@@ -928,9 +797,7 @@ describe('SeriesCardService — integration', () => {
       expect(higherId).toBeGreaterThan(lowerId);
 
       await forcePoolReorderingIndex(db);
-      // PRECONDITION: unordered, the loader's own projection now comes back
-      // DESCENDING by id. Without this the fixture cannot tell "the ORDER BY
-      // worked" from "the planner happened to return rowid order anyway".
+      // Prove unordered projection is descending by ID before testing production ordering.
       expect(await poolProbeIds(db)).toEqual([higherId, lowerId]);
 
       const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
@@ -941,8 +808,7 @@ describe('SeriesCardService — integration', () => {
             slug: 'zeta-series',
             author: { name: 'Frank Herbert' },
             book_series: [
-              // Position null, so the position pass never fires and the title
-              // pass — the pass this issue changes — is what decides.
+              // Null position disables position matching, leaving the title tier to decide.
               { position: null, book: { id: 4001, slug: 'chapterhouse-dune', title: 'Chapterhouse: Dune', image: null, users_count: 50 } },
             ],
           }],
@@ -950,19 +816,13 @@ describe('SeriesCardService — integration', () => {
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
       globalThis.fetch = fetchMock as typeof globalThis.fetch;
 
-      // Bind from the HIGHER-id book, whose prior series name is 'Alpha Series':
-      // `bindHardcoverSeries` passes `resolved.name` plus the initiating book's
-      // prior name to `persistMembers`, so the pool's targets are
-      // {'Zeta Series','Alpha Series'} and it spans both books.
+      // Bind from higher ID; resolved and prior series names make the pool span both books.
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
       const bound = await svc.bindHardcoverSeries(higherId, 7703);
 
       expect(bound).not.toBeNull();
       const memberRows = await db.select().from(seriesMembers);
-      // The ONE Hardcover member claimed the lower-id book — the assertion this
-      // fixture exists for. The higher-id initiating book adopted the canonical
-      // name unmatched, so #2144 gives it its own local row; that row is a
-      // consequence of the claim going the other way, not the claim itself.
+      // Higher-ID initiator remains unclaimed and is preserved as a local #2144 row.
       const hardcover = memberRows.filter((m) => m.source === 'hardcover');
       expect(hardcover).toHaveLength(1);
       expect(hardcover[0]!.bookId).toBe(lowerId);
@@ -972,11 +832,7 @@ describe('SeriesCardService — integration', () => {
     });
   });
 
-  // #2144 — a library book with a series name must appear on that series' member
-  // list regardless of what Hardcover thinks. Hardcover's member queries exclude
-  // dateless works, so a "Planned book" stub leaves a hole the operator's own
-  // book falls through: not paired (nothing to pair with), and not seeded (the
-  // `upsertSeriesLink` canonical-series guard suppressed the local row).
+  // Owned series books must render when Hardcover omits dateless works; otherwise no member pairs and the canonical-series guard suppresses the local link (#2144).
   describe('#2144 — owned books Hardcover does not expose', () => {
     function mockFetchHardcover(payload: unknown): ReturnType<typeof vi.fn> {
       const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }));
@@ -984,7 +840,7 @@ describe('SeriesCardService — integration', () => {
       return fetchMock;
     }
 
-    /** The live series: Hardcover exposes 1/3/4/5; position 2 is a dateless stub. */
+    /** Hardcover exposes 1/3/4/5; position 2 is a dateless stub until requested. */
     function azerothPayload(withPositionTwo: boolean): unknown {
       const members = [
         { position: 1, book: { id: 8001, slug: 'eastern-kingdoms', title: 'Exploring Azeroth: The Eastern Kingdoms', image: null, users_count: 90 } },
@@ -1031,22 +887,14 @@ describe('SeriesCardService — integration', () => {
     });
 
     /**
-     * F3 (spec review): the durable row's COMPLETE shape, not just its count and
-     * source. Every field is independently required by AC6 — the provider columns
-     * must be NULL so the partial local unique index constrains the row, the title
-     * and normalized title must come from the book, the author must be the BOOK's
-     * primary author rather than the series author, and the position must be
-     * verbatim (position `0` is the case a falsy coercion would silently destroy).
+     * Pin complete local-row shape: provider fields null, book title/primary author,
+     * and verbatim position 0. Same-position authors tie-break by lower author_id.
      */
     it('F3: the seeded row carries the exact AC6 shape, including position 0 and the tie-broken primary author', async () => {
-      // Two authors at the SAME `book_authors.position` — the defaulted/legacy
-      // shape the `author_id` tie-break exists for. The lower author_id wins, and
-      // it is deliberately NOT the alphabetically-first name, so an implementation
-      // ordering by name instead of by id fails here.
+      // Same author position forces lower author_id tie-break; lower ID is not alphabetical first.
       const prequel = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Prequel', seriesName: 'Exploring Azeroth', seriesPosition: 0, authorName: 'Zara Primary' });
       const [second] = await db.insert(authors).values({ publicId: generatePublicId('au'), name: 'Aaron Secondary', slug: 'aaron-secondary' }).returning();
       await db.insert(bookAuthors).values({ bookId: prequel, authorId: second!.id, position: 0 });
-      // A second unclaimed book with no author link at all → authorName null.
       const orphan = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Orphan', seriesName: 'Exploring Azeroth', seriesPosition: 6, authorName: null });
       mockFetchHardcover(azerothPayload(false));
 
@@ -1071,23 +919,18 @@ describe('SeriesCardService — integration', () => {
       expect(rows.find((r) => r.bookId === orphan)!.authorName).toBeNull();
     });
 
-    /**
-     * AC8 — supersession through the POSITION arm, via the existing
-     * delete-and-rebuild. No "upgrade" code path exists or is wanted.
-     */
+    /** Supersession uses delete-and-rebuild through position matching; no upgrade path is intended. */
     it('AC8: a later refresh carrying the real member leaves one canonical row and no local row', async () => {
       const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
       mockFetchHardcover(azerothPayload(false));
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
       await svc.getSeriesForBook(kalimdor);
 
-      // Positive control: the local row exists before the superseding refresh, so
-      // the assertions below cannot pass against a fixture that never seeded.
+      // Prove the local row exists before supersession.
       const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
       const before = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id));
       expect(before.filter((r) => r.source === 'local')).toHaveLength(1);
 
-      // Hardcover has since given the stub a release date, so the member arrives.
       mockFetchHardcover(azerothPayload(true));
       const card = await svc.refreshSeriesForBook(kalimdor);
 
@@ -1101,12 +944,7 @@ describe('SeriesCardService — integration', () => {
       expect(card!.members.filter((m) => m.libraryBookId === kalimdor)).toHaveLength(1);
     });
 
-    /**
-     * AC8 again, but the pairing rides the TITLE arm rather than position — the
-     * `derived-equals-full` case where the member's whole title is a suffix
-     * variant of the book's. Both sides are unpositioned, so the position pass
-     * cannot fire and the outcome depends entirely on the matcher.
-     */
+    /** Both sides are unpositioned, so derived-equals-full title matching alone drives supersession. */
     it('AC8: supersession also works when the later member pairs on the title arm at a null position', async () => {
       const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: null, authorName: 'Christie Golden' });
       mockFetchHardcover(azerothPayload(false));
@@ -1132,11 +970,6 @@ describe('SeriesCardService — integration', () => {
       expect(after[0]!).toMatchObject({ source: 'hardcover', hardcoverBookId: 8002, bookId: kalimdor });
     });
 
-    /**
-     * AC9 — the render path reconciles a book that entered the library AFTER the
-     * last rebuild, on the very next GET: no Hardcover fetch, no cache-miss
-     * resolve branch, and `series.last_fetched_at` untouched.
-     */
     it('AC9: a cache-hit GET seeds a book imported after the rebuild, without fetching or touching last_fetched_at', async () => {
       const kings = await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
       mockFetchHardcover(azerothPayload(false));
@@ -1145,9 +978,7 @@ describe('SeriesCardService — integration', () => {
       const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
       const fetchedAtBefore = seriesRow.lastFetchedAt!.getTime();
 
-      // A new import lands in the already-canonical series. `upsertSeriesLink`'s
-      // guard deliberately writes nothing — assert that first, or the GET below
-      // could be passing on a row it never created.
+      // Prove the import/upsert guard wrote nothing before GET reconciliation.
       const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
       await upsertSeriesLink(db, log, kalimdor, { name: 'Exploring Azeroth', position: 2, title: 'Exploring Azeroth: Kalimdor', authorName: 'Christie Golden' });
       expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, kalimdor))).toHaveLength(0);
@@ -1165,26 +996,20 @@ describe('SeriesCardService — integration', () => {
       expect(after.lastFetchedAt!.getTime()).toBe(fetchedAtBefore);
     });
 
-    /**
-     * AC10 fast path — a card whose pool is fully claimed opens NO transaction.
-     * The reconcile must not tax the ordinary GET, which is the overwhelmingly
-     * common shape.
-     */
+    /** Fully claimed cards must avoid reconciliation transaction overhead. */
     it('AC10: a fully-claimed pool opens no transaction and issues no write', async () => {
       const kings = await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
       mockFetchHardcover(azerothPayload(false));
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
       await svc.getSeriesForBook(kings);
 
-      // Positive control: the same spy DOES see a transaction when a book is
-      // unclaimed, so a zero count below means "fast path", not "spy never armed".
+      // Prove this spy observes a transaction when a book is unclaimed.
       const stray = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
       const armed = vi.spyOn(db, 'transaction');
       await svc.getSeriesForBook(kings);
       expect(armed).toHaveBeenCalledTimes(1);
       armed.mockRestore();
 
-      // Now every pool book is claimed (the stray got its row above).
       const spy = vi.spyOn(db, 'transaction');
       const card = await svc.getSeriesForBook(kings);
       expect(spy).not.toHaveBeenCalled();
@@ -1193,13 +1018,9 @@ describe('SeriesCardService — integration', () => {
     });
 
     /**
-     * AC10 / AC8 — the stale-snapshot race, driven DETERMINISTICALLY rather than
-     * by timing. The card build computes its unclaimed snapshot, then a full
-     * refresh rebuilds the series and pairs that book to a now-available Hardcover
-     * member, and only THEN does the reconcile transaction run. Its in-transaction
-     * re-read must observe the canonical row and write nothing — an implementation
-     * that inserts from the snapshot resurrects a superseded local row, which the
-     * disjoint partial indexes happily let coexist with the canonical one.
+     * Deterministically refresh between snapshot and transaction. The in-transaction
+     * reread must see the canonical row; stale snapshot use would create a duplicate
+     * local row because the partial indexes allow both.
      */
     it('AC10: a refresh that lands between the snapshot and the reconcile makes the guard write nothing', async () => {
       const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
@@ -1207,14 +1028,12 @@ describe('SeriesCardService — integration', () => {
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
       await svc.getSeriesForBook(kalimdor);
       const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
-      // Clear the seeded row so the next GET's snapshot sees the book unclaimed —
-      // the state a fresh import produces, reached here without a second service.
+      // Clear the seed so the next snapshot sees a fresh-import-style unclaimed book.
       await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
 
       const openTransaction = db.transaction.bind(db);
       const spy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (callback) => {
-        // Between the snapshot and the reconcile: Hardcover now exposes the
-        // real position-2 member, and the rebuild pairs it with the book.
+        // Expose and pair the real member between snapshot and reconciliation.
         mockFetchHardcover(azerothPayload(true));
         await svc.refreshSeriesForBook(kalimdor);
         return openTransaction(callback);
@@ -1229,8 +1048,6 @@ describe('SeriesCardService — integration', () => {
       expect(forBook).toHaveLength(1);
       expect(forBook[0]!.source).toBe('hardcover');
       expect(rows.filter((r) => r.source === 'local')).toHaveLength(0);
-      // The response is assembled from what the transaction returned, so it shows
-      // the book once as an owned Hardcover entry — never a second '+ Add' row.
       const shown = card!.members.filter((m) => m.libraryBookId === kalimdor);
       expect(shown).toHaveLength(1);
       expect(shown[0]!.hardcoverBookId).toBe(8002);
@@ -1238,16 +1055,9 @@ describe('SeriesCardService — integration', () => {
     });
 
     /**
-     * F1 (PR review) — AC10 requires re-reading the library POOL inside the
-     * transaction, independently of the member rows. The refresh race above
-     * changes only the rows, so an implementation that re-read rows but reused
-     * the snapshot's pool would leave it green.
-     *
-     * Here the book LEAVES the pool between the two reads — the operator re-files
-     * it under another series while the GET is in flight. The in-transaction pool
-     * read no longer returns it, so it is not unclaimed and nothing is written.
-     * Against a stale snapshot pool it is still unclaimed, and the insert lands a
-     * durable local row binding a book to a series it no longer belongs to.
+     * Separately pins the in-transaction pool reread: the book leaves the pool
+     * between snapshot and transaction. Reusing stale pool writes a local row for
+     * the wrong series.
      */
     it('F1: a book that leaves the pool between the snapshot and the reconcile gets no row', async () => {
       const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
@@ -1256,8 +1066,7 @@ describe('SeriesCardService — integration', () => {
       const svc = new SeriesCardService(db, inject(observed), settingsServiceWith('TEST_KEY'));
       await svc.getSeriesForBook(kalimdor);
       const seriesRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 25106)))[0]!;
-      // Positive control: the seed DOES fire for this fixture, so a zero-row
-      // assertion below means "the guard declined", not "nothing ever seeds".
+      // Prove the fixture seeds before testing that the guard declines.
       expect((await db.select().from(seriesMembers).where(eq(seriesMembers.source, 'local')))).toHaveLength(1);
       await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
       (observed.warn as ReturnType<typeof vi.fn>).mockClear();
@@ -1274,20 +1083,15 @@ describe('SeriesCardService — integration', () => {
       const rows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow.id));
       expect(rows.filter((r) => r.source === 'local')).toHaveLength(0);
       expect(rows.filter((r) => r.bookId === kalimdor)).toHaveLength(0);
-      // The transaction committed cleanly — no best-effort fallback was needed.
       expect(observed.warn).not.toHaveBeenCalled();
       expect(card!.members.map((m) => m.position)).toEqual([1, 3, 4, 5]);
       expect(card!.members.some((m) => m.libraryBookId === kalimdor)).toBe(false);
     });
 
     /**
-     * F1's other branch — the book is DELETED between the two reads. The
-     * in-transaction pool read drops it, so the insert never names a row that no
-     * longer exists. Against a stale snapshot pool the insert violates the FK
-     * ([[libsql-foreign-keys-on-by-default]]), the whole transaction rejects, and
-     * the best-effort fallback renders the PRE-WRITE snapshot — a card still
-     * advertising a book the operator just deleted. Both the silence of the log
-     * and the absence of the entry are therefore load-bearing.
+     * Deletion between reads must disappear from the transaction pool. Reusing the
+     * stale pool triggers an FK rejection and returns a stale snapshot card; silence
+     * and absence both pin the reread.
      */
     it('F1: a book deleted between the snapshot and the reconcile is dropped, not FK-rejected', async () => {
       const anchor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
@@ -1332,11 +1136,7 @@ describe('SeriesCardService — integration', () => {
       expect(rows.filter((r) => r.source === 'local')).toHaveLength(0);
     });
 
-    /**
-     * AC10 best-effort: the reconcile is a nicety, never a reason for the card to
-     * fail. On any rejection the GET still resolves, the card still shows the
-     * entry from the pre-write snapshot, and the failure is logged.
-     */
+    /** Reconciliation is best-effort: rejection logs once and returns the pre-write snapshot card. */
     it('AC10: a failing reconcile is caught, logged once, and still returns the snapshot card', async () => {
       const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
       mockFetchHardcover(azerothPayload(false));
@@ -1350,10 +1150,8 @@ describe('SeriesCardService — integration', () => {
       const card = await svc.getSeriesForBook(kalimdor);
       spy.mockRestore();
 
-      // Resolved, not rejected, and the owned book is still on the card.
       expect(card!.members.map((m) => m.position)).toEqual([1, 2, 3, 4, 5]);
       expect(card!.members[1]!.libraryBookId).toBe(kalimdor);
-      // Nothing landed — the fallback renders the snapshot, it does not fake a write.
       expect(await db.select().from(seriesMembers).where(eq(seriesMembers.source, 'local'))).toHaveLength(0);
       const warnCalls = (observed.warn as ReturnType<typeof vi.fn>).mock.calls;
       expect(warnCalls).toHaveLength(1);
@@ -1362,10 +1160,7 @@ describe('SeriesCardService — integration', () => {
       expect(meta.error.message).toBe('reconcile boom');
     });
 
-    /**
-     * AC5 — the seeded entry's position is `books.series_position` VERBATIM: `0`
-     * sorts before `1` instead of coercing to null, and `null` sorts last.
-     */
+    /** Persist position 0 verbatim; null sorts last. */
     it('AC5: unclaimed books at position 0 and null interleave as [0, 1, 2.5, null]', async () => {
       const zero = await seedBookWithSeries(db, { title: 'Origins', seriesName: 'Test Series', seriesPosition: 0, authorName: 'Some Author' });
       const nullPos = await seedBookWithSeries(db, { title: 'Zed Companion', seriesName: 'Test Series', seriesPosition: null, authorName: 'Some Author' });
@@ -1392,10 +1187,6 @@ describe('SeriesCardService — integration', () => {
       expect(rows.find((r) => r.bookId === nullPos)!.position).toBeNull();
     });
 
-    /**
-     * AC11 — a local row renders from the BOOK's CURRENT title, not the text
-     * frozen into the row when it was seeded.
-     */
     it('AC11: a local row whose stored title has drifted renders the book’s current title once', async () => {
       const kalimdor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
       mockFetchHardcover(azerothPayload(false));
@@ -1413,12 +1204,8 @@ describe('SeriesCardService — integration', () => {
     });
 
     /**
-     * F4 (spec review) — AC11's OTHER half: a local row owns its `book_id`, so it
-     * cannot claim a different candidate even when its stored title and position
-     * are a perfect match for one. Sharp observation point: the Hardcover member
-     * pairs with book B by title, so an implementation that resolved local rows by
-     * title would have the local row steal B, leave the member unmatched, and seed
-     * a second local row for A.
+     * Local rows own book_id, never title-match another candidate. Here a drifted
+     * local row resembles book B; title resolution would steal B and seed duplicate A.
      */
     it('F4: a local row claims its own book_id even when its stored title matches a sibling', async () => {
       const bookA = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
@@ -1433,11 +1220,7 @@ describe('SeriesCardService — integration', () => {
       ]);
 
       const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
-      // Both books are claimed — by the local row and by the member — so the
-      // build must take the fast path. Deleting the by-`book_id` claim entirely
-      // (rather than swapping it for a title match) leaves A unclaimed, and this
-      // is the assertion that sees it: the reconcile opens, its insert collides
-      // with the existing row, and the failure is swallowed as best-effort.
+      // Both books must already be claimed; losing A's book_id claim opens a transaction and colliding best-effort insert.
       const txSpy = vi.spyOn(db, 'transaction');
       const card = await svc.getSeriesForBook(bookA);
       expect(txSpy).not.toHaveBeenCalled();
@@ -1448,19 +1231,13 @@ describe('SeriesCardService — integration', () => {
       const forB = card!.members.filter((m) => m.libraryBookId === bookB);
       expect(forA).toHaveLength(1);
       expect(forB).toHaveLength(1);
-      // A renders from its own book, B stays with the Hardcover member that paired.
       expect(forA[0]!).toMatchObject({ title: 'Kings of the Wyld', position: 1, hardcoverBookId: null, inLibrary: true });
       expect(forB[0]!).toMatchObject({ title: 'Bloody Rose', hardcoverBookId: 1002, inLibrary: true });
-      // Nothing was unclaimed, so no row was written and the drifted row survives.
       const rows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seedRow!.id));
       expect(rows.filter((r) => r.source === 'local').map((r) => r.bookId)).toEqual([bookA]);
     });
 
-    /**
-     * AC12 — residue is not a member. A local row that lost its book to the FK's
-     * `ON DELETE SET NULL` renders nothing at all: not an owned row, and above all
-     * not a '+ Add' row inviting the operator to re-acquire a book they deleted.
-     */
+    /** ON DELETE SET NULL residue renders neither owned entry nor +Add phantom. */
     it('AC12: a local row whose book was deleted renders no entry and no + Add phantom', async () => {
       const anchor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
       const doomed = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
@@ -1478,11 +1255,7 @@ describe('SeriesCardService — integration', () => {
       expect(card!.members.some((m) => m.title === 'Exploring Azeroth: Kalimdor')).toBe(false);
     });
 
-    /**
-     * F5 (spec review) — AC12's other branch: the book still EXISTS and the row
-     * still names it, but its `books.series_name` has moved outside this card's
-     * pool. It is no longer a member here and must not render, in either shape.
-     */
+    /** A local row stops rendering when its surviving book moves outside this card's pool. */
     it('F5: a local row naming a book that left the series renders no entry and no + Add phantom', async () => {
       const anchor = await seedBookWithSeries(db, { title: 'Exploring Azeroth: The Eastern Kingdoms', seriesName: 'Exploring Azeroth', seriesPosition: 1, authorName: 'Christie Golden' });
       const mover = await seedBookWithSeries(db, { title: 'Exploring Azeroth: Kalimdor', seriesName: 'Exploring Azeroth', seriesPosition: 2, authorName: 'Christie Golden' });
@@ -1501,12 +1274,7 @@ describe('SeriesCardService — integration', () => {
       expect(card!.members.some((m) => m.title === 'Exploring Azeroth: Kalimdor')).toBe(false);
     });
 
-    /**
-     * AC13 — two owned books at one position, one Hardcover member there. The
-     * member takes the lower-`books.id` candidate (#2108's pinned claim order) and
-     * the other book gets its own entry at the same position; the two order by
-     * title. The service performs no position-based dedup of its own.
-     */
+    /** Position collisions do not dedup: member claims lower books.id; the other book renders beside it, title-sorted. */
     it('AC13: two owned books at one position — the member claims the lower id, the other renders alongside', async () => {
       const lower = await seedBookWithSeries(db, { title: 'Zeta Chronicle', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
       const higher = await seedBookWithSeries(db, { title: 'Alpha Chronicle', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
@@ -1531,11 +1299,7 @@ describe('SeriesCardService — integration', () => {
       expect(new Set(claimed).size).toBe(2);
     });
 
-    /**
-     * AC14 — multiplicity. Two unclaimed books with IDENTICAL titles are two
-     * different books; the local unique index is keyed on `(series_id, book_id)`,
-     * not on the title, so both rows land.
-     */
+    /** Multiplicity keys local rows by series/book ID, not title; identical titles both persist. */
     it('AC14: two unclaimed books with identical titles get one entry and one row each', async () => {
       const first = await seedBookWithSeries(db, { title: 'Twice Told', seriesName: 'The Band', seriesPosition: 4, authorName: 'Nicholas Eames' });
       const second = await seedBookWithSeries(db, { title: 'Twice Told', seriesName: 'The Band', seriesPosition: 5, authorName: 'Nicholas Eames' });
@@ -1557,13 +1321,7 @@ describe('SeriesCardService — integration', () => {
       expect(local.map((r) => r.bookId).sort((a, b) => a! - b!)).toEqual([first, second]);
     });
 
-    /**
-     * AC7 — the seed pool is the PRIMARY name only. On the bind path a sibling
-     * still carrying the pre-bind (Audnexus) name that matched no member is not a
-     * member of the canonical series, so it gets no row. Widening the seed to
-     * `extraSeriesNames` would durably enrol it in a series the operator never
-     * asserted it belongs to.
-     */
+    /** Seed only canonical primary-name pool; extra pre-bind names would durably enroll unmatched siblings. */
     it('AC7: a bind seeds no row for a pre-bind-named sibling that matched no member', async () => {
       const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
       const sibling = await seedBookWithSeries(db, { title: 'An Unrelated Sibling', seriesName: 'The Earthsea Cycle', seriesPosition: 9, authorName: 'Ursula K. Le Guin' });
@@ -1585,8 +1343,7 @@ describe('SeriesCardService — integration', () => {
     });
   });
 
-  // #2098 — the route's post-bind sidecar pass iterates `syncedIds`, so the list must agree with
-  // the COMMITTED artifact (the `books` rows whose series_name actually moved), not with a mock.
+  // syncedIds must reflect committed books whose series_name moved, not the planned member set (#2098).
   describe('#2098 — the committed synced set', () => {
     it('a real bind over a seeded 3-book series reports all three ids', async () => {
       const ids = [
@@ -1594,7 +1351,6 @@ describe('SeriesCardService — integration', () => {
         await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'The Earthsea Cycle', seriesPosition: 2, authorName: 'Ursula K. Le Guin' }),
         await seedBookWithSeries(db, { title: 'The Farthest Shore', seriesName: 'The Earthsea Cycle', seriesPosition: 3, authorName: 'Ursula K. Le Guin' }),
       ];
-      // A fourth book in an unrelated series — it must NOT be reported.
       const unrelated = await seedBookWithSeries(db, { title: 'The Dispossessed', seriesName: 'Hainish Cycle', seriesPosition: 5, authorName: 'Ursula K. Le Guin' });
 
       globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
@@ -1614,7 +1370,6 @@ describe('SeriesCardService — integration', () => {
       const bound = await svc.bindHardcoverSeries(ids[0]!, 7801);
 
       expect(bound!.syncedIds).toEqual(ids);
-      // Observed against the committed rows, not against the member set the bind built.
       const rewritten = (await db.select().from(books))
         .filter((b) => b.seriesName === 'The Earthsea Quartet').map((b) => b.id).sort((a, b) => a - b);
       expect([...bound!.syncedIds].sort((a, b) => a - b)).toEqual(rewritten);
@@ -1622,18 +1377,7 @@ describe('SeriesCardService — integration', () => {
     });
   });
 
-  /**
-   * #2175 — the card resolves its `series` row by NORMALIZED name but used to
-   * load its library pool by exact `books.series_name`, so a normalized-equal but
-   * byte-different owned book ('the band' vs 'The Band') was structurally absent
-   * from every pool keyed on the other spelling: a sibling's card, a manual
-   * refresh, and the weekly cron all rendered '+ Add' for a book the operator
-   * owns. The book's OWN card looked fine, which is why it could sit unnoticed.
-   *
-   * Every case below was counterfactual-checked against the pre-fix predicate
-   * (`inArray(books.seriesName, unique)`); the ones whose counterfactual is not
-   * simply "revert the predicate" name theirs inline.
-   */
+  /** Series resolves by normalized name, so its library pool must too; exact spelling omitted owned siblings from sibling cards, refresh, and cron (#2175). */
   describe('#2175 — the library pool is keyed on the normalized series name', () => {
     function mockHardcover(payload: unknown): ReturnType<typeof vi.fn> {
       const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
@@ -1643,7 +1387,6 @@ describe('SeriesCardService — integration', () => {
       return fetchMock;
     }
 
-    /** The Band, two members — the issue's headline fixture. */
     function bandPayload(): unknown {
       return {
         data: {
@@ -1658,12 +1401,9 @@ describe('SeriesCardService — integration', () => {
       };
     }
 
-    /** Library-only cards render straight off the pool, so members ARE the pool. */
     function libraryOnly(): SeriesCardService {
       return new SeriesCardService(db, log, settingsServiceWith(''));
     }
-
-    // --- AC1/AC2/AC6 — the equivalence class, and where it stops ---------------
 
     describe('the equivalence class', () => {
       it.each([
@@ -1692,11 +1432,6 @@ describe('SeriesCardService — integration', () => {
         expect((await libraryOnly().getSeriesForBook(second))!.members.map((m) => m.libraryBookId)).toEqual([second]);
       });
 
-      /**
-       * AC2 through the Hardcover path — the defect as the operator sees it. The
-       * drifted sibling used to render `inLibrary: false` with a '+ Add' link on
-       * the other book's card while being paired correctly on its own.
-       */
       it('a drifted sibling pairs with its canonical Hardcover member on EITHER card', async () => {
         const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
         const bloody = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'the band', seriesPosition: 2, authorName: 'Nicholas Eames' });
@@ -1708,13 +1443,10 @@ describe('SeriesCardService — integration', () => {
           expect(card!.hardcoverSeriesId).toBe(5523);
           expect(card!.members.map((m) => [m.hardcoverBookId, m.inLibrary, m.libraryBookId]))
             .toEqual([[7711, true, kings], [7712, true, bloody]]);
-          // No '+ Add' entry for a book the operator owns.
           expect(card!.members.some((m) => !m.inLibrary)).toBe(false);
         }
       });
     });
-
-    // --- AC5 — the empty-normalized guard --------------------------------------
 
     describe('AC5 — an empty-normalized name falls back to exact matching', () => {
       it('three non-Latin/punctuation series do NOT pool together', async () => {
@@ -1734,8 +1466,7 @@ describe('SeriesCardService — integration', () => {
 
         const card = await libraryOnly().getSeriesForBook(first);
         expect(card!.members.map((m) => m.libraryBookId)).toEqual([first, second]);
-        // The exact arm is byte-identical: whitespace drift on an empty-normalized
-        // name is NOT folded, because folding it is what pools 'Дозоры' with '三体'.
+        // Empty-normalized names use byte-exact matching; folding would pool unrelated non-Latin names.
         expect(card!.members.some((m) => m.libraryBookId === drifted)).toBe(false);
       });
 
@@ -1744,16 +1475,11 @@ describe('SeriesCardService — integration', () => {
         const blank = await seedBookWithSeries(db, { title: 'Blank Series', seriesName: '', seriesPosition: 1, authorName: 'Someone' });
 
         expect((await libraryOnly().getSeriesForBook(dozory))!.members.map((m) => m.libraryBookId)).toEqual([dozory]);
-        // Its own card is unreachable: '' is falsy, so the card returns null —
-        // which is pre-existing behaviour this change must not alter.
+        // Empty series_name is falsy, so its own card remains unreachable.
         expect(await libraryOnly().getSeriesForBook(blank)).toBeNull();
       });
 
-      /**
-       * The destructive half. A bind writes `books.series_name` for every pooled
-       * book, so an empty-normalized target that widened would durably rewrite
-       * every non-Latin series in the library into the bound one.
-       */
+      /** Widening an empty-normalized bind would rewrite every non-Latin series in its pool. */
       it('a bind on an empty-normalized name rewrites no other series', async () => {
         const santi = await seedBookWithSeries(db, { title: '三体', seriesName: '三体', authorName: 'Liu Cixin' });
         const dozory = await seedBookWithSeries(db, { title: 'Ночной Дозор', seriesName: 'Дозоры', authorName: 'Sergei Lukyanenko' });
@@ -1770,27 +1496,13 @@ describe('SeriesCardService — integration', () => {
 
         expect(bound!.syncedIds).toEqual([santi]);
         expect((await db.select().from(books).where(eq(books.id, dozory)))[0]!.seriesName).toBe('Дозоры');
-        // The bind also SEEDS a local row for every unclaimed book in the primary
-        // pool, so a widened empty-normalized target would durably enrol every
-        // non-Latin series in the library into this one.
+        // Widening must not enroll other non-Latin series through local-row seeding either.
         expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, dozory))).toHaveLength(0);
       });
     });
 
-    // --- AC7 / AC14 — ordering and query shape ---------------------------------
-
     describe('AC7 — the pinned claim order survives the JS filter', () => {
-      /**
-       * The #2108 contract, re-proved with a DRIFTED pair: two same-tier
-       * candidates compete for one member and the lower `books.id` must win.
-       * `Array.prototype.filter` preserves order, so pinning the loader's
-       * `ORDER BY` pins the derived pool — but only the reordering precondition
-       * makes that observable ([[sqlite-covering-index-forces-scan-order]]).
-       *
-       * Seeding is inverted on purpose: the LOWER id carries 'zeta series' and the
-       * higher 'Zeta Series', which under SQLite's BINARY collation sorts the
-       * higher id FIRST.
-       */
+      /** JS filtering preserves loader order; inverted BINARY-collated spellings make a missing lower-ID ORDER BY observable. */
       it('the lower-id book wins even when it is the drifted one', async () => {
         const lowerId = await seedBookWithSeries(db, { title: 'Chapterhouse Dune', seriesName: 'zeta series', seriesPosition: null, authorName: 'Frank Herbert' });
         const higherId = await seedBookWithSeries(db, { title: 'Chapterhouse: Dune', seriesName: 'Zeta Series', seriesPosition: null, authorName: 'Frank Herbert' });
@@ -1820,7 +1532,7 @@ describe('SeriesCardService — integration', () => {
     describe('AC14 — one statement, zero pool-derived parameters', () => {
       const SEPARATORS = ['-', '_', '.', ',', ':', ';', '/', '&'];
 
-      /** 512 distinct raw spellings, every one of which normalizes to 'the band'. */
+      /** Generates 512 raw spellings that all normalize to "the band". */
       function driftedSpelling(index: number): string {
         const a = SEPARATORS[index % 8]!;
         const b = SEPARATORS[Math.floor(index / 8) % 8]!;
@@ -1829,16 +1541,8 @@ describe('SeriesCardService — integration', () => {
       }
 
       /**
-       * The number of raw spellings that fold into one equivalence class is
-       * bounded by nothing in the schema, which is why the membership test runs in
-       * JS instead of being funnelled into a dynamic `IN (…)`.
-       *
-       * Counterfactual, run and recorded: an implementation that scans the
-       * distinct spellings and feeds the matched ones back into a widened `IN`
-       * list keeps the statement COUNT at one, returns the same rows, and
-       * preserves id order via the same `ORDER BY` — so the count and ordering
-       * assertions stay green and only the zero-parameter assertion reds. That is
-       * the observation point this case exists for (spec review F2).
+       * Schema does not bound raw spellings per equivalence class. Only zero args
+       * distinguishes JS filtering from a dynamic IN query; count, results, and order match.
        */
       it('a pool spanning 300 distinct spellings loads in one parameterless statement', async () => {
         const anchor = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
@@ -1846,7 +1550,6 @@ describe('SeriesCardService — integration', () => {
         for (let i = 0; i < 300; i++) {
           siblings.push(await seedBookWithSeries(db, { title: `Drifted ${i}`, seriesName: driftedSpelling(i), seriesPosition: i + 2 }));
         }
-        // The spellings really are distinct raw strings folding to one class.
         expect(new Set(Array.from({ length: 300 }, (_, i) => driftedSpelling(i))).size).toBe(300);
 
         const spy = spyStatements(db);
@@ -1875,7 +1578,6 @@ describe('SeriesCardService — integration', () => {
         expect(poolStatements(spy.executed)).toHaveLength(0);
       });
 
-      /** AC11 — the tombstone read is still the pool read, not a second one. */
       it('the seriesPosition tombstones ride on the pool statement', async () => {
         const anchor = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
         const drifted = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'the band', seriesPosition: null, authorName: 'Nicholas Eames' });
@@ -1891,15 +1593,12 @@ describe('SeriesCardService — integration', () => {
         const pool = poolStatements(spy.executed);
         expect(pool).toHaveLength(1);
         expect(pool[0]!.sql).toMatch(/"user_cleared_fields"/);
-        // The tombstone reached the card through that one read: the drifted book
-        // claimed member 2 and still renders an unnumbered position.
+        // Claim plus null position proves the tombstone from this read reached rendering.
         const claimed = card!.members.find((m) => m.libraryBookId === drifted)!;
         expect(claimed.hardcoverBookId).toBe(7712);
         expect(claimed.position).toBeNull();
       });
     });
-
-    // --- Null / missing paths ---------------------------------------------------
 
     describe('null and missing rows', () => {
       it('a seriesName-tombstoned book never enters the pool under any spelling', async () => {
@@ -1911,7 +1610,7 @@ describe('SeriesCardService — integration', () => {
 
         const card = await svc.getSeriesForBook(anchor);
 
-        // Its title matches member 2 exactly, so only the NULL keeps it out.
+        // Exact title match makes null seriesName the only exclusion.
         expect(card!.members.find((m) => m.hardcoverBookId === 7712)!.inLibrary).toBe(false);
         expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, tombstoned))).toHaveLength(0);
       });
@@ -1928,10 +1627,7 @@ describe('SeriesCardService — integration', () => {
       });
     });
 
-    // --- Reconcile: the widened pool inside the transaction ----------------------
-
     describe('the reconcile seeds and re-reads through the same widened rule', () => {
-      /** A one-member payload, so a drifted sibling is always left unclaimed. */
       function oneMemberPayload(): unknown {
         return {
           data: {
@@ -1974,19 +1670,12 @@ describe('SeriesCardService — integration', () => {
         expect(txSpy).not.toHaveBeenCalled();
         txSpy.mockRestore();
 
-        // AC10 — the render path issues no UPDATE to books.series_name.
         expect(spy.executed.filter((s) => /^update "books"/i.test(s.sql.trim()))).toHaveLength(0);
         expect(card!.members.map((m) => m.libraryBookId)).toEqual([kings, drifted]);
         expect((await db.select().from(books).where(eq(books.id, drifted)))[0]!.seriesName).toBe('the band');
       });
 
-      /**
-       * The race, driven deterministically: a refresh lands between the snapshot
-       * and the reconcile and pairs the DRIFTED book with a now-exposed member. The
-       * transaction's own re-read is what decides, so nothing is written — an
-       * implementation reusing the outer snapshot's pool resurrects a superseded
-       * local row beside the canonical one.
-       */
+      /** Refresh between snapshot and transaction must prevent stale-pool resurrection of a local row beside the canonical one. */
       it('a refresh landing between the snapshot and the reconcile makes the guard write nothing', async () => {
         const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
         const drifted = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'the band', seriesPosition: 2, authorName: 'Nicholas Eames' });
@@ -2019,7 +1708,7 @@ describe('SeriesCardService — integration', () => {
         const observed = createMockLogger();
         const svc = new SeriesCardService(db, inject(observed), settingsServiceWith('TEST_KEY'));
         await svc.getSeriesForBook(kings);
-        // Positive control: the seed DOES fire for this fixture.
+        // Positive control: the seed fires before deletion during reconciliation.
         expect((await db.select().from(seriesMembers)).filter((m) => m.bookId === doomed)).toHaveLength(1);
         await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
         (observed.warn as ReturnType<typeof vi.fn>).mockClear();
@@ -2057,12 +1746,7 @@ describe('SeriesCardService — integration', () => {
         expect((observed.warn as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
       });
 
-      /**
-       * A `source: 'local'` row claims its book by `book_id` in phase 1, BEFORE
-       * the title matcher runs — including when that book is drifted into the pool
-       * by the widening. Without that precedence the drifted book would also be
-       * title-matched to the Hardcover member and appear twice.
-       */
+      /** Local book_id claims precede title matching; otherwise a drifted same-title book appears twice. */
       it('a local row claims its drifted book by id before the title matcher runs', async () => {
         const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
         const drifted = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'the band', seriesPosition: 1, authorName: 'Nicholas Eames' });
@@ -2071,15 +1755,11 @@ describe('SeriesCardService — integration', () => {
 
         const card = await svc.getSeriesForBook(kings);
 
-        // The member claimed the lower id; the drifted same-title book is shown
-        // exactly once, through its own local row.
         expect(card!.members.find((m) => m.hardcoverBookId === 7711)!.libraryBookId).toBe(kings);
         expect(card!.members.filter((m) => m.libraryBookId === drifted)).toHaveLength(1);
         expect((await db.select().from(seriesMembers)).filter((m) => m.bookId === drifted)).toHaveLength(1);
       });
     });
-
-    // --- AC3 — every card-building path agrees ----------------------------------
 
     describe('AC3 — refresh and cron agree with the book’s own card', () => {
       it('a manual refresh on the non-drifted book resolves the drifted sibling', async () => {
@@ -2109,7 +1789,7 @@ describe('SeriesCardService — integration', () => {
 
         const rows = await db.select().from(seriesMembers);
         expect(rows.find((r) => r.hardcoverBookId === 7712)!.bookId).toBe(drifted);
-        // AC10 — the cron writes no series_name; the drifted spelling survives.
+        // Refresh must not canonicalize series_name.
         expect((await db.select().from(books).where(eq(books.id, drifted)))[0]!.seriesName).toBe('the band');
       });
 
@@ -2124,8 +1804,7 @@ describe('SeriesCardService — integration', () => {
           authorName: null,
           lastFetchedAt: new Date(Date.now() - 30 * 86_400_000),
         }).returning();
-        // `refreshByLinkedBook` picks the LOWEST-id linked book and passes that
-        // book's own spelling through — here the drifted one.
+        // Lowest-ID linked book supplies its own spelling to refreshByLinkedBook.
         await db.insert(seriesMembers).values({
           seriesId: row!.id, bookId: drifted, title: 'Bloody Rose', normalizedTitle: 'bloody rose', authorName: 'Nicholas Eames', position: 2, source: 'local',
         });
